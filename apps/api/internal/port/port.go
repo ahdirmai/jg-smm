@@ -15,3 +15,18 @@ type HealthChecker interface {
 type Clock interface {
 	Now() time.Time
 }
+
+// TeamConfig is the single-team root configuration.
+type TeamConfig struct {
+	ID        string
+	Name      string
+	CreatedAt time.Time
+}
+
+// TeamConfigStore persists the singleton team configuration.
+type TeamConfigStore interface {
+	// Get returns the current team config, or domain.ErrNotFound when unset.
+	Get(ctx context.Context) (TeamConfig, error)
+	// Upsert creates the row on first call and renames it afterwards.
+	Upsert(ctx context.Context, name string) (TeamConfig, error)
+}

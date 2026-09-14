@@ -20,6 +20,7 @@ import (
 	apihttp "github.com/ahdirmai/jg-smm-automation/apps/api/internal/http"
 	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/obs"
 	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/port"
+	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/repository"
 	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/service"
 )
 
@@ -52,6 +53,16 @@ func main() {
 		defer pg.Close()
 		checkers["postgres"] = pg
 		logger.Info("database connected")
+
+		// Proves the sqlc query path works end to end at boot: reads the
+		// singleton team config (creating the default row on first run).
+		teamSvc := service.NewTeamConfigService(repository.NewTeamConfigRepo(pg.Queries()))
+		team, err := teamSvc.Get(ctx)
+		if err != nil {
+			logger.Error("team config bootstrap failed", "err", err)
+			os.Exit(1)
+		}
+		logger.Info("team config loaded", "teamId", team.ID, "teamName", team.Name)
 	}
 
 	healthSvc := service.NewHealthService(checkers)

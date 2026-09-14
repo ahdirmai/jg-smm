@@ -1,0 +1,26 @@
+version: "2"
+sql:
+  - engine: postgresql
+    # Schema = the golang-migrate up files, so sqlc reads exactly the DDL that
+    # runs in production. Never duplicate the schema here.
+    schema: db/migrations
+    queries: db/queries
+    gen:
+      go:
+        package: sqlcgen
+        out: internal/repository/sqlcgen
+        # pgx/v5 driver with native pgx types (no database/sql round-trip).
+        sql_package: pgx/v5
+        emit_json_tags: true
+        emit_prepared_queries: false
+        emit_interface: true
+        emit_empty_slices: true
+        # Nullable columns become *T rather than pgtype wrappers for scalars,
+        # which keeps service code free of pgtype plumbing.
+        emit_pointers_for_null_types: true
+        # jsonb columns map to json.RawMessage instead of []byte.
+        overrides:
+          - db_type: "jsonb"
+            go_type:
+              import: "encoding/json"
+              type: "RawMessage"

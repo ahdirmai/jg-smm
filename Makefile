@@ -11,7 +11,12 @@ WORKERS ?= 3
 DB_URL ?= postgres://smm:smm@postgres:5432/smm?sslmode=disable
 MIGRATE_RUN = $(COMPOSE) run --rm --no-deps migrate
 
-.PHONY: help up down logs ps bootstrap typecheck test build migrate migrate-down migrate-create migrate-status
+# sqlc runs from its pinned image so the host needs no Go/cgo toolchain.
+# Version is pinned here and in apps/api/sqlc.yaml consumers; bump together.
+SQLC_VERSION ?= 1.27.0
+SQLC_RUN = docker run --rm -v "$(PWD)/apps/api":/src -w /src sqlc/sqlc:$(SQLC_VERSION)
+
+.PHONY: help up down logs ps bootstrap typecheck test build migrate migrate-down migrate-create migrate-status sqlc sqlc-check
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -54,3 +59,11 @@ migrate-status: ## Show migration version and dirty flag
 migrate-create: ## Create a migration pair (NAME=add_thing)
 	@test -n "$(NAME)" || (echo "usage: make migrate-create NAME=add_thing" >&2; exit 1)
 	$(MIGRATE_RUN) -ext sql -dir /migrations -seq "$(NAME)"
+
+sqlc: ## Regenerate sqlc query code (apps/api/internal/repository/sqlcgen)
+	$(SQLC_RUN) generate
+
+sqlc-check: ## Fail if generated sqlc code is stale (CI)
+	$(SQLC_RUN) generate
+	@cd apps/api && git diff --exit-code -- internal/repository/sqlcgen || \
+		(echo "sqlc output is stale; run 'make sqlc' and commit" >&2; exit 1)

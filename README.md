@@ -48,6 +48,17 @@ make migrate-down N=1         # roll back the last N (default 1)
 make migrate-create NAME=x    # scaffold a new up/down pair
 ```
 
+## Query code generation (sqlc)
+
+Queries live in `apps/api/db/queries/*.sql` and are compiled by sqlc against
+the migration DDL into `apps/api/internal/repository/sqlcgen/`. Generated code
+is committed; edit the `.sql` sources, never the `sqlcgen` files.
+
+```sh
+make sqlc          # regenerate (runs sqlc in a pinned container)
+make sqlc-check    # CI: fail if generated output is stale
+```
+
 `make up` brings the whole stack online (`postgres`, `redis`, `minio`,
 `migrate`, `api`, `web`, and `WORKERS` worker replicas; default 3).
 

@@ -53,10 +53,12 @@ Prinsip ini berlaku di semua bahasa/layer. Bila ragu, kembali ke sini.
 │   │   │   ├── port/              # interface (Publisher, Repository, K8sClient, Clock...)
 │   │   │   ├── service/           # business logic (depends on port, bukan impl)
 │   │   │   ├── repository/        # implementasi port pakai sqlc/pgx
+│   │   │   │   └── sqlcgen/       # generated sqlc (jangan edit manual)
 │   │   │   ├── adapter/           # k8s, redis, apify, callback
 │   │   │   ├── http/              # handler, middleware, router
 │   │   │   ├── scheduler/         # rate limit, reconciler, sweeper
 │   │   │   └── obs/               # slog, metrics, tracing
+│   │   ├── sqlc.yaml              # sqlc config (schema = db/migrations)
 │   │   └── db/
 │   │       ├── migrations/        # golang-migrate *.up.sql / *.down.sql
 │   │       └── queries/           # sqlc *.sql per table

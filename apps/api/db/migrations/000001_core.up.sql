@@ -1,4 +1,4 @@
--- P0-04 — core schema base (single-team).
+-- 000001 — core schema base (single-team).
 -- Scope: TeamConfig (singleton), User (auth), AuditLog.
 -- Everything else (ProxyGroup, Account, Worker, ...) lands in its owning phase.
 --
