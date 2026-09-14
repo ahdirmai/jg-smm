@@ -6,7 +6,7 @@ Spec set lives in the repo root (`PRD.md`, `ERD.md`, `SYSTEM_DESIGN.md`, ...).
 ## Layout
 
 ```
-apps/api      Go 1.23 API (Echo + pgx + sqlc)
+apps/api      Go 1.25 API (Echo + pgx + sqlc)
 apps/web      Next.js 15 dashboard (shadcn/ui)
 apps/worker   Node 22 worker (Playwright + Apify)
 packages/     shared TS constants/types, shadcn/ui, base tsconfig
@@ -21,7 +21,7 @@ tickets/      one file per ticket (generated from TICKETS.md)
 | ---------- | -------- | ------------------------------------------------ |
 | Node       | 22.x     | `nvm use` (see `.nvmrc`)                         |
 | pnpm       | 9.12     | `corepack enable`                                |
-| Go         | 1.23+    |                                                  |
+| Go         | 1.25+    |                                                  |
 | OrbStack   | latest   | container runtime (set VM RAM ~8 GiB in Settings)|
 | Docker CLI | any      | OrbStack provides it                             |
 

@@ -3,11 +3,11 @@
 # Build context = apps/api (see compose.yaml).
 
 # ---- build ----
-FROM golang:1.23-alpine AS build
+FROM golang:1.25-alpine AS build
 WORKDIR /src
 
-# Cache module downloads separately from the source (no go.sum yet at P0-02).
-COPY go.mod ./
+# Cache module downloads separately from the source.
+COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .

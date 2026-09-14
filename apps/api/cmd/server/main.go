@@ -1,8 +1,6 @@
-// Command server is the API entrypoint.
-//
-// P0-02 provides a minimal HTTP server (stdlib net/http) so the compose stack is
-// a genuine walking skeleton: `/healthz` returns 200 and the container is healthy.
-// P0-03 replaces this with the real Echo + pgx + slog wiring and graceful shutdown.
+// Command server is the API entrypoint. It wires configuration, logging, the
+// database pool, the HTTP router and graceful shutdown, then serves until it
+// receives SIGINT/SIGTERM.
 package main
 
 import (
@@ -14,55 +12,86 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/labstack/echo/v4"
+
+	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/adapter"
+	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/config"
+	apihttp "github.com/ahdirmai/jg-smm-automation/apps/api/internal/http"
+	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/obs"
+	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/port"
+	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/service"
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel()}))
-
 	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
 		os.Exit(healthcheck())
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
-	})
-
-	addr := ":8080"
-	if v := os.Getenv("API_ADDR"); v != "" {
-		addr = v
+	cfg, err := config.Load()
+	if err != nil {
+		slog.Error("config load failed", "err", err)
+		os.Exit(1)
 	}
-
-	srv := &http.Server{
-		Addr:              addr,
-		Handler:           mux,
-		ReadHeaderTimeout: 5 * time.Second,
-	}
+	logger := obs.NewLogger(cfg.LogLevel)
+	slog.SetDefault(logger)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	checkers := map[string]port.HealthChecker{}
+
+	// Database is optional at boot: if DATABASE_URL is unset the API still serves
+	// (useful when migrations run separately). Failing to connect is fatal.
+	if cfg.DatabaseURL != "" {
+		pg, err := adapter.NewPostgres(ctx, cfg.DatabaseURL)
+		if err != nil {
+			logger.Error("database connect failed", "err", err)
+			os.Exit(1)
+		}
+		defer pg.Close()
+		checkers["postgres"] = pg
+		logger.Info("database connected")
+	}
+
+	healthSvc := service.NewHealthService(checkers)
+	e := apihttp.NewRouter(apihttp.NewHealthHandler(healthSvc))
+
+	logger.Info("api listening", "addr", cfg.HTTPAddress, "provisionerMode", cfg.ProvisionerMode)
+
+	// Run the server; on ctx cancellation, drain gracefully.
+	if err := run(ctx, e, cfg.HTTPAddress, time.Duration(cfg.ShutdownTimeoutSeconds)*time.Second, logger); err != nil {
+		logger.Error("server stopped with error", "err", err)
+		os.Exit(1)
+	}
+	logger.Info("shutdown complete")
+}
+
+// run starts the Echo server and blocks until ctx is cancelled or the server
+// errors, then performs a graceful shutdown bounded by timeout.
+func run(ctx context.Context, e *echo.Echo, addr string, timeout time.Duration, logger *slog.Logger) error {
+	errCh := make(chan error, 1)
 	go func() {
-		logger.Info("api listening", "addr", addr)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logger.Error("listen failed", "err", err)
-			stop()
+		if err := e.Start(addr); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
 		}
 	}()
 
-	<-ctx.Done()
-	logger.Info("shutting down")
-
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		logger.Error("graceful shutdown failed", "err", err)
+	select {
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+		logger.Info("shutdown signal received, draining")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+		if err := e.Shutdown(shutdownCtx); err != nil {
+			return err
+		}
+		return nil
 	}
 }
 
-// healthcheck is used by the container HEALTHCHECK directive.
+// healthcheck probes the local server; used by the container HEALTHCHECK.
 func healthcheck() int {
 	client := &http.Client{Timeout: 2 * time.Second}
 	resp, err := client.Get("http://127.0.0.1:8080/healthz")
@@ -74,17 +103,4 @@ func healthcheck() int {
 		return 1
 	}
 	return 0
-}
-
-func logLevel() slog.Level {
-	switch os.Getenv("LOG_LEVEL") {
-	case "debug":
-		return slog.LevelDebug
-	case "warn":
-		return slog.LevelWarn
-	case "error":
-		return slog.LevelError
-	default:
-		return slog.LevelInfo
-	}
 }
