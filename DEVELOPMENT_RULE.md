@@ -94,6 +94,7 @@ Prinsip ini berlaku di semua bahasa/layer. Bila ragu, kembali ke sini.
 - Tidak ada `workspaceId` di tabel. Single root config = `TeamConfig` (singleton).
 - Migrasi ke multi-tenant: `TeamConfig` → `Workspace`, tambah `workspaceId` ke semua tabel root, ubah auth middleware. Estimasi 1-2 minggu. **ADR wajib** saat menyentuh tenancy.
 - Semua migration irreversible di-trace di changelog.
+- **DDL**: PK = `uuid DEFAULT gen_random_uuid()` (Postgres-native; bukan cuid). Nama tabel `snake_case`; `user` reserved → tabel **`app_user`**. Timestamp `timestamptz`. Enum Postgres native untuk nilai tertutup (mulai dari `role`).
 
 ## 5. Go (BE)
 

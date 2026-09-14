@@ -1,0 +1,4 @@
+DROP TABLE IF EXISTS audit_log;
+DROP TABLE IF EXISTS app_user;
+DROP TABLE IF EXISTS team_config;
+DROP TYPE IF EXISTS role;

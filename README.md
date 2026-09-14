@@ -17,15 +17,15 @@ tickets/      one file per ticket (generated from TICKETS.md)
 
 ## Prerequisites (local build target: Mac M2 16 GB)
 
-| Tool       | Version  | Notes                                            |
-| ---------- | -------- | ------------------------------------------------ |
-| Node       | 22.x     | `nvm use` (see `.nvmrc`)                         |
-| pnpm       | 9.12     | `corepack enable`                                |
-| Go         | 1.25+    |                                                  |
-| OrbStack   | latest   | container runtime (set VM RAM ~8 GiB in Settings)|
-| Docker CLI | any      | OrbStack provides it                             |
+| Tool       | Version | Notes                                               |
+| ---------- | ------- | --------------------------------------------------- |
+| Node       | 22.x    | `nvm use` (see `.nvmrc`)                            |
+| pnpm       | 9.12    | `corepack enable`                                   |
+| Go         | 1.25+   |                                                     |
+| colima     | latest  | container runtime (start with `--cpu 4 --memory 8`) |
+| Docker CLI | any     | provided by colima                                  |
 
-Local containers run via **OrbStack + docker compose** — no Kubernetes (K8s is the
+Local containers run via **colima + docker compose** — no Kubernetes (K8s is the
 production path; see `SYSTEM_DESIGN.md` → Local Tier).
 
 ## Bootstrap
@@ -34,5 +34,31 @@ production path; see `SYSTEM_DESIGN.md` → Local Tier).
 make bootstrap
 make typecheck
 ```
+
+## Database migrations
+
+Migrations live in `apps/api/db/migrations/` (golang-migrate, `*.up.sql` /
+`*.down.sql`). The `migrate` compose service runs them on `make up`; the
+Makefile targets below run them on demand against the composed Postgres.
+
+```sh
+make migrate                  # apply all pending
+make migrate-status           # current version + dirty flag
+make migrate-down N=1         # roll back the last N (default 1)
+make migrate-create NAME=x    # scaffold a new up/down pair
+```
+
+`make up` brings the whole stack online (`postgres`, `redis`, `minio`,
+`migrate`, `api`, `web`, and `WORKERS` worker replicas; default 3).
+
+```sh
+make up        # start everything (-d)
+make ps        # status
+make logs S=api
+make down      # stop (volumes kept)
+```
+
+Smoke checks after boot: `curl localhost:24080/healthz` (API),
+`localhost:24081` (web), `localhost:24901` (MinIO console).
 
 See `DEVELOPMENT_RULE.md` for conventions and `DEVELOPMENT_PHASE.md` for the roadmap.

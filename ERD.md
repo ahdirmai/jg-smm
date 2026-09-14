@@ -38,6 +38,8 @@ erDiagram
 > **Reference model.** Ini representasi entity + relasi (pseudo-schema), **bukan** source of truth. DDL riil ditulis di `apps/api/db/migrations/*.sql` via golang-migrate; query via sqlc (`db/queries/*.sql`). Nama tipe Go/enum di-generate sqlc dari DDL.
 >
 > Single-team. Tanpa `Workspace`. Semua entity root = `TeamConfig` (singleton). Saat jadi multi-tenant, ganti `TeamConfig` → `Workspace` + tambah `workspaceId` di setiap tabel.
+>
+> **DDL conventions** (yang sudah live di `db/migrations/000002_core`): PK = `uuid` via `gen_random_uuid()` (bukan cuid — pilihan Postgres-native, tanpa dependency eksternal); kolom `timestamp` = `timestamptz`; nama tabel `snake_case`. Tabel `User` di DDL bernama **`app_user`** (`user` reserved di Postgres); kolom `createdAt` → `created_at`. Reference model di bawah tetap pakai nama entity Prisma-style untuk keterbacaan — DDL riil yang mengikat.
 
 ```text
 // reference-model (pseudo-schema, bukan file yang di-compile)
