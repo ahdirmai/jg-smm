@@ -3,7 +3,7 @@
 # Build context = apps/api (see compose.yaml).
 
 # ---- build ----
-FROM golang:1.25-alpine AS build
+FROM golang:1.26-alpine AS build
 WORKDIR /src
 
 # Cache module downloads separately from the source.

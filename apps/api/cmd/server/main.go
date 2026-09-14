@@ -17,6 +17,7 @@ import (
 
 	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/adapter"
 	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/config"
+	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/domain"
 	apihttp "github.com/ahdirmai/jg-smm-automation/apps/api/internal/http"
 	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/obs"
 	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/port"
@@ -25,8 +26,11 @@ import (
 )
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+	switch {
+	case len(os.Args) > 1 && os.Args[1] == "healthcheck":
 		os.Exit(healthcheck())
+	case len(os.Args) > 1 && os.Args[1] == "seed":
+		os.Exit(seed())
 	}
 
 	cfg, err := config.Load()
@@ -41,6 +45,7 @@ func main() {
 	defer stop()
 
 	checkers := map[string]port.HealthChecker{}
+	deps := apihttp.Dependencies{Health: apihttp.NewHealthHandler(service.NewHealthService(checkers))}
 
 	// Database is optional at boot: if DATABASE_URL is unset the API still serves
 	// (useful when migrations run separately). Failing to connect is fatal.
@@ -63,10 +68,19 @@ func main() {
 			os.Exit(1)
 		}
 		logger.Info("team config loaded", "teamId", team.ID, "teamName", team.Name)
+
+		// Auth: JWT access tokens + DB-backed refresh sessions.
+		issuer, err := adapter.NewJWTIssuer(cfg.JWTSecret, cfg.JWTIssuer)
+		if err != nil {
+			logger.Error("jwt issuer init failed", "err", err)
+			os.Exit(1)
+		}
+		authRepo := repository.NewAuthRepo(pg.Queries())
+		authSvc := service.NewAuthService(authRepo, authRepo, issuer, adapter.SystemClock{})
+		deps.Auth = apihttp.NewAuthHandler(authSvc, cfg.SecureCookies)
 	}
 
-	healthSvc := service.NewHealthService(checkers)
-	e := apihttp.NewRouter(apihttp.NewHealthHandler(healthSvc))
+	e := apihttp.NewRouter(deps)
 
 	logger.Info("api listening", "addr", cfg.HTTPAddress, "provisionerMode", cfg.ProvisionerMode)
 
@@ -113,5 +127,57 @@ func healthcheck() int {
 	if resp.StatusCode != http.StatusOK {
 		return 1
 	}
+	return 0
+}
+
+// seed creates the bootstrap owner user from env (SEED_ADMIN_EMAIL /
+// SEED_ADMIN_PASSWORD). It is idempotent: an existing email is left untouched.
+// This is a local/ops convenience; production uses the invite flow.
+func seed() int {
+	cfg, err := config.Load()
+	if err != nil {
+		slog.Error("config load failed", "err", err)
+		return 1
+	}
+	slog.SetDefault(obs.NewLogger(cfg.LogLevel))
+
+	email := os.Getenv("SEED_ADMIN_EMAIL")
+	password := os.Getenv("SEED_ADMIN_PASSWORD")
+	if email == "" || password == "" {
+		slog.Error("seed requires SEED_ADMIN_EMAIL and SEED_ADMIN_PASSWORD")
+		return 1
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	if cfg.DatabaseURL == "" {
+		slog.Error("seed requires DATABASE_URL")
+		return 1
+	}
+	pg, err := adapter.NewPostgres(ctx, cfg.DatabaseURL)
+	if err != nil {
+		slog.Error("database connect failed", "err", err)
+		return 1
+	}
+	defer pg.Close()
+
+	repo := repository.NewAuthRepo(pg.Queries())
+	if _, err := repo.GetByEmail(ctx, email); err == nil {
+		slog.Info("seed: user already exists", "email", email)
+		return 0
+	}
+
+	hash, err := service.HashPassword(password)
+	if err != nil {
+		slog.Error("hash password failed", "err", err)
+		return 1
+	}
+	user, err := repo.Create(ctx, email, "Owner", hash, domain.RoleOwner)
+	if err != nil {
+		slog.Error("create user failed", "err", err)
+		return 1
+	}
+	slog.Info("seed: owner created", "userId", user.ID, "email", user.Email)
 	return 0
 }

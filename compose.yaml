@@ -13,39 +13,39 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     ports:
-      - "${POSTGRES_PORT:-24543}:5432"
+      - '${POSTGRES_PORT:-24543}:5432'
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-smm} -d ${POSTGRES_DB:-smm}"]
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-smm} -d ${POSTGRES_DB:-smm}']
       interval: 5s
       timeout: 3s
       retries: 10
 
   redis:
     image: redis:7-alpine
-    command: ["redis-server", "--appendonly", "yes"]
+    command: ['redis-server', '--appendonly', 'yes']
     volumes:
       - redisdata:/data
     ports:
-      - "${REDIS_PORT:-24637}:6379"
+      - '${REDIS_PORT:-24637}:6379'
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ['CMD', 'redis-cli', 'ping']
       interval: 5s
       timeout: 3s
       retries: 10
 
   minio:
     image: quay.io/minio/minio:RELEASE.2024-10-13T13-34-11Z
-    command: ["server", "/data", "--console-address", ":9001"]
+    command: ['server', '/data', '--console-address', ':9001']
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-smm}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-smmsmmsmm}
     volumes:
       - miniodata:/data
     ports:
-      - "${MINIO_PORT:-24900}:9000"
-      - "${MINIO_CONSOLE_PORT:-24901}:9001"
+      - '${MINIO_PORT:-24900}:9000'
+      - '${MINIO_CONSOLE_PORT:-24901}:9001'
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ['CMD', 'mc', 'ready', 'local']
       interval: 5s
       timeout: 3s
       retries: 10
@@ -56,7 +56,7 @@ services:
     depends_on:
       minio:
         condition: service_healthy
-    entrypoint: ["/bin/sh", "-c"]
+    entrypoint: ['/bin/sh', '-c']
     command:
       - |
         set -e
@@ -75,9 +75,9 @@ services:
     volumes:
       - ./apps/api/db/migrations:/migrations:ro
     command:
-      - "-path=/migrations"
-      - "-database=postgres://${POSTGRES_USER:-smm}:${POSTGRES_PASSWORD:-smm}@postgres:5432/${POSTGRES_DB:-smm}?sslmode=disable"
-      - "up"
+      - '-path=/migrations'
+      - '-database=postgres://${POSTGRES_USER:-smm}:${POSTGRES_PASSWORD:-smm}@postgres:5432/${POSTGRES_DB:-smm}?sslmode=disable'
+      - 'up'
 
   api:
     build:
@@ -101,11 +101,14 @@ services:
       PROVISIONER_MODE: ${PROVISIONER_MODE:-static}
       PROVISION_AUTO_CREATE: ${PROVISION_AUTO_CREATE:-true}
       ACTION_BATCH_PARALLELISM: ${ACTION_BATCH_PARALLELISM:-2}
+      JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-me-0123456789}
+      JWT_ISSUER: ${JWT_ISSUER:-smm-api}
+      SECURE_COOKIES: ${SECURE_COOKIES:-false}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     ports:
-      - "${API_PORT:-24080}:8080"
+      - '${API_PORT:-24080}:8080'
     healthcheck:
-      test: ["CMD", "/app/server", "healthcheck"]
+      test: ['CMD', '/app/server', 'healthcheck']
       interval: 10s
       timeout: 3s
       retries: 5
@@ -139,7 +142,7 @@ services:
     # so it is intentionally NOT published here. Attach on demand:
     #   docker compose exec worker bash
     expose:
-      - "6080"
+      - '6080'
 
   web:
     build:
@@ -153,7 +156,7 @@ services:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080}
       NEXT_PUBLIC_SSE_URL: ${NEXT_PUBLIC_SSE_URL:-http://localhost:8080/api/stream}
     ports:
-      - "${WEB_PORT:-24081}:3000"
+      - '${WEB_PORT:-24081}:3000'
 
 volumes:
   pgdata:

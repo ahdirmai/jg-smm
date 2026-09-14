@@ -418,7 +418,7 @@ Implikasi:
 
 ```
 macOS + tooling                        ~5.5 GiB
-Container VM (OrbStack)                ~8.0 GiB   (set limit di OrbStack Settings; sisakan ~2 GiB untuk OS)
+Container VM (colima)                ~8.0 GiB   (`colima start --cpu 4 --memory 8`; sisakan ~2 GiB untuk OS)
   ├─ stack data (PG 600M, Redis 100M,
   │   MinIO 200M, API 80M, FE 150M)    ~1.1 GiB
   └─ sisa untuk worker                  ~6.9 GiB

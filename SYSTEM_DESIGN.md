@@ -11,7 +11,7 @@ graph LR
     SSE[SSE Client]
     VNC[noVNC iframe]
   end
-  subgraph BE [Backend - Go 1.23 Echo]
+  subgraph BE [Backend - Go 1.26 Echo]
     API[REST API]
     HUB[SSE Hub]
     SCHED[robfig cron]
@@ -177,7 +177,7 @@ sequenceDiagram
 | Komponen       | Tanggung Jawab                                                                                                                     | Stack                                                                                                                |
 | -------------- | ---------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
 | Frontend       | Dashboard 3 persona, shadcn/ui minimalist profesional, real-time                                                                   | Next.js 15 App Router, React 19, shadcn/ui, Tailwind v4, TanStack Query, Zustand, recharts, native EventSource (SSE) |
-| API            | REST + auth + business logic                                                                                                       | **Go 1.23**, Echo v4, `log/slog`, golang-jwt/v5, go-playground/validator                                             |
+| API            | REST + auth + business logic                                                                                                       | **Go 1.26**, Echo v4, `log/slog`, golang-jwt/v5, go-playground/validator                                             |
 | DB Layer       | Type-safe query ke Postgres                                                                                                        | **pgx/v5 + sqlc** (code-gen dari `db/queries/*.sql`)                                                                 |
 | Migration      | Schema Postgres                                                                                                                    | **golang-migrate** (raw SQL up/down)                                                                                 |
 | SSE Hub        | Push verdict/heartbeat ke FE (server→browser)                                                                                      | Echo + `net/http` Flusher (tanpa library)                                                                            |
@@ -205,7 +205,7 @@ sequenceDiagram
 1. User pilih target + template → `ActionJob` dengan `accountId`.
 2. BE **cooldown gate** (Redis `SET PX` per `(accountId,targetUrl)`) + dedupe 7 hari + cek rate headroom → tulis `ActionJob` `PENDING` (1 tx) → `LPUSH queue:action:<workerId>` (job bawa `accountId`).
 3. Container `BLPOP` 1 job (concurrency = 1 per worker; tidak ada tab paralel).
-3a. **Model batch**: scheduler mendistribusikan job ke maksimal `ACTION_BATCH_PARALLELISM` container (default 4) secara bersamaan — N worker jalan **paralel antar container**, **sequential di dalam** masing-masing container. Batch = knobs latency, bukan kuota: rate-limit per akun + cooldown gate tetap membatasi. Container tanpa job di batch itu tetap idle (tidak Reserve ekstra).
+   3a. **Model batch**: scheduler mendistribusikan job ke maksimal `ACTION_BATCH_PARALLELISM` container (default 4) secara bersamaan — N worker jalan **paralel antar container**, **sequential di dalam** masing-masing container. Batch = knobs latency, bukan kuota: rate-limit per akun + cooldown gate tetap membatasi. Container tanpa job di batch itu tetap idle (tidak Reserve ekstra).
 4. Playwright jalankan pada context baru dengan **`storageState` session** yang sudah login (persist di PVC per akun).
 5. Sequential: action selesai → callback verdict → jitter acak 30-90 dtk → job berikutnya.
 6. **Verifikasi ground truth**: comment → teks muncul di feed; like → state `aria-pressed` berubah. Screenshot via CDP `Page.captureScreenshot` (bukan `page.screenshot`; halaman Meta tak pernah settle).
@@ -217,7 +217,7 @@ Throughput: ~1 action / 60 dtk = 60/jam per container; per batch aktif ≈ N × 
 
 | Layer         | Pilih                                                                                                                             |
 | ------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| Runtime BE    | **Go 1.23**                                                                                                                       |
+| Runtime BE    | **Go 1.26**                                                                                                                       |
 | HTTP          | Echo v4                                                                                                                           |
 | DB driver     | **pgx/v5** (pool)                                                                                                                 |
 | Query         | **sqlc** (code-gen dari SQL)                                                                                                      |
@@ -269,6 +269,8 @@ Throughput: ~1 action / 60 dtk = 60/jam per container; per batch aktif ≈ N × 
 ## Security
 
 - Semua endpoint BE: JWT (golang-jwt/v5) + CSRF (SameSite=strict cookie).
+- **Auth P0-06 (implemented):** access token = stateless JWT HS256 (**24 jam**) di cookie HttpOnly `smm_at`; refresh token = opaque 32-byte random (SHA-256 hash disimpan di tabel `auth_session`, **30 hari**) di cookie `smm_rt` path `/api/auth`. Password di-hash argon2id (PHC string). Refresh **rotasi** (token lama di-revoke `rotated`). RBAC = permission `read|act|export|admin` → matriks role di `domain/role.go`.
+  - Trade-off: access token stateless tetap valid sampai expiry walau logout (≤24 jam). Refresh token yang di-revoke memblokir perpanjangan. Bila butuh revoke instan: turunkan TTL access atau tambah denylist Redis (belum perlu di MVP).
 - `Account.credentials` + `ProxyGroup.poolKey` di-encrypt dengan KMS (envelope encryption, aws-sdk-go-v2).
 - Worker → BE: mTLS (Linkerd) atau token + IP allowlist. Internal endpoint `/internal/*` hanya dari worker namespace.
 - Rate limit per route: 100 req/menit per user; 1000 req/menit per IP.
@@ -417,7 +419,7 @@ Semua workload (BE Go, FE Next.js, Worker Node, Postgres+TimescaleDB, Redis, Min
 
 ### Local Dev: docker-compose
 
-Stack lengkap didefinisikan di `compose.yaml` (root repo). Prinsip: **runtime OrbStack**, semua service container, **tanpa K8s**. Port host memakai range **24xxx** agar tidak bertabrakan dengan project lain di mesin yang sama.
+Stack lengkap didefinisikan di `compose.yaml` (root repo). Prinsip: **runtime colima**, semua service container, **tanpa K8s**. Port host memakai range **24xxx** agar tidak bertabrakan dengan project lain di mesin yang sama.
 
 Port host: API `24080`, web `24081`, Postgres `24543`, Redis `24637`, MinIO `24900`/console `24901` (override via `infra/docker/.env.example` → `.env`).
 
@@ -431,16 +433,16 @@ make logs S=api    # tail satu service
 make down          # stop (volume dipertahankan)
 ```
 
-### Local Tier (Mac M2 16 GB) — docker-compose via OrbStack, tanpa K8s
+### Local Tier (Mac M2 16 GB) — docker-compose via colima, tanpa K8s
 
-Lingkungan build/dev = **lokal Mac M2 16 GB**, container runtime = **OrbStack** (bukan Docker Desktop — OrbStack lebih hemat RAM/CPU di Apple Silicon dan berbagi network dengan host sehingga `localhost` bekerja tanpa config). K8s (k3s + desired-state reconciler) adalah **jalur produksi**; di lokal "worker dinamis" disimulasikan dengan **`--scale`**.
+Lingkungan build/dev = **lokal Mac M2 16 GB**, container runtime = **colima** (ringan di Apple Silicon; VM default 4 CPU / 8 GiB). K8s (k3s + desired-state reconciler) adalah **jalur produksi**; di lokal "worker dinamis" disimulasikan dengan **`--scale`**.
 
-- **OrbStack:** set VM limit (~8 GiB RAM) di OrbStack → Settings; aktifkan *"Start at login"*. Domain `*.orb.local` tersedia untuk akses service antar-container (opsional; compose network sudah cukup).
+- **colima:** jalankan `colima start --cpu 4 --memory 8`; compose network sudah cukup untuk akses antar-container (service saling menemukan via nama service).
 
 - **Scale worker:** `docker compose up -d --scale worker=3` (maks **3** di M2 16 GB; lihat `INFRA_ANALYST.md` §15.2). Tiap replica butuh `WORKER_ID`/`CONTROL_CHANNEL`/`ACTION_QUEUE` unik → pakai `container_name` template atau entrypoint yang derive `WORKER_ID` dari `hostname`. Named volume `sessions-<workerId>` menggantikan PVC per container.
 - **Tanpa reconciler K8s:** provisioner (`k8s.io/client-go`) berjalan **hanya bila** `PROVISIONER_MODE=k8s`. Di lokal set `PROVISIONER_MODE=static` → BE tak memanggil K8s API; daftar worker dibaca dari baris `Worker` yang di-seed. Semua **logika bisnis** (bin-packing, rate-limit, batch, verdict, health-score) tetap sama — hanya backend provisioning yang berbeda.
 - **ARM64:** pin image multi-arch (Playwright `*-noble` arm64, `timescale/timescaledb` arm64, `minio/minio` arm64, `redis:7-alpine` multi-arch). Base image worker wajib arm64 atau `--platform=linux/arm64`.
-- **`ACTION_DRY_RUN=true` (default di lokal):** worker menjalankan Playwright sampai *sebelum* commit aksi (navigasi + screenshot + verdict disimpan, **tidak** benar-benar submit comment/like/report). Wajib untuk dev tanpa membakar akun. Set `false` hanya saat uji aksi nyata dengan akun throwaway.
+- **`ACTION_DRY_RUN=true` (default di lokal):** worker menjalankan Playwright sampai _sebelum_ commit aksi (navigasi + screenshot + verdict disimpan, **tidak** benar-benar submit comment/like/report). Wajib untuk dev tanpa membakar akun. Set `false` hanya saat uji aksi nyata dengan akun throwaway.
 - **Proxy egress** tetap aktif walau lokal (worker → IG/Threads) — tanpa proxy, akun uji cepat kena challenge/ban.
 - **Apify** scrape jalan di cloud → tidak membebani Mac.
 

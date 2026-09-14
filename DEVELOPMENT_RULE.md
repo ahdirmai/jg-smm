@@ -46,7 +46,7 @@ Prinsip ini berlaku di semua bahasa/layer. Bila ragu, kembali ke sini.
 ```
 .
 ├── apps/
-│   ├── api/          # Go 1.25 Echo BE
+│   ├── api/          # Go 1.26 Echo BE
 │   │   ├── cmd/server/            # main.go (wiring, DI root)
 │   │   ├── internal/
 │   │   │   ├── domain/            # entity, enum, constant, error sentinel (nol deps)
@@ -100,7 +100,7 @@ Prinsip ini berlaku di semua bahasa/layer. Bila ragu, kembali ke sini.
 
 ## 5. Go (BE)
 
-- Go 1.25+. Module path `github.com/<org>/smm/apps/api`.
+- Go 1.26+. Module path `github.com/<org>/smm/apps/api`.
 - `gofmt` + `goimports` (non-negotiable, di CI). Linter: `golangci-lint` (`default + gocritic + govet + staticcheck + errcheck + gosec + revive`).
 - **Error**: wrap `fmt.Errorf("layer.op: %w", err)`; sentinel di `internal/domain/errors.go` (`ErrNotFound`, `ErrConflict`, `ErrUnauthorized`, `ErrRateLimited`, `ErrK8sQuota`...). **Jangan** `panic` di production path.
 - **Context**: `context.Context` parameter pertama, selalu; cancellation dipropagasi ke semua goroutine/IO.
@@ -236,7 +236,7 @@ Semua service (BE, FE, Worker, Postgres+TimescaleDB, Redis, MinIO) berjalan dala
 
 ### 8.1 Dockerfile (multi-stage)
 
-- **BE (Go)**: stage `build` (`golang:1.25-alpine` + cache `go mod`); runtime `gcr.io/distroless/static-debian12:nonroot`. Static binary, `CGO_ENABLED=0`.
+- **BE (Go)**: stage `build` (`golang:1.26-alpine` + cache `go mod`); runtime `gcr.io/distroless/static-debian12:nonroot`. Static binary, `CGO_ENABLED=0`.
 - **FE (Next.js)**: `deps` (`pnpm install --frozen-lockfile`) → `build` (`pnpm build`) → `runtime` (`node:22-alpine` + `output: standalone`).
 - **Worker (Node)**: `deps` → `runtime` (`node:22-bookworm-slim` + Playwright Chromium + system deps, Xvfb/x11vnc/noVNC). Size ~1.2 GB (diterima).
 - **Postgres**: `timescale/timescaledb:2.14.2-pg16` (pin digest) + init ConfigMap (`timescale-tune`).

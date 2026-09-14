@@ -6,17 +6,27 @@ package sqlcgen
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type Querier interface {
+	CreateAuthSession(ctx context.Context, arg CreateAuthSessionParams) (CreateAuthSessionRow, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (CreateUserRow, error)
+	DeleteExpiredAuthSessions(ctx context.Context) (int64, error)
+	GetActiveAuthSession(ctx context.Context, tokenHash []byte) (GetActiveAuthSessionRow, error)
 	// Example queries exercising the sqlc pipeline (P0-05).
 	// Real per-domain query files land with their tables in later phases.
 	GetTeamConfig(ctx context.Context) (TeamConfig, error)
 	GetUserByEmail(ctx context.Context, lower string) (AppUser, error)
+	// Auth queries (P0-06).
+	GetUserByID(ctx context.Context, id pgtype.UUID) (AppUser, error)
 	InsertAuditLog(ctx context.Context, arg InsertAuditLogParams) (AuditLog, error)
 	ListAuditLogs(ctx context.Context, limit int32) ([]AuditLog, error)
 	ListUsers(ctx context.Context, arg ListUsersParams) ([]ListUsersRow, error)
+	RevokeAllUserSessions(ctx context.Context, arg RevokeAllUserSessionsParams) error
+	RevokeAuthSession(ctx context.Context, arg RevokeAuthSessionParams) error
+	TouchAuthSession(ctx context.Context, id pgtype.UUID) error
 	UpsertTeamConfig(ctx context.Context, name string) (TeamConfig, error)
 }
 

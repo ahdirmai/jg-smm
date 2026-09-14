@@ -26,6 +26,13 @@ type Config struct {
 	ActionBatchParallelism int
 	// ShutdownTimeoutSeconds is the graceful drain budget.
 	ShutdownTimeoutSeconds int
+
+	// JWTSecret signs access tokens. Required when the DB is configured.
+	JWTSecret string
+	// JWTIssuer is the `iss` claim; stable per deployment.
+	JWTIssuer string
+	// SecureCookies sets the Secure flag on auth cookies (true behind HTTPS).
+	SecureCookies bool
 }
 
 // Load reads configuration from the environment, applying safe defaults.
@@ -38,6 +45,9 @@ func Load() (Config, error) {
 		ProvisionAutoCreate:    envBool("PROVISION_AUTO_CREATE", true),
 		ActionBatchParallelism: envInt("ACTION_BATCH_PARALLELISM", 2),
 		ShutdownTimeoutSeconds: envInt("SHUTDOWN_TIMEOUT_SECONDS", 10),
+		JWTSecret:              os.Getenv("JWT_SECRET"),
+		JWTIssuer:              env("JWT_ISSUER", "smm-api"),
+		SecureCookies:          envBool("SECURE_COOKIES", false),
 	}
 
 	if cfg.ProvisionerMode != "static" && cfg.ProvisionerMode != "k8s" {
@@ -45,6 +55,10 @@ func Load() (Config, error) {
 	}
 	if cfg.ActionBatchParallelism < 1 {
 		return Config{}, fmt.Errorf("config: ACTION_BATCH_PARALLELISM must be >= 1, got %d", cfg.ActionBatchParallelism)
+	}
+	// The JWT secret is only meaningful once the API talks to the DB (auth on).
+	if cfg.DatabaseURL != "" && len(cfg.JWTSecret) < 16 {
+		return Config{}, fmt.Errorf("config: JWT_SECRET must be set (>= 16 bytes) when DATABASE_URL is configured")
 	}
 	return cfg, nil
 }

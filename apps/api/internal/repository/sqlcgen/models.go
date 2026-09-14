@@ -7,9 +7,53 @@ package sqlcgen
 import (
 	"database/sql/driver"
 	"fmt"
+	"net/netip"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+type AuthSessionRevokedReason string
+
+const (
+	AuthSessionRevokedReasonLogout  AuthSessionRevokedReason = "logout"
+	AuthSessionRevokedReasonRotated AuthSessionRevokedReason = "rotated"
+	AuthSessionRevokedReasonReuse   AuthSessionRevokedReason = "reuse"
+)
+
+func (e *AuthSessionRevokedReason) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = AuthSessionRevokedReason(s)
+	case string:
+		*e = AuthSessionRevokedReason(s)
+	default:
+		return fmt.Errorf("unsupported scan type for AuthSessionRevokedReason: %T", src)
+	}
+	return nil
+}
+
+type NullAuthSessionRevokedReason struct {
+	AuthSessionRevokedReason AuthSessionRevokedReason `json:"auth_session_revoked_reason"`
+	Valid                    bool                     `json:"valid"` // Valid is true if AuthSessionRevokedReason is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullAuthSessionRevokedReason) Scan(value interface{}) error {
+	if value == nil {
+		ns.AuthSessionRevokedReason, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.AuthSessionRevokedReason.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullAuthSessionRevokedReason) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.AuthSessionRevokedReason), nil
+}
 
 type Role string
 
@@ -72,6 +116,19 @@ type AuditLog struct {
 	EntityID string             `json:"entity_id"`
 	Diff     []byte             `json:"diff"`
 	Ts       pgtype.Timestamptz `json:"ts"`
+}
+
+type AuthSession struct {
+	ID            pgtype.UUID                  `json:"id"`
+	UserID        pgtype.UUID                  `json:"user_id"`
+	TokenHash     []byte                       `json:"token_hash"`
+	UserAgent     *string                      `json:"user_agent"`
+	Ip            *netip.Addr                  `json:"ip"`
+	ExpiresAt     pgtype.Timestamptz           `json:"expires_at"`
+	CreatedAt     pgtype.Timestamptz           `json:"created_at"`
+	LastUsedAt    pgtype.Timestamptz           `json:"last_used_at"`
+	RevokedAt     pgtype.Timestamptz           `json:"revoked_at"`
+	RevokedReason NullAuthSessionRevokedReason `json:"revoked_reason"`
 }
 
 type TeamConfig struct {

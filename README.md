@@ -6,7 +6,7 @@ Spec set lives in the repo root (`PRD.md`, `ERD.md`, `SYSTEM_DESIGN.md`, ...).
 ## Layout
 
 ```
-apps/api      Go 1.25 API (Echo + pgx + sqlc)
+apps/api      Go 1.26 API (Echo + pgx + sqlc)
 apps/web      Next.js 15 dashboard (shadcn/ui)
 apps/worker   Node 22 worker (Playwright + Apify)
 packages/     shared TS constants/types, shadcn/ui, base tsconfig
@@ -21,7 +21,7 @@ tickets/      one file per ticket (generated from TICKETS.md)
 | ---------- | ------- | --------------------------------------------------- |
 | Node       | 22.x    | `nvm use` (see `.nvmrc`)                            |
 | pnpm       | 9.12    | `corepack enable`                                   |
-| Go         | 1.25+   |                                                     |
+| Go         | 1.26+   |                                                     |
 | colima     | latest  | container runtime (start with `--cpu 4 --memory 8`) |
 | Docker CLI | any     | provided by colima                                  |
 
@@ -71,5 +71,24 @@ make down      # stop (volumes kept)
 
 Smoke checks after boot: `curl localhost:24080/healthz` (API),
 `localhost:24081` (web), `localhost:24901` (MinIO console).
+
+## Auth (local)
+
+Create the bootstrap owner, then log in. Sessions are cookie-based: an
+HttpOnly access JWT (`smm_at`, 24h) plus a rotating refresh token (`smm_rt`,
+30d) stored hashed in `auth_session`.
+
+```sh
+SEED_ADMIN_EMAIL=owner@local.test SEED_ADMIN_PASSWORD='devpass-123456' make seed
+
+curl -s -c jar.txt -X POST localhost:24080/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"owner@local.test","password":"devpass-123456"}'
+curl -s -b jar.txt localhost:24080/api/auth/me
+```
+
+Set `JWT_SECRET` (>= 16 bytes) via env before running the API with a database;
+compose provides a dev default. Roles: `OWNER` / `STRATEGIST` / `OPERATOR` /
+`ANALYST` (see `apps/api/internal/domain/role.go` for the permission matrix).
 
 See `DEVELOPMENT_RULE.md` for conventions and `DEVELOPMENT_PHASE.md` for the roadmap.

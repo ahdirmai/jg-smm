@@ -16,7 +16,7 @@ MIGRATE_RUN = $(COMPOSE) run --rm --no-deps migrate
 SQLC_VERSION ?= 1.27.0
 SQLC_RUN = docker run --rm -v "$(PWD)/apps/api":/src -w /src sqlc/sqlc:$(SQLC_VERSION)
 
-.PHONY: help up down logs ps bootstrap typecheck test build migrate migrate-down migrate-create migrate-status sqlc sqlc-check
+.PHONY: help up down logs ps bootstrap typecheck test build migrate migrate-down migrate-create migrate-status sqlc sqlc-check seed
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -67,3 +67,9 @@ sqlc-check: ## Fail if generated sqlc code is stale (CI)
 	$(SQLC_RUN) generate
 	@cd apps/api && git diff --exit-code -- internal/repository/sqlcgen || \
 		(echo "sqlc output is stale; run 'make sqlc' and commit" >&2; exit 1)
+
+seed: ## Create/refresh the bootstrap owner user (SEED_ADMIN_EMAIL/SEED_ADMIN_PASSWORD)
+	$(COMPOSE) run --rm --no-deps \
+		-e SEED_ADMIN_EMAIL=$(SEED_ADMIN_EMAIL) \
+		-e SEED_ADMIN_PASSWORD=$(SEED_ADMIN_PASSWORD) \
+		api seed

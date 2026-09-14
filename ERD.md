@@ -31,6 +31,7 @@ erDiagram
     ActionJob ||--o{ ActionLog : attempts
 
     User ||--o{ AuditLog : actor
+    User ||--o{ AuthSession : owns
 ```
 
 ## Skema (Postgres)
@@ -74,10 +75,29 @@ model User {
   id           String   @id @default(cuid())
   email        String   @unique
   name         String
-  passwordHash String
+  passwordHash String   // argon2id PHC string
   role         Role
   auditLogs    AuditLog[]
+  sessions     AuthSession[]
   createdAt    DateTime @default(now())
+}
+
+// Refresh-token session (P0-06). Access token = stateless JWT, tidak disimpan.
+// Hanya SHA-256 hash token yang disimpan (plaintext tak pernah masuk DB).
+model AuthSession {
+  id            String    @id @default(cuid())  // DDL: auth_session
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash     Bytes     @unique               // sha256(refreshToken)
+  userAgent     String?
+  ip            String?
+  expiresAt     DateTime
+  createdAt     DateTime  @default(now())
+  lastUsedAt    DateTime?
+  revokedAt     DateTime?
+  revokedReason String?   // logout|rotated|reuse
+  @@index([userId])
+  @@index([expiresAt])
 }
 
 model ProxyGroup {

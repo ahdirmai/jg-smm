@@ -33,7 +33,7 @@ func TestHealthEndpoints(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := NewRouter(NewHealthHandler(service.NewHealthService(tt.checkers)))
+			e := NewRouter(Dependencies{Health: NewHealthHandler(service.NewHealthService(tt.checkers))})
 			srv := httptest.NewServer(e)
 			defer srv.Close()
 
