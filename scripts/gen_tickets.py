@@ -56,8 +56,8 @@ PHASES = {
 
 # Optional per-ticket addendum, prepended above the phase notes.
 TICKET_NOTES = {
-    "P0-01": "Monorepo harus build di **arm64** (Apple Silicon). Sertakan `.nvmrc`/`go.work`/`.tool-versions` dan catat prasyarat toolchain (Node 22, Go 1.23, pnpm, Docker/OrbStack) di `README.md` root.",
-    "P0-02": "Target utama **lokal Mac M2 16 GB**: orchestration = **docker-compose (bukan K8s)**. Set `PROVISIONER_MODE=static` (BE tak panggil K8s API), `ACTION_DRY_RUN=true` default, `ACTION_BATCH_PARALLELISM=2`. Pin image **multi-arch/arm64** (Playwright `*-noble`, timescale, minio, redis) dan sediakan `--scale worker=3` (maks 3 di M2). Lihat `SYSTEM_DESIGN.md` §Local Tier & `INFRA_ANALYST.md` §15.2.",
+    "P0-01": "Monorepo harus build di **arm64** (Apple Silicon). Sertakan `.nvmrc`/`go.work`/`.tool-versions` dan catat prasyarat toolchain (Node 22, Go 1.23, pnpm, OrbStack) di `README.md` root.",
+    "P0-02": "Target utama **lokal Mac M2 16 GB**: orchestration = **docker-compose (bukan K8s)**. Set `PROVISIONER_MODE=static` (BE tak panggil K8s API), `ACTION_DRY_RUN=true` default, `ACTION_BATCH_PARALLELISM=2`. Pin image **multi-arch/arm64** (Playwright `*-noble`, timescale, minio, redis) dan sediakan `--scale worker=3` (maks 3 di M2). **Runtime lokal = OrbStack** (set VM RAM ~8 GiB; bukan Docker Desktop). Lihat `SYSTEM_DESIGN.md` §Local Tier & `INFRA_ANALYST.md` §15.2.",
     "P1-03": "Provisioner **dual-mode**: `PROVISIONER_MODE=k8s` (prod) vs `static` (lokal — daftar worker dari baris `Worker` hasil seed, tak memanggil K8s API). Logika tetap 1 port `K8sClient`/`Provisioner` interface; adapter `static` = no-op. envtest hanya jalan bila Docker/K8s tersedia.",
     "P1-04": "Reconciler = **jalur produksi**. Di lokal tak aktif (tidak ada K8s API); diuji via unit test murni (`diff(desired,actual)`) + envtest opsional. Jangan jadikan reconciler dependensi keras untuk `make up` lokal.",
 }

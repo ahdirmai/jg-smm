@@ -480,9 +480,11 @@ volumes:
   sessions-w1: {} # PVC per container di prod; named volume per worker di dev
 ```
 
-### Local Tier (Mac M2 16 GB) — docker-compose, tanpa K8s
+### Local Tier (Mac M2 16 GB) — docker-compose via OrbStack, tanpa K8s
 
-Lingkungan build/dev = **lokal Mac M2 16 GB**. K8s (k3s + desired-state reconciler) adalah **jalur produksi**; di lokal "worker dinamis" disimulasikan dengan **`--scale`**.
+Lingkungan build/dev = **lokal Mac M2 16 GB**, container runtime = **OrbStack** (bukan Docker Desktop — OrbStack lebih hemat RAM/CPU di Apple Silicon dan berbagi network dengan host sehingga `localhost` bekerja tanpa config). K8s (k3s + desired-state reconciler) adalah **jalur produksi**; di lokal "worker dinamis" disimulasikan dengan **`--scale`**.
+
+- **OrbStack:** set VM limit (~8 GiB RAM) di OrbStack → Settings; aktifkan *"Start at login"*. Domain `*.orb.local` tersedia untuk akses service antar-container (opsional; compose network sudah cukup).
 
 - **Scale worker:** `docker compose up -d --scale worker=3` (maks **3** di M2 16 GB; lihat `INFRA_ANALYST.md` §15.2). Tiap replica butuh `WORKER_ID`/`CONTROL_CHANNEL`/`ACTION_QUEUE` unik → pakai `container_name` template atau entrypoint yang derive `WORKER_ID` dari `hostname`. Named volume `sessions-<workerId>` menggantikan PVC per container.
 - **Tanpa reconciler K8s:** provisioner (`k8s.io/client-go`) berjalan **hanya bila** `PROVISIONER_MODE=k8s`. Di lokal set `PROVISIONER_MODE=static` → BE tak memanggil K8s API; daftar worker dibaca dari baris `Worker` yang di-seed. Semua **logika bisnis** (bin-packing, rate-limit, batch, verdict, health-score) tetap sama — hanya backend provisioning yang berbeda.

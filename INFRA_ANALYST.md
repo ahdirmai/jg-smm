@@ -122,15 +122,15 @@ MVP: **1 node `smm-data`** (32 GiB/8 vCPU) cukup bila MinIO di-config 1-node (si
 
 ## 4. Storage Capacity Planning
 
-| Kategori                                   | Volume                       | Estimasi Growth                                                    | Retention                               | Backup                             |
-| ------------------------------------------ | ---------------------------- | ------------------------------------------------------------------ | --------------------------------------- | ---------------------------------- |
-| **DB state** (Account, Worker, Job, Audit) | PVC 100 GB                   | ~1–2 GB/bulan                                                      | tak terbatas (hot)                      | basebackup harian + WAL            |
-| **MetricSnapshot** (Timescale)             | di dalam Postgres            | ~100k row/hari → **~3M/bulan**; compress > 7 hari → ~10–20% ukuran | 90 hari hot / 1 tahun cold              | ikut Postgres                      |
-| **Raw payload Apify** (MinIO)              | bucket `raw-payload`         | per scrape ~50–500 KB → ratusan MB/hari                            | 90 hari → lalu lifecycle delete/Glacier | versioning                         |
-| **Screenshots** (MinIO/volume)             | bucket `screenshots`         | ~30–80 KB/action → 3k action/hr → ~150 MB/hari                     | 30 hari → delete                        | versioning                         |
-| **PVC session** (`smm-session-<workerId>`) | **512 MiB** × 50 = **25 GiB** (Q3) | flat (kecil, ~KB/session) | selama container hidup | cookie backup terenkripsi terpisah |
-| **WAL/RDB archive**                        | bucket `pg-wal`, `redis-rdb` | WAL ~1–5 GB/hari                                                   | 7–30 hari                               | —                                  |
-| **MinIO total**                            | PVC 500 GB                   | —                                                                  | lifecycle per bucket                    | erasure-code (v1)                  |
+| Kategori                                   | Volume                             | Estimasi Growth                                                    | Retention                               | Backup                             |
+| ------------------------------------------ | ---------------------------------- | ------------------------------------------------------------------ | --------------------------------------- | ---------------------------------- |
+| **DB state** (Account, Worker, Job, Audit) | PVC 100 GB                         | ~1–2 GB/bulan                                                      | tak terbatas (hot)                      | basebackup harian + WAL            |
+| **MetricSnapshot** (Timescale)             | di dalam Postgres                  | ~100k row/hari → **~3M/bulan**; compress > 7 hari → ~10–20% ukuran | 90 hari hot / 1 tahun cold              | ikut Postgres                      |
+| **Raw payload Apify** (MinIO)              | bucket `raw-payload`               | per scrape ~50–500 KB → ratusan MB/hari                            | 90 hari → lalu lifecycle delete/Glacier | versioning                         |
+| **Screenshots** (MinIO/volume)             | bucket `screenshots`               | ~30–80 KB/action → 3k action/hr → ~150 MB/hari                     | 30 hari → delete                        | versioning                         |
+| **PVC session** (`smm-session-<workerId>`) | **512 MiB** × 50 = **25 GiB** (Q3) | flat (kecil, ~KB/session)                                          | selama container hidup                  | cookie backup terenkripsi terpisah |
+| **WAL/RDB archive**                        | bucket `pg-wal`, `redis-rdb`       | WAL ~1–5 GB/hari                                                   | 7–30 hari                               | —                                  |
+| **MinIO total**                            | PVC 500 GB                         | —                                                                  | lifecycle per bucket                    | erasure-code (v1)                  |
 
 **Proyeksi 12 bulan (DB):**
 
@@ -276,7 +276,7 @@ Compute total = ~$680 (20%). Optimasi compute lebih kecil dampaknya dari proxy.
 | 1   | **Blokir aset berat** (image/video) via route interception Playwright — scrape hanya HTML/JSON | ~-30% bita proxy      | **P2/P3**  |
 | 2   | Naikkan `MAX_ACCOUNTS_PER_CONTAINER` saat platform bertambah                                   | compute idle turun    | P3+        |
 | 3   | Right-size memory request worker (2→1 GiB)                                                     | -2 node               | **segera** |
-| 4 | ~~Turunkan PVC session (2 GiB → 512 MiB)~~ **DONE (Q3)** | hemat ~75 GiB storage | P1 |
+| 4   | ~~Turunkan PVC session (2 GiB → 512 MiB)~~ **DONE (Q3)**                                       | hemat ~75 GiB storage | P1         |
 | 5   | Budget cap per akun + alert 90%                                                                | cegah runaway cost    | P5-08      |
 | 6   | Compress Timescale > 7 hari + chunk mingguan                                                   | DB I/O turun          | P2         |
 
@@ -395,6 +395,7 @@ Semua keputusan di bawah **sudah dikonfirmasi user** kecuali Q1 yang menunggu sp
 **Keputusan user:** build & dev dulu di **lokal Mac M2 16 GB**, bukan server. Server (milik user) dipakai belakangan (staging/prod) — specs server **belum dikonfirmasi**, tapi **tidak lagi memblokir P0** karena P0–P4 jalan di lokal.
 
 Implikasi:
+
 - **Local tier = docker-compose, TIDAK pakai K8s.** K8s (k3s + reconciler `Worker.desiredState`) adalah **jalur produksi** (P1+ untuk provisioning dinamis) — di lokal, "worker dinamis" disimulasikan via `docker compose up --scale worker=N`. Menjalankan K8s di Mac menambah VM/etcd overhead yang tak perlu untuk 16 GB.
 - **ARM64 (Apple Silicon):** semua image harus multi-arch/arm64. Playwright base image `mcr.microsoft.com/playwright:vX.Y.Z-noble` punya arm64; headful Chromium + Xvfb + noVNC jalan di arm64 Linux container. Pin digest di `compose.yaml`.
 - **Proxy egress** tetap wajib (worker → IG/Threads) walau dev lokal; tanpa proxy, akun = cara tercepat kena ban.
@@ -402,22 +403,22 @@ Implikasi:
 
 ### 15.2 Tier Lingkungan & Angka
 
-| Item | `local` (dev, Mac M2 16 GB) | `prod` (server user, TBD) |
-| --- | --- | --- |
-| Orchestrator | docker-compose | K8s (k3s/kubeadm) |
-| Worker dinamis | `--scale worker=N` (manual) | reconciler `desiredState` + pod label |
-| Max worker concurrent | **3** | 50 (sesuai §3) |
-| `ACTION_BATCH_PARALLELISM` | **2** | 4 |
-| Worker request/limit | 250m / 1Gi → 1 / 2Gi *(dev-only relax)* | 750m / 1Gi → 2 / 4Gi |
-| PG / Redis / MinIO | shared compose, single instance | node `smm-data` |
-| Apify scrape | remote (cloud) | remote (cloud) |
-| Tujuan | fitur + correctness + smoke | throughput + HA |
+| Item                       | `local` (dev, Mac M2 16 GB)             | `prod` (server user, TBD)             |
+| -------------------------- | --------------------------------------- | ------------------------------------- |
+| Orchestrator               | docker-compose                          | K8s (k3s/kubeadm)                     |
+| Worker dinamis             | `--scale worker=N` (manual)             | reconciler `desiredState` + pod label |
+| Max worker concurrent      | **3**                                   | 50 (sesuai §3)                        |
+| `ACTION_BATCH_PARALLELISM` | **2**                                   | 4                                     |
+| Worker request/limit       | 250m / 1Gi → 1 / 2Gi _(dev-only relax)_ | 750m / 1Gi → 2 / 4Gi                  |
+| PG / Redis / MinIO         | shared compose, single instance         | node `smm-data`                       |
+| Apify scrape               | remote (cloud)                          | remote (cloud)                        |
+| Tujuan                     | fitur + correctness + smoke             | throughput + HA                       |
 
 **Hitungan memori lokal (anggaran 16 GB):**
 
 ```
 macOS + tooling                        ~5.5 GiB
-Container VM (Docker/OrbStack)         ~8.0 GiB   (set di settings; sisakan ~2 GiB untuk OS)
+Container VM (OrbStack)                ~8.0 GiB   (set limit di OrbStack Settings; sisakan ~2 GiB untuk OS)
   ├─ stack data (PG 600M, Redis 100M,
   │   MinIO 200M, API 80M, FE 150M)    ~1.1 GiB
   └─ sisa untuk worker                  ~6.9 GiB
@@ -431,15 +432,15 @@ Spike (1 context Chromium ~1.5 GiB)     → dengan batch=2: ≤3 GiB peak
 
 ### 15.3 Keputusan Diterima (DONE)
 
-| # | Pertanyaan | Keputusan | Status |
-| --- | --- | --- | --- |
-| Q2 | Right-size memory request worker | `request 750m/1Gi`, `limit 2000m/4Gi` | ✅ DONE |
-| Q3 | PVC session size | **512 MiB** (session file KB-scale) | ✅ DONE |
-| Q4 | MinIO topologi MVP | **1 node single-drive + versioning**; 4-node EC di v1 | ✅ DONE (default) |
-| Q5 | Redis HA mulai kapan | **single node MVP**; Sentinel di 100–500 pod | ✅ DONE (default) |
-| Q6 | mTLS internal | **token + IP allowlist** MVP; Linkerd saat > 20 service | ✅ DONE (default) |
-| Q7 | Autoscaling node | **manual ramp** MVP; cluster-autoscaler v1 | ✅ DONE (default) |
-| Q8 | Egress proxy policy | **FQDN allowlist** (Meta + proxy endpoint) | ✅ DONE (default) |
+| #   | Pertanyaan                       | Keputusan                                               | Status            |
+| --- | -------------------------------- | ------------------------------------------------------- | ----------------- |
+| Q2  | Right-size memory request worker | `request 750m/1Gi`, `limit 2000m/4Gi`                   | ✅ DONE           |
+| Q3  | PVC session size                 | **512 MiB** (session file KB-scale)                     | ✅ DONE           |
+| Q4  | MinIO topologi MVP               | **1 node single-drive + versioning**; 4-node EC di v1   | ✅ DONE (default) |
+| Q5  | Redis HA mulai kapan             | **single node MVP**; Sentinel di 100–500 pod            | ✅ DONE (default) |
+| Q6  | mTLS internal                    | **token + IP allowlist** MVP; Linkerd saat > 20 service | ✅ DONE (default) |
+| Q7  | Autoscaling node                 | **manual ramp** MVP; cluster-autoscaler v1              | ✅ DONE (default) |
+| Q8  | Egress proxy policy              | **FQDN allowlist** (Meta + proxy endpoint)              | ✅ DONE (default) |
 
 ---
 
