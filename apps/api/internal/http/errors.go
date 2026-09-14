@@ -7,17 +7,14 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/domain"
+	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/http/oapigen"
 )
 
-// errorBody is the single error shape returned to clients.
-type errorBody struct {
-	Error errorDetail `json:"error"`
-}
+// errorBody is the wire error shape. It aliases the generated type so
+// openapi/openapi.yaml stays the single source of truth for the contract.
+type errorBody = oapigen.ErrorBody
 
-type errorDetail struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
-}
+type errorDetail = oapigen.ErrorDetail
 
 // errorHandler maps domain sentinel errors to HTTP status codes and never leaks
 // raw error strings (driver/transport details) to the client.

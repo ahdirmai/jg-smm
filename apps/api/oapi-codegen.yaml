@@ -1,0 +1,17 @@
+# oapi-codegen config for the Go side of the OpenAPI SSOT (P0-07).
+# Generates request/response types and a strict server interface. Handlers in
+# internal/http implement ServerInterface; the Echo router stays hand-written so
+# we control middleware ordering (auth, RBAC, logging).
+package: oapigen
+
+# Emit types for every schema plus typed request/response wrappers.
+generate:
+  models: true
+  strict-server: true
+  embedded-spec: false
+
+output: internal/http/oapigen/api.gen.go
+
+output-options:
+  skip-prune: true
+  nullable-type: true

@@ -6,6 +6,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/http/oapigen"
 	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/service"
 )
 
@@ -27,7 +28,7 @@ func (h *HealthHandler) Register(e *echo.Echo) {
 
 // live is liveness: the process is up. Never depends on downstreams.
 func (h *HealthHandler) live(c echo.Context) error {
-	return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
+	return c.JSON(http.StatusOK, oapigen.HealthStatus{Status: "ok"})
 }
 
 // ready is readiness: dependencies reachable.
@@ -37,8 +38,13 @@ func (h *HealthHandler) ready(c echo.Context) error {
 
 	status := h.health.Check(ctx)
 	code := http.StatusOK
+	resp := oapigen.ReadinessStatus{Status: oapigen.Ok}
+	if len(status.Checks) > 0 {
+		resp.Checks = &status.Checks
+	}
 	if status.Status != "ok" {
 		code = http.StatusServiceUnavailable
+		resp.Status = oapigen.Degraded
 	}
-	return c.JSON(code, status)
+	return c.JSON(code, resp)
 }

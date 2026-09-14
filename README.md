@@ -59,6 +59,20 @@ make sqlc          # regenerate (runs sqlc in a pinned container)
 make sqlc-check    # CI: fail if generated output is stale
 ```
 
+## API contract generation (OpenAPI)
+
+`openapi/openapi.yaml` is the single source of truth for the HTTP contract.
+`make generate` emits Go types/handler interfaces
+(`apps/api/internal/http/oapigen`) and FE types
+(`packages/shared/src/generated/api.ts`). Generated files are committed and
+must be reproducible — edit the spec, never the output.
+
+```sh
+make generate        # regenerate Go + TS from the spec
+make generate-go     # Go only (oapi-codegen)
+make generate-ts     # TS only (openapi-typescript)
+```
+
 `make up` brings the whole stack online (`postgres`, `redis`, `minio`,
 `migrate`, `api`, `web`, and `WORKERS` worker replicas; default 3).
 

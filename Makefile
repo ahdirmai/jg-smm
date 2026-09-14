@@ -16,7 +16,10 @@ MIGRATE_RUN = $(COMPOSE) run --rm --no-deps migrate
 SQLC_VERSION ?= 1.27.0
 SQLC_RUN = docker run --rm -v "$(PWD)/apps/api":/src -w /src sqlc/sqlc:$(SQLC_VERSION)
 
-.PHONY: help up down logs ps bootstrap typecheck test build migrate migrate-down migrate-create migrate-status sqlc sqlc-check seed
+# Code generation from the OpenAPI SSOT (openapi/openapi.yaml).
+OAPI_CODEGEN_VERSION ?= v2.4.1
+
+.PHONY: help up down logs ps bootstrap typecheck test build migrate migrate-down migrate-create migrate-status sqlc sqlc-check seed generate generate-go generate-ts
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -73,3 +76,11 @@ seed: ## Create/refresh the bootstrap owner user (SEED_ADMIN_EMAIL/SEED_ADMIN_PA
 		-e SEED_ADMIN_EMAIL=$(SEED_ADMIN_EMAIL) \
 		-e SEED_ADMIN_PASSWORD=$(SEED_ADMIN_PASSWORD) \
 		api seed
+
+generate: generate-go generate-ts ## Regenerate all code from the OpenAPI spec
+
+generate-go: ## Generate Go types from openapi/openapi.yaml
+	cd apps/api && go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@$(OAPI_CODEGEN_VERSION) --config oapi-codegen.yaml ../../openapi/openapi.yaml
+
+generate-ts: ## Generate FE types into packages/shared
+	pnpm --filter @smm/shared generate:api

@@ -69,6 +69,7 @@ Prinsip ini berlaku di semua bahasa/layer. Bila ragu, kembali ke sini.
 │   ├── ui/           # shadcn/ui components (FE-only)
 │   └── tsconfig/     # base tsconfig (SSOT TS config)
 ├── infra/            # docker, k8s manifests/helm, terraform
+├── openapi/          # openapi.yaml — SSOT kontrak HTTP (Go + FE type di-generate dari sini)
 ├── docs/             # PRD, ERD, SYSTEM_DESIGN, DESIGN_SYSTEM, DEVELOPMENT_RULE, adr/
 └── scripts/          # one-off ops script (idempoten, tidak destruktif tanpa --force)
 ```
@@ -113,7 +114,10 @@ Prinsip ini berlaku di semua bahasa/layer. Bila ragu, kembali ke sini.
 - **K8s client** (`k8s.io/client-go`): scope namespace `smm`, RBAC minimal. Rate limit `10 create/menit` (burst 20); bulk via Job queue.
 - **Idempotency-Key** wajib untuk POST mutasi (create-account, kill-worker, bulk-import); simpan Redis 24 jam.
 - **Test**: tabel-driven (`t.Run`), `testcontainers-go` + `envtest` (K8s). Coverage target **70%**. `govulncheck ./...` di CI per PR.
-- **OpenAPI**: generate via `oapi-codegen`; spec = SSOT. FE type-sync via `packages/shared`.
+- **OpenAPI**: `openapi/openapi.yaml` = SSOT kontrak HTTP. Generate via `make generate`:
+  - Go types/handler interface → `apps/api/internal/http/oapigen` (`oapi-codegen`, config `apps/api/oapi-codegen.yaml`).
+  - FE types → `packages/shared/src/generated/api.ts` (`openapi-typescript`).
+    Output **committed** dan wajib deterministik; jangan edit manual. Router tetap hand-written (kontrol middleware auth/RBAC/log).
 
 ### 5.1 Layer Dependency Rule (enforced)
 

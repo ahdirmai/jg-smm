@@ -1,0 +1,240 @@
+openapi: 3.0.3
+info:
+  title: SMM API
+  version: 0.1.0
+  description: |
+    Social Media Management API. This spec is the single source of truth for the
+    HTTP contract: Go server/handler types are generated with `oapi-codegen` and
+    FE types with `openapi-typescript` into `packages/shared`. Do not hand-write
+    DTOs on either side.
+servers:
+  - url: http://localhost:24080
+    description: Local development
+tags:
+  - name: health
+  - name: auth
+  - name: admin
+
+paths:
+  /healthz:
+    get:
+      tags: [health]
+      summary: Liveness probe
+      operationId: getHealthz
+      responses:
+        '200':
+          description: Process is up.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+
+  /readyz:
+    get:
+      tags: [health]
+      summary: Readiness probe
+      operationId: getReadyz
+      responses:
+        '200':
+          description: All dependencies reachable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessStatus'
+        '503':
+          description: One or more dependencies are down.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessStatus'
+
+  /api/auth/login:
+    post:
+      tags: [auth]
+      summary: Log in and start a session
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Session established. Sets `smm_at` and `smm_rt` cookies.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+
+  /api/auth/refresh:
+    post:
+      tags: [auth]
+      summary: Rotate the refresh token and mint a new access token
+      operationId: refresh
+      responses:
+        '200':
+          description: New session. Rotates the active refresh token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          $ref: '#/components/responses/Error'
+
+  /api/auth/logout:
+    post:
+      tags: [auth]
+      summary: Revoke the current refresh token
+      operationId: logout
+      responses:
+        '204':
+          description: Logged out. Clears auth cookies.
+
+  /api/auth/me:
+    get:
+      tags: [auth]
+      summary: Return the authenticated principal
+      operationId: getMe
+      security:
+        - accessCookie: []
+      responses:
+        '200':
+          description: Current principal.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeResponse'
+        '401':
+          $ref: '#/components/responses/Error'
+
+  /api/admin/ping:
+    get:
+      tags: [admin]
+      summary: RBAC-guarded example endpoint
+      description: Requires the `admin` permission (OWNER only).
+      operationId: adminPing
+      security:
+        - accessCookie: []
+      responses:
+        '200':
+          description: Caller holds the admin permission.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+
+components:
+  securitySchemes:
+    accessCookie:
+      type: apiKey
+      in: cookie
+      name: smm_at
+
+  responses:
+    Error:
+      description: Error response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+
+  schemas:
+    HealthStatus:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          example: ok
+
+    ReadinessStatus:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+        checks:
+          type: object
+          additionalProperties:
+            type: string
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 1
+
+    LoginResponse:
+      type: object
+      required: [accessExpiry, user]
+      properties:
+        accessExpiry:
+          type: string
+          format: date-time
+        user:
+          $ref: '#/components/schemas/User'
+
+    MeResponse:
+      type: object
+      required: [userId, role]
+      properties:
+        userId:
+          type: string
+        role:
+          $ref: '#/components/schemas/Role'
+
+    User:
+      type: object
+      required: [id, email, name, role]
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        role:
+          $ref: '#/components/schemas/Role'
+
+    Role:
+      type: string
+      enum: [OWNER, STRATEGIST, OPERATOR, ANALYST]
+
+    StatusResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+
+    ErrorBody:
+      type: object
+      required: [error]
+      properties:
+        error:
+          $ref: '#/components/schemas/ErrorDetail'
+
+    ErrorDetail:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string

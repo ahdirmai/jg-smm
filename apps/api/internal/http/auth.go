@@ -6,7 +6,10 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	openapiTypes "github.com/oapi-codegen/runtime/types"
+
 	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/domain"
+	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/http/oapigen"
 	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/port"
 	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/service"
 )
@@ -38,32 +41,19 @@ func (h *AuthHandler) Register(e *echo.Echo) {
 	e.GET("/api/auth/me", h.me, h.requireAuth())
 }
 
-type loginRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-}
-
-type userResponse struct {
-	ID    string      `json:"id"`
-	Email string      `json:"email"`
-	Name  string      `json:"name"`
-	Role  domain.Role `json:"role"`
-}
+type loginRequest = oapigen.LoginRequest
 
 func (h *AuthHandler) login(c echo.Context) error {
 	var req loginRequest
 	if err := c.Bind(&req); err != nil {
 		return domain.ErrValidation
 	}
-	sess, err := h.auth.Login(c.Request().Context(), req.Email, req.Password, c.Request().UserAgent(), c.RealIP())
+	sess, err := h.auth.Login(c.Request().Context(), string(req.Email), req.Password, c.Request().UserAgent(), c.RealIP())
 	if err != nil {
 		return err
 	}
 	h.setCookies(c, sess)
-	return c.JSON(http.StatusOK, map[string]any{
-		"accessExpiry": sess.AccessExpiry,
-		"user":         toUserResponse(sess.User),
-	})
+	return c.JSON(http.StatusOK, loginResponse(sess))
 }
 
 func (h *AuthHandler) refresh(c echo.Context) error {
@@ -77,10 +67,7 @@ func (h *AuthHandler) refresh(c echo.Context) error {
 		return err
 	}
 	h.setCookies(c, sess)
-	return c.JSON(http.StatusOK, map[string]any{
-		"accessExpiry": sess.AccessExpiry,
-		"user":         toUserResponse(sess.User),
-	})
+	return c.JSON(http.StatusOK, loginResponse(sess))
 }
 
 func (h *AuthHandler) logout(c echo.Context) error {
@@ -98,10 +85,7 @@ func (h *AuthHandler) me(c echo.Context) error {
 	if !ok {
 		return domain.ErrUnauthorized
 	}
-	return c.JSON(http.StatusOK, map[string]any{
-		"userId": claims.UserID,
-		"role":   claims.Role,
-	})
+	return c.JSON(http.StatusOK, oapigen.MeResponse{UserId: claims.UserID, Role: oapigen.Role(claims.Role)})
 }
 
 // setCookies writes the access + refresh cookies. Access is short-lived and
@@ -183,6 +167,11 @@ func ClaimsFrom(c echo.Context) (port.Claims, bool) {
 	return v, ok
 }
 
-func toUserResponse(u port.User) userResponse {
-	return userResponse{ID: u.ID, Email: u.Email, Name: u.Name, Role: u.Role}
+func toUserResponse(u port.User) oapigen.User {
+	return oapigen.User{Id: u.ID, Email: openapiTypes.Email(u.Email), Name: u.Name, Role: oapigen.Role(u.Role)}
+}
+
+// loginResponse builds the generated response shape from a session.
+func loginResponse(sess service.Session) oapigen.LoginResponse {
+	return oapigen.LoginResponse{AccessExpiry: sess.AccessExpiry, User: toUserResponse(sess.User)}
 }

@@ -15,6 +15,7 @@
     "dist"
   ],
   "scripts": {
+    "generate:api": "openapi-typescript ../../openapi/openapi.yaml -o src/generated/api.ts",
     "build": "tsc -p tsconfig.json",
     "lint": "eslint src",
     "typecheck": "tsc --noEmit",
@@ -22,6 +23,7 @@
   },
   "devDependencies": {
     "@smm/tsconfig": "workspace:*",
+    "openapi-typescript": "7.4.4",
     "typescript": "5.6.3"
   }
 }
