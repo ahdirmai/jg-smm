@@ -57,7 +57,8 @@
 **Scope**
 - ERD lengkap: `Account`, `Worker`, `ProxyGroup`, `ProvisionLog`, `Heartbeat`, enum (`AccountStatus`, `AuthStatus`, `WorkerStatus`, `DesiredState`).
 - **Desired-state reconciler** (`Worker.desiredState` + `generation`) + K8s provisioner (`k8s.io/client-go`) + PVC `smm-session-<workerId>`.
-- **Bin-packing**: add akun → slot platform kosong / auto-create container; `MAX_ACCOUNTS_PER_CONTAINER`.
+- **Provisioning manual-by-default**: dashboard "Create Container" (pilih platform) → `Worker.desiredState=RUNNING`; fleet default kosong.
+- **Assign akun (bin-packing)**: add akun → slot platform kosong → else auto-create (fallback, `PROVISION_AUTO_CREATE`); `MAX_ACCOUNTS_PER_CONTAINER`.
 - Worker: bootstrap, `BLPOP` loop, subscribe `control-<workerId>`, heartbeat.
 - **Login flow headful**: Xvfb + x11vnc + noVNC; `runLogin`/`waitForLoginOutcome`; persist `storageState` per platform.
 - **Kredensial**: AES-256-GCM at rest; `control-<workerId>` `auth-login`/`auth-input`/`auth-clear`.

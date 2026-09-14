@@ -221,7 +221,7 @@ apps/worker/src/
 - **Validasi + sanitasi callback** di BE: status ∈ enum, `worker_id` ≤ 64, `path.Base` screenshot (tolak `..`/`/`), truncate (`renderedText` 2000, error 500), `MaxBytesReader`.
 - **Orphan job + backoff** `min(2^attempt × 30s, 30m)`.
 - **Rate limit per akun dipaksa scheduler (Go BE)**, bukan di dalam job.
-- **Bin-packing** akun → container: pilih container region-matched ber-slot platform kosong (`MAX_ACCOUNTS_PER_CONTAINER`), else auto-create; container 0 akun → auto-delete.
+- **Assign** akun → container: pilih container region-matched ber-slot platform kosong (`MAX_ACCOUNTS_PER_CONTAINER`); bila tak ada slot → auto-create (default, `PROVISION_AUTO_CREATE=true`) atau reject (`false`). Fleet default **kosong** — container dibuat manual dari UI. Container 0 akun **`source=AUTO`** → auto-delete; `source=MANUAL` bertahan sampai user Remove.
 
 ### 7.6 Logging Worker
 
@@ -381,7 +381,7 @@ Setiap keputusan arsitektur signifikan → `docs/adr/NNNN-slug.md` (format MADR:
 - `0009-all-containerized-no-managed-services.md` — Postgres+Redis+MinIO self-hosted container (bukan RDS/ElastiCache/S3): murah di MVP, kontrol penuh, dev parity. Trade-off: ops DB/Redis ditanggung sendiri.
 - `0010-sse-over-websocket.md` — real-time pakai SSE (`EventSource`), bukan socket.io; satu arah server→browser, command via REST. Frame = entitas penuh.
 - `0011-worker-redis-pubsub-callback-contract.md` — kontrak worker dari `JG/automation`: worker hanya SUBSCRIBE + POST callback, tidak sentuh DB. Verdict per attempt = baris (upsert). Trade-off: Pub/Sub tanpa delivery guarantee; gap otorisasi callback ditutup setelah keluar loopback.
-- `0012-desired-state-worker-provisioning.md` — worker dinamis pakai desired-state reconciler (`Worker.desiredState`), bukan daftar `WORKER_IDS` statis. Add akun → bin-pack slot/platform atau auto-create; container kosong → auto-delete. Idempotensi via `Worker.generation` + pod label. Dua pemicu: event + cron 60 dtk. Semua op di `ProvisionLog`.
+- `0012-desired-state-worker-provisioning.md` — worker dinamis pakai desired-state reconciler (`Worker.desiredState`), bukan daftar `WORKER_IDS` statis. **Fleet default kosong; container dibuat manual dari UI**, dengan fallback auto-create saat add-akun (`PROVISION_AUTO_CREATE`). Container kosong → auto-delete. Idempotensi via `Worker.generation` + pod label. Dua pemicu: event + cron 60 dtk. Semua op di `ProvisionLog`.
 
 ## 18. On-call
 

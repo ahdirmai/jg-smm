@@ -52,6 +52,7 @@ enum JobType      { SCRAPE_LIKE SCRAPE_COMMENT SCRAPE_METRIC SESSION_REFRESH ACT
 enum TargetKind   { POST COMMENT }
 enum AuthStatus   { AUTHENTICATING NEEDS_INPUT AUTHENTICATED FAILED }
 enum DesiredState { RUNNING STOPPED }
+enum WorkerSource { MANUAL AUTO } // MANUAL = dibuat user dari dashboard; AUTO = auto-create saat bin-packing
 enum ProvisionOp  { CREATE DELETE }
 enum AccountStatus { PENDING ACTIVE PAUSED QUARANTINED DEAD ARCHIVED }
 ```
@@ -133,6 +134,7 @@ model Worker {
   sessionPvc     String?               // K8s PVC: smm-session-<workerId> (storageState per platform)
   novncService   String?               // ClusterIP service noVNC dalam pod (tidak pernah publik)
   desiredState   DesiredState @default(RUNNING) // sumber keinginan provisioning container
+  source         WorkerSource @default(MANUAL)  // MANUAL = user-created (tak auto-delete saat 0 akun); AUTO = fallback auto-create (auto-delete saat 0 akun)
   region         String                // region default pod (proxy per-akun bisa override)
   status         WorkerStatus @default(IDLE)
   generation     Int          @default(1) // naik tiap reconcile apply; guard anti-spawn-ganda
@@ -401,8 +403,9 @@ model Setting {
 - Tabel `TeamConfig` saat ini singleton (satu baris). Saat jadi multi-tenant, replace dengan `Workspace` + tambah `workspaceId` ke semua tabel yang sebelumnya root entity.
 - **1 Worker = 1 container = 1 "device", meng-host BANYAK akun — maks 1 per platform.** Dijaga `@@unique([workerId, platform])`. MVP platform IG+Threads → maks 2 akun/container. `Account.workerId` NULL = belum di-pack (bin-packing belum assign slot).
   - Alasan: satu device nyata memang punya 1 sesi per platform. Fingerprint (UA/viewport/locale) tetap per-container; tiap akun punya `context` + `storageState` sendiri (isolasi cookie).
+  - Container dibuat **manual** (`source=MANUAL`, user pilih platform) atau via **fallback auto-create** saat bin-packing tak temukan slot (`source=AUTO`). **Auto-delete container 0-akun hanya berlaku untuk `source=AUTO`**; container `MANUAL` bertahan sampai user menghapusnya (bisa di-pre-provision sebelum ada akun).
   - Blast radius: 1 pod mati = maks N akun idle (N = jumlah platform, ≤2 di MVP), bukan 1 akun.
-- **Desired-state provisioning ada di `Worker`** (container = unit provisioning): `Worker.desiredState` (`RUNNING|STOPPED`) = sumber keinginan. Reconciler bandingkan desired vs actual (`Worker.containerId` + pod label `smm.generation`).
+- **Desired-state provisioning ada di `Worker`** (container = unit provisioning): `Worker.desiredState` (`RUNNING|STOPPED`) = sumber keinginan. Reconciler bandingkan desired vs actual (`Worker.containerId` + pod label `smm.generation`). **Fleet default = kosong**: tidak ada `Worker` row sampai user membuat container dari dashboard (atau fallback auto-create saat add-akun).
   - `STOPPED` (pause container) → drain → delete pod → **PVC session ditahan** (resume tanpa login ulang).
   - Remove container → `Account.status=archived` untuk semua akunnya + delete pod + delete PVC + hapus `Worker` row.
 - **`Worker.generation` + `observedGen` = guard anti-spawn-ganda.** Tiap reconcile `apply` menaikkan `generation`; pod dilabeli `smm.generation=<n>`. Pod dengan generation < `observedGen` atau pod kedua untuk `(workerId, generation)` sama = **orphan** → dibunuh. Idempotent: retry reconcile generation sama tidak spawn pod kedua. K8s jadi lock (pod = resource), pengganti `SETNX`.

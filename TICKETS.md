@@ -40,7 +40,8 @@
 | P1-02 | Domain & port                     | `internal/domain` entity/enum/error + `internal/port` interface (K8sClient, Publisher, Repository, Clock) | `domain` nol import internal; arch test lolos                  | M   | P1-01        | P0  |
 | P1-03 | K8s provisioner                   | `internal/adapter/k8s` create/delete pod+PVC+service; rate limit 10 create/menit                          | Pod+PVC `smm-session-<workerId>` terbuat di envtest            | L   | P1-02        | P0  |
 | P1-04 | Desired-state reconciler          | `diff(desired, actual) → actions`; `Worker.desiredState` + `generation` label                             | Reconciler idempotent; retry aman; pod gen usang dihapus       | L   | P1-03        | P0  |
-| P1-05 | Bin-packing service               | Cari container slot platform kosong / auto-create; `MAX_ACCOUNTS_PER_CONTAINER`                           | Add akun → ter-pack; container 0 akun → auto-delete            | M   | P1-04        | P0  |
+| P1-05 | Assign akun (bin-packing)         | Cari container slot platform kosong; fallback auto-create (`PROVISION_AUTO_CREATE`); `MAX_ACCOUNTS_PER_CONTAINER` | Add akun → ter-pack; tak ada slot → auto-create atau `NO_SLOT`; container `AUTO` 0 akun → auto-delete, `MANUAL` bertahan | M   | P1-04        | P0  |
+| P1-19 | Create Container (manual)         | API `POST /containers` (pilih platform, `source=MANUAL`) + UI "Create Container" → `Worker` RUNNING → reconcile | User buat container saat fleet kosong; pod+PVC terbuat; `MANUAL` 0 akun tidak auto-delete | M   | P1-04, P1-05 | P0  |
 | P1-06 | ProvisionLog + orphan sweeper     | Catat CREATE/DELETE; sweep pod orphan; safety-net 60 dtk                                                  | Setiap op tercatat; orphan terhapus; test sweeper              | M   | P1-04        | P0  |
 | P1-07 | Credential crypto                 | AES-256-GCM encrypt/decrypt `passwordEnc`; write-only, tak pernah select                                  | Round-trip test; CI grep blokir plaintext credential           | S   | P1-02        | P0  |
 | P1-08 | Redis transport BE                | Publisher: `LPUSH queue:action:<workerId>`, `PUBLISH control-<workerId>`; receivers ack                   | Commit DB sebelum LPUSH (test order); receivers dilaporkan     | M   | P1-02        | P0  |
@@ -143,12 +144,12 @@
 | Phase     | Jumlah tiket | Estimasi (S/M/L)               |
 | --------- | ------------ | ------------------------------ |
 | P0        | 12           | 6S 5M 0L 1S                    |
-| P1        | 18           | 3S 12M 3L                      |
+| P1        | 19           | 3S 13M 3L                      |
 | P2        | 9            | 1S 7M 1L                       |
 | P3        | 14           | 4S 8M 2L                       |
 | P4        | 10           | 2S 7M 1L                       |
 | P5        | 10           | 2S 6M 2L                       |
-| **Total** | **73 tiket** | **≈ 14 minggu (2–3 engineer)** |
+| **Total** | **74 tiket** | **≈ 14 minggu (2–3 engineer)** |
 
 ## Aturan Tiket
 

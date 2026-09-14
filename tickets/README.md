@@ -27,7 +27,8 @@ Satu file per tiket (generated dari `TICKETS.md`). Jangan edit manual — jalank
 | P1-02 | Domain & port | P0 | M | [p1_02.md](p1_02.md) |
 | P1-03 | K8s provisioner | P0 | L | [p1_03.md](p1_03.md) |
 | P1-04 | Desired-state reconciler | P0 | L | [p1_04.md](p1_04.md) |
-| P1-05 | Bin-packing service | P0 | M | [p1_05.md](p1_05.md) |
+| P1-05 | Assign akun (bin-packing) | P0 | M | [p1_05.md](p1_05.md) |
+| P1-19 | Create Container (manual) | P0 | M | [p1_19.md](p1_19.md) |
 | P1-06 | ProvisionLog + orphan sweeper | P0 | M | [p1_06.md](p1_06.md) |
 | P1-07 | Credential crypto | P0 | S | [p1_07.md](p1_07.md) |
 | P1-08 | Redis transport BE | P0 | M | [p1_08.md](p1_08.md) |
@@ -105,4 +106,4 @@ Satu file per tiket (generated dari `TICKETS.md`). Jangan edit manual — jalank
 | P5-09 | Docs final sync | P0 | M | [p5_09.md](p5_09.md) |
 | P5-10 | GA sign-off | P0 | L | [p5_10.md](p5_10.md) |
 
-**Total: 73 tiket.**
+**Total: 74 tiket.**

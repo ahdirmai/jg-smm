@@ -260,10 +260,10 @@ Throughput: ~1 action / 60 dtk = 60/jam per container; per batch aktif ≈ N × 
 
 ### Dynamic Worker Scale
 
-- **Jumlah container dinamis & dikendalikan dari UI.** Tambah akun → bin-pack ke container ber-slot-kosong; bila tak ada → auto-create container baru. Pause/Resume/Remove container dari dashboard. Tanpa redeploy BE/FE, tanpa daftar worker statis.
+- **Default: nol container.** Fleet mulai kosong. User **membuat container manual** dari dashboard (pilih platform → provision slot). Saat menambah akun, bin-pack ke container ber-slot-kosong; bila tak ada slot → **fallback auto-create** (bila `PROVISION_AUTO_CREATE=true`, default). Pause/Resume/Remove container dari dashboard. Tanpa redeploy BE/FE, tanpa daftar worker statis.
 - Backend **tidak** menyimpan daftar worker statis. Fleet = turunan dari baris `Worker` ber-pod-hidup. `GET /containers` mengembalikan fleet aktual.
 - Burst create (50 akun sekaligus): antrian Redis, rate-limit `10 create/menit` ke K8s API, fan-out reconcile per container.
-- Auto-cleanup: container tanpa akun sama sekali → auto-delete; akun `dead` > 30 hari → `archived` + purge.
+- Auto-cleanup: container **`source=AUTO`** tanpa akun sama sekali → auto-delete. Container **`source=MANUAL`** bertahan (bisa di-pre-provision) sampai user Remove. Akun `dead` > 30 hari → `archived` + purge.
 - HPA **tidak** dipakai untuk worker (cardinality per-container, bukan beban). HPA hanya untuk BE/FE.
 
 ## Security
@@ -348,10 +348,12 @@ Throughput: ~1 action / 60 dtk = 60/jam per container; per batch aktif ≈ N × 
 
 **Transisi desiredState dari UI:**
 
-- Add account → bin-pack ke container ber-slot-kosong + region cocok; bila tak ada → auto-create `Worker` (`desiredState=RUNNING`).
+- **Create container (manual, default):** user pilih platform → BE insert `Worker` (`desiredState=RUNNING`) → `enqueue reconcile` → pod dibuat.
+- Add account → bin-pack ke container ber-slot-kosong + region cocok; bila tak ada slot → auto-create `Worker` (`desiredState=RUNNING`) **hanya bila `PROVISION_AUTO_CREATE=true`** (default); else API mengembalikan hint `NO_SLOT` agar user buat container manual.
+- `PROVISION_AUTO_CREATE=false` → fleet murni manual (cocok bila user ingin kontrol penuh atas jumlah device).
 - Remove container → `Account.status=archived` (semua akunnya) → DELETE pod + PVC.
 - Pause/Resume container → toggling `Worker.desiredState`.
-- **Container tanpa akun sama sekali** → reconciler auto-delete (containers kosong tidak dipertahankan).
+- **Container `source=AUTO` tanpa akun** → reconciler auto-delete. Container **`source=MANUAL`** tanpa akun **tidak** dihapus (pre-provision).
 
 **Dua pemicu reconcile** (bukan cuma cron):
 

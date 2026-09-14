@@ -69,7 +69,7 @@ Tim Social Media Ops butuh satu panel untuk:
 
 ### F2 — Account & Proxy
 
-- F2.1 Connect akun via **login interaktif**: operator isi username+password → BE encrypt AES-256-GCM → publish ke `control-<workerId>` (channel per container; payload bawa `accountId`) → worker headful login → tunggu outcome. Akun di-**bin-pack** ke container yang punya slot platform kosong (lihat F3.9). Fallback legacy: paste cookie (jalur `credentials` existing).
+- F2.1 Connect akun via **login interaktif**: operator isi username+password → BE encrypt AES-256-GCM → publish ke `control-<workerId>` (channel per container; payload bawa `accountId`) → worker headful login → tunggu outcome. Akun di-assign ke container ber-slot-kosong (lihat F3.9); bila fleet kosong, user **buat container dulu** (F3.1a) atau andalkan fallback auto-create. Fallback legacy: paste cookie (jalur `credentials` existing).
 - F2.1a Outcome 2FA/checkpoint → status `NEEDS_INPUT`: worker tahan context browser hidup + screenshot → operator masuk kode via dialog `auth-input` ATAU klik langsung lewat noVNC (iframe di dashboard). Bisa berulang (checkpoint kedua).
 - F2.1b Bukti login = **auth cookie** (`sessionid`, `ds_user_id`), bukan redirect URL. Sukses → `storageState()` persist ke PVC session + `handle` diverifikasi dari halaman profil.
 - F2.2 Bind akun ke ProxyGroup (region, provider).
@@ -79,11 +79,12 @@ Tim Social Media Ops butuh satu panel untuk:
 ### F3 — Worker Orchestration (desired-state, dinamis)
 
 - F3.1 Spawn container (K8s pod) 1:1 dengan **device**, bukan akun: **1 container meng-host N akun, maks 1 akun per platform** (`@@unique([workerId, platform])`). Label `smm.worker=<workerId>`, `smm.generation=<n>`.
+- F3.1a **Default tanpa container.** Saat sistem kosong, fleet worker = **nol**. Container **dibuat manual oleh user dari dashboard** (pilih platform → provision 1 `/dev/slot`). Tidak ada container yang di-spawn otomatis hanya karena data kosong.
 - F3.2 Container = unit provisioning: bind ke N `Account` (maks 1/platform) + 1 `ProxyGroup` (region-matched). Fingerprint (UA/locale/viewport) fixed per container; tiap akun punya `context` + `storageState` sendiri.
 - F3.3 **Desired-state reconciler**: `Worker.desiredState` (`RUNNING|STOPPED`) = keinginan (di level container/device); actual = `Worker.containerId` + pod K8s. Reconciler menyelaraskan keduanya. Pemicu: **event** (add/remove akun, pause/resume dari UI, latensi detik) + **periodic safety-net** (60 dtk). Pause/Resume berlaku ke **seluruh container** (semua akunnya).
 - F3.4 **Idempotent & anti-spawn-ganda**: `Worker.generation` naik tiap apply, pod dilabeli generation; pod generation usang / ganda = orphan → dibunuh. Retry event aman.
 - F3.5 Heartbeat tiap 30 dtk; tanpa heartbeat > 90 dtk → `DEAD` + respawn (gen++). Anti-flapping: max 3 restart / 10 menit → container `quarantined` (semua akun di dalamnya), butuh reset manual.
-- F3.9 **Bin-packing akun → container**: saat tambah akun, BE cari container region-matched yang punya slot platform kosong (`MAX_ACCOUNTS_PER_CONTAINER`, default = jumlah platform = 2 di MVP); jika tidak ada, auto-create container baru. Container dengan 0 akun → auto-delete. 100 akun → **~50 container**.
+- F3.9 **Assign akun → container (bin-packing)**: default akun di-assign ke container yang sudah dibuat user dan punya slot platform kosong (`MAX_ACCOUNTS_PER_CONTAINER`, default = jumlah platform = 2 di MVP), region-matched. Bila **tidak ada** slot: (a) fallback **auto-create** container baru (default, agar operator tidak klik manual 25× saat 50 akun), atau (b) reject dengan hint "buat container dulu" bila auto-create dimatikan (`PROVISION_AUTO_CREATE=false`). Container dengan **0 akun** → auto-delete. 100 akun → **~50 container**.
 - F3.6 **Pause** (operator, level container): drain 60 dtk → delete pod → PVC session ditahan. **Resume**: reconciler create pod baru → semua session akun terbaca → ready tanpa login ulang.
 - F3.7 Setiap op CREATE/DELETE dicatat di `ProvisionLog` (generation, hasil, error) untuk trace & troubleshooting.
 - F3.8 Rate limit K8s API `10 create/menit` (burst 20); burst create di-queue Redis.
@@ -157,7 +158,7 @@ Tim Social Media Ops butuh satu panel untuk:
 ### F13 — On-demand Worker Provisioning via Dashboard
 
 - Client (Operator/Owner) tambah akun dari UI: isi platform + username + password, pilih proxy group → submit.
-- BE Go flow: encrypt kredensial → **bin-pack** akun ke container (F3.9): cari `Worker` region-matched dengan slot platform kosong, atau buat `Worker` baru (`desiredState=RUNNING`, `status=PENDING`) → insert `Account` (`status=PENDING`, `authStatus=AUTHENTICATING`, `workerId`) → `enqueue reconcile` → provisioner create pod `smm-worker-{workerId}` (label `smm.worker=<workerId>`, `smm.generation=<n>`) + PVC `smm-session-{workerId}` + ClusterIP service noVNC.
+- BE Go flow: encrypt kredensial → **assign** akun ke container (F3.9): cari `Worker` region-matched dengan slot platform kosong; bila tak ada, auto-create `Worker` baru (`desiredState=RUNNING`, `status=PENDING`) bila `PROVISION_AUTO_CREATE=true`, else reject. Insert `Account` (`status=PENDING`, `authStatus=AUTHENTICATING`, `workerId`) → `enqueue reconcile` → provisioner create pod `smm-worker-{workerId}` (label `smm.worker=<workerId>`, `smm.generation=<n>`) + PVC `smm-session-{workerId}` + ClusterIP service noVNC.
 - Pod boot: pull image → mount PVC session → headful Chromium launch (Xvfb) → `BLPOP` queue → heartbeat pertama → status `READY`. Timeout boot 90 dtk → `ERROR` + alert. Container meng-host semua akunnya (maks 1/platform).
 - Login: BE `PUBLISH control-<workerId>` `auth-login` (payload `accountId`) → worker login → callback `authStatus`. (Detail: F2.1.)
 - Progress UI: stepper `Creating pod → Booting browser → Waiting login → Ready` (+ cabang `Needs input` saat 2FA) via SSE, ETA per step.
