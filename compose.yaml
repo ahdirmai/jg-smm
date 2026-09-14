@@ -1,0 +1,163 @@
+# P0-02 walking skeleton. Local runtime = OrbStack (linux/arm64 on Apple Silicon).
+# Everything runs as containers; no Kubernetes. Worker replicas are scaled with
+# `--scale worker=N` (max 3 on a 16 GB machine — see INFRA_ANALYST.md §15.2).
+name: smm
+
+services:
+  postgres:
+    image: timescale/timescaledb:2.17.2-pg16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-smm}
+      POSTGRES_USER: ${POSTGRES_USER:-smm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-smm}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-24543}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-smm} -d ${POSTGRES_DB:-smm}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    ports:
+      - "${REDIS_PORT:-24637}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: quay.io/minio/minio:RELEASE.2024-10-13T13-34-11Z
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-smm}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-smmsmmsmm}
+    volumes:
+      - miniodata:/data
+    ports:
+      - "${MINIO_PORT:-24900}:9000"
+      - "${MINIO_CONSOLE_PORT:-24901}:9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Creates the buckets the API/workers expect. Idempotent.
+  minio-init:
+    image: quay.io/minio/mc:RELEASE.2024-10-08T09-37-26Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        mc alias set local http://minio:9000 "${MINIO_ROOT_USER:-smm}" "${MINIO_ROOT_PASSWORD:-smmsmmsmm}"
+        mc mb --ignore-existing local/raw-payload
+        mc mb --ignore-existing local/screenshots
+        mc mb --ignore-existing local/sessions
+        echo "minio buckets ready"
+
+  # Runs pending migrations then exits. API waits for successful completion.
+  migrate:
+    image: migrate/migrate:v4.17.1
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./apps/api/db/migrations:/migrations:ro
+    command:
+      - "-path=/migrations"
+      - "-database=postgres://${POSTGRES_USER:-smm}:${POSTGRES_PASSWORD:-smm}@postgres:5432/${POSTGRES_DB:-smm}?sslmode=disable"
+      - "up"
+
+  api:
+    build:
+      context: ./apps/api
+      target: runtime
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      migrate:
+        condition: service_completed_successfully
+      minio:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-smm}:${POSTGRES_PASSWORD:-smm}@postgres:5432/${POSTGRES_DB:-smm}?sslmode=disable
+      REDIS_URL: redis://redis:6379
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER:-smm}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-smmsmmsmm}
+      PROVISIONER_MODE: ${PROVISIONER_MODE:-static}
+      PROVISION_AUTO_CREATE: ${PROVISION_AUTO_CREATE:-true}
+      ACTION_BATCH_PARALLELISM: ${ACTION_BATCH_PARALLELISM:-2}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "${API_PORT:-24080}:8080"
+    healthcheck:
+      test: ["CMD", "/app/server", "healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  worker:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+      target: runtime
+    # No container_name: the service is scaled with `--scale worker=N`.
+    depends_on:
+      api:
+        condition: service_started
+      redis:
+        condition: service_started
+      minio:
+        condition: service_healthy
+    environment:
+      # WORKER_ID is derived from the container hostname at runtime (see entrypoint).
+      API_URL: http://api:8080
+      REDIS_URL: redis://redis:6379
+      S3_ENDPOINT: http://minio:9000
+      PROVISIONER_MODE: ${PROVISIONER_MODE:-static}
+      ACTION_DRY_RUN: ${ACTION_DRY_RUN:-true}
+      PLATFORMS: ${WORKER_PLATFORMS:-instagram,threads}
+    volumes:
+      - sessions:/data/sessions
+      - screenshots:/data/screenshots
+    # noVNC live screen is localhost-only and must not collide across replicas,
+    # so it is intentionally NOT published here. Attach on demand:
+    #   docker compose exec worker bash
+    expose:
+      - "6080"
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      target: runner
+    depends_on:
+      api:
+        condition: service_started
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080}
+      NEXT_PUBLIC_SSE_URL: ${NEXT_PUBLIC_SSE_URL:-http://localhost:8080/api/stream}
+    ports:
+      - "${WEB_PORT:-24081}:3000"
+
+volumes:
+  pgdata:
+  redisdata:
+  miniodata:
+  sessions:
+  screenshots:

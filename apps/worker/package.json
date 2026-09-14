@@ -13,7 +13,8 @@
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
-    "@smm/shared": "workspace:*"
+    "@smm/shared": "workspace:*",
+    "playwright": "1.48.2"
   },
   "devDependencies": {
     "@smm/tsconfig": "workspace:*",

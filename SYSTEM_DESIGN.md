@@ -417,69 +417,18 @@ Semua workload (BE Go, FE Next.js, Worker Node, Postgres+TimescaleDB, Redis, Min
 
 ### Local Dev: docker-compose
 
-```yaml
-# compose.yaml
-services:
-  postgres:
-    image: timescale/timescaledb:2.14.2-pg16
-    environment: { POSTGRES_DB: smm, POSTGRES_USER: smm, POSTGRES_PASSWORD: smm }
-    volumes: ["pgdata:/var/lib/postgresql/data"]
-    ports: ["5432:5432"]
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U smm"]
-      interval: 5s
-  redis:
-    image: redis:7-alpine
-    command: redis-server --appendonly yes
-    volumes: ["redisdata:/data"]
-    ports: ["6379:6379"]
-  minio:
-    image: minio/minio:latest
-    command: server /data --console-address :9001
-    volumes: ["miniodata:/data"]
-    ports: ["9000:9000", "9001:9001"]
-  migrate:
-    image: migrate/migrate:v4.17.1
-    depends_on: { postgres: { condition: service_healthy } }
-    volumes: ["./apps/api/db/migrations:/migrations"]
-    command: -path=/migrations -database postgres://smm:smm@postgres:5432/smm?sslmode=disable up
-  api:
-    build: { context: ./apps/api, target: runtime }
-    depends_on:
-      postgres: { condition: service_healthy }
-      redis: { condition: service_started }
-      migrate: { condition: service_completed_successfully }
-    environment:
-      DATABASE_URL: postgres://smm:smm@postgres:5432/smm?sslmode=disable
-      REDIS_URL: redis://redis:6379
-      S3_ENDPOINT: http://minio:9000
-    ports: ["8080:8080"]
-  worker:
-    build: ./apps/worker
-    depends_on: [api, redis, postgres, minio]
-    environment:
-      WORKER_ID: worker-1 # id container (device), bukan akun
-      ACCOUNT_IDS: "1,2" # akun yang di-host (maks 1/platform)
-      PLATFORMS: "instagram,threads"
-      API_URL: "http://api:8080"
-      REDIS_URL: "redis://redis:6379"
-      CONTROL_CHANNEL: "control-worker-1"
-      ACTION_QUEUE: "queue:action:worker-1"
-    # noVNC live screen (headful login), localhost only
-    ports: ["127.0.0.1:6080:6080"]
-    volumes: ["sessions-w1:/data/sessions", "screenshots:/data/screenshots"]
-  web:
-    build: ./apps/web
-    environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8080
-      NEXT_PUBLIC_SSE_URL: http://localhost:8080/api/stream
-    ports: ["3000:3000"]
-volumes:
-  pgdata: {}
-  redisdata: {}
-  miniodata: {}
-  screenshots: {}
-  sessions-w1: {} # PVC per container di prod; named volume per worker di dev
+Stack lengkap didefinisikan di `compose.yaml` (root repo). Prinsip: **runtime OrbStack**, semua service container, **tanpa K8s**. Port host memakai range **24xxx** agar tidak bertabrakan dengan project lain di mesin yang sama.
+
+Port host: API `24080`, web `24081`, Postgres `24543`, Redis `24637`, MinIO `24900`/console `24901` (override via `infra/docker/.env.example` → `.env`).
+
+Service: `postgres` (TimescaleDB), `redis`, `minio` + `minio-init` (buat bucket `raw-payload`/`screenshots`/`sessions`), `migrate` (golang-migrate, one-shot), `api` (Go, distroless, `healthcheck` subcommand), `worker` (di-`--scale`), `web` (Next.js standalone).
+
+Worker image = **Chromium-only** (`node:22-bookworm` + `playwright install --with-deps chromium`), bukan base Playwright full (3 browser) — hemat ~1.5 GB. Xvfb + x11vnc + noVNC ada di image untuk login headful; `WORKER_ID` **diturunkan dari hostname** oleh entrypoint (bukan env statis) sehingga `--scale worker=N` menghasilkan channel/queue unik per replica.
+
+```sh
+make up            # docker compose up -d --scale worker=3
+make logs S=api    # tail satu service
+make down          # stop (volume dipertahankan)
 ```
 
 ### Local Tier (Mac M2 16 GB) — docker-compose via OrbStack, tanpa K8s
