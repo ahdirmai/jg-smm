@@ -1,0 +1,38 @@
+# --- OS / editor ---
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# --- Env & secrets ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# --- Node / pnpm ---
+node_modules/
+.pnpm-store/
+dist/
+.next/
+out/
+*.tsbuildinfo
+coverage/
+.turbo/
+
+# --- Go ---
+/bin/
+*.exe
+*.test
+*.out
+vendor/
+
+# --- Playwright ---
+/apps/worker/test-results/
+/apps/worker/playwright-report/
+/apps/worker/.playwright/
+
+# --- Compose / runtime data ---
+/data/
+*.log
