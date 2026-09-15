@@ -78,6 +78,14 @@ func main() {
 		authRepo := repository.NewAuthRepo(pg.Queries())
 		authSvc := service.NewAuthService(authRepo, authRepo, issuer, adapter.SystemClock{})
 		deps.Auth = apihttp.NewAuthHandler(authSvc, cfg.SecureCookies)
+
+		// Worker callbacks (heartbeat / auth outcome / action verdict). The
+		// worker container POSTs here; it never touches the DB directly.
+		workerRepo := repository.NewWorkerRepo(pg.Queries())
+		accountRepo := repository.NewAccountRepo(pg.Queries())
+		logRepo := repository.NewProvisionLogRepo(pg.Queries())
+		jobSvc := service.NewJobService(workerRepo, accountRepo, logRepo, adapter.SystemClock{}, logger)
+		deps.Internal = apihttp.NewInternalHandler(jobSvc)
 	}
 
 	e := apihttp.NewRouter(deps)
