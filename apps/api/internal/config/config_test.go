@@ -41,6 +41,48 @@ func TestLoad_InvalidBatchParallelism(t *testing.T) {
 	}
 }
 
+// TestLoad_ActionRateLimits pins the per-platform hourly budgets (P3-10) to
+// the ticket's safety contract: IG 30/jam, Threads 15/jam. These are the
+// platform-tolerance numbers the scheduler enforces, so a silent default
+// change here would put sessions at risk.
+func TestLoad_ActionRateLimits(t *testing.T) {
+	t.Setenv("PROVISIONER_MODE", "")
+	t.Setenv("ACTION_RATE_LIMIT_INSTAGRAM", "")
+	t.Setenv("ACTION_RATE_LIMIT_THREADS", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.ActionRateLimits["instagram"] != 30 {
+		t.Errorf("instagram limit = %d, want 30", cfg.ActionRateLimits["instagram"])
+	}
+	if cfg.ActionRateLimits["threads"] != 15 {
+		t.Errorf("threads limit = %d, want 15", cfg.ActionRateLimits["threads"])
+	}
+	if cfg.ActionCooldownSeconds != 60 {
+		t.Errorf("cooldown = %d, want 60", cfg.ActionCooldownSeconds)
+	}
+
+	// The limits are overridable per platform without touching code.
+	t.Setenv("ACTION_RATE_LIMIT_INSTAGRAM", "5")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.ActionRateLimits["instagram"] != 5 {
+		t.Errorf("overridden instagram limit = %d, want 5", cfg.ActionRateLimits["instagram"])
+	}
+}
+
+// TestLoad_ActionCooldownInvalid guards the cooldown gate's own bound.
+func TestLoad_ActionCooldownInvalid(t *testing.T) {
+	t.Setenv("PROVISIONER_MODE", "")
+	t.Setenv("ACTION_COOLDOWN_SECONDS", "-1")
+	if _, err := Load(); err == nil {
+		t.Fatal("want error for negative ACTION_COOLDOWN_SECONDS")
+	}
+}
+
 func TestLoad_MaxAccountsPerContainer(t *testing.T) {
 	t.Setenv("PROVISIONER_MODE", "")
 	t.Setenv("MAX_ACCOUNTS_PER_CONTAINER", "")

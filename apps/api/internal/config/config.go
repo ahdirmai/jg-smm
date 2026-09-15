@@ -39,6 +39,12 @@ type Config struct {
 	// the same account may not act on the same target twice inside this window.
 	// The ticket's contract is 60s; 0 disables the gate only for local play.
 	ActionCooldownSeconds int
+	// ActionRateLimits is the per-platform hourly action budget (P3-10) the BE
+	// enforces before publishing. A platform absent from the map or set to 0 is
+	// treated as disabled (no budget), never unlimited: the defaults are the
+	// ticket's safety contract (IG 30/hr, Threads 15/hr), and a missing entry
+	// must not silently mean "unlimited".
+	ActionRateLimits map[string]int
 	// ShutdownTimeoutSeconds is the graceful drain budget.
 	ShutdownTimeoutSeconds int
 
@@ -114,12 +120,16 @@ func Load() (Config, error) {
 		MaxAccountsPerContainer:  envInt("MAX_ACCOUNTS_PER_CONTAINER", 7),
 		ActionBatchParallelism:   envInt("ACTION_BATCH_PARALLELISM", 2),
 		ActionCooldownSeconds:    envInt("ACTION_COOLDOWN_SECONDS", 60),
-		ShutdownTimeoutSeconds:   envInt("SHUTDOWN_TIMEOUT_SECONDS", 10),
-		JWTSecret:                os.Getenv("JWT_SECRET"),
-		JWTIssuer:                env("JWT_ISSUER", "smm-api"),
-		SecureCookies:            envBool("SECURE_COOKIES", false),
-		CredentialKeyBase64:      os.Getenv("CREDENTIAL_KEY"),
-		SSEBuffer:                envInt("SSE_BUFFER", 64),
+		ActionRateLimits: map[string]int{
+			"instagram": envInt("ACTION_RATE_LIMIT_INSTAGRAM", 30),
+			"threads":   envInt("ACTION_RATE_LIMIT_THREADS", 15),
+		},
+		ShutdownTimeoutSeconds: envInt("SHUTDOWN_TIMEOUT_SECONDS", 10),
+		JWTSecret:              os.Getenv("JWT_SECRET"),
+		JWTIssuer:              env("JWT_ISSUER", "smm-api"),
+		SecureCookies:          envBool("SECURE_COOKIES", false),
+		CredentialKeyBase64:    os.Getenv("CREDENTIAL_KEY"),
+		SSEBuffer:              envInt("SSE_BUFFER", 64),
 
 		ScrapeIntervalSeconds:  envInt("SCRAPE_INTERVAL_SECONDS", 0),
 		ScrapeJitterMinSeconds: envInt("SCRAPE_JITTER_MIN_SECONDS", 5),
@@ -173,6 +183,9 @@ func Load() (Config, error) {
 	}
 	if cfg.AggregateIntervalSeconds < 0 {
 		return Config{}, fmt.Errorf("config: AGGREGATE_INTERVAL_SECONDS must be >= 0, got %d", cfg.AggregateIntervalSeconds)
+	}
+	if cfg.ActionCooldownSeconds < 0 {
+		return Config{}, fmt.Errorf("config: ACTION_COOLDOWN_SECONDS must be >= 0, got %d", cfg.ActionCooldownSeconds)
 	}
 	// The JWT secret is only meaningful once the API talks to the DB (auth on).
 	if cfg.DatabaseURL != "" && len(cfg.JWTSecret) < 16 {
