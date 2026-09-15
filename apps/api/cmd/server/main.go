@@ -16,6 +16,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/adapter"
+	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/adapter/k8s"
 	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/config"
 	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/domain"
 	apihttp "github.com/ahdirmai/jg-smm-automation/apps/api/internal/http"
@@ -86,6 +87,22 @@ func main() {
 		logRepo := repository.NewProvisionLogRepo(pg.Queries())
 		jobSvc := service.NewJobService(workerRepo, accountRepo, logRepo, adapter.SystemClock{}, logger)
 		deps.Internal = apihttp.NewInternalHandler(jobSvc)
+
+		// Provisioning driver: k8s in a cluster, static (bookkeeping only) on
+		// a workstation. The reconciler is a pure loop over this port, so both
+		// tiers share the same code path (P1-03/P1-04).
+		driver, err := provisionDriver(ctx, cfg, workerRepo, logRepo, logger)
+		if err != nil {
+			logger.Error("provisioner init failed", "err", err)
+			os.Exit(1)
+		}
+
+		// The desired-state loop is opt-in via RECONCILE_INTERVAL_SECONDS. It is
+		// off by default so `make up` locally never depends on it (P1-04).
+		if cfg.ReconcileIntervalSeconds > 0 {
+			reconciler := service.NewReconciler(workerRepo, driver, logger)
+			go reconciler.Run(ctx, time.Duration(cfg.ReconcileIntervalSeconds)*time.Second)
+		}
 	}
 
 	e := apihttp.NewRouter(deps)
@@ -122,6 +139,23 @@ func run(ctx context.Context, e *echo.Echo, addr string, timeout time.Duration, 
 		}
 		return nil
 	}
+}
+
+// provisionDriver picks the container-platform driver for the configured tier:
+// k8s inside a cluster, static bookkeeping on a workstation. Both implement
+// port.K8sClient, so the reconciler and services are tier-agnostic.
+func provisionDriver(ctx context.Context, cfg config.Config, workers port.WorkerStore, logs port.ProvisionLogStore, logger *slog.Logger) (port.K8sClient, error) {
+	if cfg.ProvisionerMode != "k8s" {
+		logger.Info("provisioner: static driver (no cluster); scale locally with docker compose")
+		return adapter.NewStaticProvisioner(workers, logs, adapter.SystemClock{}, logger), nil
+	}
+	logger.Info("provisioner: k8s driver", "namespace", cfg.K8sNamespace)
+	return k8s.New(ctx, k8s.Config{
+		Namespace:        cfg.K8sNamespace,
+		Image:            cfg.WorkerImage,
+		CreatesPerMinute: 10,
+		Logger:           logger,
+	})
 }
 
 // healthcheck probes the local server; used by the container HEALTHCHECK.

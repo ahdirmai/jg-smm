@@ -41,6 +41,32 @@ func TestLoad_InvalidBatchParallelism(t *testing.T) {
 	}
 }
 
+func TestLoad_ReconcileInterval(t *testing.T) {
+	t.Setenv("PROVISIONER_MODE", "")
+	t.Setenv("RECONCILE_INTERVAL_SECONDS", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.ReconcileIntervalSeconds != 0 {
+		t.Errorf("default ReconcileIntervalSeconds = %d, want 0 (off)", cfg.ReconcileIntervalSeconds)
+	}
+
+	t.Setenv("RECONCILE_INTERVAL_SECONDS", "45")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.ReconcileIntervalSeconds != 45 {
+		t.Errorf("ReconcileIntervalSeconds = %d, want 45", cfg.ReconcileIntervalSeconds)
+	}
+
+	t.Setenv("RECONCILE_INTERVAL_SECONDS", "-1")
+	if _, err := Load(); err == nil {
+		t.Fatal("want error for RECONCILE_INTERVAL_SECONDS < 0")
+	}
+}
+
 func TestLoad_RequiresCredentialKeyWithDB(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://x:y@localhost:5432/db")
 	t.Setenv("JWT_SECRET", "0123456789abcdef")

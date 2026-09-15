@@ -20,6 +20,14 @@ type Config struct {
 
 	// ProvisionerMode is static (local, no Kubernetes) or k8s (production).
 	ProvisionerMode string
+	// ReconcileIntervalSeconds runs the desired-state loop in the API process.
+	// 0 disables it. Local dev leaves it off (INFRA_ANALYST.md §15.1: no
+	// cluster locally); production enables it (default there is 30).
+	ReconcileIntervalSeconds int
+	// K8sNamespace is the cluster namespace the k8s driver provisions into.
+	K8sNamespace string
+	// WorkerImage is the container image the k8s driver launches.
+	WorkerImage string
 	// ProvisionAutoCreate allows bin-packing to auto-create a worker container.
 	ProvisionAutoCreate bool
 	// ActionBatchParallelism caps how many worker containers act concurrently.
@@ -41,21 +49,27 @@ type Config struct {
 // Load reads configuration from the environment, applying safe defaults.
 func Load() (Config, error) {
 	cfg := Config{
-		HTTPAddress:            env("API_ADDR", ":8080"),
-		LogLevel:               env("LOG_LEVEL", "info"),
-		DatabaseURL:            os.Getenv("DATABASE_URL"),
-		ProvisionerMode:        env("PROVISIONER_MODE", "static"),
-		ProvisionAutoCreate:    envBool("PROVISION_AUTO_CREATE", true),
-		ActionBatchParallelism: envInt("ACTION_BATCH_PARALLELISM", 2),
-		ShutdownTimeoutSeconds: envInt("SHUTDOWN_TIMEOUT_SECONDS", 10),
-		JWTSecret:              os.Getenv("JWT_SECRET"),
-		JWTIssuer:              env("JWT_ISSUER", "smm-api"),
-		SecureCookies:          envBool("SECURE_COOKIES", false),
-		CredentialKeyBase64:    os.Getenv("CREDENTIAL_KEY"),
+		HTTPAddress:              env("API_ADDR", ":8080"),
+		LogLevel:                 env("LOG_LEVEL", "info"),
+		DatabaseURL:              os.Getenv("DATABASE_URL"),
+		ProvisionerMode:          env("PROVISIONER_MODE", "static"),
+		ReconcileIntervalSeconds: envInt("RECONCILE_INTERVAL_SECONDS", 0),
+		K8sNamespace:             env("K8S_NAMESPACE", "smm"),
+		WorkerImage:              env("WORKER_IMAGE", ""),
+		ProvisionAutoCreate:      envBool("PROVISION_AUTO_CREATE", true),
+		ActionBatchParallelism:   envInt("ACTION_BATCH_PARALLELISM", 2),
+		ShutdownTimeoutSeconds:   envInt("SHUTDOWN_TIMEOUT_SECONDS", 10),
+		JWTSecret:                os.Getenv("JWT_SECRET"),
+		JWTIssuer:                env("JWT_ISSUER", "smm-api"),
+		SecureCookies:            envBool("SECURE_COOKIES", false),
+		CredentialKeyBase64:      os.Getenv("CREDENTIAL_KEY"),
 	}
 
 	if cfg.ProvisionerMode != "static" && cfg.ProvisionerMode != "k8s" {
 		return Config{}, fmt.Errorf("config: PROVISIONER_MODE must be static|k8s, got %q", cfg.ProvisionerMode)
+	}
+	if cfg.ReconcileIntervalSeconds < 0 {
+		return Config{}, fmt.Errorf("config: RECONCILE_INTERVAL_SECONDS must be >= 0, got %d", cfg.ReconcileIntervalSeconds)
 	}
 	if cfg.ActionBatchParallelism < 1 {
 		return Config{}, fmt.Errorf("config: ACTION_BATCH_PARALLELISM must be >= 1, got %d", cfg.ActionBatchParallelism)
