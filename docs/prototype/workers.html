@@ -5,125 +5,232 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Workers — SMM Automation</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="theme.js"></script>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body
-    class="dark"
     data-title="Workers / Containers"
     data-subtitle="Operator console · 1 container hosts N accounts (max 1 per platform)"
-    data-actions='<button class="btn btn-outline btn-sm"><i data-lucide="refresh-cw" class="w-4 h-4"></i>Reconcile</button><button class="btn btn-primary btn-sm" onclick="document.getElementById('create-container').showModal()"><i data-lucide="plus" class="w-4 h-4"></i>Create container</button>'
+    data-actions='<button class="btn btn-outline btn-sm"><i data-lucide="refresh-cw" class="w-4 h-4"></i>Reconcile</button><button class="btn btn-primary btn-sm" onclick="document.getElementById(&#39;create-container&#39;).showModal()"><i data-lucide="plus" class="w-4 h-4"></i>Create container</button>'
   >
     <div id="app">
       <section class="grid grid-cols-2 gap-4 lg:grid-cols-5">
-        <div class="card p-3"><div class="text-xs muted">Containers</div><div class="mt-1 text-xl font-semibold">5</div></div>
-        <div class="card p-3"><div class="text-xs muted flex items-center gap-1.5"><span class="dot dot-ready"></span>Ready</div><div class="mt-1 text-xl font-semibold">3</div></div>
-        <div class="card p-3"><div class="text-xs muted flex items-center gap-1.5"><span class="dot dot-busy"></span>Busy</div><div class="mt-1 text-xl font-semibold">1</div></div>
-        <div class="card p-3"><div class="text-xs muted flex items-center gap-1.5"><span class="dot dot-error"></span>Error</div><div class="mt-1 text-xl font-semibold">1</div></div>
-        <div class="card p-3"><div class="text-xs muted">Accounts enrolled</div><div class="mt-1 text-xl font-semibold">9 / 20</div></div>
+        <div class="card p-3">
+          <div class="text-xs muted">Containers</div>
+          <div class="mt-1 text-xl font-semibold">5</div>
+        </div>
+        <div class="card p-3">
+          <div class="text-xs muted flex items-center gap-1.5">
+            <span class="dot dot-ready"></span>Ready
+          </div>
+          <div class="mt-1 text-xl font-semibold">3</div>
+        </div>
+        <div class="card p-3">
+          <div class="text-xs muted flex items-center gap-1.5">
+            <span class="dot dot-busy"></span>Busy
+          </div>
+          <div class="mt-1 text-xl font-semibold">1</div>
+        </div>
+        <div class="card p-3">
+          <div class="text-xs muted flex items-center gap-1.5">
+            <span class="dot dot-error"></span>Error
+          </div>
+          <div class="mt-1 text-xl font-semibold">1</div>
+        </div>
+        <div class="card p-3">
+          <div class="text-xs muted">Accounts enrolled</div>
+          <div class="mt-1 text-xl font-semibold">9 / 20</div>
+        </div>
       </section>
 
-      <section class="mt-4 flex flex-wrap items-center gap-2">
-        <select class="input w-40"><option>All platforms</option><option>Instagram</option><option>Threads</option></select>
-        <select class="input w-36"><option>All status</option><option>Ready</option><option>Busy</option><option>Paused</option><option>Error</option></select>
-        <select class="input w-36"><option>All regions</option><option>sg</option><option>us</option><option>id</option></select>
-        <button class="btn btn-outline btn-sm"><i data-lucide="calendar" class="w-4 h-4"></i>Provisioned</button>
-        <div class="ml-auto text-xs muted">Auto-create: <span class="badge badge-success">ON</span> · MAX_ACCOUNTS_PER_CONTAINER=4</div>
+      <section class="flex flex-wrap items-center gap-2">
+        <select class="input w-40">
+          <option>All platforms</option>
+          <option>Instagram</option>
+          <option>Threads</option>
+        </select>
+        <select class="input w-36">
+          <option>All status</option>
+          <option>Ready</option>
+          <option>Busy</option>
+          <option>Paused</option>
+          <option>Error</option>
+        </select>
+        <select class="input w-36">
+          <option>All regions</option>
+          <option>sg</option>
+          <option>us</option>
+          <option>id</option>
+        </select>
+        <button class="btn btn-outline btn-sm">
+          <i data-lucide="calendar" class="w-4 h-4"></i>Provisioned
+        </button>
+        <div class="ml-auto text-xs muted">
+          Auto-create: <span class="badge badge-success">ON</span> · MAX_ACCOUNTS_PER_CONTAINER=4
+        </div>
       </section>
 
-      <section class="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-[1fr_320px]">
+      <section class="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_320px]">
         <div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
           <!-- container: ready -->
           <div class="card p-4">
             <div class="flex items-start justify-between">
-              <div class="flex items-center gap-2"><span class="dot dot-ready dot-pulse"></span><span class="mono">worker-7f3a91</span></div>
+              <div class="flex items-center gap-2">
+                <span class="dot dot-ready dot-pulse"></span><span class="mono">worker-7f3a91</span>
+              </div>
               <span class="badge badge-success">Ready</span>
             </div>
             <div class="mt-1 text-xs muted">region sg · gen 12 · source AUTO</div>
             <div class="mt-3 space-y-2">
-              <div class="flex items-center justify-between rounded-md border border-border bg-background/40 px-2.5 py-2">
-                <div class="flex items-center gap-2 min-w-0"><i data-lucide="instagram" class="w-4 h-4 shrink-0"></i><div class="min-w-0"><div class="truncate text-sm">@growth.hacks.id</div><div class="text-xs muted">Instagram</div></div></div>
+              <div
+                class="flex items-center justify-between rounded-md border border-border bg-background/40 px-2.5 py-2"
+              >
+                <div class="flex items-center gap-2 min-w-0">
+                  <i data-lucide="instagram" class="w-4 h-4 shrink-0"></i>
+                  <div class="min-w-0">
+                    <div class="truncate text-sm">@growth.hacks.id</div>
+                    <div class="text-xs muted">Instagram</div>
+                  </div>
+                </div>
                 <span class="badge badge-success">auth</span>
               </div>
-              <div class="flex items-center justify-between rounded-md border border-border bg-background/40 px-2.5 py-2">
-                <div class="flex items-center gap-2 min-w-0"><i data-lucide="at-sign" class="w-4 h-4 shrink-0"></i><div class="min-w-0"><div class="truncate text-sm">@growth.hacks</div><div class="text-xs muted">Threads</div></div></div>
+              <div
+                class="flex items-center justify-between rounded-md border border-border bg-background/40 px-2.5 py-2"
+              >
+                <div class="flex items-center gap-2 min-w-0">
+                  <i data-lucide="at-sign" class="w-4 h-4 shrink-0"></i>
+                  <div class="min-w-0">
+                    <div class="truncate text-sm">@growth.hacks</div>
+                    <div class="text-xs muted">Threads</div>
+                  </div>
+                </div>
                 <span class="badge badge-success">auth</span>
               </div>
-              <button class="btn btn-outline btn-sm w-full justify-center"><i data-lucide="user-plus" class="w-4 h-4"></i>Add account</button>
+              <button class="btn btn-outline btn-sm w-full justify-center">
+                <i data-lucide="user-plus" class="w-4 h-4"></i>Add account
+              </button>
             </div>
           </div>
 
           <!-- container: busy -->
           <div class="card p-4">
             <div class="flex items-start justify-between">
-              <div class="flex items-center gap-2"><span class="dot dot-busy dot-pulse"></span><span class="mono">worker-2b19c0</span></div>
+              <div class="flex items-center gap-2">
+                <span class="dot dot-busy dot-pulse"></span><span class="mono">worker-2b19c0</span>
+              </div>
               <span class="badge badge-info">Busy</span>
             </div>
             <div class="mt-1 text-xs muted">region id · gen 4 · source MANUAL</div>
             <div class="mt-3 space-y-2">
-              <div class="flex items-center justify-between rounded-md border border-border bg-background/40 px-2.5 py-2">
-                <div class="flex items-center gap-2 min-w-0"><i data-lucide="instagram" class="w-4 h-4 shrink-0"></i><div class="min-w-0"><div class="truncate text-sm">@daily.deals</div><div class="text-xs muted">Instagram</div></div></div>
+              <div
+                class="flex items-center justify-between rounded-md border border-border bg-background/40 px-2.5 py-2"
+              >
+                <div class="flex items-center gap-2 min-w-0">
+                  <i data-lucide="instagram" class="w-4 h-4 shrink-0"></i>
+                  <div class="min-w-0">
+                    <div class="truncate text-sm">@daily.deals</div>
+                    <div class="text-xs muted">Instagram</div>
+                  </div>
+                </div>
                 <span class="badge badge-info">running</span>
               </div>
               <div class="rounded-md border border-border bg-background/40 px-2.5 py-2 text-xs">
-                <div class="flex items-center justify-between"><span class="muted">Current job</span><span class="mono">job_8f21</span></div>
-                <div class="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-secondary"><div class="h-full w-2/3 bg-[hsl(var(--status-busy))]"></div></div>
+                <div class="flex items-center justify-between">
+                  <span class="muted">Current job</span><span class="mono">job_8f21</span>
+                </div>
+                <div class="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-secondary">
+                  <div class="h-full w-2/3 bg-primary"></div>
+                </div>
                 <div class="mt-1 muted">comment · 00:41 elapsed</div>
               </div>
             </div>
           </div>
 
           <!-- container: needs input -->
-          <div class="card p-4 border-[hsl(var(--warning)/0.4)]">
+          <div class="card p-4 border-warning/40">
             <div class="flex items-start justify-between">
-              <div class="flex items-center gap-2"><span class="dot dot-busy dot-pulse"></span><span class="mono">worker-9ac104</span></div>
+              <div class="flex items-center gap-2">
+                <span class="dot dot-busy dot-pulse"></span><span class="mono">worker-9ac104</span>
+              </div>
               <span class="badge badge-warning">Needs input</span>
             </div>
             <div class="mt-1 text-xs muted">region sg · gen 7 · source AUTO</div>
             <div class="mt-3 space-y-2">
-              <div class="flex items-center justify-between rounded-md border border-border bg-background/40 px-2.5 py-2">
-                <div class="flex items-center gap-2 min-w-0"><i data-lucide="instagram" class="w-4 h-4 shrink-0"></i><div class="min-w-0"><div class="truncate text-sm">@shop.abc</div><div class="text-xs muted">Instagram · 2FA</div></div></div>
+              <div
+                class="flex items-center justify-between rounded-md border border-border bg-background/40 px-2.5 py-2"
+              >
+                <div class="flex items-center gap-2 min-w-0">
+                  <i data-lucide="instagram" class="w-4 h-4 shrink-0"></i>
+                  <div class="min-w-0">
+                    <div class="truncate text-sm">@shop.abc</div>
+                    <div class="text-xs muted">Instagram · 2FA</div>
+                  </div>
+                </div>
                 <span class="badge badge-warning">otp</span>
               </div>
               <div class="flex gap-2">
-                <button class="btn btn-secondary btn-sm flex-1 justify-center"><i data-lucide="monitor" class="w-4 h-4"></i>Live screen</button>
+                <button class="btn btn-secondary btn-sm flex-1 justify-center">
+                  <i data-lucide="monitor" class="w-4 h-4"></i>Live screen
+                </button>
                 <button class="btn btn-primary btn-sm flex-1 justify-center">Enter code</button>
               </div>
             </div>
           </div>
 
           <!-- container: error -->
-          <div class="card p-4 border-[hsl(var(--destructive)/0.4)]">
+          <div class="card p-4 border-destructive/40">
             <div class="flex items-start justify-between">
-              <div class="flex items-center gap-2"><span class="dot dot-error"></span><span class="mono">worker-11de77</span></div>
+              <div class="flex items-center gap-2">
+                <span class="dot dot-error"></span><span class="mono">worker-11de77</span>
+              </div>
               <span class="badge badge-destructive">Error</span>
             </div>
             <div class="mt-1 text-xs muted">region us · gen 2 · source AUTO</div>
-            <div class="mt-3 rounded-md border border-[hsl(var(--destructive)/0.3)] bg-[hsl(var(--destructive)/0.08)] p-2.5 text-xs">
-              <div class="font-medium text-[hsl(var(--destructive))]">CREDENTIALS_REJECTED</div>
+            <div
+              class="mt-3 rounded-md border border-destructive/30 bg-destructive/10 p-2.5 text-xs"
+            >
+              <div class="font-medium text-destructive">CREDENTIALS_REJECTED</div>
               <div class="muted mt-0.5">Login failed for @promo.us · 2 attempts</div>
             </div>
             <div class="mt-3 flex gap-2">
-              <button class="btn btn-outline btn-sm flex-1 justify-center"><i data-lucide="rotate-cw" class="w-4 h-4"></i>Retry</button>
-              <button class="btn btn-ghost btn-sm flex-1 justify-center text-[hsl(var(--destructive))]">Remove</button>
+              <button class="btn btn-outline btn-sm flex-1 justify-center">
+                <i data-lucide="rotate-cw" class="w-4 h-4"></i>Retry
+              </button>
+              <button class="btn btn-ghost btn-sm flex-1 justify-center text-destructive">
+                Remove
+              </button>
             </div>
           </div>
 
           <!-- container: paused, empty -->
           <div class="card p-4 opacity-80">
             <div class="flex items-start justify-between">
-              <div class="flex items-center gap-2"><span class="dot"></span><span class="mono">worker-4f0b22</span></div>
+              <div class="flex items-center gap-2">
+                <span class="dot"></span><span class="mono">worker-4f0b22</span>
+              </div>
               <span class="badge">Paused</span>
             </div>
             <div class="mt-1 text-xs muted">region sg · gen 3 · source MANUAL</div>
-            <div class="mt-3 rounded-md border border-dashed border-border p-3 text-center text-xs muted">No accounts assigned</div>
+            <div
+              class="mt-3 rounded-md border border-dashed border-border p-3 text-center text-xs muted"
+            >
+              No accounts assigned
+            </div>
             <div class="mt-3 flex gap-2">
-              <button class="btn btn-outline btn-sm flex-1 justify-center"><i data-lucide="play" class="w-4 h-4"></i>Resume</button>
-              <button class="btn btn-ghost btn-sm flex-1 justify-center text-[hsl(var(--destructive))]">Delete</button>
+              <button class="btn btn-outline btn-sm flex-1 justify-center">
+                <i data-lucide="play" class="w-4 h-4"></i>Resume
+              </button>
+              <button class="btn btn-ghost btn-sm flex-1 justify-center text-destructive">
+                Delete
+              </button>
             </div>
           </div>
 
           <!-- create tile -->
-          <button onclick="document.getElementById('create-container').showModal()" class="card grid min-h-[13rem] place-items-center border-dashed text-center hover:bg-accent/40">
+          <button
+            onclick="document.getElementById('create-container').showModal()"
+            class="card grid min-h-[13rem] place-items-center border-dashed text-center hover:bg-accent/40"
+          >
             <div>
               <i data-lucide="plus" class="mx-auto w-6 h-6 muted"></i>
               <div class="mt-2 text-sm font-medium">Create container</div>
@@ -135,34 +242,114 @@
         <!-- Live ticker -->
         <aside class="card flex flex-col">
           <div class="flex items-center justify-between border-b border-border p-3">
-            <div class="flex items-center gap-2"><span class="dot dot-ready dot-pulse"></span><h2 class="text-sm font-semibold">Live events</h2></div>
+            <div class="flex items-center gap-2">
+              <span class="dot dot-ready dot-pulse"></span>
+              <h2 class="text-sm font-semibold">Live events</h2>
+            </div>
             <span class="badge badge-outline">SSE</span>
           </div>
           <div class="flex-1 space-y-3 p-3 text-xs">
-            <div><div class="flex items-center gap-2"><span class="badge badge-success">account-updated</span><span class="muted ml-auto">now</span></div><div class="mt-1 muted">@growth.hacks.id → <span class="text-foreground">AUTHENTICATED</span></div></div>
-            <div><div class="flex items-center gap-2"><span class="badge badge-info">action-updated</span><span class="muted ml-auto">2s</span></div><div class="mt-1 muted">job_8f21 comment → <span class="text-foreground">RUNNING</span></div></div>
-            <div><div class="flex items-center gap-2"><span class="badge badge-info">worker-health</span><span class="muted ml-auto">18s</span></div><div class="mt-1 muted">worker-7f3a91 · depth 0 · browser idle</div></div>
-            <div><div class="flex items-center gap-2"><span class="badge badge-warning">provision-updated</span><span class="muted ml-auto">41s</span></div><div class="mt-1 muted">worker-9ac104 → <span class="text-foreground">NEEDS_INPUT</span></div></div>
-            <div><div class="flex items-center gap-2"><span class="badge badge-destructive">action-updated</span><span class="muted ml-auto">1m</span></div><div class="mt-1 muted">job_8f19 comment → <span class="text-foreground">FAILED</span> (cooldown)</div></div>
+            <div>
+              <div class="flex items-center gap-2">
+                <span class="badge badge-success">account-updated</span
+                ><span class="muted ml-auto">now</span>
+              </div>
+              <div class="mt-1 muted">
+                @growth.hacks.id → <span class="text-foreground">AUTHENTICATED</span>
+              </div>
+            </div>
+            <div>
+              <div class="flex items-center gap-2">
+                <span class="badge badge-info">action-updated</span
+                ><span class="muted ml-auto">2s</span>
+              </div>
+              <div class="mt-1 muted">
+                job_8f21 comment → <span class="text-foreground">RUNNING</span>
+              </div>
+            </div>
+            <div>
+              <div class="flex items-center gap-2">
+                <span class="badge badge-info">worker-health</span
+                ><span class="muted ml-auto">18s</span>
+              </div>
+              <div class="mt-1 muted">worker-7f3a91 · depth 0 · browser idle</div>
+            </div>
+            <div>
+              <div class="flex items-center gap-2">
+                <span class="badge badge-warning">provision-updated</span
+                ><span class="muted ml-auto">41s</span>
+              </div>
+              <div class="mt-1 muted">
+                worker-9ac104 → <span class="text-foreground">NEEDS_INPUT</span>
+              </div>
+            </div>
+            <div>
+              <div class="flex items-center gap-2">
+                <span class="badge badge-destructive">action-updated</span
+                ><span class="muted ml-auto">1m</span>
+              </div>
+              <div class="mt-1 muted">
+                job_8f19 comment → <span class="text-foreground">FAILED</span> (cooldown)
+              </div>
+            </div>
           </div>
         </aside>
       </section>
 
       <!-- Create container dialog -->
-      <dialog id="create-container" class="card w-full max-w-md p-0 backdrop:bg-[hsl(222_47%_5%/0.7)]">
+      <dialog id="create-container" class="card w-full max-w-md p-0 backdrop:bg-black/60">
         <div class="flex items-center justify-between border-b border-border p-4">
-          <div><h2 class="text-sm font-semibold">Create container</h2><p class="text-xs muted">Adds one worker slot (device)</p></div>
-          <button class="btn btn-ghost btn-icon btn-sm" onclick="document.getElementById('create-container').close()"><i data-lucide="x" class="w-4 h-4"></i></button>
+          <div>
+            <h2 class="text-sm font-semibold">Create container</h2>
+            <p class="text-xs muted">Adds one worker slot (device)</p>
+          </div>
+          <button
+            class="btn btn-ghost btn-icon btn-sm"
+            onclick="document.getElementById('create-container').close()"
+          >
+            <i data-lucide="x" class="w-4 h-4"></i>
+          </button>
         </div>
         <div class="space-y-4 p-4">
-          <div><label class="label">Region</label><select class="input"><option>sg — Singapore</option><option>id — Jakarta</option><option>us — Oregon</option></select><div class="helper mt-1.5">Container is region-matched during account assignment.</div></div>
-          <div><label class="label">Proxy group (optional)</label><select class="input"><option>None (direct)</option><option>sg-residential</option><option>id-mobile</option></select></div>
-          <div><label class="label">Max accounts</label><input class="input" type="number" value="4" min="1" max="8" /><div class="helper mt-1.5">Hard cap of one account per platform still applies.</div></div>
-          <label class="flex items-center gap-2 text-sm"><input type="checkbox" checked /> Start immediately (desiredState = RUNNING)</label>
+          <div>
+            <label class="label">Region</label
+            ><select class="input">
+              <option>sg — Singapore</option>
+              <option>id — Jakarta</option>
+              <option>us — Oregon</option>
+            </select>
+            <div class="helper mt-1.5">Container is region-matched during account assignment.</div>
+          </div>
+          <div>
+            <label class="label">Proxy group (optional)</label
+            ><select class="input">
+              <option>None (direct)</option>
+              <option>sg-residential</option>
+              <option>id-mobile</option>
+            </select>
+          </div>
+          <div>
+            <label class="label">Max accounts</label
+            ><input class="input" type="number" value="4" min="1" max="8" />
+            <div class="helper mt-1.5">Hard cap of one account per platform still applies.</div>
+          </div>
+          <label class="flex items-center gap-2 text-sm"
+            ><input type="checkbox" checked /> Start immediately (desiredState = RUNNING)</label
+          >
         </div>
         <div class="flex justify-end gap-2 border-t border-border p-4">
-          <button class="btn btn-outline btn-sm" onclick="document.getElementById('create-container').close()">Cancel</button>
-          <button class="btn btn-primary btn-sm" onclick="document.getElementById('create-container').close()"><i data-lucide="plus" class="w-4 h-4"></i>Create container</button>
+          <button
+            class="btn btn-outline btn-sm"
+            onclick="document.getElementById('create-container').close()"
+          >
+            Cancel
+          </button>
+          <button
+            class="btn btn-primary btn-sm"
+            onclick="document.getElementById('create-container').close()"
+          >
+            <i data-lucide="plus" class="w-4 h-4"></i>Create container
+          </button>
         </div>
       </dialog>
     </div>

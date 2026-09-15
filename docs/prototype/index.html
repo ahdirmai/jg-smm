@@ -5,9 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>SMM Automation — Prototype</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="theme.js"></script>
     <link rel="stylesheet" href="styles.css" />
   </head>
-  <body class="dark">
+  <body>
     <div class="mx-auto max-w-3xl px-6 py-16">
       <div class="mb-8 flex items-center gap-3">
         <span class="grid h-10 w-10 place-items-center rounded-lg bg-primary text-primary-foreground">
@@ -83,6 +84,11 @@
       </p>
     </div>
 
+        <button class="btn btn-ghost btn-icon theme-float" title="Toggle light / dark" aria-label="Toggle theme"
+      onclick="window.smmTheme && window.smmTheme.toggle()">
+      <span class="theme-toggle-icon theme-sun"><i data-lucide="sun" class="w-4 h-4"></i></span>
+      <span class="theme-toggle-icon theme-moon"><i data-lucide="moon" class="w-4 h-4"></i></span>
+    </button>
     <script src="https://unpkg.com/lucide@latest"></script>
     <script>
       lucide.createIcons();

@@ -1,12 +1,43 @@
 /* =============================================================================
  * SMM Automation — dashboard prototype
  * Design tokens mirror apps/web/app/globals.css (DESIGN_SYSTEM §4). Tailwind is
- * loaded from the CDN in each page; this file holds tokens + a few component
- * classes so pages stay readable without a build step.
- * Dark is the default theme (DESIGN_SYSTEM §4.1).
+ * loaded from the CDN in each page; theme.js maps the tokens into the Play CDN
+ * config so utilities like `bg-card`/`text-muted-foreground` resolve.
+ * Light is the base; dark applies via `.dark` on <html>. Dark is the default
+ * (theme.js seeds it from localStorage / prefers-color-scheme).
  * ========================================================================== */
 
 :root,
+.light {
+  --background: 0 0% 100%;
+  --foreground: 222 47% 11%;
+  --card: 0 0% 100%;
+  --card-foreground: 222 47% 11%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222 47% 11%;
+  --primary: 238 84% 67%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 220 14% 96%;
+  --secondary-foreground: 222 47% 11%;
+  --muted: 220 14% 96%;
+  --muted-foreground: 220 9% 46%;
+  --accent: 220 14% 96%;
+  --accent-foreground: 222 47% 11%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 100%;
+  --success: 142 71% 45%;
+  --warning: 38 92% 50%;
+  --info: 199 89% 60%;
+  --border: 220 13% 91%;
+  --input: 220 13% 91%;
+  --ring: 238 84% 67%;
+  --status-cold: 220 9% 46%;
+  --status-ready: 142 71% 45%;
+  --status-busy: 238 84% 67%;
+  --status-error: 0 84% 60%;
+  --radius: 0.5rem;
+}
+
 .dark {
   --background: 222 47% 5%;
   --foreground: 220 13% 95%;
@@ -34,40 +65,6 @@
   --status-ready: 142 71% 45%;
   --status-busy: 238 84% 67%;
   --status-error: 0 72% 51%;
-  --radius: 0.5rem;
-}
-
-/* Tailwind v4 token mapping (utilities read these). */
-@theme {
-  --color-background: hsl(var(--background));
-  --color-foreground: hsl(var(--foreground));
-  --color-card: hsl(var(--card));
-  --color-card-foreground: hsl(var(--card-foreground));
-  --color-popover: hsl(var(--popover));
-  --color-popover-foreground: hsl(var(--popover-foreground));
-  --color-primary: hsl(var(--primary));
-  --color-primary-foreground: hsl(var(--primary-foreground));
-  --color-secondary: hsl(var(--secondary));
-  --color-secondary-foreground: hsl(var(--secondary-foreground));
-  --color-muted: hsl(var(--muted));
-  --color-muted-foreground: hsl(var(--muted-foreground));
-  --color-accent: hsl(var(--accent));
-  --color-accent-foreground: hsl(var(--accent-foreground));
-  --color-destructive: hsl(var(--destructive));
-  --color-destructive-foreground: hsl(var(--destructive-foreground));
-  --color-success: hsl(var(--success));
-  --color-warning: hsl(var(--warning));
-  --color-info: hsl(var(--info));
-  --color-border: hsl(var(--border));
-  --color-input: hsl(var(--input));
-  --color-ring: hsl(var(--ring));
-  --color-status-cold: hsl(var(--status-cold));
-  --color-status-ready: hsl(var(--status-ready));
-  --color-status-busy: hsl(var(--status-busy));
-  --color-status-error: hsl(var(--status-error));
-  --radius-lg: var(--radius);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-sm: calc(var(--radius) - 4px);
 }
 
 @layer base {
@@ -81,7 +78,13 @@
   body {
     background-color: hsl(var(--background));
     color: hsl(var(--foreground));
-    font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    font-family:
+      ui-sans-serif,
+      system-ui,
+      -apple-system,
+      'Segoe UI',
+      Roboto,
+      sans-serif;
   }
 }
 
@@ -97,7 +100,10 @@
   height: 2.25rem;
   padding: 0 1rem;
   border: 1px solid transparent;
-  transition: background-color 0.15s, opacity 0.15s, border-color 0.15s;
+  transition:
+    background-color 0.15s,
+    opacity 0.15s,
+    border-color 0.15s;
 }
 .btn:disabled {
   opacity: 0.5;
@@ -249,8 +255,13 @@
   animation: dotpulse 2s ease-in-out infinite;
 }
 @keyframes dotpulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
 }
 
 /* Table */
@@ -294,7 +305,9 @@
   padding: 0.5rem 0.75rem;
   font-size: 0.875rem;
   color: hsl(var(--muted-foreground));
-  transition: background-color 0.15s, color 0.15s;
+  transition:
+    background-color 0.15s,
+    color 0.15s;
 }
 .nav-item:hover {
   background: hsl(var(--accent));
@@ -319,14 +332,23 @@
   letter-spacing: -0.02em;
 }
 .skeleton {
-  background: linear-gradient(90deg, hsl(var(--muted)) 25%, hsl(var(--accent)) 50%, hsl(var(--muted)) 75%);
+  background: linear-gradient(
+    90deg,
+    hsl(var(--muted)) 25%,
+    hsl(var(--accent)) 50%,
+    hsl(var(--muted)) 75%
+  );
   background-size: 200% 100%;
   animation: shimmer 1.5s infinite;
   border-radius: var(--radius-sm);
 }
 @keyframes shimmer {
-  0% { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
 }
 .stepper-dot {
   width: 0.6rem;
@@ -348,4 +370,25 @@
   background: hsl(222 47% 5% / 0.7);
   backdrop-filter: blur(2px);
   z-index: 40;
+}
+
+/* Theme toggle: show sun in dark mode, moon in light mode. */
+.theme-toggle-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+html.dark .theme-sun {
+  display: none;
+}
+html:not(.dark) .theme-moon {
+  display: none;
+}
+
+/* Floating toggle for standalone pages (no shell). */
+.theme-float {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 50;
 }

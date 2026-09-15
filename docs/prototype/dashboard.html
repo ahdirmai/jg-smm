@@ -5,10 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Dashboard — SMM Automation</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="theme.js"></script>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body
-    class="dark"
     data-title="Dashboard"
     data-subtitle="Overview · last 30 days · Instagram + Threads"
     data-actions='<button class="btn btn-outline btn-sm"><i data-lucide="calendar" class="w-4 h-4"></i>Last 30 days</button><button class="btn btn-primary btn-sm"><i data-lucide="download" class="w-4 h-4"></i>Export CSV</button>'
@@ -22,7 +22,7 @@
             <i data-lucide="eye" class="w-4 h-4 muted"></i>
           </div>
           <div class="kpi-value mt-2">184.2K</div>
-          <div class="mt-1 text-xs"><span class="text-[hsl(var(--status-ready))]">▲ 12.4%</span> <span class="muted">vs prev</span></div>
+          <div class="mt-1 text-xs"><span class="text-success">▲ 12.4%</span> <span class="muted">vs prev</span></div>
         </div>
         <div class="card p-4">
           <div class="flex items-center justify-between">
@@ -30,7 +30,7 @@
             <i data-lucide="heart" class="w-4 h-4 muted"></i>
           </div>
           <div class="kpi-value mt-2">9,412</div>
-          <div class="mt-1 text-xs"><span class="text-[hsl(var(--status-ready))]">▲ 3.1%</span> <span class="muted">vs prev</span></div>
+          <div class="mt-1 text-xs"><span class="text-success">▲ 3.1%</span> <span class="muted">vs prev</span></div>
         </div>
         <div class="card p-4">
           <div class="flex items-center justify-between">
@@ -38,7 +38,7 @@
             <i data-lucide="message-circle" class="w-4 h-4 muted"></i>
           </div>
           <div class="kpi-value mt-2">1,208</div>
-          <div class="mt-1 text-xs"><span class="text-[hsl(var(--status-error))]">▼ 1.8%</span> <span class="muted">vs prev</span></div>
+          <div class="mt-1 text-xs"><span class="text-destructive">▼ 1.8%</span> <span class="muted">vs prev</span></div>
         </div>
         <div class="card p-4">
           <div class="flex items-center justify-between">
@@ -46,12 +46,12 @@
             <i data-lucide="play-circle" class="w-4 h-4 muted"></i>
           </div>
           <div class="kpi-value mt-2">92.7K</div>
-          <div class="mt-1 text-xs"><span class="text-[hsl(var(--status-ready))]">▲ 21.0%</span> <span class="muted">vs prev</span></div>
+          <div class="mt-1 text-xs"><span class="text-success">▲ 21.0%</span> <span class="muted">vs prev</span></div>
         </div>
       </section>
 
       <!-- Trend + action summary -->
-      <section class="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
+      <section class="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div class="card p-4 lg:col-span-2">
           <div class="mb-3 flex items-center justify-between">
             <div>
@@ -100,7 +100,7 @@
       </section>
 
       <!-- Top posts -->
-      <section class="mt-4 card">
+      <section class="card">
         <div class="flex items-center justify-between border-b border-border p-4">
           <div>
             <h2 class="text-sm font-semibold">Top posts</h2>

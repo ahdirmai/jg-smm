@@ -1,4 +1,4 @@
-/* Settings page tab switching + theme toggle (prototype only). */
+/* Settings page tab switching + theme controls (prototype only). */
 (function () {
   function init() {
     const tabs = document.querySelectorAll('#settings-tabs [data-tab]');
@@ -16,11 +16,23 @@
     tabs.forEach((t) => t.addEventListener('click', () => show(t.dataset.tab)));
     show('team');
 
-    document.querySelectorAll('[data-set-theme]').forEach((btn) => {
+    // Appearance: drive the shared, persisted theme and reflect active state.
+    const themeBtns = document.querySelectorAll('[data-set-theme]');
+    const markActive = () => {
+      const current = window.smmTheme ? window.smmTheme.get() : 'dark';
+      themeBtns.forEach((b) => {
+        const on = b.dataset.setTheme === current;
+        b.classList.toggle('btn-primary', on);
+        b.classList.toggle('btn-outline', !on);
+      });
+    };
+    themeBtns.forEach((btn) => {
       btn.addEventListener('click', () => {
-        document.documentElement.classList.toggle('dark', btn.dataset.setTheme !== 'light');
+        window.smmTheme && window.smmTheme.set(btn.dataset.setTheme);
+        markActive();
       });
     });
+    markActive();
   }
 
   // shell.js replaces #app on DOMContentLoaded, so wait a tick after it runs.

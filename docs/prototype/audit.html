@@ -5,9 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Audit Log — SMM Automation</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="theme.js"></script>
     <link rel="stylesheet" href="styles.css" />
   </head>
-  <body class="dark" data-title="Audit Log" data-subtitle="Who did what, when · immutable"
+  <body data-title="Audit Log" data-subtitle="Who did what, when · immutable"
     data-actions='<button class="btn btn-outline btn-sm"><i data-lucide="download" class="w-4 h-4"></i>Export</button>'>
     <div id="app">
       <section class="flex flex-wrap items-center gap-2">
@@ -16,7 +17,7 @@
         <button class="btn btn-outline btn-sm"><i data-lucide="calendar" class="w-4 h-4"></i>Last 7 days</button>
       </section>
 
-      <section class="mt-4 card overflow-hidden">
+      <section class="card overflow-hidden">
         <div class="overflow-x-auto">
           <table class="tbl">
             <thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Target</th><th>Result</th><th>IP</th></tr></thead>

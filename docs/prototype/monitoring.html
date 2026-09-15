@@ -5,19 +5,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Monitoring — SMM Automation</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="theme.js"></script>
     <link rel="stylesheet" href="styles.css" />
   </head>
-  <body class="dark" data-title="Monitoring" data-subtitle="Reach · views · mentions · live sources"
+  <body data-title="Monitoring" data-subtitle="Reach · views · mentions · live sources"
     data-actions='<select class="input w-36"><option>Last 7 days</option><option>Last 30 days</option></select><button class="btn btn-outline btn-sm"><i data-lucide="refresh-cw" class="w-4 h-4"></i>Refresh</button>'>
     <div id="app">
       <section class="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <div class="card p-4"><div class="text-xs muted">Total reach</div><div class="kpi-value mt-1">184.2K</div><div class="text-xs mt-1"><span class="text-[hsl(var(--status-ready))]">▲ 12.4%</span></div></div>
-        <div class="card p-4"><div class="text-xs muted">Reels views</div><div class="kpi-value mt-1">92.7K</div><div class="text-xs mt-1"><span class="text-[hsl(var(--status-ready))]">▲ 21.0%</span></div></div>
-        <div class="card p-4"><div class="text-xs muted">Mentions</div><div class="kpi-value mt-1">1,504</div><div class="text-xs mt-1"><span class="text-[hsl(var(--status-error))]">▼ 4.2%</span></div></div>
+        <div class="card p-4"><div class="text-xs muted">Total reach</div><div class="kpi-value mt-1">184.2K</div><div class="text-xs mt-1"><span class="text-success">▲ 12.4%</span></div></div>
+        <div class="card p-4"><div class="text-xs muted">Reels views</div><div class="kpi-value mt-1">92.7K</div><div class="text-xs mt-1"><span class="text-success">▲ 21.0%</span></div></div>
+        <div class="card p-4"><div class="text-xs muted">Mentions</div><div class="kpi-value mt-1">1,504</div><div class="text-xs mt-1"><span class="text-destructive">▼ 4.2%</span></div></div>
         <div class="card p-4"><div class="text-xs muted">Live viewers</div><div class="kpi-value mt-1">318</div><div class="text-xs mt-1 muted">2 live now</div></div>
       </section>
 
-      <section class="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
+      <section class="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div class="card p-4 lg:col-span-2">
           <div class="mb-3 flex items-center justify-between"><h2 class="text-sm font-semibold">Reach vs Views</h2><div class="flex gap-3 text-xs"><span class="flex items-center gap-1.5"><span class="dot dot-busy"></span>Reach</span><span class="flex items-center gap-1.5"><span class="dot dot-ready"></span>Views</span></div></div>
           <div class="h-56 rounded-md border border-border bg-background/40 p-2">
@@ -39,7 +40,7 @@
           <h2 class="text-sm font-semibold">Live sources</h2>
           <p class="text-xs muted">TikTok &amp; IG lives (deferred platforms shown)</p>
           <div class="mt-3 space-y-3">
-            <div class="rounded-md border border-[hsl(var(--destructive)/0.3)] bg-[hsl(var(--destructive)/0.08)] p-3">
+            <div class="rounded-md border border-destructive/30 bg-destructive/10 p-3">
               <div class="flex items-center gap-2 text-sm font-medium"><span class="dot dot-error dot-pulse"></span>IG Live · @shop.abc</div>
               <div class="mt-1 text-xs muted">Viewers 214 · started 12m ago</div>
             </div>
@@ -51,7 +52,7 @@
         </div>
       </section>
 
-      <section class="mt-4 card">
+      <section class="card">
         <div class="border-b border-border p-4"><h2 class="text-sm font-semibold">Metric snapshots</h2><p class="text-xs muted">Ingested via Apify · aggregated hourly</p></div>
         <div class="overflow-x-auto">
           <table class="tbl">

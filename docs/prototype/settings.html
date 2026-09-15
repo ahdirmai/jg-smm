@@ -5,82 +5,183 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Settings — SMM Automation</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="theme.js"></script>
     <link rel="stylesheet" href="styles.css" />
     <link rel="stylesheet" href="styles-tabs.css" />
   </head>
-  <body class="dark" data-title="Settings" data-subtitle="Team · proxy groups · limits · appearance">
+  <body data-title="Settings" data-subtitle="Team · proxy groups · limits · appearance">
     <div id="app">
-      <div class="grid grid-cols-1 gap-6 lg:grid-cols-[180px_1fr]">
+      <div class="grid grid-cols-1 gap-4 lg:grid-cols-[180px_1fr]">
         <nav class="flex gap-1 lg:flex-col" id="settings-tabs">
           <button class="nav-item" data-tab="team">Team</button>
           <button class="nav-item" data-tab="proxy">Proxy groups</button>
           <button class="nav-item" data-tab="limits">Limits</button>
           <button class="nav-item" data-tab="appearance">Appearance</button>
-          <button class="nav-item text-[hsl(var(--destructive))]" data-tab="danger">Danger zone</button>
+          <button class="nav-item text-destructive" data-tab="danger">Danger zone</button>
         </nav>
 
         <div class="min-w-0 space-y-6">
           <!-- TEAM -->
           <section class="card" data-panel="team">
-            <div class="border-b border-border p-4"><h2 class="text-sm font-semibold">Team</h2><p class="text-xs muted">MVP is single-team. RBAC: owner · operator · viewer.</p></div>
+            <div class="border-b border-border p-4">
+              <h2 class="text-sm font-semibold">Team</h2>
+              <p class="text-xs muted">MVP is single-team. RBAC: owner · operator · viewer.</p>
+            </div>
             <table class="tbl">
-              <thead><tr><th>Member</th><th>Role</th><th>2FA on login</th><th></th></tr></thead>
+              <thead>
+                <tr>
+                  <th>Member</th>
+                  <th>Role</th>
+                  <th>2FA on login</th>
+                  <th></th>
+                </tr>
+              </thead>
               <tbody>
-                <tr><td>ahdirmai · owner@local.test</td><td><span class="badge badge-success">owner</span></td><td><span class="badge">off</span></td><td class="text-right"><button class="btn btn-ghost btn-sm">Edit</button></td></tr>
-                <tr><td>operator@local.test</td><td><span class="badge badge-info">operator</span></td><td><span class="badge">off</span></td><td class="text-right"><button class="btn btn-ghost btn-sm">Edit</button></td></tr>
-                <tr><td>viewer@local.test</td><td><span class="badge">viewer</span></td><td><span class="badge">off</span></td><td class="text-right"><button class="btn btn-ghost btn-sm">Edit</button></td></tr>
+                <tr>
+                  <td>ahdirmai · owner@local.test</td>
+                  <td><span class="badge badge-success">owner</span></td>
+                  <td><span class="badge">off</span></td>
+                  <td class="text-right"><button class="btn btn-ghost btn-sm">Edit</button></td>
+                </tr>
+                <tr>
+                  <td>operator@local.test</td>
+                  <td><span class="badge badge-info">operator</span></td>
+                  <td><span class="badge">off</span></td>
+                  <td class="text-right"><button class="btn btn-ghost btn-sm">Edit</button></td>
+                </tr>
+                <tr>
+                  <td>viewer@local.test</td>
+                  <td><span class="badge">viewer</span></td>
+                  <td><span class="badge">off</span></td>
+                  <td class="text-right"><button class="btn btn-ghost btn-sm">Edit</button></td>
+                </tr>
               </tbody>
             </table>
-            <div class="border-t border-border p-4"><button class="btn btn-outline btn-sm"><i data-lucide="user-plus" class="w-4 h-4"></i>Invite member</button></div>
+            <div class="border-t border-border p-4">
+              <button class="btn btn-outline btn-sm">
+                <i data-lucide="user-plus" class="w-4 h-4"></i>Invite member
+              </button>
+            </div>
           </section>
 
           <!-- PROXY -->
           <section class="card hidden" data-panel="proxy">
-            <div class="flex items-center justify-between border-b border-border p-4"><div><h2 class="text-sm font-semibold">Proxy groups</h2><p class="text-xs muted">Region → worker → proxy group binding stays 1:1 per account</p></div><button class="btn btn-primary btn-sm"><i data-lucide="plus" class="w-4 h-4"></i>New group</button></div>
+            <div class="flex items-center justify-between border-b border-border p-4">
+              <div>
+                <h2 class="text-sm font-semibold">Proxy groups</h2>
+                <p class="text-xs muted">
+                  Region → worker → proxy group binding stays 1:1 per account
+                </p>
+              </div>
+              <button class="btn btn-primary btn-sm">
+                <i data-lucide="plus" class="w-4 h-4"></i>New group
+              </button>
+            </div>
             <table class="tbl">
-              <thead><tr><th>Name</th><th>Region</th><th>Type</th><th class="text-right">Bound accounts</th><th>Health</th></tr></thead>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Region</th>
+                  <th>Type</th>
+                  <th class="text-right">Bound accounts</th>
+                  <th>Health</th>
+                </tr>
+              </thead>
               <tbody>
-                <tr><td class="mono">sg-residential</td><td>sg</td><td>residential</td><td class="text-right mono">4</td><td><span class="badge badge-success">healthy</span></td></tr>
-                <tr><td class="mono">id-mobile</td><td>id</td><td>mobile</td><td class="text-right mono">1</td><td><span class="badge badge-warning">slow</span></td></tr>
-                <tr><td class="mono">us-datacenter</td><td>us</td><td>datacenter</td><td class="text-right mono">0</td><td><span class="badge badge-destructive">blocked</span></td></tr>
+                <tr>
+                  <td class="mono">sg-residential</td>
+                  <td>sg</td>
+                  <td>residential</td>
+                  <td class="text-right mono">4</td>
+                  <td><span class="badge badge-success">healthy</span></td>
+                </tr>
+                <tr>
+                  <td class="mono">id-mobile</td>
+                  <td>id</td>
+                  <td>mobile</td>
+                  <td class="text-right mono">1</td>
+                  <td><span class="badge badge-warning">slow</span></td>
+                </tr>
+                <tr>
+                  <td class="mono">us-datacenter</td>
+                  <td>us</td>
+                  <td>datacenter</td>
+                  <td class="text-right mono">0</td>
+                  <td><span class="badge badge-destructive">blocked</span></td>
+                </tr>
               </tbody>
             </table>
           </section>
 
           <!-- LIMITS -->
           <section class="card hidden" data-panel="limits">
-            <div class="border-b border-border p-4"><h2 class="text-sm font-semibold">Rate limits</h2><p class="text-xs muted">Enforced by the BE scheduler, not inside jobs.</p></div>
+            <div class="border-b border-border p-4">
+              <h2 class="text-sm font-semibold">Rate limits</h2>
+              <p class="text-xs muted">Enforced by the BE scheduler, not inside jobs.</p>
+            </div>
             <div class="space-y-4 p-4">
               <div>
-                <div class="mb-1 flex items-center justify-between"><label class="label">Comments per hour · Instagram</label><span class="mono">30</span></div>
-                <input type="range" min="0" max="60" value="30" class="w-full accent-[hsl(var(--primary))]" />
+                <div class="mb-1 flex items-center justify-between">
+                  <label class="label">Comments per hour · Instagram</label
+                  ><span class="mono">30</span>
+                </div>
+                <input type="range" min="0" max="60" value="30" class="w-full accent-primary" />
               </div>
               <div>
-                <div class="mb-1 flex items-center justify-between"><label class="label">Likes per hour · Instagram</label><span class="mono">120</span></div>
-                <input type="range" min="0" max="240" value="120" class="w-full accent-[hsl(var(--primary))]" />
+                <div class="mb-1 flex items-center justify-between">
+                  <label class="label">Likes per hour · Instagram</label
+                  ><span class="mono">120</span>
+                </div>
+                <input type="range" min="0" max="240" value="120" class="w-full accent-primary" />
               </div>
               <div>
-                <div class="mb-1 flex items-center justify-between"><label class="label">Action batch parallelism</label><span class="mono">2</span></div>
-                <input type="range" min="1" max="8" value="2" class="w-full accent-[hsl(var(--primary))]" />
-                <div class="helper mt-1">How many workers may run a batch job simultaneously on colima.</div>
+                <div class="mb-1 flex items-center justify-between">
+                  <label class="label">Action batch parallelism</label><span class="mono">2</span>
+                </div>
+                <input type="range" min="1" max="8" value="2" class="w-full accent-primary" />
+                <div class="helper mt-1">
+                  How many workers may run a batch job simultaneously on colima.
+                </div>
               </div>
               <div>
                 <label class="label">Jitter between actions (seconds)</label>
-                <div class="flex items-center gap-2"><input class="input w-24" value="30" /><span class="muted">–</span><input class="input w-24" value="90" /></div>
+                <div class="flex items-center gap-2">
+                  <input class="input w-24" value="30" /><span class="muted">–</span
+                  ><input class="input w-24" value="90" />
+                </div>
               </div>
-              <label class="flex items-center gap-2 text-sm"><input type="checkbox" checked /> Enable cooldown gate (60s per target comment)</label>
+              <label class="flex items-center gap-2 text-sm"
+                ><input type="checkbox" checked /> Enable cooldown gate (60s per target
+                comment)</label
+              >
             </div>
-            <div class="border-t border-border p-4 text-right"><button class="btn btn-primary btn-sm"><i data-lucide="save" class="w-4 h-4"></i>Save limits</button></div>
+            <div class="border-t border-border p-4 text-right">
+              <button class="btn btn-primary btn-sm">
+                <i data-lucide="save" class="w-4 h-4"></i>Save limits
+              </button>
+            </div>
           </section>
 
           <!-- APPEARANCE -->
           <section class="card hidden" data-panel="appearance">
-            <div class="border-b border-border p-4"><h2 class="text-sm font-semibold">Appearance</h2><p class="text-xs muted">Persisted in cookie · applies to your session only</p></div>
+            <div class="border-b border-border p-4">
+              <h2 class="text-sm font-semibold">Appearance</h2>
+              <p class="text-xs muted">Persisted in cookie · applies to your session only</p>
+            </div>
             <div class="space-y-4 p-4">
-              <div class="flex flex-wrap items-center gap-2">
-                <button class="btn btn-outline btn-sm" data-set-theme="dark">Dark</button>
-                <button class="btn btn-outline btn-sm" data-set-theme="light">Light</button>
-                <button class="btn btn-outline btn-sm" data-set-theme="system">System</button>
+              <div>
+                <label class="label">Theme</label>
+                <div class="flex flex-wrap items-center gap-2">
+                  <button class="btn btn-outline btn-sm" data-set-theme="dark">
+                    <i data-lucide="moon" class="w-4 h-4"></i>Dark
+                  </button>
+                  <button class="btn btn-outline btn-sm" data-set-theme="light">
+                    <i data-lucide="sun" class="w-4 h-4"></i>Light
+                  </button>
+                </div>
+                <div class="helper mt-1.5">
+                  Persisted per browser. First visit follows your OS preference.
+                </div>
               </div>
               <div>
                 <label class="label">Density</label>
@@ -90,26 +191,44 @@
                 </div>
               </div>
               <div>
-                <label class="label">Timezone</label><select class="input w-48"><option>Asia/Jakarta (UTC+7)</option><option>UTC</option></select>
+                <label class="label">Timezone</label
+                ><select class="input w-48">
+                  <option>Asia/Jakarta (UTC+7)</option>
+                  <option>UTC</option>
+                </select>
               </div>
             </div>
           </section>
 
           <!-- DANGER -->
-          <section class="card hidden border-[hsl(var(--destructive)/0.35)]" data-panel="danger">
-            <div class="border-b border-[hsl(var(--destructive)/0.35)] p-4"><h2 class="text-sm font-semibold text-[hsl(var(--destructive))]">Danger zone</h2><p class="text-xs muted">Destructive actions. Require confirmation.</p></div>
+          <section class="card hidden border-destructive/40" data-panel="danger">
+            <div class="border-b border-destructive/40 p-4">
+              <h2 class="text-sm font-semibold text-destructive">Danger zone</h2>
+              <p class="text-xs muted">Destructive actions. Require confirmation.</p>
+            </div>
             <div class="divide-y divide-border">
               <div class="flex items-center justify-between p-4">
-                <div><div class="text-sm font-medium">Kill all workers</div><div class="text-xs muted">Scales fleet to zero. Desired-state is preserved.</div></div>
+                <div>
+                  <div class="text-sm font-medium">Kill all workers</div>
+                  <div class="text-xs muted">Scales fleet to zero. Desired-state is preserved.</div>
+                </div>
                 <button class="btn btn-destructive btn-sm">Kill workers</button>
               </div>
               <div class="flex items-center justify-between p-4">
-                <div><div class="text-sm font-medium">Purge audit log</div><div class="text-xs muted">Owner-only · irreversible for compliance.</div></div>
-                <button class="btn btn-ghost btn-sm text-[hsl(var(--destructive))]">Purge</button>
+                <div>
+                  <div class="text-sm font-medium">Purge audit log</div>
+                  <div class="text-xs muted">Owner-only · irreversible for compliance.</div>
+                </div>
+                <button class="btn btn-ghost btn-sm text-destructive">Purge</button>
               </div>
               <div class="flex items-center justify-between p-4">
-                <div><div class="text-sm font-medium">Delete team</div><div class="text-xs muted">Removes every account, container and job.</div></div>
-                <button class="btn btn-destructive btn-sm disabled:opacity-60" disabled>Delete</button>
+                <div>
+                  <div class="text-sm font-medium">Delete team</div>
+                  <div class="text-xs muted">Removes every account, container and job.</div>
+                </div>
+                <button class="btn btn-destructive btn-sm disabled:opacity-60" disabled>
+                  Delete
+                </button>
               </div>
             </div>
           </section>

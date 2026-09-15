@@ -5,10 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Accounts — SMM Automation</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="theme.js"></script>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body
-    class="dark"
     data-title="Accounts"
     data-subtitle="Roster · 9 accounts across 5 containers"
     data-actions='<button class="btn btn-outline btn-sm" onclick="location.href=&quot;bulk-import.html&quot;"><i data-lucide="upload" class="w-4 h-4"></i>Bulk import</button><button class="btn btn-primary btn-sm" onclick="location.href=&quot;add-account.html&quot;"><i data-lucide="user-plus" class="w-4 h-4"></i>Add account</button>'
@@ -22,11 +22,11 @@
         <div class="ml-auto flex items-center gap-2 text-xs muted">
           <span>4 selected</span>
           <button class="btn btn-outline btn-sm"><i data-lucide="pause" class="w-4 h-4"></i>Pause</button>
-          <button class="btn btn-ghost btn-sm text-[hsl(var(--destructive))]">Remove</button>
+          <button class="btn btn-ghost btn-sm text-destructive">Remove</button>
         </div>
       </section>
 
-      <section class="mt-4 card overflow-hidden">
+      <section class="card overflow-hidden">
         <div class="overflow-x-auto">
           <table class="tbl">
             <thead>

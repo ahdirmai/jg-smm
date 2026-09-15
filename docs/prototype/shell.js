@@ -1,6 +1,12 @@
 /* =============================================================================
  * Prototype shell — injects the shared top bar + side nav into #app and marks
  * the active route. Keeps every page DRY without a build step.
+ *
+ * Layout contract for ALL shell pages:
+ *   header (h-14)  →  main (p-6)  →  #page (space-y-4)
+ * so page authors write top-level sections with NO manual mt-* — vertical rhythm
+ * comes from `space-y-4` here. Two-column pages use `grid ... gap-4`.
+ *
  * Static prototype only; the real app uses apps/web/components/dashboard-shell.tsx.
  * ========================================================================== */
 (function () {
@@ -17,8 +23,7 @@
 
   const current = (location.pathname.split('/').pop() || 'dashboard.html').toLowerCase();
 
-  const icon = (name, cls = 'w-4 h-4') =>
-    `<i data-lucide="${name}" class="${cls}"></i>`;
+  const icon = (name, cls = 'w-4 h-4') => `<i data-lucide="${name}" class="${cls}"></i>`;
 
   const navHtml = NAV.map((item) => {
     const active = item.href.toLowerCase() === current;
@@ -29,6 +34,14 @@
   const title = document.body.dataset.title || 'Dashboard';
   const subtitle = document.body.dataset.subtitle || '';
   const actions = document.body.dataset.actions || '';
+
+  // Theme toggle: both icons are rendered, CSS shows the relevant one.
+  const themeToggle = `
+    <button class="btn btn-ghost btn-icon btn-sm" title="Toggle light / dark" aria-label="Toggle theme"
+      onclick="window.smmTheme && window.smmTheme.toggle()">
+      <span class="theme-toggle-icon theme-sun">${icon('sun')}</span>
+      <span class="theme-toggle-icon theme-moon">${icon('moon')}</span>
+    </button>`;
 
   const html = `
   <div class="flex min-h-screen">
@@ -58,16 +71,17 @@
           ${subtitle ? `<p class="truncate text-xs muted">${subtitle}</p>` : ''}
         </div>
         <div class="ml-auto flex items-center gap-2">
-          <div class="hidden lg:flex items-center gap-2 rounded-md border border-border bg-background px-2.5 h-9 text-sm muted w-56">
+          <div class="hidden lg:flex h-9 w-56 items-center gap-2 rounded-md border border-border bg-background px-2.5 text-sm muted">
             ${icon('search', 'w-4 h-4')}<span>Search accounts, jobs…</span>
             <kbd class="ml-auto rounded border border-border px-1.5 text-xs">⌘K</kbd>
           </div>
           ${actions}
+          ${themeToggle}
         </div>
       </header>
 
       <main class="flex-1 p-4 md:p-6">
-        <div id="page"></div>
+        <div id="page" class="space-y-4"></div>
       </main>
     </div>
   </div>
@@ -84,5 +98,6 @@
     app.outerHTML = html;
     document.getElementById('page').innerHTML = pageBody;
     if (window.lucide) window.lucide.createIcons();
+    if (window.smmTheme) window.smmTheme.set(window.smmTheme.get());
   });
 })();
