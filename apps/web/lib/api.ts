@@ -23,6 +23,7 @@ export type CommentTemplate = ApiSchemas['CommentTemplate'];
 export type TemplateList = ApiSchemas['TemplateList'];
 export type CreateTemplateRequest = ApiSchemas['CreateTemplateRequest'];
 export type Platform = ApiSchemas['Platform'];
+export type ImportResult = ApiSchemas['ImportResult'];
 
 export class ApiError extends Error {
   constructor(
@@ -65,6 +66,14 @@ export const api = {
   setAccountStatus: (id: string, body: SetAccountStatusRequest) =>
     request<Account>(`/api/accounts/${id}`, { method: 'POST', body: JSON.stringify(body) }),
   removeAccount: (id: string) => request<void>(`/api/accounts/${id}`, { method: 'DELETE' }),
+
+  // Bulk import (P4-07). Per-row failures come back in the body with a 200;
+  // only call-level preconditions (empty, over cap) or the rate limit error.
+  importAccounts: (rows: CreateAccountRequest[]) =>
+    request<ImportResult>('/api/accounts/import', {
+      method: 'POST',
+      body: JSON.stringify({ rows }),
+    }),
 
   listContainers: (signal?: AbortSignal) =>
     request<ContainerList>('/api/containers', signal ? { signal } : undefined),

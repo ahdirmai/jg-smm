@@ -528,6 +528,29 @@ type Heartbeat struct {
 // HeartbeatBrowserStatus defines model for Heartbeat.BrowserStatus.
 type HeartbeatBrowserStatus string
 
+// ImportAccountsRequest defines model for ImportAccountsRequest.
+type ImportAccountsRequest struct {
+	// Rows One row per account; the cap is the import batch.
+	Rows []CreateAccountRequest `json:"rows"`
+}
+
+// ImportResult The import verdict. `queued` counts created rows; `invalid` lists the
+// rows rejected by validation or a duplicate; `rateLimited` is true when
+// the caller exceeded the import rate budget and rows were refused.
+type ImportResult struct {
+	// Invalid One entry per rejected row, with a reason.
+	Invalid []struct {
+		Reason string `json:"reason"`
+
+		// Row Zero-based index into the request rows.
+		Row int `json:"row"`
+	} `json:"invalid"`
+
+	// Queued Accounts created (and packed when a slot exists).
+	Queued      int  `json:"queued"`
+	RateLimited bool `json:"rateLimited"`
+}
+
 // JobStatus The queue-side status; the verdict lives on the attempt.
 type JobStatus string
 
@@ -717,6 +740,9 @@ type ListTemplatesParams struct {
 
 // CreateAccountJSONRequestBody defines body for CreateAccount for application/json ContentType.
 type CreateAccountJSONRequestBody = CreateAccountRequest
+
+// ImportAccountsJSONRequestBody defines body for ImportAccounts for application/json ContentType.
+type ImportAccountsJSONRequestBody = ImportAccountsRequest
 
 // SetAccountStatusJSONRequestBody defines body for SetAccountStatus for application/json ContentType.
 type SetAccountStatusJSONRequestBody = SetAccountStatusRequest

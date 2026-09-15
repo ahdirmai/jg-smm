@@ -26,14 +26,23 @@ import {
   TableHeader,
   TableRow,
 } from '@smm/ui';
-import { AlertCircle, MoreVertical, Pause, Play, Trash2, UserPlus } from 'lucide-react';
+import { AlertCircle, MoreVertical, Pause, Play, Trash2, Upload, UserPlus } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
 import { useAccounts } from '@/lib/hooks/use-accounts';
 import type { Account } from '@/lib/api';
 import { AddAccountDialog } from '@/components/add-account-dialog';
+import { ImportAccountsDialog } from '@/components/import-accounts-dialog';
 
-const PLATFORMS = ['INSTAGRAM', 'THREADS', 'FACEBOOK', 'TIKTOK', 'LINKEDIN', 'X', 'YOUTUBE'] as const;
+const PLATFORMS = [
+  'INSTAGRAM',
+  'THREADS',
+  'FACEBOOK',
+  'TIKTOK',
+  'LINKEDIN',
+  'X',
+  'YOUTUBE',
+] as const;
 type Platform = (typeof PLATFORMS)[number];
 
 const PLATFORM_LABEL: Record<Platform, string> = {
@@ -48,7 +57,9 @@ const PLATFORM_LABEL: Record<Platform, string> = {
 
 const STATUSES = ['PENDING', 'ACTIVE', 'PAUSED', 'QUARANTINED', 'DEAD', 'ARCHIVED'] as const;
 
-function statusTone(status: Account['status']): 'success' | 'outline' | 'secondary' | 'destructive' {
+function statusTone(
+  status: Account['status'],
+): 'success' | 'outline' | 'secondary' | 'destructive' {
   switch (status) {
     case 'ACTIVE':
       return 'success';
@@ -74,8 +85,9 @@ function authTone(status: Account['authStatus']): 'success' | 'outline' | 'destr
 }
 
 export default function AccountsPage() {
-  const { accounts, loading, error, setStatus, remove } = useAccounts();
+  const { accounts, loading, error, setStatus, remove, refresh } = useAccounts();
   const [addOpen, setAddOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [platform, setPlatform] = useState<string>('all');
   const [status, setStatusFilter] = useState<string>('all');
   const [busy, setBusy] = useState<string | null>(null);
@@ -109,11 +121,23 @@ export default function AccountsPage() {
             Worker accounts used for actions. One account per platform per container.
           </p>
         </div>
-        <Button onClick={() => setAddOpen(true)}>
-          <UserPlus />
-          Add account
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => setImportOpen(true)}>
+            <Upload />
+            Import
+          </Button>
+          <Button onClick={() => setAddOpen(true)}>
+            <UserPlus />
+            Add account
+          </Button>
+        </div>
       </header>
+
+      <ImportAccountsDialog
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        onImported={() => void refresh()}
+      />
 
       <Card>
         <CardHeader>

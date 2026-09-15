@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sync"
+	"time"
 
 	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/domain"
 	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/port"
@@ -20,6 +22,7 @@ type AccountService struct {
 	sealer   port.Sealer
 	clock    port.Clock
 	stream   port.StreamPublisher
+	imports  *importLimiter
 	logger   *slog.Logger
 }
 
@@ -47,6 +50,7 @@ func NewAccountService(accounts port.AccountStore, workers port.WorkerStore, pac
 		sealer:   cfg.Sealer,
 		clock:    cfg.Clock,
 		stream:   cfg.Stream,
+		imports:  newImportLimiter(time.Minute, ImportRateLimit),
 		logger:   cfg.Logger,
 	}
 }
@@ -240,6 +244,100 @@ func (s *AccountService) publishAccount(ctx context.Context, a AccountSummary) {
 		return
 	}
 	s.stream.Publish(ctx, port.EventAccountUpdated, body)
+}
+
+// MaxImportRows is the import batch cap (P4-07). More than this is an operator
+// mistake, not a workflow: the UI splits at the boundary.
+const MaxImportRows = 100
+
+// ImportRateLimit is the per-caller import budget: 10 imports per minute. The
+// import is the one endpoint that can add a fleet in a loop, so it is the one
+// that needs a ceiling. In-memory: correct for a single API pod, and the
+// Redis-backed limiter (P3-10) is the upgrade path when the API scales out.
+const ImportRateLimit = 10
+
+// importLimiter is a fixed-window counter per caller. Deliberately not a
+// sliding window: import bursts are operator-driven and a minute boundary is
+// accurate enough for a budget this coarse.
+type importLimiter struct {
+	window time.Duration
+	limit  int
+	mu     sync.Mutex
+	hits   map[string][]time.Time
+}
+
+func newImportLimiter(window time.Duration, limit int) *importLimiter {
+	return &importLimiter{window: window, limit: limit, hits: map[string][]time.Time{}}
+}
+
+// Allow reports whether the caller is within budget. Stale hits are reaped on
+// the same pass, so the map cannot grow without bound for idle callers.
+func (l *importLimiter) Allow(key string, now time.Time) bool {
+	cutoff := now.Add(-l.window)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	hits := l.hits[key]
+	keep := hits[:0]
+	for _, t := range hits {
+		if t.After(cutoff) {
+			keep = append(keep, t)
+		}
+	}
+	if len(keep) >= l.limit {
+		l.hits[key] = keep
+		return false
+	}
+	l.hits[key] = append(keep, now)
+	return true
+}
+
+// ImportError is one rejected row of an import.
+type ImportError struct {
+	Row    int    `json:"row"`
+	Reason string `json:"reason"`
+}
+
+// ImportResult is the import verdict (P4-07): the shape the AC asks for.
+type ImportResult struct {
+	Queued      int           `json:"queued"`
+	Invalid     []ImportError `json:"invalid"`
+	RateLimited bool          `json:"rateLimited"`
+}
+
+// Import creates up to MaxImportRows accounts. Every row is independent: a
+// row that fails validation or duplicates an existing account is reported in
+// Invalid, and the rest still import. The whole call is bounded by the import
+// rate limiter — a refused call returns RateLimited and creates nothing.
+func (s *AccountService) Import(ctx context.Context, caller string, rows []AccountInput) (ImportResult, error) {
+	res := ImportResult{Invalid: []ImportError{}}
+	if len(rows) == 0 {
+		return res, fmt.Errorf("%w: import must carry at least one row", domain.ErrValidation)
+	}
+	if len(rows) > MaxImportRows {
+		return res, fmt.Errorf("%w: import carries %d rows, the cap is %d", domain.ErrValidation, len(rows), MaxImportRows)
+	}
+	if s.imports != nil && !s.imports.Allow(caller, s.clock.Now()) {
+		// Refuse the whole call rather than a subset: a partial import under a
+		// rate limit is how an operator loses track of what landed.
+		res.RateLimited = true
+		return res, domain.ErrRateLimited
+	}
+
+	for i, in := range rows {
+		if err := in.Validate(); err != nil {
+			res.Invalid = append(res.Invalid, ImportError{Row: i, Reason: err.Error()})
+			continue
+		}
+		// Create already seals the credential, stores and packs the row, and
+		// publishes the SSE frame. A conflict is a row-level outcome.
+		if _, _, err := s.Create(ctx, in); err != nil {
+			res.Invalid = append(res.Invalid, ImportError{Row: i, Reason: err.Error()})
+			continue
+		}
+		res.Queued++
+	}
+	s.logger.Info("accounts imported", "queued", res.Queued, "invalid", len(res.Invalid))
+	return res, nil
 }
 
 const timeRFC3339 = "2006-01-02T15:04:05Z07:00"

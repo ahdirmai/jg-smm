@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"errors"
+	"strconv"
 	"testing"
 
 	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/domain"
@@ -228,4 +230,89 @@ func TestAccountPauseMissing(t *testing.T) {
 	if _, err := svc.Pause(context.Background(), "ghost"); err == nil {
 		t.Fatal("want error for a missing account")
 	}
+}
+
+func TestAccountImport(t *testing.T) {
+	newSvc := func() *AccountService {
+		store := newFakeWorkerStore()
+		accounts := newFakeAccountStore()
+		packer := NewPacker(store, accounts, PackerConfig{MaxPerContainer: 10, AutoCreate: true})
+		return NewAccountService(accounts, store, packer, AccountConfig{Sealer: stubSealer{}})
+	}
+
+	row := func(u string) AccountInput {
+		return AccountInput{Platform: domain.PlatformInstagram, Username: u, Password: "pw"}
+	}
+
+	t.Run("queues valid rows and reports invalid ones", func(t *testing.T) {
+		svc := newSvc()
+		res, err := svc.Import(context.Background(), "1.2.3.4", []AccountInput{
+			row("ok-1"),
+			{Platform: domain.PlatformInstagram, Username: "", Password: "pw"}, // invalid: no username
+			row("ok-2"),
+		})
+		if err != nil {
+			t.Fatalf("import: %v", err)
+		}
+		if res.Queued != 2 {
+			t.Errorf("queued = %d, want 2", res.Queued)
+		}
+		if len(res.Invalid) != 1 || res.Invalid[0].Row != 1 {
+			t.Errorf("invalid = %+v, want row 1", res.Invalid)
+		}
+		if res.RateLimited {
+			t.Error("rate limited without exceeding the budget")
+		}
+	})
+
+	t.Run("rejects an empty import", func(t *testing.T) {
+		svc := newSvc()
+		if _, err := svc.Import(context.Background(), "1.2.3.4", nil); err == nil {
+			t.Fatal("want validation error for an empty import")
+		}
+	})
+
+	t.Run("rejects an over-cap import", func(t *testing.T) {
+		svc := newSvc()
+		rows := make([]AccountInput, MaxImportRows+1)
+		for i := range rows {
+			rows[i] = row("u-" + strconv.Itoa(i))
+		}
+		if _, err := svc.Import(context.Background(), "1.2.3.4", rows); err == nil {
+			t.Fatal("want validation error over the import cap")
+		}
+	})
+
+	t.Run("rate limits above the budget", func(t *testing.T) {
+		svc := newSvc()
+		// ImportRateLimit per minute per caller; the 11th call is refused.
+		for i := 0; i < ImportRateLimit; i++ {
+			if _, err := svc.Import(context.Background(), "1.2.3.4", []AccountInput{row("rl-" + strconv.Itoa(i))}); err != nil {
+				t.Fatalf("import %d: unexpected error: %v", i, err)
+			}
+		}
+		res, err := svc.Import(context.Background(), "1.2.3.4", []AccountInput{row("rl-over")})
+		if !errors.Is(err, domain.ErrRateLimited) {
+			t.Fatalf("over-budget error = %v, want ErrRateLimited", err)
+		}
+		if !res.RateLimited {
+			t.Error("rateLimited flag not set on refusal")
+		}
+		if res.Queued != 0 {
+			t.Errorf("over-budget import queued %d rows, want 0", res.Queued)
+		}
+	})
+
+	t.Run("rate limit is per caller", func(t *testing.T) {
+		svc := newSvc()
+		for i := 0; i < ImportRateLimit; i++ {
+			if _, err := svc.Import(context.Background(), "1.2.3.4", []AccountInput{row("a-" + strconv.Itoa(i))}); err != nil {
+				t.Fatalf("import %d: %v", i, err)
+			}
+		}
+		// A different caller is a fresh budget.
+		if _, err := svc.Import(context.Background(), "5.6.7.8", []AccountInput{row("b-1")}); err != nil {
+			t.Fatalf("second caller import: %v", err)
+		}
+	})
 }

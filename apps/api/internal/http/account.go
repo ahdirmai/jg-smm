@@ -29,6 +29,7 @@ func NewAccountHandler(accounts *service.AccountService) *AccountHandler {
 func (h *AccountHandler) Register(g *echo.Group) {
 	g.POST("/accounts", h.create)
 	g.GET("/accounts", h.list)
+	g.POST("/accounts/import", h.importRows)
 	g.POST("/accounts/:accountId", h.setStatus)
 	g.DELETE("/accounts/:accountId", h.remove)
 }
@@ -64,6 +65,67 @@ func (h *AccountHandler) create(c echo.Context) error {
 		return translateAccountError(err)
 	}
 	return c.JSON(http.StatusCreated, toAccountResponse(account))
+}
+
+// importRows bulk-creates accounts (P4-07). Per-row failures stay in the body
+// with a 200; only the call-level preconditions (empty, over-cap, rate limit)
+// produce an error status.
+func (h *AccountHandler) importRows(c echo.Context) error {
+	var req oapigen.ImportAccountsRequest
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+	if h.accounts == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "account service unavailable")
+	}
+
+	rows := make([]service.AccountInput, 0, len(req.Rows))
+	for _, r := range req.Rows {
+		tags := []string{}
+		if r.Tags != nil {
+			tags = *r.Tags
+		}
+		var proxyID *string
+		if r.ProxyGroupId.IsSpecified() && !r.ProxyGroupId.IsNull() {
+			p := r.ProxyGroupId.MustGet()
+			proxyID = &p
+		}
+		rows = append(rows, service.AccountInput{
+			Platform:     domain.Platform(r.Platform),
+			Username:     r.Username,
+			Password:     r.Password,
+			ProxyGroupID: proxyID,
+			Tags:         tags,
+		})
+	}
+
+	// The caller key is the client IP: imports are an operator action, and a
+	// shared-NAT office is the realistic worst case for a false refusal.
+	caller := c.RealIP()
+
+	res, err := h.accounts.Import(c.Request().Context(), caller, rows)
+	if err != nil {
+		if errors.Is(err, domain.ErrRateLimited) {
+			return echo.NewHTTPError(http.StatusTooManyRequests, "import rate limit exceeded; try again in a minute")
+		}
+		return translateAccountError(err)
+	}
+
+	invalid := make([]struct {
+		Reason string `json:"reason"`
+		Row    int    `json:"row"`
+	}, 0, len(res.Invalid))
+	for _, e := range res.Invalid {
+		invalid = append(invalid, struct {
+			Reason string `json:"reason"`
+			Row    int    `json:"row"`
+		}{Row: e.Row, Reason: e.Reason})
+	}
+	return c.JSON(http.StatusOK, oapigen.ImportResult{
+		Queued:      res.Queued,
+		Invalid:     invalid,
+		RateLimited: res.RateLimited,
+	})
 }
 
 // list returns every account without credentials.

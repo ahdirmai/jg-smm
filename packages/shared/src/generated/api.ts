@@ -134,6 +134,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/accounts/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Bulk-import worker accounts
+         * @description Validates and creates up to 100 account rows in one request. Each row
+         *     is created independently: a row that fails validation is reported, not
+         *     fatal, so one bad row does not discard the rest. The whole call is
+         *     rate-limited to 10 per minute per caller (P4-07).
+         *
+         */
+        post: operations["importAccounts"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/accounts/{accountId}": {
         parameters: {
             query?: never;
@@ -710,6 +734,25 @@ export interface components {
             proxyGroupId?: string | null;
             tags?: string[];
         };
+        ImportAccountsRequest: {
+            /** @description One row per account; the cap is the import batch. */
+            rows: components["schemas"]["CreateAccountRequest"][];
+        };
+        /** @description The import verdict. `queued` counts created rows; `invalid` lists the
+         *     rows rejected by validation or a duplicate; `rateLimited` is true when
+         *     the caller exceeded the import rate budget and rows were refused.
+         *      */
+        ImportResult: {
+            /** @description Accounts created (and packed when a slot exists). */
+            queued: number;
+            /** @description One entry per rejected row, with a reason. */
+            invalid: {
+                /** @description Zero-based index into the request rows. */
+                row: number;
+                reason: string;
+            }[];
+            rateLimited: boolean;
+        };
         Account: {
             id: string;
             /** @enum {string} */
@@ -1186,6 +1229,34 @@ export interface operations {
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             409: components["responses"]["Error"];
+        };
+    };
+    importAccounts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportAccountsRequest"];
+            };
+        };
+        responses: {
+            /** @description Import result (always 200; per-row failures are in the body). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportResult"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            429: components["responses"]["Error"];
         };
     };
     setAccountStatus: {
