@@ -33,6 +33,9 @@ type Config struct {
 	JWTIssuer string
 	// SecureCookies sets the Secure flag on auth cookies (true behind HTTPS).
 	SecureCookies bool
+	// CredentialKeyBase64 is the AES-256 key (base64) for credential encryption
+	// at rest. Required when the DB is configured.
+	CredentialKeyBase64 string
 }
 
 // Load reads configuration from the environment, applying safe defaults.
@@ -48,6 +51,7 @@ func Load() (Config, error) {
 		JWTSecret:              os.Getenv("JWT_SECRET"),
 		JWTIssuer:              env("JWT_ISSUER", "smm-api"),
 		SecureCookies:          envBool("SECURE_COOKIES", false),
+		CredentialKeyBase64:    os.Getenv("CREDENTIAL_KEY"),
 	}
 
 	if cfg.ProvisionerMode != "static" && cfg.ProvisionerMode != "k8s" {
@@ -59,6 +63,10 @@ func Load() (Config, error) {
 	// The JWT secret is only meaningful once the API talks to the DB (auth on).
 	if cfg.DatabaseURL != "" && len(cfg.JWTSecret) < 16 {
 		return Config{}, fmt.Errorf("config: JWT_SECRET must be set (>= 16 bytes) when DATABASE_URL is configured")
+	}
+	// Credential encryption is mandatory whenever accounts can be stored.
+	if cfg.DatabaseURL != "" && cfg.CredentialKeyBase64 == "" {
+		return Config{}, fmt.Errorf("config: CREDENTIAL_KEY must be set (base64 32-byte key) when DATABASE_URL is configured")
 	}
 	return cfg, nil
 }

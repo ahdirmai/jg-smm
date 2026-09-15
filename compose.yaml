@@ -103,6 +103,7 @@ services:
       ACTION_BATCH_PARALLELISM: ${ACTION_BATCH_PARALLELISM:-2}
       JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-me-0123456789}
       JWT_ISSUER: ${JWT_ISSUER:-smm-api}
+      CREDENTIAL_KEY: ${CREDENTIAL_KEY:-v0k2nMVGJAq5Ta69vg36gcxNB4wiClCeOFMC6WBemH8=}
       SECURE_COOKIES: ${SECURE_COOKIES:-false}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     ports:

@@ -66,10 +66,11 @@
 
 ## P1 — Account Lifecycle & Provisioning
 
-| Ticket | Title            | Status | Commit | Date    | Notes                                                                                                                                                                                                                    |
-| ------ | ---------------- | ------ | ------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| P1-01  | ERD → migrations | DONE   | —      | 2026-09 | Migration 000003: platform/auth/account/worker/desired/source/provision enums + proxy_group, worker, account, heartbeat, provision_log. `UNIQUE(worker_id, platform)` + `UNIQUE(platform, username)` verified up→down→up |
-| P1-02  | Domain & port    | DONE   | —      | 2026-09 | `internal/domain` entities/enums (zero internal imports) + `internal/port` K8sClient/Publisher/WorkerStore/AccountStore/ProxyGroupStore/ProvisionLogStore. Arch test + domain unit tests green                           |
+| Ticket | Title             | Status | Commit | Date    | Notes                                                                                                                                                                                                                    |
+| ------ | ----------------- | ------ | ------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --- | --- | --- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| P1-01  | ERD → migrations  | DONE   | —      | 2026-09 | Migration 000003: platform/auth/account/worker/desired/source/provision enums + proxy_group, worker, account, heartbeat, provision_log. `UNIQUE(worker_id, platform)` + `UNIQUE(platform, username)` verified up→down→up |
+| P1-02  | Domain & port     | DONE   | —      | 2026-09 | `internal/domain` entities/enums (zero internal imports) + `internal/port` K8sClient/Publisher/WorkerStore/AccountStore/ProxyGroupStore/ProvisionLogStore. Arch test + domain unit tests green                           |
+| P1-07  | Credential crypto | DONE   | —      | 2026-09 | `internal/adapter/crypto` AES-256-GCM Sealer ([nonce                                                                                                                                                                     |     | ct  |     | tag]); round-trip/tamper/wrong-key tests. `CREDENTIAL_KEY` config (required with DB). CI `credential-guard` job + `scripts/check-credentials.sh` |
 
 ## Frontend prototype (pre-implementation review)
 

@@ -40,3 +40,17 @@ func TestLoad_InvalidBatchParallelism(t *testing.T) {
 		t.Fatal("want error for ACTION_BATCH_PARALLELISM < 1")
 	}
 }
+
+func TestLoad_RequiresCredentialKeyWithDB(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://x:y@localhost:5432/db")
+	t.Setenv("JWT_SECRET", "0123456789abcdef")
+	t.Setenv("CREDENTIAL_KEY", "")
+	if _, err := Load(); err == nil {
+		t.Fatal("want error when DATABASE_URL is set but CREDENTIAL_KEY is empty")
+	}
+
+	t.Setenv("CREDENTIAL_KEY", "v0k2nMVGJAq5Ta69vg36gcxNB4wiClCeOFMC6WBemH8=")
+	if _, err := Load(); err != nil {
+		t.Fatalf("unexpected error with a key present: %v", err)
+	}
+}

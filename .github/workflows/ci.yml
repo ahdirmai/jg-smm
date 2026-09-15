@@ -163,6 +163,17 @@ jobs:
         run: migrate -path apps/api/db/migrations -database "$MIGRATE_URL" down -all
 
   # ---------------------------------------------------------------------------
+  # Blocks plaintext credentials and exposed credential columns (P1-07).
+  # ---------------------------------------------------------------------------
+  credential-guard:
+    name: credential guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan for plaintext credentials
+        run: ./scripts/check-credentials.sh
+
+  # ---------------------------------------------------------------------------
   # Container image scan. Blocks on fixable HIGH/CRITICAL findings.
   # ---------------------------------------------------------------------------
   trivy:
@@ -186,7 +197,7 @@ jobs:
   # ---------------------------------------------------------------------------
   ci-ok:
     name: ci-ok
-    needs: [js, go, codegen, migrate-dry, trivy]
+    needs: [js, go, codegen, migrate-dry, credential-guard, trivy]
     runs-on: ubuntu-latest
     steps:
       - run: echo "all checks passed"
