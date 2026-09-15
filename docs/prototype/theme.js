@@ -15,6 +15,10 @@
     var root = document.documentElement;
     root.classList.toggle('dark', theme === 'dark');
     root.classList.toggle('light', theme === 'light');
+    // Let any rendered theme switch reflect the new state.
+    if (document.readyState !== 'loading') {
+      window.dispatchEvent(new CustomEvent('smmthemechange', { detail: theme }));
+    }
   }
 
   // Default dark; respect a saved choice, else the OS preference.
@@ -44,7 +48,51 @@
       this.set(this.get() === 'dark' ? 'light' : 'dark');
       if (window.lucide) window.lucide.createIcons();
     },
+    /**
+     * Render a segmented Light/Dark switch bound to the current theme.
+     * Returns markup; call bindThemeSwitch() afterwards to wire it up.
+     */
+    switchMarkup: function () {
+      var cur = this.get();
+      var seg = function (value, label, icon) {
+        return (
+          '<button type="button" data-theme-set="' +
+          value +
+          '" aria-pressed="' +
+          (cur === value) +
+          '">' +
+          '<i data-lucide="' +
+          icon +
+          '" class="w-3.5 h-3.5"></i>' +
+          label +
+          '</button>'
+        );
+      };
+      return (
+        '<div class="theme-switch" role="group" aria-label="Theme">' +
+        seg('light', 'Light', 'sun') +
+        seg('dark', 'Dark', 'moon') +
+        '</div>'
+      );
+    },
+    bindThemeSwitch: function () {
+      var self = this;
+      document.querySelectorAll('[data-theme-set]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          self.set(btn.getAttribute('data-theme-set'));
+          if (window.lucide) window.lucide.createIcons();
+        });
+      });
+    },
   };
+
+  // Keep every rendered switch in sync when the theme changes anywhere.
+  window.addEventListener('smmthemechange', function (e) {
+    var cur = e.detail;
+    document.querySelectorAll('[data-theme-set]').forEach(function (btn) {
+      btn.setAttribute('aria-pressed', String(btn.getAttribute('data-theme-set') === cur));
+    });
+  });
 
   if (window.tailwind) {
     var hsl = function (name) {

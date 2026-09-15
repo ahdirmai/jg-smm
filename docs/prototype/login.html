@@ -12,7 +12,9 @@
     <div class="grid min-h-screen place-items-center px-6">
       <div class="w-full max-w-sm">
         <div class="mb-6 flex flex-col items-center gap-3 text-center">
-          <span class="grid h-11 w-11 place-items-center rounded-xl bg-primary text-primary-foreground">
+          <span
+            class="grid h-11 w-11 place-items-center rounded-xl bg-primary text-primary-foreground"
+          >
             <i data-lucide="activity" class="w-6 h-6"></i>
           </span>
           <div>
@@ -21,17 +23,32 @@
           </div>
         </div>
 
-        <form class="card p-6 space-y-4" onsubmit="event.preventDefault(); location.href='dashboard.html'">
+        <form
+          class="card p-6 space-y-4"
+          onsubmit="event.preventDefault(); location.href='dashboard.html'"
+        >
           <div>
             <label class="label" for="email">Email</label>
-            <input id="email" class="input" type="email" placeholder="owner@local.test" value="owner@local.test" />
+            <input
+              id="email"
+              class="input"
+              type="email"
+              placeholder="owner@local.test"
+              value="owner@local.test"
+            />
           </div>
           <div>
             <div class="flex items-center justify-between">
               <label class="label" for="password">Password</label>
               <a href="#" class="helper underline-offset-4 hover:underline">Forgot?</a>
             </div>
-            <input id="password" class="input" type="password" placeholder="••••••••" value="devpass-123456" />
+            <input
+              id="password"
+              class="input"
+              type="password"
+              placeholder="••••••••"
+              value="devpass-123456"
+            />
           </div>
           <button class="btn btn-primary w-full justify-center" type="submit">Sign in</button>
         </form>
@@ -42,12 +59,17 @@
       </div>
     </div>
 
-        <button class="btn btn-ghost btn-icon theme-float" title="Toggle light / dark" aria-label="Toggle theme"
-      onclick="window.smmTheme && window.smmTheme.toggle()">
-      <span class="theme-toggle-icon theme-sun"><i data-lucide="sun" class="w-4 h-4"></i></span>
-      <span class="theme-toggle-icon theme-moon"><i data-lucide="moon" class="w-4 h-4"></i></span>
-    </button>
+    <div class="theme-float" id="theme-slot"></div>
     <script src="https://unpkg.com/lucide@latest"></script>
-    <script>lucide.createIcons();</script>
+    <script>
+      (function () {
+        var slot = document.getElementById('theme-slot');
+        if (slot && window.smmTheme) {
+          slot.innerHTML = window.smmTheme.switchMarkup();
+          window.smmTheme.bindThemeSwitch();
+        }
+        lucide.createIcons();
+      })();
+    </script>
   </body>
 </html>

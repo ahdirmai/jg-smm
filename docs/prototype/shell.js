@@ -72,9 +72,11 @@
   const subtitle = document.body.dataset.subtitle || '';
   const actions = document.body.dataset.actions || '';
 
-  // Theme toggle: both icons are rendered, CSS shows the relevant one.
-  const themeToggle = `
-    <button class="btn btn-ghost btn-icon btn-sm" title="Toggle light / dark" aria-label="Toggle theme"
+  // Theme switch: explicit segmented Light/Dark control (see theme.js).
+  const themeToggle =
+    window.smmTheme && window.smmTheme.switchMarkup
+      ? window.smmTheme.switchMarkup()
+      : `<button class="btn btn-ghost btn-icon btn-sm" title="Toggle light / dark" aria-label="Toggle theme"
       onclick="window.smmTheme && window.smmTheme.toggle()">
       <span class="theme-toggle-icon theme-sun">${icon('sun')}</span>
       <span class="theme-toggle-icon theme-moon">${icon('moon')}</span>
@@ -135,6 +137,7 @@
     app.outerHTML = html;
     document.getElementById('page').innerHTML = pageBody;
     bindNavGroups();
+    if (window.smmTheme && window.smmTheme.bindThemeSwitch) window.smmTheme.bindThemeSwitch();
     if (window.lucide) window.lucide.createIcons();
     if (window.smmTheme) window.smmTheme.set(window.smmTheme.get());
   });
