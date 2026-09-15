@@ -16,12 +16,13 @@ const (
 // optional handlers (e.g. Auth) are skipped when nil so the API can boot before
 // the database is wired.
 type Dependencies struct {
-	Health     *HealthHandler
-	Auth       *AuthHandler
-	Internal   *InternalHandler
-	Containers *ContainerHandler
-	Accounts   *AccountHandler
-	Stream     *StreamHandler
+	Health      *HealthHandler
+	Auth        *AuthHandler
+	Internal    *InternalHandler
+	Containers  *ContainerHandler
+	Accounts    *AccountHandler
+	ProxyGroups *ProxyGroupHandler
+	Stream      *StreamHandler
 }
 
 // NewRouter builds the Echo instance with middleware and routes. It does not
@@ -64,6 +65,9 @@ func NewRouter(deps Dependencies) *echo.Echo {
 		}
 		if deps.Stream != nil {
 			deps.Stream.Register(api)
+		}
+		if deps.ProxyGroups != nil {
+			deps.ProxyGroups.Register(api)
 		}
 	}
 

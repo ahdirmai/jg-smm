@@ -286,6 +286,20 @@ type CreateContainerRequest struct {
 	Region string `json:"region"`
 }
 
+// CreateProxyGroupRequest defines model for CreateProxyGroupRequest.
+type CreateProxyGroupRequest struct {
+	DailyBudgetMb  int    `json:"dailyBudgetMb"`
+	MaxConcurrency int    `json:"maxConcurrency"`
+	Name           string `json:"name"`
+
+	// PoolKey Write-only; sealed at rest, never returned.
+	PoolKey  string `json:"poolKey"`
+	Provider string `json:"provider"`
+
+	// Region ISO 3166-1 alpha-2.
+	Region string `json:"region"`
+}
+
 // ErrorBody defines model for ErrorBody.
 type ErrorBody struct {
 	Error ErrorDetail `json:"error"`
@@ -333,6 +347,25 @@ type LoginResponse struct {
 type MeResponse struct {
 	Role   Role   `json:"role"`
 	UserId string `json:"userId"`
+}
+
+// ProxyGroup A residential proxy pool. The pool key is write-only and never present
+// in a response.
+type ProxyGroup struct {
+	CreatedAt      *time.Time `json:"createdAt,omitempty"`
+	DailyBudgetMb  int        `json:"dailyBudgetMb"`
+	Id             string     `json:"id"`
+	MaxConcurrency int        `json:"maxConcurrency"`
+	Name           string     `json:"name"`
+	Provider       string     `json:"provider"`
+
+	// Region ISO 3166-1 alpha-2.
+	Region string `json:"region"`
+}
+
+// ProxyGroupList defines model for ProxyGroupList.
+type ProxyGroupList struct {
+	ProxyGroups []ProxyGroup `json:"proxyGroups"`
 }
 
 // ReadinessStatus defines model for ReadinessStatus.
@@ -386,6 +419,9 @@ type AccountId = string
 // ContainerId defines model for ContainerId.
 type ContainerId = string
 
+// ProxyGroupId defines model for ProxyGroupId.
+type ProxyGroupId = string
+
 // Error defines model for Error.
 type Error = ErrorBody
 
@@ -400,6 +436,9 @@ type LoginJSONRequestBody = LoginRequest
 
 // CreateContainerJSONRequestBody defines body for CreateContainer for application/json ContentType.
 type CreateContainerJSONRequestBody = CreateContainerRequest
+
+// CreateProxyGroupJSONRequestBody defines body for CreateProxyGroup for application/json ContentType.
+type CreateProxyGroupJSONRequestBody = CreateProxyGroupRequest
 
 // PostAccountCallbackJSONRequestBody defines body for PostAccountCallback for application/json ContentType.
 type PostAccountCallbackJSONRequestBody = AccountCallback

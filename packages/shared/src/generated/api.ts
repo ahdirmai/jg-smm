@@ -238,6 +238,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/proxy-groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List proxy groups
+         * @description Returns every proxy group without pool keys.
+         */
+        get: operations["listProxyGroups"];
+        put?: never;
+        /**
+         * Create a proxy group
+         * @description Stores a residential proxy pool. The pool key is sealed at rest with
+         *     AES-256-GCM and is write-only: it is never returned by any endpoint.
+         *     Requires the `act` permission.
+         *
+         */
+        post: operations["createProxyGroup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/proxy-groups/{proxyGroupId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The proxy group ID. */
+                proxyGroupId: components["parameters"]["ProxyGroupId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete a proxy group
+         * @description Removes the pool. Accounts referencing it fall back to no proxy (the
+         *     column is ON DELETE SET NULL), so a delete never strands an account.
+         *
+         */
+        delete: operations["deleteProxyGroup"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/stream": {
         parameters: {
             query?: never;
@@ -463,6 +515,33 @@ export interface components {
         AccountList: {
             accounts: components["schemas"]["Account"][];
         };
+        /** @description A residential proxy pool. The pool key is write-only and never present
+         *     in a response.
+         *      */
+        ProxyGroup: {
+            id: string;
+            name: string;
+            /** @description ISO 3166-1 alpha-2. */
+            region: string;
+            provider: string;
+            maxConcurrency: number;
+            dailyBudgetMb: number;
+            /** Format: date-time */
+            createdAt?: string;
+        };
+        ProxyGroupList: {
+            proxyGroups: components["schemas"]["ProxyGroup"][];
+        };
+        CreateProxyGroupRequest: {
+            name: string;
+            /** @description ISO 3166-1 alpha-2. */
+            region: string;
+            provider: string;
+            /** @description Write-only; sealed at rest, never returned. */
+            poolKey: string;
+            maxConcurrency: number;
+            dailyBudgetMb: number;
+        };
         SetAccountStatusRequest: {
             /** @enum {string} */
             status: "ACTIVE" | "PAUSED";
@@ -520,6 +599,8 @@ export interface components {
         ContainerId: string;
         /** @description The account ID. */
         AccountId: string;
+        /** @description The proxy group ID. */
+        ProxyGroupId: string;
     };
     requestBodies: never;
     headers: never;
@@ -858,6 +939,80 @@ export interface operations {
             };
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
+        };
+    };
+    listProxyGroups: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Proxy groups. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProxyGroupList"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    createProxyGroup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateProxyGroupRequest"];
+            };
+        };
+        responses: {
+            /** @description Proxy group created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProxyGroup"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+        };
+    };
+    deleteProxyGroup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The proxy group ID. */
+                proxyGroupId: components["parameters"]["ProxyGroupId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
         };
     };
     streamEvents: {

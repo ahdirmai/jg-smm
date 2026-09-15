@@ -150,6 +150,55 @@ func (fakeProvisionLogStore) ListByWorker(_ context.Context, _ string, _ int) ([
 	return nil, nil
 }
 
+// fakeProxyGroupStore is the minimal port.ProxyGroupStore for handler tests.
+// Duplicate names surface as domain.ErrConflict, mirroring the DB unique.
+type fakeProxyGroupStore struct {
+	groups map[string]domain.ProxyGroup
+}
+
+func newMemProxyStoreForHTTP() *fakeProxyGroupStore {
+	return &fakeProxyGroupStore{groups: map[string]domain.ProxyGroup{}}
+}
+
+func (s *fakeProxyGroupStore) GetByID(_ context.Context, id string) (domain.ProxyGroup, error) {
+	g, ok := s.groups[id]
+	if !ok {
+		return domain.ProxyGroup{}, domain.ErrNotFound
+	}
+	return g, nil
+}
+
+func (s *fakeProxyGroupStore) List(_ context.Context) ([]domain.ProxyGroup, error) {
+	out := make([]domain.ProxyGroup, 0, len(s.groups))
+	for _, g := range s.groups {
+		out = append(out, g)
+	}
+	return out, nil
+}
+
+func (s *fakeProxyGroupStore) Create(_ context.Context, g domain.ProxyGroup) (domain.ProxyGroup, error) {
+	for _, existing := range s.groups {
+		if existing.Name == g.Name {
+			return domain.ProxyGroup{}, domain.ErrConflict
+		}
+	}
+	if g.ID == "" {
+		g.ID = "pg-http-1"
+	}
+	s.groups[g.ID] = g
+	return g, nil
+}
+
+func (s *fakeProxyGroupStore) Update(_ context.Context, g domain.ProxyGroup) (domain.ProxyGroup, error) {
+	s.groups[g.ID] = g
+	return g, nil
+}
+
+func (s *fakeProxyGroupStore) Delete(_ context.Context, id string) error {
+	delete(s.groups, id)
+	return nil
+}
+
 func newTestInternal() (*InternalHandler, *service.JobService, *fakeWorkerStore, *fakeAccountStore) {
 	workers := newMemWorkerStoreForHTTP()
 	accounts := newMemAccountStoreForHTTP()

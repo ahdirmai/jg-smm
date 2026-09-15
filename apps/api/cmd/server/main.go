@@ -127,6 +127,16 @@ func main() {
 		deps.Accounts = apihttp.NewAccountHandler(accountSvc)
 		deps.Stream = apihttp.NewStreamHandler(hub)
 
+		// Proxy groups (P1-14): residential pools, region-matched. The same
+		// sealer covers the pool key and the account password.
+		proxyGroupRepo := repository.NewProxyGroupRepo(pg.Queries())
+		proxyGroupSvc := service.NewProxyGroupService(proxyGroupRepo, accountRepo, workerRepo, service.ProxyGroupConfig{
+			Sealer: sealer,
+			Clock:  adapter.SystemClock{},
+			Logger: logger,
+		})
+		deps.ProxyGroups = apihttp.NewProxyGroupHandler(proxyGroupSvc)
+
 		// Provisioning driver: k8s in a cluster, static (bookkeeping only) on
 		// a workstation. The reconciler is a pure loop over this port, so both
 		// tiers share the same code path (P1-03/P1-04). The LoggingDriver wraps

@@ -305,6 +305,79 @@ paths:
         '403':
           $ref: '#/components/responses/Error'
 
+  /api/proxy-groups:
+    post:
+      tags: [proxy-groups]
+      summary: Create a proxy group
+      description: |
+        Stores a residential proxy pool. The pool key is sealed at rest with
+        AES-256-GCM and is write-only: it is never returned by any endpoint.
+        Requires the `act` permission.
+      operationId: createProxyGroup
+      security:
+        - accessCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateProxyGroupRequest'
+      responses:
+        '201':
+          description: Proxy group created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProxyGroup'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+    get:
+      tags: [proxy-groups]
+      summary: List proxy groups
+      description: Returns every proxy group without pool keys.
+      operationId: listProxyGroups
+      security:
+        - accessCookie: []
+      responses:
+        '200':
+          description: Proxy groups.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProxyGroupList'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+
+  /api/proxy-groups/{proxyGroupId}:
+    parameters:
+      - $ref: '#/components/parameters/ProxyGroupId'
+    delete:
+      tags: [proxy-groups]
+      summary: Delete a proxy group
+      description: |
+        Removes the pool. Accounts referencing it fall back to no proxy (the
+        column is ON DELETE SET NULL), so a delete never strands an account.
+      operationId: deleteProxyGroup
+      security:
+        - accessCookie: []
+      responses:
+        '204':
+          description: Deleted.
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+
   /api/stream:
     get:
       tags: [stream]
@@ -422,6 +495,13 @@ components:
       schema:
         type: string
       description: The account ID.
+    ProxyGroupId:
+      name: proxyGroupId
+      in: path
+      required: true
+      schema:
+        type: string
+      description: The proxy group ID.
 
   securitySchemes:
     accessCookie:
@@ -690,6 +770,62 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Account'
+
+    ProxyGroup:
+      type: object
+      description: |
+        A residential proxy pool. The pool key is write-only and never present
+        in a response.
+      required: [id, name, region, provider, maxConcurrency, dailyBudgetMb]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        region:
+          type: string
+          description: ISO 3166-1 alpha-2.
+        provider:
+          type: string
+        maxConcurrency:
+          type: integer
+          minimum: 1
+        dailyBudgetMb:
+          type: integer
+          minimum: 1
+        createdAt:
+          type: string
+          format: date-time
+
+    ProxyGroupList:
+      type: object
+      required: [proxyGroups]
+      properties:
+        proxyGroups:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProxyGroup'
+
+    CreateProxyGroupRequest:
+      type: object
+      required: [name, region, provider, poolKey, maxConcurrency, dailyBudgetMb]
+      properties:
+        name:
+          type: string
+        region:
+          type: string
+          description: ISO 3166-1 alpha-2.
+        provider:
+          type: string
+        poolKey:
+          type: string
+          description: Write-only; sealed at rest, never returned.
+        maxConcurrency:
+          type: integer
+          minimum: 1
+        dailyBudgetMb:
+          type: integer
+          minimum: 1
 
     SetAccountStatusRequest:
       type: object
