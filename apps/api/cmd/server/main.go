@@ -152,8 +152,8 @@ func main() {
 		if cfg.MinioEndpoint != "" {
 			storage, err := storageadapter.New(ctx, storageadapter.Config{
 				Endpoint:   cfg.MinioEndpoint,
-				AccessKey:  cfg.MinioRootUser,
-				SecretKey:  cfg.MinioRootPassword,
+				AccessKey:  cfg.MinioUser,
+				SecretKey:  cfg.MinioPassword,
 				Bucket:     cfg.MinioBucket,
 				UseSSL:     cfg.MinioUseSSL,
 				MakeBucket: true,

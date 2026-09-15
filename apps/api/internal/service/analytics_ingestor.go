@@ -156,6 +156,8 @@ func (i *AnalyticsIngestor) IngestNow(ctx context.Context) (domain.AnalyticsInge
 }
 
 // ingestAccount pulls metrics + mentions for one account and writes them.
+// Only a fully successful pull touches last_fetched_at, so the freshness badge
+// means "data present", not merely "an attempt ran".
 func (i *AnalyticsIngestor) ingestAccount(ctx context.Context, acc domain.OfficialAccount) error {
 	snap, err := i.provider.FetchMetrics(ctx, acc)
 	if err != nil {
@@ -173,6 +175,10 @@ func (i *AnalyticsIngestor) ingestAccount(ctx context.Context, acc domain.Offici
 		if _, err := i.store.UpsertAnalyticsMention(ctx, m); err != nil {
 			return fmt.Errorf("upsert mention: %w", err)
 		}
+	}
+
+	if err := i.store.TouchOfficialAccountFetched(ctx, acc.ID); err != nil {
+		return fmt.Errorf("touch fetched: %w", err)
 	}
 	return nil
 }

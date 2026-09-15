@@ -72,6 +72,7 @@ type AnalyticsStore interface {
 	ListOfficialAccountsByPlatform(ctx context.Context, p domain.Platform, limit, offset *int) ([]domain.OfficialAccount, error)
 	CountOfficialAccountsByPlatform(ctx context.Context, p domain.Platform) (int, error)
 	UpdateOfficialAccount(ctx context.Context, a domain.OfficialAccount) (domain.OfficialAccount, error)
+	TouchOfficialAccountFetched(ctx context.Context, id string) error
 	ArchiveOfficialAccount(ctx context.Context, id string) (domain.OfficialAccount, error)
 	ListOfficialAccountsForIngest(ctx context.Context, provider domain.AnalyticsProvider, limit int) ([]domain.OfficialAccount, error)
 

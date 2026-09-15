@@ -88,6 +88,17 @@ func (f *httpAnalyticsStore) UpdateOfficialAccount(ctx context.Context, a domain
 	f.accounts[a.ID] = a
 	return a, nil
 }
+func (f *httpAnalyticsStore) TouchOfficialAccountFetched(ctx context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if a, ok := f.accounts[id]; ok {
+		now := time.Now()
+		a.LastFetchedAt = &now
+		f.accounts[id] = a
+	}
+	return nil
+}
+
 func (f *httpAnalyticsStore) ArchiveOfficialAccount(ctx context.Context, id string) (domain.OfficialAccount, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -165,6 +165,15 @@ func (r *AnalyticsRepo) UpdateOfficialAccount(ctx context.Context, a domain.Offi
 	return toOfficialAccount(row), nil
 }
 
+// TouchOfficialAccountFetched stamps a successful pull. See the query: it is
+// only ever called after a snapshot write.
+func (r *AnalyticsRepo) TouchOfficialAccountFetched(ctx context.Context, id string) error {
+	if err := r.q.TouchOfficialAccountFetched(ctx, uuidValue(id)); err != nil {
+		return fmt.Errorf("repository.analytics.TouchOfficialAccountFetched: %w", err)
+	}
+	return nil
+}
+
 // ArchiveOfficialAccount flips status to ARCHIVED. The row and its history stay
 // queryable; an archived account is simply excluded from the next ingest run.
 func (r *AnalyticsRepo) ArchiveOfficialAccount(ctx context.Context, id string) (domain.OfficialAccount, error) {

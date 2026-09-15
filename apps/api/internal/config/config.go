@@ -84,11 +84,11 @@ type Config struct {
 
 	// MinIO / S3 for raw scrape payloads (P2-04). The bucket is created on first
 	// use, so these can point at a fresh MinIO.
-	MinioEndpoint     string
-	MinioRootUser     string
-	MinioRootPassword string
-	MinioBucket       string
-	MinioUseSSL       bool
+	MinioEndpoint string
+	MinioUser     string
+	MinioPassword string
+	MinioBucket   string
+	MinioUseSSL   bool
 }
 
 // Load reads configuration from the environment, applying safe defaults.
@@ -125,11 +125,11 @@ func Load() (Config, error) {
 		AnalyticsProviderBaseURL:       env("ANALYTICS_PROVIDER_BASE_URL", "https://provider.example.com/v1"),
 		AnalyticsProviderKey:           os.Getenv("ANALYTICS_PROVIDER_KEY"),
 
-		MinioEndpoint:     env("MINIO_ENDPOINT", "minio:9000"),
-		MinioRootUser:     env("MINIO_ROOT_USER", "smm"),
-		MinioRootPassword: os.Getenv("MINIO_ROOT_PASSWORD"),
-		MinioBucket:       env("MINIO_BUCKET", "smm-raw"),
-		MinioUseSSL:       envBool("MINIO_USE_SSL", false),
+		MinioEndpoint: env("MINIO_ENDPOINT", "minio:9000"),
+		MinioUser:     env("MINIO_USER", "smm"),
+		MinioPassword: os.Getenv("MINIO_PASSWORD"),
+		MinioBucket:   env("MINIO_BUCKET", "smm-raw"),
+		MinioUseSSL:   envBool("MINIO_USE_SSL", false),
 	}
 
 	if cfg.ProvisionerMode != "static" && cfg.ProvisionerMode != "k8s" {

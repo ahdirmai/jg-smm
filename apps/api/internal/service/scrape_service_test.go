@@ -314,6 +314,37 @@ func TestAnalyticsIngestorPartialRun(t *testing.T) {
 	}
 }
 
+func TestAnalyticsIngestorMarksFetchedOnlyOnSuccess(t *testing.T) {
+	store := newFakeAnalyticsStore()
+	acc := seedOfficial(store, "brand-fresh")
+
+	prov := &perAccountProvider{
+		failHandle: acc.Handle,
+		inner:      &fakeProvider{metrics: domain.AnalyticsSnapshot{Provider: domain.AnalyticsProviderA}},
+	}
+	ing := NewAnalyticsIngestor(store, prov, AnalyticsIngestorConfig{})
+
+	if _, err := ing.IngestNow(context.Background()); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	// A failed pull must NOT stamp last_fetched_at, otherwise the freshness
+	// badge would claim data is present when it is not.
+	got, _ := store.GetOfficialAccount(context.Background(), acc.ID)
+	if got.LastFetchedAt != nil {
+		t.Fatal("failed account must not be marked fetched")
+	}
+
+	// Flip the account to healthy and re-run: now it must be stamped.
+	prov.failHandle = ""
+	if _, err := ing.IngestNow(context.Background()); err != nil {
+		t.Fatalf("ingest again: %v", err)
+	}
+	got, _ = store.GetOfficialAccount(context.Background(), acc.ID)
+	if got.LastFetchedAt == nil {
+		t.Fatal("successful account must be marked fetched")
+	}
+}
+
 func TestAnalyticsIngestorEmptyFleetIsSuccess(t *testing.T) {
 	store := newFakeAnalyticsStore()
 	ing := NewAnalyticsIngestor(store, &fakeProvider{}, AnalyticsIngestorConfig{})
