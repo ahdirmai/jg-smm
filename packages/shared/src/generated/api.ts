@@ -106,6 +106,65 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/accounts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List worker accounts
+         * @description Returns every account without credentials.
+         */
+        get: operations["listAccounts"];
+        put?: never;
+        /**
+         * Add a worker account
+         * @description Stores an account (credential sealed at rest with AES-256-GCM) and
+         *     packs it into the first container with a free platform slot,
+         *     auto-creating an AUTO container when the fleet is full and
+         *     PROVISION_AUTO_CREATE is on. Requires the `act` permission.
+         *
+         */
+        post: operations["createAccount"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/accounts/{accountId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The account ID. */
+                accountId: components["parameters"]["AccountId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Pause or resume an account
+         * @description `pause` suspends use (the session survives on the container PVC);
+         *     `resume` reactivates without a fresh login.
+         *
+         */
+        post: operations["setAccountStatus"];
+        /**
+         * Remove an account
+         * @description Releases the container slot (an AUTO container that empties is reaped)
+         *     and deletes the account row.
+         *
+         */
+        delete: operations["deleteAccount"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/containers": {
         parameters: {
             query?: never;
@@ -334,6 +393,39 @@ export interface components {
         ContainerList: {
             containers: components["schemas"]["Container"][];
         };
+        CreateAccountRequest: {
+            /** @enum {string} */
+            platform: "instagram" | "threads" | "facebook" | "linkedin" | "x" | "youtube" | "tiktok";
+            username: string;
+            /**
+             * Format: password
+             * @description Sealed at rest; never returned or logged.
+             */
+            password: string;
+            proxyGroupId?: string | null;
+            tags?: string[];
+        };
+        Account: {
+            id: string;
+            /** @enum {string} */
+            platform: "instagram" | "threads" | "facebook" | "linkedin" | "x" | "youtube" | "tiktok";
+            username: string;
+            handle?: string | null;
+            /** @enum {string} */
+            authStatus: "AUTHENTICATING" | "NEEDS_INPUT" | "AUTHENTICATED" | "FAILED" | "QUARANTINED";
+            /** @enum {string} */
+            status: "ACTIVE" | "PAUSED" | "ARCHIVED" | "DEAD";
+            workerId?: string | null;
+            tags?: string[];
+            lastError?: string | null;
+        };
+        AccountList: {
+            accounts: components["schemas"]["Account"][];
+        };
+        SetAccountStatusRequest: {
+            /** @enum {string} */
+            status: "ACTIVE" | "PAUSED";
+        };
         ActionCallback: {
             attemptId: string;
             status: components["schemas"]["AttemptStatus"];
@@ -385,6 +477,8 @@ export interface components {
     parameters: {
         /** @description The container ID. */
         ContainerId: string;
+        /** @description The account ID. */
+        AccountId: string;
     };
     requestBodies: never;
     headers: never;
@@ -525,6 +619,109 @@ export interface operations {
                 };
             };
             401: components["responses"]["Error"];
+        };
+    };
+    listAccounts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accounts. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountList"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    createAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateAccountRequest"];
+            };
+        };
+        responses: {
+            /** @description Account created (and packed when a slot exists). */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Account"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+        };
+    };
+    setAccountStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The account ID. */
+                accountId: components["parameters"]["AccountId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetAccountStatusRequest"];
+            };
+        };
+        responses: {
+            /** @description Account updated. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Account"];
+                };
+            };
+            400: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    deleteAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The account ID. */
+                accountId: components["parameters"]["AccountId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Account removed. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
         };
     };
     listContainers: {

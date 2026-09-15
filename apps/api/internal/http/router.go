@@ -20,6 +20,7 @@ type Dependencies struct {
 	Auth       *AuthHandler
 	Internal   *InternalHandler
 	Containers *ContainerHandler
+	Accounts   *AccountHandler
 }
 
 // NewRouter builds the Echo instance with middleware and routes. It does not
@@ -60,6 +61,11 @@ func NewRouter(deps Dependencies) *echo.Echo {
 		// carries both; the handler only adds routes.
 		containers := e.Group("/api", deps.Auth.requireAuth(), RequirePermission(domain.PermAct))
 		deps.Containers.Register(containers)
+
+		// Accounts share the same permission tier as containers.
+		if deps.Accounts != nil {
+			deps.Accounts.Register(containers)
+		}
 	}
 
 	return e

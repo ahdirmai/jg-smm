@@ -156,17 +156,8 @@ type ContainerView struct {
 	Status       domain.WorkerStatus
 	Generation   int
 	ObservedGen  *int
-	Accounts     []AccountView
+	Accounts     []AccountSummary
 	CreatedAt    time.Time
-}
-
-// AccountView is the account summary shown inside a container (no credential).
-type AccountView struct {
-	ID         string
-	Platform   domain.Platform
-	Username   string
-	AuthStatus domain.AuthStatus
-	Status     domain.AccountStatus
 }
 
 // ToContainerView builds the read model for a single worker. Exported so the
@@ -176,9 +167,9 @@ func ToContainerView(w domain.Worker, accounts []domain.Account) ContainerView {
 }
 
 func toContainerView(w domain.Worker, accounts []domain.Account) ContainerView {
-	views := make([]AccountView, 0, len(accounts))
+	views := make([]AccountSummary, 0, len(accounts))
 	for _, a := range accounts {
-		views = append(views, AccountView{
+		views = append(views, AccountSummary{
 			ID:         a.ID,
 			Platform:   a.Platform,
 			Username:   a.Username,

@@ -109,7 +109,7 @@ func translateContainerError(err error) error {
 
 // toContainerResponse builds the API shape from a container view. accounts may
 // be empty; a container with zero accounts is a valid fleet state.
-func toContainerResponse(cv service.ContainerView, accounts []service.AccountView) oapigen.Container {
+func toContainerResponse(cv service.ContainerView, accounts []service.AccountSummary) oapigen.Container {
 	out := oapigen.Container{
 		Id:           cv.ID,
 		Name:         cv.Name,

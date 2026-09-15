@@ -27,3 +27,13 @@ var AllPlatforms = []Platform{
 
 // MVPPlatforms are the platforms enabled in the MVP rollout.
 var MVPPlatforms = []Platform{PlatformInstagram, PlatformThreads}
+
+// Valid reports whether p is a known platform value.
+func (p Platform) Valid() bool {
+	for _, known := range AllPlatforms {
+		if p == known {
+			return true
+		}
+	}
+	return false
+}

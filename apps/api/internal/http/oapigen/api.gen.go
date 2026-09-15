@@ -14,6 +14,34 @@ const (
 	AccessCookieScopes = "accessCookie.Scopes"
 )
 
+// Defines values for AccountAuthStatus.
+const (
+	AccountAuthStatusAUTHENTICATED  AccountAuthStatus = "AUTHENTICATED"
+	AccountAuthStatusAUTHENTICATING AccountAuthStatus = "AUTHENTICATING"
+	AccountAuthStatusFAILED         AccountAuthStatus = "FAILED"
+	AccountAuthStatusNEEDSINPUT     AccountAuthStatus = "NEEDS_INPUT"
+	AccountAuthStatusQUARANTINED    AccountAuthStatus = "QUARANTINED"
+)
+
+// Defines values for AccountPlatform.
+const (
+	AccountPlatformFacebook  AccountPlatform = "facebook"
+	AccountPlatformInstagram AccountPlatform = "instagram"
+	AccountPlatformLinkedin  AccountPlatform = "linkedin"
+	AccountPlatformThreads   AccountPlatform = "threads"
+	AccountPlatformTiktok    AccountPlatform = "tiktok"
+	AccountPlatformX         AccountPlatform = "x"
+	AccountPlatformYoutube   AccountPlatform = "youtube"
+)
+
+// Defines values for AccountStatus.
+const (
+	AccountStatusACTIVE   AccountStatus = "ACTIVE"
+	AccountStatusARCHIVED AccountStatus = "ARCHIVED"
+	AccountStatusDEAD     AccountStatus = "DEAD"
+	AccountStatusPAUSED   AccountStatus = "PAUSED"
+)
+
 // Defines values for AttemptStatus.
 const (
 	AttemptStatusCANCELLED AttemptStatus = "CANCELLED"
@@ -65,21 +93,32 @@ const (
 
 // Defines values for ContainerAccountPlatform.
 const (
-	Facebook  ContainerAccountPlatform = "facebook"
-	Instagram ContainerAccountPlatform = "instagram"
-	Linkedin  ContainerAccountPlatform = "linkedin"
-	Threads   ContainerAccountPlatform = "threads"
-	Tiktok    ContainerAccountPlatform = "tiktok"
-	X         ContainerAccountPlatform = "x"
-	Youtube   ContainerAccountPlatform = "youtube"
+	ContainerAccountPlatformFacebook  ContainerAccountPlatform = "facebook"
+	ContainerAccountPlatformInstagram ContainerAccountPlatform = "instagram"
+	ContainerAccountPlatformLinkedin  ContainerAccountPlatform = "linkedin"
+	ContainerAccountPlatformThreads   ContainerAccountPlatform = "threads"
+	ContainerAccountPlatformTiktok    ContainerAccountPlatform = "tiktok"
+	ContainerAccountPlatformX         ContainerAccountPlatform = "x"
+	ContainerAccountPlatformYoutube   ContainerAccountPlatform = "youtube"
 )
 
 // Defines values for ContainerAccountStatus.
 const (
-	ACTIVE   ContainerAccountStatus = "ACTIVE"
-	ARCHIVED ContainerAccountStatus = "ARCHIVED"
-	DEAD     ContainerAccountStatus = "DEAD"
-	PAUSED   ContainerAccountStatus = "PAUSED"
+	ContainerAccountStatusACTIVE   ContainerAccountStatus = "ACTIVE"
+	ContainerAccountStatusARCHIVED ContainerAccountStatus = "ARCHIVED"
+	ContainerAccountStatusDEAD     ContainerAccountStatus = "DEAD"
+	ContainerAccountStatusPAUSED   ContainerAccountStatus = "PAUSED"
+)
+
+// Defines values for CreateAccountRequestPlatform.
+const (
+	Facebook  CreateAccountRequestPlatform = "facebook"
+	Instagram CreateAccountRequestPlatform = "instagram"
+	Linkedin  CreateAccountRequestPlatform = "linkedin"
+	Threads   CreateAccountRequestPlatform = "threads"
+	Tiktok    CreateAccountRequestPlatform = "tiktok"
+	X         CreateAccountRequestPlatform = "x"
+	Youtube   CreateAccountRequestPlatform = "youtube"
 )
 
 // Defines values for HeartbeatBrowserStatus.
@@ -104,6 +143,34 @@ const (
 	STRATEGIST Role = "STRATEGIST"
 )
 
+// Defines values for SetAccountStatusRequestStatus.
+const (
+	SetAccountStatusRequestStatusACTIVE SetAccountStatusRequestStatus = "ACTIVE"
+	SetAccountStatusRequestStatusPAUSED SetAccountStatusRequestStatus = "PAUSED"
+)
+
+// Account defines model for Account.
+type Account struct {
+	AuthStatus AccountAuthStatus         `json:"authStatus"`
+	Handle     nullable.Nullable[string] `json:"handle,omitempty"`
+	Id         string                    `json:"id"`
+	LastError  nullable.Nullable[string] `json:"lastError,omitempty"`
+	Platform   AccountPlatform           `json:"platform"`
+	Status     AccountStatus             `json:"status"`
+	Tags       *[]string                 `json:"tags,omitempty"`
+	Username   string                    `json:"username"`
+	WorkerId   nullable.Nullable[string] `json:"workerId,omitempty"`
+}
+
+// AccountAuthStatus defines model for Account.AuthStatus.
+type AccountAuthStatus string
+
+// AccountPlatform defines model for Account.Platform.
+type AccountPlatform string
+
+// AccountStatus defines model for Account.Status.
+type AccountStatus string
+
 // AccountCallback defines model for AccountCallback.
 type AccountCallback struct {
 	AccountId  string     `json:"accountId"`
@@ -112,6 +179,11 @@ type AccountCallback struct {
 
 	// Handle Verified platform handle, set after a successful login.
 	Handle *string `json:"handle,omitempty"`
+}
+
+// AccountList defines model for AccountList.
+type AccountList struct {
+	Accounts []Account `json:"accounts"`
 }
 
 // ActionCallback defines model for ActionCallback.
@@ -185,6 +257,19 @@ type ContainerList struct {
 	Containers []Container `json:"containers"`
 }
 
+// CreateAccountRequest defines model for CreateAccountRequest.
+type CreateAccountRequest struct {
+	// Password Sealed at rest; never returned or logged.
+	Password     string                       `json:"password"`
+	Platform     CreateAccountRequestPlatform `json:"platform"`
+	ProxyGroupId nullable.Nullable[string]    `json:"proxyGroupId,omitempty"`
+	Tags         *[]string                    `json:"tags,omitempty"`
+	Username     string                       `json:"username"`
+}
+
+// CreateAccountRequestPlatform defines model for CreateAccountRequest.Platform.
+type CreateAccountRequestPlatform string
+
 // CreateContainerRequest defines model for CreateContainerRequest.
 type CreateContainerRequest struct {
 	// Name Optional display name. Omit to get a generated name.
@@ -255,6 +340,14 @@ type ReadinessStatusStatus string
 // Role defines model for Role.
 type Role string
 
+// SetAccountStatusRequest defines model for SetAccountStatusRequest.
+type SetAccountStatusRequest struct {
+	Status SetAccountStatusRequestStatus `json:"status"`
+}
+
+// SetAccountStatusRequestStatus defines model for SetAccountStatusRequest.Status.
+type SetAccountStatusRequestStatus string
+
 // StatusResponse defines model for StatusResponse.
 type StatusResponse struct {
 	Status string `json:"status"`
@@ -268,11 +361,20 @@ type User struct {
 	Role  Role                `json:"role"`
 }
 
+// AccountId defines model for AccountId.
+type AccountId = string
+
 // ContainerId defines model for ContainerId.
 type ContainerId = string
 
 // Error defines model for Error.
 type Error = ErrorBody
+
+// CreateAccountJSONRequestBody defines body for CreateAccount for application/json ContentType.
+type CreateAccountJSONRequestBody = CreateAccountRequest
+
+// SetAccountStatusJSONRequestBody defines body for SetAccountStatus for application/json ContentType.
+type SetAccountStatusJSONRequestBody = SetAccountStatusRequest
 
 // LoginJSONRequestBody defines body for Login for application/json ContentType.
 type LoginJSONRequestBody = LoginRequest

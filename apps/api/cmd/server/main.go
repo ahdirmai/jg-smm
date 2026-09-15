@@ -16,6 +16,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/adapter"
+	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/adapter/crypto"
 	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/adapter/k8s"
 	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/config"
 	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/domain"
@@ -80,6 +81,13 @@ func main() {
 		authSvc := service.NewAuthService(authRepo, authRepo, issuer, adapter.SystemClock{})
 		deps.Auth = apihttp.NewAuthHandler(authSvc, cfg.SecureCookies)
 
+		// Credential encryption (P1-07): accounts cannot be stored without it.
+		sealer, err := crypto.NewAESGCMFromBase64(cfg.CredentialKeyBase64)
+		if err != nil {
+			logger.Error("credential key init failed", "err", err)
+			os.Exit(1)
+		}
+
 		// Worker callbacks (heartbeat / auth outcome / action verdict). The
 		// worker container POSTs here; it never touches the DB directly.
 		workerRepo := repository.NewWorkerRepo(pg.Queries())
@@ -105,6 +113,15 @@ func main() {
 			Logger: logger,
 		})
 		deps.Containers = apihttp.NewContainerHandler(containerSvc)
+
+		// Account API (P1-15 / P1-16): add/list/pause/resume/remove. The
+		// sealer is injected so the plaintext password never reaches the store.
+		accountSvc := service.NewAccountService(accountRepo, workerRepo, packer, service.AccountConfig{
+			Sealer: sealer,
+			Clock:  adapter.SystemClock{},
+			Logger: logger,
+		})
+		deps.Accounts = apihttp.NewAccountHandler(accountSvc)
 
 		// Provisioning driver: k8s in a cluster, static (bookkeeping only) on
 		// a workstation. The reconciler is a pure loop over this port, so both

@@ -113,6 +113,106 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
 
+  /api/accounts:
+    post:
+      tags: [accounts]
+      summary: Add a worker account
+      description: |
+        Stores an account (credential sealed at rest with AES-256-GCM) and
+        packs it into the first container with a free platform slot,
+        auto-creating an AUTO container when the fleet is full and
+        PROVISION_AUTO_CREATE is on. Requires the `act` permission.
+      operationId: createAccount
+      security:
+        - accessCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAccountRequest'
+      responses:
+        '201':
+          description: Account created (and packed when a slot exists).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+    get:
+      tags: [accounts]
+      summary: List worker accounts
+      description: Returns every account without credentials.
+      operationId: listAccounts
+      security:
+        - accessCookie: []
+      responses:
+        '200':
+          description: Accounts.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountList'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+
+  /api/accounts/{accountId}:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    post:
+      tags: [accounts]
+      summary: Pause or resume an account
+      description: |
+        `pause` suspends use (the session survives on the container PVC);
+        `resume` reactivates without a fresh login.
+      operationId: setAccountStatus
+      security:
+        - accessCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetAccountStatusRequest'
+      responses:
+        '200':
+          description: Account updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+        '400':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+    delete:
+      tags: [accounts]
+      summary: Remove an account
+      description: |
+        Releases the container slot (an AUTO container that empties is reaped)
+        and deletes the account row.
+      operationId: deleteAccount
+      security:
+        - accessCookie: []
+      responses:
+        '204':
+          description: Account removed.
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+
   /api/containers:
     post:
       tags: [containers]
@@ -286,6 +386,13 @@ components:
       schema:
         type: string
       description: The container ID.
+    AccountId:
+      name: accountId
+      in: path
+      required: true
+      schema:
+        type: string
+      description: The account ID.
 
   securitySchemes:
     accessCookie:
@@ -474,6 +581,77 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Container'
+
+    CreateAccountRequest:
+      type: object
+      required: [platform, username, password]
+      properties:
+        platform:
+          type: string
+          enum: [instagram, threads, facebook, linkedin, x, youtube, tiktok]
+        username:
+          type: string
+          minLength: 1
+        password:
+          type: string
+          minLength: 1
+          format: password
+          description: Sealed at rest; never returned or logged.
+        proxyGroupId:
+          type: string
+          nullable: true
+        tags:
+          type: array
+          items:
+            type: string
+
+    Account:
+      type: object
+      required: [id, platform, username, authStatus, status]
+      properties:
+        id:
+          type: string
+        platform:
+          type: string
+          enum: [instagram, threads, facebook, linkedin, x, youtube, tiktok]
+        username:
+          type: string
+        handle:
+          type: string
+          nullable: true
+        authStatus:
+          type: string
+          enum: [AUTHENTICATING, NEEDS_INPUT, AUTHENTICATED, FAILED, QUARANTINED]
+        status:
+          type: string
+          enum: [ACTIVE, PAUSED, ARCHIVED, DEAD]
+        workerId:
+          type: string
+          nullable: true
+        tags:
+          type: array
+          items:
+            type: string
+        lastError:
+          type: string
+          nullable: true
+
+    AccountList:
+      type: object
+      required: [accounts]
+      properties:
+        accounts:
+          type: array
+          items:
+            $ref: '#/components/schemas/Account'
+
+    SetAccountStatusRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ACTIVE, PAUSED]
 
     ActionCallback:
       type: object

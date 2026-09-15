@@ -2,35 +2,66 @@ package service
 
 import (
 	"context"
+	"fmt"
+	"sort"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/domain"
 	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/port"
 )
 
-// fakeAccountStore is a minimal port.AccountStore for packer tests.
+// fakeAccountStore is a minimal port.AccountStore for packer/account tests.
+// It mirrors the real DB invariants (000003_accounts.up.sql):
+//   - UNIQUE (platform, username)  -> enforced in Create/seed via uniqueKeys.
+//   - UNIQUE (worker_id, platform) -> enforced in Assign via byWorker.
 type fakeAccountStore struct {
 	mu         sync.Mutex
 	accounts   map[string]domain.Account
 	byWorker   map[string][]string // workerID -> accountIDs in insertion order
+	uniqueKeys map[string]bool     // "platform|username"
 	failAssign bool
+	nextID     int
 }
 
 func newFakeAccountStore() *fakeAccountStore {
 	return &fakeAccountStore{
-		accounts: map[string]domain.Account{},
-		byWorker: map[string][]string{},
+		accounts:   map[string]domain.Account{},
+		byWorker:   map[string][]string{},
+		uniqueKeys: map[string]bool{},
 	}
 }
 
+func fakeAccountUniqueKey(platform domain.Platform, username string) string {
+	return string(platform) + "|" + username
+}
+
+// seed inserts a pre-existing row (with a caller-chosen id) exactly as a
+// migration or a prior create would have left it.
 func (s *fakeAccountStore) seed(a domain.Account) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.seedLocked(a)
+}
+
+// seedLocked stores a row and returns the stored value (with any generated id
+// and created-at filled in). It is the single write path so Create and seed
+// can never disagree about bookkeeping.
+func (s *fakeAccountStore) seedLocked(a domain.Account) domain.Account {
+	if a.ID == "" {
+		s.nextID++
+		a.ID = fmt.Sprintf("acc-%d", s.nextID)
+	}
+	if a.CreatedAt.IsZero() {
+		a.CreatedAt = time.Now().UTC()
+	}
 	s.accounts[a.ID] = a
+	s.uniqueKeys[fakeAccountUniqueKey(a.Platform, a.Username)] = true
 	if a.WorkerID != nil {
 		s.byWorker[*a.WorkerID] = append(s.byWorker[*a.WorkerID], a.ID)
 	}
+	return a
 }
 
 func (s *fakeAccountStore) get(id string) domain.Account {
@@ -50,14 +81,32 @@ func (s *fakeAccountStore) GetByID(ctx context.Context, id string) (domain.Accou
 }
 
 func (s *fakeAccountStore) List(ctx context.Context, f port.AccountFilter) ([]domain.Account, error) {
-	return nil, nil
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]domain.Account, 0, len(s.accounts))
+	for _, a := range s.accounts {
+		out = append(out, a)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	return out, nil
 }
 
 func (s *fakeAccountStore) Create(ctx context.Context, a domain.Account) (domain.Account, error) {
-	return a, nil
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.uniqueKeys[fakeAccountUniqueKey(a.Platform, a.Username)] {
+		return domain.Account{}, domain.ErrConflict
+	}
+	return s.seedLocked(a), nil
 }
 
 func (s *fakeAccountStore) Update(ctx context.Context, a domain.Account) (domain.Account, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.accounts[a.ID]; !ok {
+		return domain.Account{}, domain.ErrNotFound
+	}
+	s.accounts[a.ID] = a
 	return a, nil
 }
 
@@ -113,7 +162,26 @@ func (s *fakeAccountStore) Unassign(ctx context.Context, accountID string) (doma
 	}, nil
 }
 
-func (s *fakeAccountStore) Delete(ctx context.Context, id string) error { return nil }
+func (s *fakeAccountStore) Delete(ctx context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a, ok := s.accounts[id]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	delete(s.accounts, id)
+	delete(s.uniqueKeys, fakeAccountUniqueKey(a.Platform, a.Username))
+	if a.WorkerID != nil {
+		var kept []string
+		for _, otherID := range s.byWorker[*a.WorkerID] {
+			if otherID != id {
+				kept = append(kept, otherID)
+			}
+		}
+		s.byWorker[*a.WorkerID] = kept
+	}
+	return nil
+}
 
 func (s *fakeAccountStore) ListByWorker(ctx context.Context, workerID string) ([]domain.Account, error) {
 	s.mu.Lock()

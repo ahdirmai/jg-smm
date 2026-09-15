@@ -34,3 +34,11 @@ type Publisher interface {
 	// PublishControl sends an ephemeral control message on control-<workerId>.
 	PublishControl(ctx context.Context, workerID string, msg []byte) error
 }
+
+// Sealer encrypts and decrypts credential blobs at rest. Services depend on
+// this port; the concrete AES-256-GCM implementation lives in adapter/crypto
+// and satisfies it structurally (P1-07).
+type Sealer interface {
+	Seal(plaintext []byte) ([]byte, error)
+	Open(ciphertext []byte) ([]byte, error)
+}
