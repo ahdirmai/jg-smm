@@ -22,6 +22,8 @@ import { useAccounts } from '@/lib/hooks/use-accounts';
 import { useContainers } from '@/lib/hooks/use-containers';
 import { PLATFORM_LABEL } from '@/lib/platforms';
 import type { Container } from '@/lib/api';
+import { useSession } from '@/lib/auth/session-context';
+import { can } from '@/lib/auth/permissions';
 
 function containerTone(
   status: Container['status'],
@@ -44,6 +46,9 @@ function containerTone(
 export default function WorkersPage() {
   const { containers, loading, error, create, remove } = useContainers();
   const { setStatus, remove: removeAccount } = useAccounts();
+  const session = useSession();
+  const role = session.status === 'authenticated' ? session.role : undefined;
+  const canAct = can(role, 'act');
 
   const [name, setName] = useState('');
   const [region, setRegion] = useState('');
@@ -130,7 +135,7 @@ export default function WorkersPage() {
                   </div>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon" className="size-8">
+                      <Button variant="ghost" size="icon" className="size-8" disabled={!canAct}>
                         <MoreVertical className="size-4" />
                         <span className="sr-only">Open container menu</span>
                       </Button>
@@ -189,7 +194,7 @@ export default function WorkersPage() {
                               variant="ghost"
                               size="icon"
                               className="size-7"
-                              disabled={busy === a.id}
+                              disabled={busy === a.id || !canAct}
                               onClick={() => onAct(a.id, (id) => setStatus(id, 'PAUSED'))}
                             >
                               <Pause className="size-3.5" />
@@ -200,7 +205,7 @@ export default function WorkersPage() {
                               variant="ghost"
                               size="icon"
                               className="size-7"
-                              disabled={busy === a.id}
+                              disabled={busy === a.id || !canAct}
                               onClick={() => onAct(a.id, (id) => setStatus(id, 'ACTIVE'))}
                             >
                               <Play className="size-3.5" />
@@ -211,7 +216,7 @@ export default function WorkersPage() {
                             variant="ghost"
                             size="icon"
                             className="size-7 text-destructive"
-                            disabled={busy === a.id}
+                            disabled={busy === a.id || !canAct}
                             onClick={() => onAct(a.id, removeAccount)}
                           >
                             <Trash2 className="size-3.5" />
@@ -244,7 +249,7 @@ export default function WorkersPage() {
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="worker-us-01"
-                disabled={busy === '__create__'}
+                disabled={busy === '__create__' || !canAct}
               />
             </div>
             <div className="grid w-full max-w-xs gap-2">
@@ -254,7 +259,7 @@ export default function WorkersPage() {
                 value={region}
                 onChange={(e) => setRegion(e.target.value)}
                 placeholder="us"
-                disabled={busy === '__create__'}
+                disabled={busy === '__create__' || !canAct}
               />
             </div>
             {formError ? (
@@ -263,7 +268,7 @@ export default function WorkersPage() {
                 {formError}
               </div>
             ) : null}
-            <Button type="submit" disabled={busy === '__create__'}>
+            <Button type="submit" disabled={busy === '__create__' || !canAct}>
               <Plus />
               Create
             </Button>

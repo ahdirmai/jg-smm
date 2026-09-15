@@ -41,6 +41,8 @@ import { useMemo, useState } from 'react';
 import { useTemplates } from '@/lib/hooks/use-templates';
 import { PLATFORM_LABEL, PLATFORMS } from '@/lib/platforms';
 import type { CommentTemplate, CreateTemplateRequest } from '@/lib/api';
+import { useSession } from '@/lib/auth/session-context';
+import { can } from '@/lib/auth/permissions';
 
 type Draft = {
   platform: CreateTemplateRequest['platform'];
@@ -92,6 +94,9 @@ function draftToRequest(d: Draft): CreateTemplateRequest {
 
 export default function TemplatesPage() {
   const { templates, loading, error, create, update, remove } = useTemplates();
+  const session = useSession();
+  const role = session.status === 'authenticated' ? session.role : undefined;
+  const canAct = can(role, 'act');
   const [platform, setPlatform] = useState<string>('all');
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<CommentTemplate | null>(null);
@@ -163,7 +168,7 @@ export default function TemplatesPage() {
         </div>
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild>
-            <Button onClick={startCreate}>
+            <Button onClick={startCreate} disabled={!canAct}>
               <Plus />
               New variant
             </Button>
@@ -350,7 +355,12 @@ export default function TemplatesPage() {
                       <TableCell>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" className="size-8">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="size-8"
+                              disabled={!canAct}
+                            >
                               <MoreVertical className="size-4" />
                               <span className="sr-only">Open variant menu</span>
                             </Button>

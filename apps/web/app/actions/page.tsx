@@ -30,6 +30,8 @@ import { useActions } from '@/lib/hooks/use-actions';
 import { useVirtualRowWindow } from '@/lib/hooks/use-virtual-window';
 import { PLATFORM_LABEL } from '@/lib/platforms';
 import type { ActionItem, ActionJob, JobStatus } from '@/lib/api';
+import { useSession } from '@/lib/auth/session-context';
+import { can } from '@/lib/auth/permissions';
 
 const STATUSES: JobStatus[] = ['PENDING', 'RUNNING', 'SUCCESS', 'FAILED', 'CANCELLED'];
 const MAX_BATCH = 50;
@@ -53,6 +55,9 @@ function statusTone(status: JobStatus): 'success' | 'outline' | 'secondary' | 'd
 export default function ActionsPage() {
   const { accounts } = useAccounts();
   const { actions, loading, error, enqueue } = useActions();
+  const session = useSession();
+  const role = session.status === 'authenticated' ? session.role : undefined;
+  const canAct = can(role, 'act');
 
   const [accountId, setAccountId] = useState<string>('');
   const [actionType, setActionType] = useState<'action_like' | 'action_comment'>('action_like');
@@ -152,51 +157,53 @@ export default function ActionsPage() {
         </CardHeader>
         <CardContent>
           <form onSubmit={onEnqueue} className="space-y-4">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="account">Account</Label>
-                <Select value={accountId} onValueChange={setAccountId}>
-                  <SelectTrigger id="account">
-                    <SelectValue placeholder="Select an account" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {usable.map((a) => (
-                      <SelectItem key={a.id} value={a.id}>
-                        @{a.username} · {PLATFORM_LABEL[a.platform] ?? a.platform}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+            <fieldset disabled={!canAct} className="space-y-4" aria-label="Enqueue actions">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="account">Account</Label>
+                  <Select value={accountId} onValueChange={setAccountId}>
+                    <SelectTrigger id="account">
+                      <SelectValue placeholder="Select an account" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {usable.map((a) => (
+                        <SelectItem key={a.id} value={a.id}>
+                          @{a.username} · {PLATFORM_LABEL[a.platform] ?? a.platform}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="type">Action</Label>
+                  <Select
+                    value={actionType}
+                    onValueChange={(v) => setActionType(v as 'action_like' | 'action_comment')}
+                  >
+                    <SelectTrigger id="type">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="action_like">Like</SelectItem>
+                      <SelectItem value="action_comment">Comment</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="type">Action</Label>
-                <Select
-                  value={actionType}
-                  onValueChange={(v) => setActionType(v as 'action_like' | 'action_comment')}
-                >
-                  <SelectTrigger id="type">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="action_like">Like</SelectItem>
-                    <SelectItem value="action_comment">Comment</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="urls">Target URLs</Label>
-              <Textarea
-                id="urls"
-                value={urls}
-                onChange={(e) => setUrls(e.target.value)}
-                placeholder={'https://www.instagram.com/p/…\nhttps://www.threads.net/p/…'}
-                rows={5}
-                className="font-mono text-xs"
-                disabled={busy}
-              />
-            </div>
+              <div className="space-y-2">
+                <Label htmlFor="urls">Target URLs</Label>
+                <Textarea
+                  id="urls"
+                  value={urls}
+                  onChange={(e) => setUrls(e.target.value)}
+                  placeholder={'https://www.instagram.com/p/…\nhttps://www.threads.net/p/…'}
+                  rows={5}
+                  className="font-mono text-xs"
+                  disabled={busy || !canAct}
+                />
+              </div>
+            </fieldset>
 
             {formError ? (
               <div className="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
@@ -206,7 +213,7 @@ export default function ActionsPage() {
             ) : null}
 
             <div className="flex items-center gap-3">
-              <Button type="submit" disabled={busy}>
+              <Button type="submit" disabled={busy || !canAct}>
                 {busy ? <Loader2 className="animate-spin" /> : <Send />}
                 Enqueue
               </Button>

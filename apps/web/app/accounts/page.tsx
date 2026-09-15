@@ -33,6 +33,8 @@ import { useAccounts } from '@/lib/hooks/use-accounts';
 import type { Account } from '@/lib/api';
 import { AddAccountDialog } from '@/components/add-account-dialog';
 import { ImportAccountsDialog } from '@/components/import-accounts-dialog';
+import { useSession } from '@/lib/auth/session-context';
+import { can } from '@/lib/auth/permissions';
 
 const PLATFORMS = [
   'INSTAGRAM',
@@ -86,6 +88,9 @@ function authTone(status: Account['authStatus']): 'success' | 'outline' | 'destr
 
 export default function AccountsPage() {
   const { accounts, loading, error, setStatus, remove, refresh } = useAccounts();
+  const session = useSession();
+  const role = session.status === 'authenticated' ? session.role : undefined;
+  const canAct = can(role, 'act');
   const [addOpen, setAddOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [platform, setPlatform] = useState<string>('all');
@@ -122,11 +127,11 @@ export default function AccountsPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => setImportOpen(true)}>
+          <Button variant="outline" disabled={!canAct} onClick={() => setImportOpen(true)}>
             <Upload />
             Import
           </Button>
-          <Button onClick={() => setAddOpen(true)}>
+          <Button disabled={!canAct} onClick={() => setAddOpen(true)}>
             <UserPlus />
             Add account
           </Button>
@@ -229,7 +234,7 @@ export default function AccountsPage() {
                       <TableCell>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" disabled={busy === a.id}>
+                            <Button variant="ghost" size="icon" disabled={busy === a.id || !canAct}>
                               <MoreVertical />
                             </Button>
                           </DropdownMenuTrigger>

@@ -24,6 +24,7 @@ export type TemplateList = ApiSchemas['TemplateList'];
 export type CreateTemplateRequest = ApiSchemas['CreateTemplateRequest'];
 export type Platform = ApiSchemas['Platform'];
 export type ImportResult = ApiSchemas['ImportResult'];
+export type MeResponse = ApiSchemas['MeResponse'];
 
 export class ApiError extends Error {
   constructor(
@@ -114,4 +115,8 @@ export const api = {
       body: JSON.stringify(body),
     }),
   deleteTemplate: (id: string) => request<void>(`/api/templates/${id}`, { method: 'DELETE' }),
+
+  // Session (P4-09). The role drives UI gating; every write is still checked
+  // server-side, so this is a UX layer, not a security boundary.
+  me: () => request<MeResponse>('/api/auth/me'),
 };

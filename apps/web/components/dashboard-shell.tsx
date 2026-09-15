@@ -15,17 +15,27 @@ import { usePathname } from 'next/navigation';
 
 import { ModeToggle } from '@/components/mode-toggle';
 import { cn } from '@/lib/utils';
+import { useSession } from '@/lib/auth/session-context';
+import { ROLE_LABEL, can } from '@/lib/auth/permissions';
+import type { Permission } from '@/lib/auth/permissions';
 
-const NAV = [
+type NavItem = {
+  href: string;
+  label: string;
+  icon: typeof LayoutDashboard;
+  perm?: Permission;
+};
+
+const NAV: NavItem[] = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/workers', label: 'Workers', icon: MonitorSmartphone },
-  { href: '/accounts', label: 'Accounts', icon: Users },
-  { href: '/actions', label: 'Actions', icon: Activity },
-  { href: '/templates', label: 'Templates', icon: MessageSquareText },
+  { href: '/workers', label: 'Workers', icon: MonitorSmartphone, perm: 'act' },
+  { href: '/accounts', label: 'Accounts', icon: Users, perm: 'act' },
+  { href: '/actions', label: 'Actions', icon: Activity, perm: 'act' },
+  { href: '/templates', label: 'Templates', icon: MessageSquareText, perm: 'act' },
   { href: '/monitoring', label: 'Monitoring', icon: LineChart },
   { href: '/audit', label: 'Audit Log', icon: ScrollText },
-  { href: '/settings', label: 'Settings', icon: Settings },
-] as const;
+  { href: '/settings', label: 'Settings', icon: Settings, perm: 'admin' },
+];
 
 /**
  * Application shell: fixed sidebar + content area. Kept intentionally plain
@@ -33,6 +43,8 @@ const NAV = [
  */
 export function DashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const session = useSession();
+  const role = session.status === 'authenticated' ? session.role : undefined;
 
   return (
     <div className="flex min-h-screen">
@@ -44,7 +56,10 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
           <span className="text-sm font-semibold tracking-tight">SMM Automation</span>
         </div>
         <nav className="flex-1 space-y-1 p-2">
-          {NAV.map(({ href, label, icon: Icon }) => {
+          {NAV.map(({ href, label, icon: Icon, perm }) => {
+            // Read-only roles still see the dashboards; write surfaces are
+            // hidden so the nav cannot route to a page of blocked controls.
+            if (perm && !can(role, perm)) return null;
             const active = href === '/' ? pathname === '/' : pathname.startsWith(href);
             return (
               <Link
@@ -64,7 +79,12 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             );
           })}
         </nav>
-        <div className="border-t p-2">
+        <div className="space-y-2 border-t p-2">
+          {role ? (
+            <div className="px-3 text-xs text-muted-foreground" data-testid="session-role">
+              Signed in as <span className="font-medium text-foreground">{ROLE_LABEL[role]}</span>
+            </div>
+          ) : null}
           <ModeToggle />
         </div>
       </aside>
