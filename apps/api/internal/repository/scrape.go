@@ -332,6 +332,22 @@ func (r *ScrapeRepo) ListPendingScrapeJobsByAccount(ctx context.Context, account
 	return out, nil
 }
 
+// RescheduleScrapeJob pushes a job's scheduled_at out and resets it to PENDING
+// so the next eligible tick claims it again (backoff + jitter path).
+func (r *ScrapeRepo) RescheduleScrapeJob(ctx context.Context, id string, scheduledAt time.Time) (domain.ScrapeJob, error) {
+	row, err := r.q.RescheduleScrapeJob(ctx, sqlcgen.RescheduleScrapeJobParams{
+		ID:          uuidValue(id),
+		ScheduledAt: tsPtr(&scheduledAt),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.ScrapeJob{}, domain.ErrNotFound
+	}
+	if err != nil {
+		return domain.ScrapeJob{}, fmt.Errorf("repository.scrape.RescheduleScrapeJob: %w", err)
+	}
+	return toScrapeJob(row), nil
+}
+
 // CompleteScrapeJob marks a job terminal. A nil errMsg with a success status is
 // the normal path; a non-nil message records the failure reason.
 func (r *ScrapeRepo) CompleteScrapeJob(ctx context.Context, id string, status domain.JobStatus, errMsg *string) (domain.ScrapeJob, error) {
@@ -397,6 +413,16 @@ func (r *ScrapeRepo) CreateRawPayload(ctx context.Context, p domain.RawPayload) 
 		return domain.RawPayload{}, fmt.Errorf("repository.scrape.CreateRawPayload: %w", err)
 	}
 	return toRawPayload(row), nil
+}
+
+// ListRawPayloadsByRunID returns the S3 keys for one Apify run. Key-only: the
+// ingestor reads the bodies from object storage, never from the DB.
+func (r *ScrapeRepo) ListRawPayloadsByRunID(ctx context.Context, apifyRunID string) ([]string, error) {
+	keys, err := r.q.ListRawPayloadsByRun(ctx, uuidValue(apifyRunID))
+	if err != nil {
+		return nil, fmt.Errorf("repository.scrape.ListRawPayloadsByRunID: %w", err)
+	}
+	return keys, nil
 }
 
 // ---------------------------------------------------------------------------

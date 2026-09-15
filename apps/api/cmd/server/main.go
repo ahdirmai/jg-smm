@@ -16,8 +16,11 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/adapter"
+	analyticsprovider "github.com/ahdirmai/jg-smm-automation/apps/api/internal/adapter/analytics"
+	apifyadapter "github.com/ahdirmai/jg-smm-automation/apps/api/internal/adapter/apify"
 	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/adapter/crypto"
 	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/adapter/k8s"
+	storageadapter "github.com/ahdirmai/jg-smm-automation/apps/api/internal/adapter/storage"
 	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/config"
 	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/domain"
 	apihttp "github.com/ahdirmai/jg-smm-automation/apps/api/internal/http"
@@ -137,6 +140,80 @@ func main() {
 		})
 		deps.ProxyGroups = apihttp.NewProxyGroupHandler(proxyGroupSvc)
 
+		// P2 — scrape + official-account analytics. The scrape path (Apify) and
+		// the analytics path (3rd-party provider) are disjoint: worker accounts
+		// scrape/act, official accounts are monitored read-only.
+		scrapeRepo := repository.NewScrapeRepo(pg.Queries())
+		analyticsRepo := repository.NewAnalyticsRepo(pg.Queries())
+
+		// Raw payload store (MinIO). Present in every environment; the apify
+		// adapter writes dataset items here and the ingestor reads them back.
+		var rawStorage port.RawStorage
+		if cfg.MinioEndpoint != "" {
+			storage, err := storageadapter.New(ctx, storageadapter.Config{
+				Endpoint:   cfg.MinioEndpoint,
+				AccessKey:  cfg.MinioRootUser,
+				SecretKey:  cfg.MinioRootPassword,
+				Bucket:     cfg.MinioBucket,
+				UseSSL:     cfg.MinioUseSSL,
+				MakeBucket: true,
+			})
+			if err != nil {
+				logger.Error("object storage init failed", "err", err)
+				os.Exit(1)
+			}
+			rawStorage = storage
+			checkers["minio"] = storageadapter.NewHealth(storage)
+		}
+
+		// Analytics provider (stub until the real contract is signed, P2-11).
+		var analyticsProvider port.AnalyticsProvider
+		if cfg.AnalyticsProviderKey != "" {
+			stub, err := analyticsprovider.New(cfg.AnalyticsProviderBaseURL, cfg.AnalyticsProviderKey)
+			if err != nil {
+				logger.Error("analytics provider init failed", "err", err)
+				os.Exit(1)
+			}
+			analyticsProvider = stub
+		}
+
+		// Ingestor cron (P2-12): pulls official-account metrics on an interval.
+		// Off by default locally; the API's refresh endpoint can trigger a run
+		// regardless of the cron.
+		analyticsIngestor := service.NewAnalyticsIngestor(analyticsRepo, analyticsProvider, service.AnalyticsIngestorConfig{
+			Scope:  "all",
+			Clock:  time.Now,
+			Logger: logger,
+		})
+		if cfg.AnalyticsIngestIntervalSeconds > 0 {
+			go analyticsIngestor.Run(ctx, time.Duration(cfg.AnalyticsIngestIntervalSeconds)*time.Second)
+		}
+
+		// Scrape scheduler (P2-02): claims due jobs FIFO, runs the Apify actor,
+		// records the outcome with jitter + rate-limit backoff.
+		if cfg.ScrapeIntervalSeconds > 0 && cfg.ApifyToken != "" {
+			runner, err := apifyadapter.New(apifyadapter.Config{
+				BaseURL:  cfg.ApifyBaseURL,
+				Token:    cfg.ApifyToken,
+				Storage:  rawStorage,
+				ActorFor: actorForPlatform(cfg),
+				Log:      logger.Info,
+			})
+			if err != nil {
+				logger.Error("apify runner init failed", "err", err)
+				os.Exit(1)
+			}
+			scheduler := service.NewScrapeScheduler(scrapeRepo, runner, service.ScrapeSchedulerConfig{
+				JitterMin:   time.Duration(cfg.ScrapeJitterMinSeconds) * time.Second,
+				JitterMax:   time.Duration(cfg.ScrapeJitterMaxSeconds) * time.Second,
+				MaxAttempts: cfg.ScrapeMaxAttempts,
+				TickBudget:  cfg.ActionBatchParallelism * 10,
+				Clock:       time.Now,
+				Logger:      logger,
+			})
+			go scheduler.Run(ctx, time.Duration(cfg.ScrapeIntervalSeconds)*time.Second)
+		}
+
 		// Provisioning driver: k8s in a cluster, static (bookkeeping only) on
 		// a workstation. The reconciler is a pure loop over this port, so both
 		// tiers share the same code path (P1-03/P1-04). The LoggingDriver wraps
@@ -216,6 +293,22 @@ func provisionDriver(ctx context.Context, cfg config.Config, workers port.Worker
 		CreatesPerMinute: 10,
 		Logger:           logger,
 	})
+}
+
+// actorForPlatform maps a platform to its configured Apify actor id. The ids
+// are derived from the actor prefix in config so an actor change ships without
+// a rebuild. The MVP enables Instagram + Threads only; every other platform
+// returns empty and the runner rejects the job up front.
+func actorForPlatform(cfg config.Config) func(domain.Platform) string {
+	return func(p domain.Platform) string {
+		switch p {
+		case domain.PlatformInstagram:
+			return cfg.ApifyActorPrefix + "/instagram-scraper"
+		case domain.PlatformThreads:
+			return cfg.ApifyActorPrefix + "/threads-scraper"
+		}
+		return ""
+	}
 }
 
 // healthcheck probes the local server; used by the container HEALTHCHECK.

@@ -43,12 +43,14 @@ type ScrapeStore interface {
 	ListScrapeJobs(ctx context.Context, limit, offset *int) ([]domain.ScrapeJob, error)
 	ListScrapeJobsByStatus(ctx context.Context, status domain.JobStatus, limit, offset *int) ([]domain.ScrapeJob, error)
 	ListPendingScrapeJobsByAccount(ctx context.Context, accountID string, limit int) ([]domain.ScrapeJob, error)
+	RescheduleScrapeJob(ctx context.Context, id string, scheduledAt time.Time) (domain.ScrapeJob, error)
 	CompleteScrapeJob(ctx context.Context, id string, status domain.JobStatus, errMsg *string) (domain.ScrapeJob, error)
 
 	// Apify runs + raw payload pointers.
 	CreateApifyRun(ctx context.Context, r domain.ApifyRun) (domain.ApifyRun, error)
 	UpdateApifyRun(ctx context.Context, r domain.ApifyRun, finished bool) (domain.ApifyRun, error)
 	CreateRawPayload(ctx context.Context, p domain.RawPayload) (domain.RawPayload, error)
+	ListRawPayloadsByRunID(ctx context.Context, apifyRunID string) ([]string, error)
 
 	// Metric time-series.
 	CreateMetricSnapshot(ctx context.Context, s domain.MetricSnapshot) error

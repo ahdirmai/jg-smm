@@ -269,31 +269,25 @@ func (q *Queries) ListPendingScrapeJobsByAccount(ctx context.Context, arg ListPe
 }
 
 const listRawPayloadsByRun = `-- name: ListRawPayloadsByRun :many
-SELECT id, apify_run_id, s3_key, bytes, received_at
+SELECT s3_key
 FROM raw_payload
 WHERE apify_run_id = $1
 ORDER BY received_at
 `
 
-func (q *Queries) ListRawPayloadsByRun(ctx context.Context, apifyRunID pgtype.UUID) ([]RawPayload, error) {
+func (q *Queries) ListRawPayloadsByRun(ctx context.Context, apifyRunID pgtype.UUID) ([]string, error) {
 	rows, err := q.db.Query(ctx, listRawPayloadsByRun, apifyRunID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []RawPayload{}
+	items := []string{}
 	for rows.Next() {
-		var i RawPayload
-		if err := rows.Scan(
-			&i.ID,
-			&i.ApifyRunID,
-			&i.S3Key,
-			&i.Bytes,
-			&i.ReceivedAt,
-		); err != nil {
+		var s3_key string
+		if err := rows.Scan(&s3_key); err != nil {
 			return nil, err
 		}
-		items = append(items, i)
+		items = append(items, s3_key)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -393,6 +387,44 @@ func (q *Queries) ListScrapeJobsByStatus(ctx context.Context, arg ListScrapeJobs
 		return nil, err
 	}
 	return items, nil
+}
+
+const rescheduleScrapeJob = `-- name: RescheduleScrapeJob :one
+UPDATE scrape_job
+SET status       = 'PENDING',
+    scheduled_at = $2,
+    finished_at  = NULL
+WHERE id = $1
+RETURNING id, type, target_id, account_id, worker_id, status, scheduled_at,
+          started_at, finished_at, attempts, error, created_at
+`
+
+type RescheduleScrapeJobParams struct {
+	ID          pgtype.UUID        `json:"id"`
+	ScheduledAt pgtype.Timestamptz `json:"scheduled_at"`
+}
+
+// Moves a job back into the queue at a later time. Used by the scheduler's
+// backoff/jitter path: the job is set PENDING and its scheduled_at pushed out,
+// so the next eligible tick claims it again.
+func (q *Queries) RescheduleScrapeJob(ctx context.Context, arg RescheduleScrapeJobParams) (ScrapeJob, error) {
+	row := q.db.QueryRow(ctx, rescheduleScrapeJob, arg.ID, arg.ScheduledAt)
+	var i ScrapeJob
+	err := row.Scan(
+		&i.ID,
+		&i.Type,
+		&i.TargetID,
+		&i.AccountID,
+		&i.WorkerID,
+		&i.Status,
+		&i.ScheduledAt,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.Attempts,
+		&i.Error,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const updateApifyRun = `-- name: UpdateApifyRun :one

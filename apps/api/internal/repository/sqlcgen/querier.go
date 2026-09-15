@@ -117,7 +117,7 @@ type Querier interface {
 	ListPosts(ctx context.Context, arg ListPostsParams) ([]Post, error)
 	ListProvisionLogsByWorker(ctx context.Context, arg ListProvisionLogsByWorkerParams) ([]ProvisionLog, error)
 	ListProxyGroups(ctx context.Context) ([]ProxyGroup, error)
-	ListRawPayloadsByRun(ctx context.Context, apifyRunID pgtype.UUID) ([]RawPayload, error)
+	ListRawPayloadsByRun(ctx context.Context, apifyRunID pgtype.UUID) ([]string, error)
 	ListScrapeJobs(ctx context.Context, arg ListScrapeJobsParams) ([]ScrapeJob, error)
 	ListScrapeJobsByStatus(ctx context.Context, arg ListScrapeJobsByStatusParams) ([]ScrapeJob, error)
 	ListTargets(ctx context.Context, arg ListTargetsParams) ([]Target, error)
@@ -127,6 +127,10 @@ type Querier interface {
 	ListTopPostsByPlatform(ctx context.Context, arg ListTopPostsByPlatformParams) ([]Post, error)
 	ListUsers(ctx context.Context, arg ListUsersParams) ([]ListUsersRow, error)
 	ListWorkers(ctx context.Context, arg ListWorkersParams) ([]Worker, error)
+	// Moves a job back into the queue at a later time. Used by the scheduler's
+	// backoff/jitter path: the job is set PENDING and its scheduled_at pushed out,
+	// so the next eligible tick claims it again.
+	RescheduleScrapeJob(ctx context.Context, arg RescheduleScrapeJobParams) (ScrapeJob, error)
 	RevokeAllUserSessions(ctx context.Context, arg RevokeAllUserSessionsParams) error
 	RevokeAuthSession(ctx context.Context, arg RevokeAuthSessionParams) error
 	// P2-05 aggregation: top-100 posts by a metric over a trailing window, via a

@@ -58,6 +58,18 @@ WHERE account_id = $1
 ORDER BY scheduled_at
 LIMIT $2;
 
+-- name: RescheduleScrapeJob :one
+-- Moves a job back into the queue at a later time. Used by the scheduler's
+-- backoff/jitter path: the job is set PENDING and its scheduled_at pushed out,
+-- so the next eligible tick claims it again.
+UPDATE scrape_job
+SET status       = 'PENDING',
+    scheduled_at = $2,
+    finished_at  = NULL
+WHERE id = $1
+RETURNING id, type, target_id, account_id, worker_id, status, scheduled_at,
+          started_at, finished_at, attempts, error, created_at;
+
 -- name: CompleteScrapeJob :one
 UPDATE scrape_job
 SET status      = $2,
@@ -87,7 +99,7 @@ VALUES ($1, $2, $3)
 RETURNING id, apify_run_id, s3_key, bytes, received_at;
 
 -- name: ListRawPayloadsByRun :many
-SELECT id, apify_run_id, s3_key, bytes, received_at
+SELECT s3_key
 FROM raw_payload
 WHERE apify_run_id = $1
 ORDER BY received_at;

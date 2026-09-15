@@ -51,6 +51,44 @@ type Config struct {
 	// overflows it is disconnected (its EventSource reconnects) rather than
 	// blocking the API.
 	SSEBuffer int
+
+	// ScrapeIntervalSeconds runs the FIFO scrape scheduler in the API process.
+	// 0 disables it (local dev); production enables it.
+	ScrapeIntervalSeconds int
+	// ScrapeJitterMin/MaxSeconds is the per-account randomized delay the
+	// scheduler adds so a fleet of accounts never looks like a bot burst
+	// (TICKETS P2-02 AC: jitter 5-15s).
+	ScrapeJitterMinSeconds int
+	ScrapeJitterMaxSeconds int
+	// ScrapeMaxAttempts caps retries on a rate-limited scrape job before it
+	// fails permanently (P2-02 backoff).
+	ScrapeMaxAttempts int
+
+	// Apify base URL + token for the scrape actor runner (P2-03). The token is
+	// a secret injected via env; it is never logged.
+	ApifyBaseURL string
+	ApifyToken   string
+	// ApifyActorPrefix selects the actor id per platform, e.g.
+	// "~smm/instagram-scraper". The concrete ids live in PLATFORM_MATRIX.
+	ApifyActorPrefix string
+
+	// AnalyticsIngestIntervalSeconds runs the official-account ingest cron
+	// (P2-12). 0 disables it.
+	AnalyticsIngestIntervalSeconds int
+	// AnalyticsProvider selects which 3rd-party provider adapter the ingestor
+	// uses (PRD F5; provider-agnostic by design).
+	AnalyticsProvider string
+	// AnalyticsProviderBaseURL + key for the chosen provider.
+	AnalyticsProviderBaseURL string
+	AnalyticsProviderKey     string
+
+	// MinIO / S3 for raw scrape payloads (P2-04). The bucket is created on first
+	// use, so these can point at a fresh MinIO.
+	MinioEndpoint     string
+	MinioRootUser     string
+	MinioRootPassword string
+	MinioBucket       string
+	MinioUseSSL       bool
 }
 
 // Load reads configuration from the environment, applying safe defaults.
@@ -72,6 +110,26 @@ func Load() (Config, error) {
 		SecureCookies:            envBool("SECURE_COOKIES", false),
 		CredentialKeyBase64:      os.Getenv("CREDENTIAL_KEY"),
 		SSEBuffer:                envInt("SSE_BUFFER", 64),
+
+		ScrapeIntervalSeconds:  envInt("SCRAPE_INTERVAL_SECONDS", 0),
+		ScrapeJitterMinSeconds: envInt("SCRAPE_JITTER_MIN_SECONDS", 5),
+		ScrapeJitterMaxSeconds: envInt("SCRAPE_JITTER_MAX_SECONDS", 15),
+		ScrapeMaxAttempts:      envInt("SCRAPE_MAX_ATTEMPTS", 3),
+
+		ApifyBaseURL:     env("APIFY_BASE_URL", "https://api.apify.com/v2"),
+		ApifyToken:       os.Getenv("APIFY_TOKEN"),
+		ApifyActorPrefix: env("APIFY_ACTOR_PREFIX", "~smm"),
+
+		AnalyticsIngestIntervalSeconds: envInt("ANALYTICS_INGEST_INTERVAL_SECONDS", 0),
+		AnalyticsProvider:              env("ANALYTICS_PROVIDER", "thirdparty_a"),
+		AnalyticsProviderBaseURL:       env("ANALYTICS_PROVIDER_BASE_URL", "https://provider.example.com/v1"),
+		AnalyticsProviderKey:           os.Getenv("ANALYTICS_PROVIDER_KEY"),
+
+		MinioEndpoint:     env("MINIO_ENDPOINT", "minio:9000"),
+		MinioRootUser:     env("MINIO_ROOT_USER", "smm"),
+		MinioRootPassword: os.Getenv("MINIO_ROOT_PASSWORD"),
+		MinioBucket:       env("MINIO_BUCKET", "smm-raw"),
+		MinioUseSSL:       envBool("MINIO_USE_SSL", false),
 	}
 
 	if cfg.ProvisionerMode != "static" && cfg.ProvisionerMode != "k8s" {
@@ -85,6 +143,18 @@ func Load() (Config, error) {
 	}
 	if cfg.MaxAccountsPerContainer < 1 {
 		return Config{}, fmt.Errorf("config: MAX_ACCOUNTS_PER_CONTAINER must be >= 1, got %d", cfg.MaxAccountsPerContainer)
+	}
+	if cfg.ScrapeIntervalSeconds < 0 {
+		return Config{}, fmt.Errorf("config: SCRAPE_INTERVAL_SECONDS must be >= 0, got %d", cfg.ScrapeIntervalSeconds)
+	}
+	if cfg.ScrapeJitterMinSeconds < 0 || cfg.ScrapeJitterMaxSeconds < cfg.ScrapeJitterMinSeconds {
+		return Config{}, fmt.Errorf("config: SCRAPE_JITTER must satisfy 0 <= MIN <= MAX, got min=%d max=%d", cfg.ScrapeJitterMinSeconds, cfg.ScrapeJitterMaxSeconds)
+	}
+	if cfg.ScrapeMaxAttempts < 1 {
+		return Config{}, fmt.Errorf("config: SCRAPE_MAX_ATTEMPTS must be >= 1, got %d", cfg.ScrapeMaxAttempts)
+	}
+	if cfg.AnalyticsIngestIntervalSeconds < 0 {
+		return Config{}, fmt.Errorf("config: ANALYTICS_INGEST_INTERVAL_SECONDS must be >= 0, got %d", cfg.AnalyticsIngestIntervalSeconds)
 	}
 	// The JWT secret is only meaningful once the API talks to the DB (auth on).
 	if cfg.DatabaseURL != "" && len(cfg.JWTSecret) < 16 {
