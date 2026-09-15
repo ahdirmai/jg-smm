@@ -100,6 +100,38 @@ func (q *Queries) CreateOfficialAccount(ctx context.Context, arg CreateOfficialA
 	return i, err
 }
 
+const getOfficialAccountByHandle = `-- name: GetOfficialAccountByHandle :one
+SELECT id, platform, handle, display_name, profile_url, avatar_url, status,
+       provider, provider_ref, tags, last_fetched_at, created_at
+FROM official_account
+WHERE platform = $1 AND handle = $2
+`
+
+type GetOfficialAccountByHandleParams struct {
+	Platform Platform `json:"platform"`
+	Handle   string   `json:"handle"`
+}
+
+func (q *Queries) GetOfficialAccountByHandle(ctx context.Context, arg GetOfficialAccountByHandleParams) (OfficialAccount, error) {
+	row := q.db.QueryRow(ctx, getOfficialAccountByHandle, arg.Platform, arg.Handle)
+	var i OfficialAccount
+	err := row.Scan(
+		&i.ID,
+		&i.Platform,
+		&i.Handle,
+		&i.DisplayName,
+		&i.ProfileUrl,
+		&i.AvatarUrl,
+		&i.Status,
+		&i.Provider,
+		&i.ProviderRef,
+		&i.Tags,
+		&i.LastFetchedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getOfficialAccountByID = `-- name: GetOfficialAccountByID :one
 
 SELECT id, platform, handle, display_name, profile_url, avatar_url, status,

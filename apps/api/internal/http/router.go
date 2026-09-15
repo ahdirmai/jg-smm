@@ -22,6 +22,7 @@ type Dependencies struct {
 	Containers  *ContainerHandler
 	Accounts    *AccountHandler
 	ProxyGroups *ProxyGroupHandler
+	Analytics   *AnalyticsHandler
 	Stream      *StreamHandler
 }
 
@@ -68,6 +69,9 @@ func NewRouter(deps Dependencies) *echo.Echo {
 		}
 		if deps.ProxyGroups != nil {
 			deps.ProxyGroups.Register(api)
+		}
+		if deps.Analytics != nil {
+			deps.Analytics.Register(api)
 		}
 	}
 

@@ -112,13 +112,13 @@ const (
 
 // Defines values for CreateAccountRequestPlatform.
 const (
-	Facebook  CreateAccountRequestPlatform = "facebook"
-	Instagram CreateAccountRequestPlatform = "instagram"
-	Linkedin  CreateAccountRequestPlatform = "linkedin"
-	Threads   CreateAccountRequestPlatform = "threads"
-	Tiktok    CreateAccountRequestPlatform = "tiktok"
-	X         CreateAccountRequestPlatform = "x"
-	Youtube   CreateAccountRequestPlatform = "youtube"
+	CreateAccountRequestPlatformFacebook  CreateAccountRequestPlatform = "facebook"
+	CreateAccountRequestPlatformInstagram CreateAccountRequestPlatform = "instagram"
+	CreateAccountRequestPlatformLinkedin  CreateAccountRequestPlatform = "linkedin"
+	CreateAccountRequestPlatformThreads   CreateAccountRequestPlatform = "threads"
+	CreateAccountRequestPlatformTiktok    CreateAccountRequestPlatform = "tiktok"
+	CreateAccountRequestPlatformX         CreateAccountRequestPlatform = "x"
+	CreateAccountRequestPlatformYoutube   CreateAccountRequestPlatform = "youtube"
 )
 
 // Defines values for HeartbeatBrowserStatus.
@@ -127,6 +127,24 @@ const (
 	HeartbeatBrowserStatusCold  HeartbeatBrowserStatus = "cold"
 	HeartbeatBrowserStatusError HeartbeatBrowserStatus = "error"
 	HeartbeatBrowserStatusReady HeartbeatBrowserStatus = "ready"
+)
+
+// Defines values for OfficialAccountStatus.
+const (
+	Active   OfficialAccountStatus = "active"
+	Archived OfficialAccountStatus = "archived"
+	Paused   OfficialAccountStatus = "paused"
+)
+
+// Defines values for Platform.
+const (
+	PlatformFacebook  Platform = "facebook"
+	PlatformInstagram Platform = "instagram"
+	PlatformLinkedin  Platform = "linkedin"
+	PlatformThreads   Platform = "threads"
+	PlatformTiktok    Platform = "tiktok"
+	PlatformX         Platform = "x"
+	PlatformYoutube   Platform = "youtube"
 )
 
 // Defines values for ReadinessStatusStatus.
@@ -205,6 +223,43 @@ type ActionCallback struct {
 	Status         AttemptStatus `json:"status"`
 	TargetUrl      *string       `json:"targetUrl,omitempty"`
 	WorkerId       *string       `json:"workerId,omitempty"`
+}
+
+// AnalyticsFreshness Backs the dashboard's stale badge (P2-15 AC: stale when older than 60 minutes).
+type AnalyticsFreshness struct {
+	LastRunAt        nullable.Nullable[time.Time] `json:"lastRunAt,omitempty"`
+	LastRunStatus    nullable.Nullable[string]    `json:"lastRunStatus,omitempty"`
+	Stale            bool                         `json:"stale"`
+	ThresholdSeconds *int                         `json:"thresholdSeconds,omitempty"`
+}
+
+// AnalyticsIngestRun defines model for AnalyticsIngestRun.
+type AnalyticsIngestRun struct {
+	AccountsErr *int                         `json:"accountsErr,omitempty"`
+	AccountsOk  *int                         `json:"accountsOk,omitempty"`
+	Error       nullable.Nullable[string]    `json:"error,omitempty"`
+	ErrorClass  nullable.Nullable[string]    `json:"errorClass,omitempty"`
+	FinishedAt  nullable.Nullable[time.Time] `json:"finishedAt,omitempty"`
+	Id          string                       `json:"id"`
+	Provider    string                       `json:"provider"`
+	Scope       string                       `json:"scope"`
+	StartedAt   time.Time                    `json:"startedAt"`
+	Status      string                       `json:"status"`
+}
+
+// AnalyticsKpi One scalar KPI for one account.
+type AnalyticsKpi struct {
+	Handle            *string                  `json:"handle,omitempty"`
+	Metric            string                   `json:"metric"`
+	OfficialAccountId string                   `json:"officialAccountId"`
+	Value             nullable.Nullable[int64] `json:"value"`
+}
+
+// AnalyticsOverview defines model for AnalyticsOverview.
+type AnalyticsOverview struct {
+	// Freshness Backs the dashboard's stale badge (P2-15 AC: stale when older than 60 minutes).
+	Freshness AnalyticsFreshness `json:"freshness"`
+	Kpis      []AnalyticsKpi     `json:"kpis"`
 }
 
 // AttemptStatus defines model for AttemptStatus.
@@ -286,6 +341,19 @@ type CreateContainerRequest struct {
 	Region string `json:"region"`
 }
 
+// CreateOfficialAccountRequest defines model for CreateOfficialAccountRequest.
+type CreateOfficialAccountRequest struct {
+	AvatarUrl   *string `json:"avatarUrl,omitempty"`
+	DisplayName *string `json:"displayName,omitempty"`
+	Handle      string  `json:"handle"`
+
+	// Platform The social platform. MVP active set is Instagram + Threads.
+	Platform   Platform  `json:"platform"`
+	ProfileUrl *string   `json:"profileUrl,omitempty"`
+	Provider   *string   `json:"provider,omitempty"`
+	Tags       *[]string `json:"tags,omitempty"`
+}
+
 // CreateProxyGroupRequest defines model for CreateProxyGroupRequest.
 type CreateProxyGroupRequest struct {
 	DailyBudgetMb  int    `json:"dailyBudgetMb"`
@@ -349,6 +417,51 @@ type MeResponse struct {
 	UserId string `json:"userId"`
 }
 
+// OfficialAccount A monitored brand/client account (read-only). NOT a worker account: no
+// credentials, no actions. The subject of 3rd-party analytics.
+type OfficialAccount struct {
+	AvatarUrl   nullable.Nullable[string] `json:"avatarUrl,omitempty"`
+	CreatedAt   *time.Time                `json:"createdAt,omitempty"`
+	DisplayName nullable.Nullable[string] `json:"displayName,omitempty"`
+	Handle      string                    `json:"handle"`
+	Id          string                    `json:"id"`
+
+	// LastFetchedAt Null until the first successful ingest — the freshness signal.
+	LastFetchedAt nullable.Nullable[time.Time] `json:"lastFetchedAt,omitempty"`
+
+	// Platform The social platform. MVP active set is Instagram + Threads.
+	Platform   Platform                  `json:"platform"`
+	ProfileUrl nullable.Nullable[string] `json:"profileUrl,omitempty"`
+	Provider   string                    `json:"provider"`
+
+	// Stale True when lastFetchedAt is older than the 60-minute threshold.
+	Stale  *bool                 `json:"stale,omitempty"`
+	Status OfficialAccountStatus `json:"status"`
+	Tags   *[]string             `json:"tags,omitempty"`
+}
+
+// OfficialAccountStatus defines model for OfficialAccount.Status.
+type OfficialAccountStatus string
+
+// OfficialAccountList defines model for OfficialAccountList.
+type OfficialAccountList struct {
+	OfficialAccounts []OfficialAccount `json:"officialAccounts"`
+}
+
+// Platform The social platform. MVP active set is Instagram + Threads.
+type Platform string
+
+// PlatformAnalytics defines model for PlatformAnalytics.
+type PlatformAnalytics struct {
+	// Freshness Backs the dashboard's stale badge (P2-15 AC: stale when older than 60 minutes).
+	Freshness AnalyticsFreshness `json:"freshness"`
+	Kpis      []AnalyticsKpi     `json:"kpis"`
+
+	// Platform The social platform. MVP active set is Instagram + Threads.
+	Platform Platform     `json:"platform"`
+	Trend    []TrendPoint `json:"trend"`
+}
+
 // ProxyGroup A residential proxy pool. The pool key is write-only and never present
 // in a response.
 type ProxyGroup struct {
@@ -405,6 +518,12 @@ type StreamEvent struct {
 // StreamEventKind The SSE `event:` line; the client dispatches on this.
 type StreamEventKind string
 
+// TrendPoint defines model for TrendPoint.
+type TrendPoint struct {
+	Bucket time.Time `json:"bucket"`
+	Value  int64     `json:"value"`
+}
+
 // User defines model for User.
 type User struct {
 	Email openapi_types.Email `json:"email"`
@@ -419,11 +538,30 @@ type AccountId = string
 // ContainerId defines model for ContainerId.
 type ContainerId = string
 
+// OfficialAccountId defines model for OfficialAccountId.
+type OfficialAccountId = string
+
 // ProxyGroupId defines model for ProxyGroupId.
 type ProxyGroupId = string
 
 // Error defines model for Error.
 type Error = ErrorBody
+
+// AnalyticsOverviewParams defines parameters for AnalyticsOverview.
+type AnalyticsOverviewParams struct {
+	WindowDays *int `form:"windowDays,omitempty" json:"windowDays,omitempty"`
+}
+
+// AnalyticsByPlatformParams defines parameters for AnalyticsByPlatform.
+type AnalyticsByPlatformParams struct {
+	Metric     *string `form:"metric,omitempty" json:"metric,omitempty"`
+	WindowDays *int    `form:"windowDays,omitempty" json:"windowDays,omitempty"`
+}
+
+// ListOfficialAccountsParams defines parameters for ListOfficialAccounts.
+type ListOfficialAccountsParams struct {
+	Platform *Platform `form:"platform,omitempty" json:"platform,omitempty"`
+}
 
 // CreateAccountJSONRequestBody defines body for CreateAccount for application/json ContentType.
 type CreateAccountJSONRequestBody = CreateAccountRequest
@@ -436,6 +574,9 @@ type LoginJSONRequestBody = LoginRequest
 
 // CreateContainerJSONRequestBody defines body for CreateContainer for application/json ContentType.
 type CreateContainerJSONRequestBody = CreateContainerRequest
+
+// CreateOfficialAccountJSONRequestBody defines body for CreateOfficialAccount for application/json ContentType.
+type CreateOfficialAccountJSONRequestBody = CreateOfficialAccountRequest
 
 // CreateProxyGroupJSONRequestBody defines body for CreateProxyGroup for application/json ContentType.
 type CreateProxyGroupJSONRequestBody = CreateProxyGroupRequest

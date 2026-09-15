@@ -63,6 +63,7 @@ type Querier interface {
 	// backs the dashboard's freshness badge: the most recent terminal run tells the
 	// operator whether the analytics view they are reading is current or stale.
 	GetLatestAnalyticsIngestRun(ctx context.Context) (AnalyticsIngestRun, error)
+	GetOfficialAccountByHandle(ctx context.Context, arg GetOfficialAccountByHandleParams) (OfficialAccount, error)
 	// OfficialAccount: a monitored brand/client account (read-only). NOT an
 	// `account` (executor) — no credentials, no login, no actions. Metrics come
 	// from a 3rd-party provider and land in analytics_snapshot/analytics_mention.

@@ -8,6 +8,12 @@ SELECT id, platform, handle, display_name, profile_url, avatar_url, status,
 FROM official_account
 WHERE id = $1;
 
+-- name: GetOfficialAccountByHandle :one
+SELECT id, platform, handle, display_name, profile_url, avatar_url, status,
+       provider, provider_ref, tags, last_fetched_at, created_at
+FROM official_account
+WHERE platform = $1 AND handle = $2;
+
 -- name: ListOfficialAccounts :many
 SELECT id, platform, handle, display_name, profile_url, avatar_url, status,
        provider, provider_ref, tags, last_fetched_at, created_at

@@ -356,6 +356,190 @@ paths:
         '403':
           $ref: '#/components/responses/Error'
 
+  /api/official-accounts:
+    post:
+      tags: [official-accounts]
+      summary: Add a monitored (official) account
+      description: |
+        Registers a brand/client account for read-only analytics. An official
+        account has no credentials and performs no actions — it is only the
+        subject of metrics pulled from a 3rd-party provider (PRD F5). Requires
+        the `act` permission.
+      operationId: createOfficialAccount
+      security:
+        - accessCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOfficialAccountRequest'
+      responses:
+        '201':
+          description: Official account created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OfficialAccount'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+    get:
+      tags: [official-accounts]
+      summary: List official accounts
+      description: Returns every monitored account, optionally filtered by platform.
+      operationId: listOfficialAccounts
+      security:
+        - accessCookie: []
+      parameters:
+        - name: platform
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/Platform'
+      responses:
+        '200':
+          description: Official accounts.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OfficialAccountList'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+
+  /api/official-accounts/{officialAccountId}:
+    parameters:
+      - $ref: '#/components/parameters/OfficialAccountId'
+    delete:
+      tags: [official-accounts]
+      summary: Archive an official account
+      description: |
+        Archives the account: history stays queryable, but it is excluded from
+        the next ingest run. The row is never deleted so historical analytics
+        remain reproducible.
+      operationId: archiveOfficialAccount
+      security:
+        - accessCookie: []
+      responses:
+        '200':
+          description: Archived.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OfficialAccount'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+
+  /api/analytics/overview:
+    get:
+      tags: [analytics]
+      summary: Analytics overview across every platform
+      description: |
+        The KPI strip for the monitoring overview: the latest value of each
+        cross-platform metric per official account, over the trailing window.
+        Requires the `read` permission; analysts can read analytics.
+      operationId: analyticsOverview
+      security:
+        - accessCookie: []
+      parameters:
+        - name: windowDays
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 90
+            default: 30
+      responses:
+        '200':
+          description: KPI overview.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalyticsOverview'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+
+  /api/analytics/{platform}:
+    parameters:
+      - name: platform
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/Platform'
+    get:
+      tags: [analytics]
+      summary: Per-platform analytics
+      description: |
+        KPI strip + trend series + top posts for one platform. Mirrors
+        PLATFORM_MATRIX §2.3: the shape is identical across platforms, the
+        available metrics differ.
+      operationId: analyticsByPlatform
+      security:
+        - accessCookie: []
+      parameters:
+        - name: metric
+          in: query
+          required: false
+          schema:
+            type: string
+            default: followers
+        - name: windowDays
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 90
+            default: 30
+      responses:
+        '200':
+          description: Platform analytics.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlatformAnalytics'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+
+  /api/analytics/refresh:
+    post:
+      tags: [analytics]
+      summary: Trigger an analytics ingest run
+      description: |
+        Enqueues a provider pull on demand. The dashboard's refresh button hits
+        this; it never talks to the provider directly. Returns the audit run so
+        the caller can show freshness immediately.
+      operationId: analyticsRefresh
+      security:
+        - accessCookie: []
+      responses:
+        '200':
+          description: Ingest run started.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalyticsIngestRun'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+
   /api/proxy-groups/{proxyGroupId}:
     parameters:
       - $ref: '#/components/parameters/ProxyGroupId'
@@ -502,6 +686,14 @@ components:
       schema:
         type: string
       description: The proxy group ID.
+
+    OfficialAccountId:
+      name: officialAccountId
+      in: path
+      required: true
+      schema:
+        type: string
+      description: The official (monitored) account ID.
 
   securitySchemes:
     accessCookie:
@@ -770,6 +962,187 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Account'
+
+    Platform:
+      type: string
+      description: The social platform. MVP active set is Instagram + Threads.
+      enum: [instagram, threads, facebook, linkedin, x, youtube, tiktok]
+
+    OfficialAccount:
+      type: object
+      description: |
+        A monitored brand/client account (read-only). NOT a worker account: no
+        credentials, no actions. The subject of 3rd-party analytics.
+      required: [id, platform, handle, status, provider]
+      properties:
+        id:
+          type: string
+        platform:
+          $ref: '#/components/schemas/Platform'
+        handle:
+          type: string
+        displayName:
+          type: string
+          nullable: true
+        profileUrl:
+          type: string
+          nullable: true
+        avatarUrl:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [active, paused, archived]
+        provider:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        lastFetchedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Null until the first successful ingest — the freshness signal.
+        stale:
+          type: boolean
+          description: True when lastFetchedAt is older than the 60-minute threshold.
+        createdAt:
+          type: string
+          format: date-time
+
+    OfficialAccountList:
+      type: object
+      required: [officialAccounts]
+      properties:
+        officialAccounts:
+          type: array
+          items:
+            $ref: '#/components/schemas/OfficialAccount'
+
+    CreateOfficialAccountRequest:
+      type: object
+      required: [platform, handle]
+      properties:
+        platform:
+          $ref: '#/components/schemas/Platform'
+        handle:
+          type: string
+        displayName:
+          type: string
+        profileUrl:
+          type: string
+        avatarUrl:
+          type: string
+        provider:
+          type: string
+          default: thirdparty_a
+        tags:
+          type: array
+          items:
+            type: string
+
+    AnalyticsKpi:
+      type: object
+      description: One scalar KPI for one account.
+      required: [officialAccountId, metric, value]
+      properties:
+        officialAccountId:
+          type: string
+        handle:
+          type: string
+        metric:
+          type: string
+        value:
+          type: integer
+          format: int64
+          nullable: true
+
+    TrendPoint:
+      type: object
+      required: [bucket, value]
+      properties:
+        bucket:
+          type: string
+          format: date-time
+        value:
+          type: integer
+          format: int64
+
+    AnalyticsOverview:
+      type: object
+      required: [kpis, freshness]
+      properties:
+        kpis:
+          type: array
+          items:
+            $ref: '#/components/schemas/AnalyticsKpi'
+        freshness:
+          $ref: '#/components/schemas/AnalyticsFreshness'
+
+    PlatformAnalytics:
+      type: object
+      required: [platform, kpis, trend, freshness]
+      properties:
+        platform:
+          $ref: '#/components/schemas/Platform'
+        kpis:
+          type: array
+          items:
+            $ref: '#/components/schemas/AnalyticsKpi'
+        trend:
+          type: array
+          items:
+            $ref: '#/components/schemas/TrendPoint'
+        freshness:
+          $ref: '#/components/schemas/AnalyticsFreshness'
+
+    AnalyticsFreshness:
+      type: object
+      description: "Backs the dashboard's stale badge (P2-15 AC: stale when older than 60 minutes)."
+      required: [stale]
+      properties:
+        lastRunStatus:
+          type: string
+          nullable: true
+        lastRunAt:
+          type: string
+          format: date-time
+          nullable: true
+        stale:
+          type: boolean
+        thresholdSeconds:
+          type: integer
+
+    AnalyticsIngestRun:
+      type: object
+      required: [id, provider, scope, status, startedAt]
+      properties:
+        id:
+          type: string
+        provider:
+          type: string
+        scope:
+          type: string
+        status:
+          type: string
+        startedAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: string
+          format: date-time
+          nullable: true
+        accountsOk:
+          type: integer
+        accountsErr:
+          type: integer
+        errorClass:
+          type: string
+          nullable: true
+        error:
+          type: string
+          nullable: true
 
     ProxyGroup:
       type: object

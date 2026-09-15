@@ -214,7 +214,14 @@ func main() {
 			go scheduler.Run(ctx, time.Duration(cfg.ScrapeIntervalSeconds)*time.Second)
 		}
 
-		// Provisioning driver: k8s in a cluster, static (bookkeeping only) on
+		// Official-accounts API + analytics read models (P2-13 / P2-14).
+		analyticsSvc := service.NewAnalyticsService(analyticsRepo, service.AnalyticsConfig{
+			Ingestor: analyticsIngestor,
+			Clock:    time.Now,
+			Logger:   logger,
+		})
+		deps.Analytics = apihttp.NewAnalyticsHandler(analyticsSvc)
+
 		// a workstation. The reconciler is a pure loop over this port, so both
 		// tiers share the same code path (P1-03/P1-04). The LoggingDriver wraps
 		// either one so every create/delete lands in provision_log (P1-06).

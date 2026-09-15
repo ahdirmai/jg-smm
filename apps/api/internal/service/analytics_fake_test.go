@@ -48,6 +48,17 @@ func (f *fakeAnalyticsStore) GetOfficialAccount(ctx context.Context, id string) 
 	}
 	return domain.OfficialAccount{}, domain.ErrNotFound
 }
+func (f *fakeAnalyticsStore) GetOfficialAccountByHandle(ctx context.Context, p domain.Platform, handle string) (domain.OfficialAccount, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, a := range f.accounts {
+		if a.Platform == p && a.Handle == handle {
+			return a, nil
+		}
+	}
+	return domain.OfficialAccount{}, domain.ErrNotFound
+}
+
 func (f *fakeAnalyticsStore) ListOfficialAccounts(ctx context.Context, limit, offset *int) ([]domain.OfficialAccount, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -84,6 +84,20 @@ func (r *AnalyticsRepo) GetOfficialAccount(ctx context.Context, id string) (doma
 	return toOfficialAccount(row), nil
 }
 
+func (r *AnalyticsRepo) GetOfficialAccountByHandle(ctx context.Context, p domain.Platform, handle string) (domain.OfficialAccount, error) {
+	row, err := r.q.GetOfficialAccountByHandle(ctx, sqlcgen.GetOfficialAccountByHandleParams{
+		Platform: platformEnum(p),
+		Handle:   handle,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.OfficialAccount{}, domain.ErrNotFound
+	}
+	if err != nil {
+		return domain.OfficialAccount{}, fmt.Errorf("repository.analytics.GetOfficialAccountByHandle: %w", err)
+	}
+	return toOfficialAccount(row), nil
+}
+
 func (r *AnalyticsRepo) ListOfficialAccounts(ctx context.Context, limit, offset *int) ([]domain.OfficialAccount, error) {
 	l, o := ptrPage(limit, offset)
 	rows, err := r.q.ListOfficialAccounts(ctx, sqlcgen.ListOfficialAccountsParams{Limit: l, Offset: o})

@@ -265,6 +265,131 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/official-accounts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List official accounts
+         * @description Returns every monitored account, optionally filtered by platform.
+         */
+        get: operations["listOfficialAccounts"];
+        put?: never;
+        /**
+         * Add a monitored (official) account
+         * @description Registers a brand/client account for read-only analytics. An official
+         *     account has no credentials and performs no actions — it is only the
+         *     subject of metrics pulled from a 3rd-party provider (PRD F5). Requires
+         *     the `act` permission.
+         *
+         */
+        post: operations["createOfficialAccount"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/official-accounts/{officialAccountId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The official (monitored) account ID. */
+                officialAccountId: components["parameters"]["OfficialAccountId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Archive an official account
+         * @description Archives the account: history stays queryable, but it is excluded from
+         *     the next ingest run. The row is never deleted so historical analytics
+         *     remain reproducible.
+         *
+         */
+        delete: operations["archiveOfficialAccount"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/analytics/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Analytics overview across every platform
+         * @description The KPI strip for the monitoring overview: the latest value of each
+         *     cross-platform metric per official account, over the trailing window.
+         *     Requires the `read` permission; analysts can read analytics.
+         *
+         */
+        get: operations["analyticsOverview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/analytics/{platform}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                platform: components["schemas"]["Platform"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Per-platform analytics
+         * @description KPI strip + trend series + top posts for one platform. Mirrors
+         *     PLATFORM_MATRIX §2.3: the shape is identical across platforms, the
+         *     available metrics differ.
+         *
+         */
+        get: operations["analyticsByPlatform"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/analytics/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Trigger an analytics ingest run
+         * @description Enqueues a provider pull on demand. The dashboard's refresh button hits
+         *     this; it never talks to the provider directly. Returns the audit run so
+         *     the caller can show freshness immediately.
+         *
+         */
+        post: operations["analyticsRefresh"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/proxy-groups/{proxyGroupId}": {
         parameters: {
             query?: never;
@@ -515,6 +640,94 @@ export interface components {
         AccountList: {
             accounts: components["schemas"]["Account"][];
         };
+        /**
+         * @description The social platform. MVP active set is Instagram + Threads.
+         * @enum {string}
+         */
+        Platform: "instagram" | "threads" | "facebook" | "linkedin" | "x" | "youtube" | "tiktok";
+        /** @description A monitored brand/client account (read-only). NOT a worker account: no
+         *     credentials, no actions. The subject of 3rd-party analytics.
+         *      */
+        OfficialAccount: {
+            id: string;
+            platform: components["schemas"]["Platform"];
+            handle: string;
+            displayName?: string | null;
+            profileUrl?: string | null;
+            avatarUrl?: string | null;
+            /** @enum {string} */
+            status: "active" | "paused" | "archived";
+            provider: string;
+            tags?: string[];
+            /**
+             * Format: date-time
+             * @description Null until the first successful ingest — the freshness signal.
+             */
+            lastFetchedAt?: string | null;
+            /** @description True when lastFetchedAt is older than the 60-minute threshold. */
+            stale?: boolean;
+            /** Format: date-time */
+            createdAt?: string;
+        };
+        OfficialAccountList: {
+            officialAccounts: components["schemas"]["OfficialAccount"][];
+        };
+        CreateOfficialAccountRequest: {
+            platform: components["schemas"]["Platform"];
+            handle: string;
+            displayName?: string;
+            profileUrl?: string;
+            avatarUrl?: string;
+            /** @default thirdparty_a */
+            provider: string;
+            tags?: string[];
+        };
+        /** @description One scalar KPI for one account. */
+        AnalyticsKpi: {
+            officialAccountId: string;
+            handle?: string;
+            metric: string;
+            /** Format: int64 */
+            value: number | null;
+        };
+        TrendPoint: {
+            /** Format: date-time */
+            bucket: string;
+            /** Format: int64 */
+            value: number;
+        };
+        AnalyticsOverview: {
+            kpis: components["schemas"]["AnalyticsKpi"][];
+            freshness: components["schemas"]["AnalyticsFreshness"];
+        };
+        PlatformAnalytics: {
+            platform: components["schemas"]["Platform"];
+            kpis: components["schemas"]["AnalyticsKpi"][];
+            trend: components["schemas"]["TrendPoint"][];
+            freshness: components["schemas"]["AnalyticsFreshness"];
+        };
+        /** @description Backs the dashboard's stale badge (P2-15 AC: stale when older than 60 minutes). */
+        AnalyticsFreshness: {
+            lastRunStatus?: string | null;
+            /** Format: date-time */
+            lastRunAt?: string | null;
+            stale: boolean;
+            thresholdSeconds?: number;
+        };
+        AnalyticsIngestRun: {
+            id: string;
+            provider: string;
+            scope: string;
+            status: string;
+            /** Format: date-time */
+            startedAt: string;
+            /** Format: date-time */
+            finishedAt?: string | null;
+            accountsOk?: number;
+            accountsErr?: number;
+            errorClass?: string | null;
+            error?: string | null;
+        };
         /** @description A residential proxy pool. The pool key is write-only and never present
          *     in a response.
          *      */
@@ -601,6 +814,8 @@ export interface components {
         AccountId: string;
         /** @description The proxy group ID. */
         ProxyGroupId: string;
+        /** @description The official (monitored) account ID. */
+        OfficialAccountId: string;
     };
     requestBodies: never;
     headers: never;
@@ -989,6 +1204,157 @@ export interface operations {
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             409: components["responses"]["Error"];
+        };
+    };
+    listOfficialAccounts: {
+        parameters: {
+            query?: {
+                platform?: components["schemas"]["Platform"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Official accounts. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OfficialAccountList"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    createOfficialAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateOfficialAccountRequest"];
+            };
+        };
+        responses: {
+            /** @description Official account created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OfficialAccount"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+        };
+    };
+    archiveOfficialAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The official (monitored) account ID. */
+                officialAccountId: components["parameters"]["OfficialAccountId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Archived. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OfficialAccount"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    analyticsOverview: {
+        parameters: {
+            query?: {
+                windowDays?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description KPI overview. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnalyticsOverview"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    analyticsByPlatform: {
+        parameters: {
+            query?: {
+                metric?: string;
+                windowDays?: number;
+            };
+            header?: never;
+            path: {
+                platform: components["schemas"]["Platform"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Platform analytics. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformAnalytics"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    analyticsRefresh: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Ingest run started. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnalyticsIngestRun"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
         };
     };
     deleteProxyGroup: {

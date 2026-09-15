@@ -67,6 +67,7 @@ type AnalyticsStore interface {
 	// Official accounts (CRUD).
 	CreateOfficialAccount(ctx context.Context, a domain.OfficialAccount) (domain.OfficialAccount, error)
 	GetOfficialAccount(ctx context.Context, id string) (domain.OfficialAccount, error)
+	GetOfficialAccountByHandle(ctx context.Context, p domain.Platform, handle string) (domain.OfficialAccount, error)
 	ListOfficialAccounts(ctx context.Context, limit, offset *int) ([]domain.OfficialAccount, error)
 	ListOfficialAccountsByPlatform(ctx context.Context, p domain.Platform, limit, offset *int) ([]domain.OfficialAccount, error)
 	CountOfficialAccountsByPlatform(ctx context.Context, p domain.Platform) (int, error)
