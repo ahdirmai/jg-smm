@@ -35,6 +35,10 @@ type Config struct {
 	MaxAccountsPerContainer int
 	// ActionBatchParallelism caps how many worker containers act concurrently.
 	ActionBatchParallelism int
+	// ActionCooldownSeconds is the per-(account, target) cooldown gate (P3-09):
+	// the same account may not act on the same target twice inside this window.
+	// The ticket's contract is 60s; 0 disables the gate only for local play.
+	ActionCooldownSeconds int
 	// ShutdownTimeoutSeconds is the graceful drain budget.
 	ShutdownTimeoutSeconds int
 
@@ -109,6 +113,7 @@ func Load() (Config, error) {
 		ProvisionAutoCreate:      envBool("PROVISION_AUTO_CREATE", true),
 		MaxAccountsPerContainer:  envInt("MAX_ACCOUNTS_PER_CONTAINER", 7),
 		ActionBatchParallelism:   envInt("ACTION_BATCH_PARALLELISM", 2),
+		ActionCooldownSeconds:    envInt("ACTION_COOLDOWN_SECONDS", 60),
 		ShutdownTimeoutSeconds:   envInt("SHUTDOWN_TIMEOUT_SECONDS", 10),
 		JWTSecret:                os.Getenv("JWT_SECRET"),
 		JWTIssuer:                env("JWT_ISSUER", "smm-api"),
