@@ -123,3 +123,13 @@ FROM action_log
 WHERE error_class = $1
 ORDER BY ts DESC
 LIMIT $2 OFFSET $3;
+
+-- name: LatestActionLogsByJobs :many
+-- The newest attempt of each of a set of jobs in one round trip (P3-13): the
+-- queue view shows live status (job) plus the verdict that explains it (log),
+-- and this keeps a 50-row page at one query rather than one per row.
+-- DISTINCT ON is the per-group max: one row per job, the highest attempt.
+SELECT DISTINCT ON (action_job_id) *
+FROM action_log
+WHERE action_job_id = ANY($1::uuid[])
+ORDER BY action_job_id, attempt DESC;

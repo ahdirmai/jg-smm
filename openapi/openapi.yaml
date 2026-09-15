@@ -213,6 +213,182 @@ paths:
         '404':
           $ref: '#/components/responses/Error'
 
+  /api/actions:
+    post:
+      tags: [actions]
+      summary: Enqueue action jobs
+      description: |
+        Creates up to 50 like/comment jobs, one per target. Comment text is NOT
+        sent: it is composed from the template pool and denylist-screened at
+        dispatch time (P3-02/P3-03), so the only thing stored here is the
+        intent (account, target, action type). Requires the `act` permission.
+      operationId: enqueueActions
+      security:
+        - accessCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnqueueActionsRequest'
+      responses:
+        '201':
+          description: Jobs enqueued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionJobList'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+    get:
+      tags: [actions]
+      summary: List the action queue
+      description: |
+        Returns action jobs newest-first with their latest attempt, so the
+        queue view can show live status. The worker writes the verdict via the
+        internal callback; this is the read side.
+      operationId: listActions
+      security:
+        - accessCookie: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/JobStatus'
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+      responses:
+        '200':
+          description: The queue.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionJobList'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+
+  /api/templates:
+    post:
+      tags: [templates]
+      summary: Add a comment template
+      description: |
+        One variant in the comment pool (P3-02). Platform-scoped, weighted, and
+        carrying its own denylist. Every banned-word entry must compile as a
+        regex or the request is a 400 (validasi inline, P3-03).
+      operationId: createTemplate
+      security:
+        - accessCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTemplateRequest'
+      responses:
+        '201':
+          description: Template created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommentTemplate'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+    get:
+      tags: [templates]
+      summary: List comment templates
+      operationId: listTemplates
+      security:
+        - accessCookie: []
+      parameters:
+        - name: platform
+          in: query
+          schema:
+            $ref: '#/components/schemas/Platform'
+        - name: includeInactive
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: Templates.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TemplateList'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+
+  /api/templates/{templateId}:
+    parameters:
+      - $ref: '#/components/parameters/TemplateId'
+    put:
+      tags: [templates]
+      summary: Replace a comment template
+      description: |
+        Full-row update: text, vars, weight, banned words and active flag all
+        change together from one request. A denylist entry that does not compile
+        is a 400.
+      operationId: updateTemplate
+      security:
+        - accessCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTemplateRequest'
+      responses:
+        '200':
+          description: Template updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommentTemplate'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+    delete:
+      tags: [templates]
+      summary: Delete a comment template
+      description: |
+        Soft question only in the sense that past action_logs keep their
+        template_id; the pool row itself is removed.
+      operationId: deleteTemplate
+      security:
+        - accessCookie: []
+      responses:
+        '204':
+          description: Deleted.
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+
   /api/containers:
     post:
       tags: [containers]
@@ -679,6 +855,13 @@ components:
       schema:
         type: string
       description: The account ID.
+    TemplateId:
+      name: templateId
+      in: path
+      required: true
+      schema:
+        type: string
+      description: The template ID.
     ProxyGroupId:
       name: proxyGroupId
       in: path
@@ -1292,3 +1475,160 @@ components:
         lastActionAt:
           type: string
           format: date-time
+
+    EnqueueActionsRequest:
+      type: object
+      description: |
+        A batch of intents. Comment text is deliberately absent: it is composed
+        from the template pool at dispatch (P3-02) and denylist-screened before
+        the queue (P3-03), so an enqueue only records WHAT to do and WHERE.
+      required: [items]
+      properties:
+        items:
+          type: array
+          minItems: 1
+          maxItems: 50
+          description: One job per target; the cap is the queue batch size.
+          items:
+            $ref: '#/components/schemas/ActionItem'
+
+    ActionItem:
+      type: object
+      required: [accountId, targetUrl, actionType]
+      properties:
+        accountId:
+          type: string
+          description: The worker account that will perform the action.
+        targetUrl:
+          type: string
+          minLength: 1
+          description: Permalink of the post to act on. SSRF-guarded server-side.
+        actionType:
+          type: string
+          enum: [action_like, action_comment]
+          description: The queue JobType; a like needs no text.
+
+    ActionJob:
+      type: object
+      description: One enqueued action and its live status.
+      required: [id, actionType, accountId, targetId, status, attempts, scheduledAt]
+      properties:
+        id:
+          type: string
+        actionType:
+          type: string
+          enum: [action_like, action_comment]
+        accountId:
+          type: string
+        targetId:
+          type: string
+        targetUrl:
+          type: string
+          nullable: true
+          description: Resolved at dispatch from the target; null until then.
+        status:
+          $ref: '#/components/schemas/JobStatus'
+        attempts:
+          type: integer
+          minimum: 0
+        scheduledAt:
+          type: string
+          format: date-time
+        error:
+          type: string
+          nullable: true
+        renderedText:
+          type: string
+          nullable: true
+          description: The comment text of the latest attempt, once dispatched.
+        errorClass:
+          allOf:
+            - $ref: '#/components/schemas/ErrorClass'
+          nullable: true
+
+    ActionJobList:
+      type: object
+      required: [actions]
+      properties:
+        actions:
+          type: array
+          items:
+            $ref: '#/components/schemas/ActionJob'
+
+    JobStatus:
+      type: string
+      enum: [PENDING, RUNNING, SUCCESS, FAILED, CANCELLED]
+      description: The queue-side status; the verdict lives on the attempt.
+
+    ErrorClass:
+      type: string
+      enum: [TRANSIENT, AUTH, RATE_LIMIT, BANNED, UNKNOWN]
+      description: |
+        Coarse failure classification (P3-12). Only TRANSIENT and RATE_LIMIT are
+        retryable: AUTH/BANNED cannot be fixed by running it again.
+
+    CreateTemplateRequest:
+      type: object
+      description: |
+        One pool variant. Every banned-word entry must compile as a regex
+        (P3-03); a literal word is a valid regex, so the common case is free.
+      required: [platform, text, vars, weight]
+      properties:
+        platform:
+          $ref: '#/components/schemas/Platform'
+        text:
+          type: string
+          minLength: 1
+          description: The variant body. {topic} forms are rendered from vars.
+        vars:
+          type: array
+          items:
+            type: string
+          description: Every {var} used in text must be declared here, and used.
+        weight:
+          type: integer
+          minimum: 1
+          description: Relative pick probability (weight 3 is 3x weight 1).
+        bannedWords:
+          type: array
+          items:
+            type: string
+          description: Regex denylist screened before a comment is queued.
+        isActive:
+          type: boolean
+          default: true
+
+    CommentTemplate:
+      type: object
+      required: [id, platform, text, vars, weight, isActive, createdAt]
+      properties:
+        id:
+          type: string
+        platform:
+          $ref: '#/components/schemas/Platform'
+        text:
+          type: string
+        vars:
+          type: array
+          items:
+            type: string
+        weight:
+          type: integer
+        bannedWords:
+          type: array
+          items:
+            type: string
+        isActive:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+
+    TemplateList:
+      type: object
+      required: [templates]
+      properties:
+        templates:
+          type: array
+          items:
+            $ref: '#/components/schemas/CommentTemplate'

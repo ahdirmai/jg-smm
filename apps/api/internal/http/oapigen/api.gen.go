@@ -42,6 +42,18 @@ const (
 	AccountStatusPAUSED   AccountStatus = "PAUSED"
 )
 
+// Defines values for ActionItemActionType.
+const (
+	ActionItemActionTypeActionComment ActionItemActionType = "action_comment"
+	ActionItemActionTypeActionLike    ActionItemActionType = "action_like"
+)
+
+// Defines values for ActionJobActionType.
+const (
+	ActionJobActionTypeActionComment ActionJobActionType = "action_comment"
+	ActionJobActionTypeActionLike    ActionJobActionType = "action_like"
+)
+
 // Defines values for AttemptStatus.
 const (
 	AttemptStatusCANCELLED AttemptStatus = "CANCELLED"
@@ -60,8 +72,8 @@ const (
 
 // Defines values for ContainerDesiredState.
 const (
-	RUNNING ContainerDesiredState = "RUNNING"
-	STOPPED ContainerDesiredState = "STOPPED"
+	ContainerDesiredStateRUNNING ContainerDesiredState = "RUNNING"
+	ContainerDesiredStateSTOPPED ContainerDesiredState = "STOPPED"
 )
 
 // Defines values for ContainerSource.
@@ -121,12 +133,30 @@ const (
 	CreateAccountRequestPlatformYoutube   CreateAccountRequestPlatform = "youtube"
 )
 
+// Defines values for ErrorClass.
+const (
+	AUTH      ErrorClass = "AUTH"
+	BANNED    ErrorClass = "BANNED"
+	RATELIMIT ErrorClass = "RATE_LIMIT"
+	TRANSIENT ErrorClass = "TRANSIENT"
+	UNKNOWN   ErrorClass = "UNKNOWN"
+)
+
 // Defines values for HeartbeatBrowserStatus.
 const (
 	HeartbeatBrowserStatusBusy  HeartbeatBrowserStatus = "busy"
 	HeartbeatBrowserStatusCold  HeartbeatBrowserStatus = "cold"
 	HeartbeatBrowserStatusError HeartbeatBrowserStatus = "error"
 	HeartbeatBrowserStatusReady HeartbeatBrowserStatus = "ready"
+)
+
+// Defines values for JobStatus.
+const (
+	JobStatusCANCELLED JobStatus = "CANCELLED"
+	JobStatusFAILED    JobStatus = "FAILED"
+	JobStatusPENDING   JobStatus = "PENDING"
+	JobStatusRUNNING   JobStatus = "RUNNING"
+	JobStatusSUCCESS   JobStatus = "SUCCESS"
 )
 
 // Defines values for OfficialAccountStatus.
@@ -234,6 +264,50 @@ type ActionCallback struct {
 	WorkerId       *string       `json:"workerId,omitempty"`
 }
 
+// ActionItem defines model for ActionItem.
+type ActionItem struct {
+	// AccountId The worker account that will perform the action.
+	AccountId string `json:"accountId"`
+
+	// ActionType The queue JobType; a like needs no text.
+	ActionType ActionItemActionType `json:"actionType"`
+
+	// TargetUrl Permalink of the post to act on. SSRF-guarded server-side.
+	TargetUrl string `json:"targetUrl"`
+}
+
+// ActionItemActionType The queue JobType; a like needs no text.
+type ActionItemActionType string
+
+// ActionJob One enqueued action and its live status.
+type ActionJob struct {
+	AccountId  string                        `json:"accountId"`
+	ActionType ActionJobActionType           `json:"actionType"`
+	Attempts   int                           `json:"attempts"`
+	Error      nullable.Nullable[string]     `json:"error,omitempty"`
+	ErrorClass nullable.Nullable[ErrorClass] `json:"errorClass,omitempty"`
+	Id         string                        `json:"id"`
+
+	// RenderedText The comment text of the latest attempt, once dispatched.
+	RenderedText nullable.Nullable[string] `json:"renderedText,omitempty"`
+	ScheduledAt  time.Time                 `json:"scheduledAt"`
+
+	// Status The queue-side status; the verdict lives on the attempt.
+	Status   JobStatus `json:"status"`
+	TargetId string    `json:"targetId"`
+
+	// TargetUrl Resolved at dispatch from the target; null until then.
+	TargetUrl nullable.Nullable[string] `json:"targetUrl,omitempty"`
+}
+
+// ActionJobActionType defines model for ActionJob.ActionType.
+type ActionJobActionType string
+
+// ActionJobList defines model for ActionJobList.
+type ActionJobList struct {
+	Actions []ActionJob `json:"actions"`
+}
+
 // AnalyticsFreshness Backs the dashboard's stale badge (P2-15 AC: stale when older than 60 minutes).
 type AnalyticsFreshness struct {
 	LastRunAt        nullable.Nullable[time.Time] `json:"lastRunAt,omitempty"`
@@ -280,6 +354,20 @@ type AuthStatus string
 // CallbackAck defines model for CallbackAck.
 type CallbackAck struct {
 	Accepted bool `json:"accepted"`
+}
+
+// CommentTemplate defines model for CommentTemplate.
+type CommentTemplate struct {
+	BannedWords *[]string `json:"bannedWords,omitempty"`
+	CreatedAt   time.Time `json:"createdAt"`
+	Id          string    `json:"id"`
+	IsActive    bool      `json:"isActive"`
+
+	// Platform The social platform. MVP active set is Instagram + Threads.
+	Platform Platform `json:"platform"`
+	Text     string   `json:"text"`
+	Vars     []string `json:"vars"`
+	Weight   int      `json:"weight"`
 }
 
 // Container defines model for Container.
@@ -377,10 +465,42 @@ type CreateProxyGroupRequest struct {
 	Region string `json:"region"`
 }
 
+// CreateTemplateRequest One pool variant. Every banned-word entry must compile as a regex
+// (P3-03); a literal word is a valid regex, so the common case is free.
+type CreateTemplateRequest struct {
+	// BannedWords Regex denylist screened before a comment is queued.
+	BannedWords *[]string `json:"bannedWords,omitempty"`
+	IsActive    *bool     `json:"isActive,omitempty"`
+
+	// Platform The social platform. MVP active set is Instagram + Threads.
+	Platform Platform `json:"platform"`
+
+	// Text The variant body. {topic} forms are rendered from vars.
+	Text string `json:"text"`
+
+	// Vars Every {var} used in text must be declared here, and used.
+	Vars []string `json:"vars"`
+
+	// Weight Relative pick probability (weight 3 is 3x weight 1).
+	Weight int `json:"weight"`
+}
+
+// EnqueueActionsRequest A batch of intents. Comment text is deliberately absent: it is composed
+// from the template pool at dispatch (P3-02) and denylist-screened before
+// the queue (P3-03), so an enqueue only records WHAT to do and WHERE.
+type EnqueueActionsRequest struct {
+	// Items One job per target; the cap is the queue batch size.
+	Items []ActionItem `json:"items"`
+}
+
 // ErrorBody defines model for ErrorBody.
 type ErrorBody struct {
 	Error ErrorDetail `json:"error"`
 }
+
+// ErrorClass Coarse failure classification (P3-12). Only TRANSIENT and RATE_LIMIT are
+// retryable: AUTH/BANNED cannot be fixed by running it again.
+type ErrorClass string
 
 // ErrorDetail defines model for ErrorDetail.
 type ErrorDetail struct {
@@ -407,6 +527,9 @@ type Heartbeat struct {
 
 // HeartbeatBrowserStatus defines model for Heartbeat.BrowserStatus.
 type HeartbeatBrowserStatus string
+
+// JobStatus The queue-side status; the verdict lives on the attempt.
+type JobStatus string
 
 // LoginRequest defines model for LoginRequest.
 type LoginRequest struct {
@@ -527,6 +650,11 @@ type StreamEvent struct {
 // StreamEventKind The SSE `event:` line; the client dispatches on this.
 type StreamEventKind string
 
+// TemplateList defines model for TemplateList.
+type TemplateList struct {
+	Templates []CommentTemplate `json:"templates"`
+}
+
 // TrendPoint defines model for TrendPoint.
 type TrendPoint struct {
 	Bucket time.Time `json:"bucket"`
@@ -553,8 +681,17 @@ type OfficialAccountId = string
 // ProxyGroupId defines model for ProxyGroupId.
 type ProxyGroupId = string
 
+// TemplateId defines model for TemplateId.
+type TemplateId = string
+
 // Error defines model for Error.
 type Error = ErrorBody
+
+// ListActionsParams defines parameters for ListActions.
+type ListActionsParams struct {
+	Status *JobStatus `form:"status,omitempty" json:"status,omitempty"`
+	Limit  *int       `form:"limit,omitempty" json:"limit,omitempty"`
+}
 
 // AnalyticsOverviewParams defines parameters for AnalyticsOverview.
 type AnalyticsOverviewParams struct {
@@ -572,11 +709,20 @@ type ListOfficialAccountsParams struct {
 	Platform *Platform `form:"platform,omitempty" json:"platform,omitempty"`
 }
 
+// ListTemplatesParams defines parameters for ListTemplates.
+type ListTemplatesParams struct {
+	Platform        *Platform `form:"platform,omitempty" json:"platform,omitempty"`
+	IncludeInactive *bool     `form:"includeInactive,omitempty" json:"includeInactive,omitempty"`
+}
+
 // CreateAccountJSONRequestBody defines body for CreateAccount for application/json ContentType.
 type CreateAccountJSONRequestBody = CreateAccountRequest
 
 // SetAccountStatusJSONRequestBody defines body for SetAccountStatus for application/json ContentType.
 type SetAccountStatusJSONRequestBody = SetAccountStatusRequest
+
+// EnqueueActionsJSONRequestBody defines body for EnqueueActions for application/json ContentType.
+type EnqueueActionsJSONRequestBody = EnqueueActionsRequest
 
 // LoginJSONRequestBody defines body for Login for application/json ContentType.
 type LoginJSONRequestBody = LoginRequest
@@ -589,6 +735,12 @@ type CreateOfficialAccountJSONRequestBody = CreateOfficialAccountRequest
 
 // CreateProxyGroupJSONRequestBody defines body for CreateProxyGroup for application/json ContentType.
 type CreateProxyGroupJSONRequestBody = CreateProxyGroupRequest
+
+// CreateTemplateJSONRequestBody defines body for CreateTemplate for application/json ContentType.
+type CreateTemplateJSONRequestBody = CreateTemplateRequest
+
+// UpdateTemplateJSONRequestBody defines body for UpdateTemplate for application/json ContentType.
+type UpdateTemplateJSONRequestBody = CreateTemplateRequest
 
 // PostAccountCallbackJSONRequestBody defines body for PostAccountCallback for application/json ContentType.
 type PostAccountCallbackJSONRequestBody = AccountCallback

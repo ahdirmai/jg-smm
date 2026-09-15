@@ -102,3 +102,52 @@ func (s *TemplateService) weightedPick(candidates []domain.CommentTemplate) doma
 	// guard is only for a zero-weight candidate set, which cannot reach here.
 	return candidates[len(candidates)-1]
 }
+
+// --- CRUD surface (P3-13 template composer) --------------------------------
+
+// The store runs Validate() on every write, so these methods are pass-through
+// by design: the composer's contract (vars match the text, weight positive,
+// denylist compiles) is enforced at the store boundary, one place, and the
+// handler only shapes the request. No method invents defaults the schema
+// already owns.
+
+// Create adds one variant to the pool.
+func (s *TemplateService) Create(ctx context.Context, t domain.CommentTemplate) (domain.CommentTemplate, error) {
+	out, err := s.templates.CreateTemplate(ctx, t)
+	if err != nil {
+		return out, fmt.Errorf("service.template.Create: %w", err)
+	}
+	return out, nil
+}
+
+// Update replaces a variant's mutable fields.
+func (s *TemplateService) Update(ctx context.Context, t domain.CommentTemplate) (domain.CommentTemplate, error) {
+	out, err := s.templates.UpdateTemplate(ctx, t)
+	if err != nil {
+		return out, fmt.Errorf("service.template.Update: %w", err)
+	}
+	return out, nil
+}
+
+// Delete removes a variant from the pool. Past action_logs keep their
+// template_id: the audit trail does not follow the pool's current membership.
+func (s *TemplateService) Delete(ctx context.Context, id string) error {
+	if err := s.templates.DeleteTemplate(ctx, id); err != nil {
+		return fmt.Errorf("service.template.Delete: %w", err)
+	}
+	return nil
+}
+
+// List returns the pool for one platform. The dashboard asks per platform
+// (the composer is platform-scoped), so the query stays single-platform.
+func (s *TemplateService) List(ctx context.Context, platform domain.Platform, includeInactive bool) ([]domain.CommentTemplate, error) {
+	out, err := s.templates.ListTemplates(ctx, platform, includeInactive, &listPageSize, nil)
+	if err != nil {
+		return nil, fmt.Errorf("service.template.List: %w", err)
+	}
+	return out, nil
+}
+
+// listPageSize bounds the pool read. The pool is a curated set, not a feed: a
+// large number here means the pool needs pruning, not a bigger page.
+var listPageSize = 200

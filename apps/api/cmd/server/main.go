@@ -191,6 +191,15 @@ func main() {
 			go analyticsIngestor.Run(ctx, time.Duration(cfg.AnalyticsIngestIntervalSeconds)*time.Second)
 		}
 
+		// P3-13 — action queue + comment templates. The enqueue path turns pasted
+		// permalinks into PENDING jobs; the composer that renders comment text for
+		// the scheduler is the same instance this CRUD handler serves, so a
+		// template edit is visible to dispatch without a restart.
+		templateSvc := service.NewTemplateService(repository.NewTemplateRepo(pg.Queries()), nil, nil, logger)
+		actionSvc := service.NewActionService(actionRepo, accountRepo, scrapeRepo, nil, logger)
+		deps.Actions = apihttp.NewActionHandler(actionSvc)
+		deps.Templates = apihttp.NewTemplateHandler(templateSvc)
+
 		// Scrape scheduler (P2-02): claims due jobs FIFO, runs the Apify actor,
 		// records the outcome with jitter + rate-limit backoff.
 		if cfg.ScrapeIntervalSeconds > 0 && cfg.ApifyToken != "" {
@@ -233,19 +242,12 @@ func main() {
 			// The composer is the template engine (P3-02/P3-03): it picks an unused
 			// variant for the target, renders it, and denylist-screens the result,
 			// so the only text a worker ever receives is already safe to post.
-			// Clock + RNG default inside the constructor (seeded from the clock).
-			composer := service.NewTemplateService(
-				repository.NewTemplateRepo(pg.Queries()),
-				nil,
-				nil,
-				logger,
-			)
-
+			// Same instance the template handler serves above.
 			actionSched := service.NewActionScheduler(
 				actionRepo,
 				accountRepo,
 				scrapeRepo,
-				composer,
+				templateSvc,
 				adapter.NewCooldownGate(rc.Client(), "smm:cooldown"),
 				adapter.NewRateLimiter(rc.Client(), "smm:ratelimit"),
 				transport.NewPublisher(rc.Client()),

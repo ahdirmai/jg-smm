@@ -29,5 +29,8 @@ type ActionStore interface {
 	UpsertActionLog(ctx context.Context, l domain.ActionLog) (domain.ActionLog, error)
 	GetActionLog(ctx context.Context, jobID string, attempt int) (domain.ActionLog, error)
 	ListActionLogsByJob(ctx context.Context, jobID string) ([]domain.ActionLog, error)
+	// LatestActionLogsByJobs is the queue view's read (P3-13): the newest
+	// attempt of each job in one round trip, so a page never runs N queries.
+	LatestActionLogsByJobs(ctx context.Context, jobIDs []string) ([]domain.ActionLog, error)
 	ListActionLogsByErrorClass(ctx context.Context, class domain.ErrorClass, limit, offset *int) ([]domain.ActionLog, error)
 }

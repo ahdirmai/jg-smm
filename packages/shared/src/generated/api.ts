@@ -165,6 +165,93 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the action queue
+         * @description Returns action jobs newest-first with their latest attempt, so the
+         *     queue view can show live status. The worker writes the verdict via the
+         *     internal callback; this is the read side.
+         *
+         */
+        get: operations["listActions"];
+        put?: never;
+        /**
+         * Enqueue action jobs
+         * @description Creates up to 50 like/comment jobs, one per target. Comment text is NOT
+         *     sent: it is composed from the template pool and denylist-screened at
+         *     dispatch time (P3-02/P3-03), so the only thing stored here is the
+         *     intent (account, target, action type). Requires the `act` permission.
+         *
+         */
+        post: operations["enqueueActions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List comment templates */
+        get: operations["listTemplates"];
+        put?: never;
+        /**
+         * Add a comment template
+         * @description One variant in the comment pool (P3-02). Platform-scoped, weighted, and
+         *     carrying its own denylist. Every banned-word entry must compile as a
+         *     regex or the request is a 400 (validasi inline, P3-03).
+         *
+         */
+        post: operations["createTemplate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/templates/{templateId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The template ID. */
+                templateId: components["parameters"]["TemplateId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Replace a comment template
+         * @description Full-row update: text, vars, weight, banned words and active flag all
+         *     change together from one request. A denylist entry that does not compile
+         *     is a 400.
+         *
+         */
+        put: operations["updateTemplate"];
+        post?: never;
+        /**
+         * Delete a comment template
+         * @description Soft question only in the sense that past action_logs keep their
+         *     template_id; the pool row itself is removed.
+         *
+         */
+        delete: operations["deleteTemplate"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/containers": {
         parameters: {
             query?: never;
@@ -804,6 +891,88 @@ export interface components {
             /** Format: date-time */
             lastActionAt?: string;
         };
+        /** @description A batch of intents. Comment text is deliberately absent: it is composed
+         *     from the template pool at dispatch (P3-02) and denylist-screened before
+         *     the queue (P3-03), so an enqueue only records WHAT to do and WHERE.
+         *      */
+        EnqueueActionsRequest: {
+            /** @description One job per target; the cap is the queue batch size. */
+            items: components["schemas"]["ActionItem"][];
+        };
+        ActionItem: {
+            /** @description The worker account that will perform the action. */
+            accountId: string;
+            /** @description Permalink of the post to act on. SSRF-guarded server-side. */
+            targetUrl: string;
+            /**
+             * @description The queue JobType; a like needs no text.
+             * @enum {string}
+             */
+            actionType: "action_like" | "action_comment";
+        };
+        /** @description One enqueued action and its live status. */
+        ActionJob: {
+            id: string;
+            /** @enum {string} */
+            actionType: "action_like" | "action_comment";
+            accountId: string;
+            targetId: string;
+            /** @description Resolved at dispatch from the target; null until then. */
+            targetUrl?: string | null;
+            status: components["schemas"]["JobStatus"];
+            attempts: number;
+            /** Format: date-time */
+            scheduledAt: string;
+            error?: string | null;
+            /** @description The comment text of the latest attempt, once dispatched. */
+            renderedText?: string | null;
+            errorClass?: components["schemas"]["ErrorClass"] | null;
+        };
+        ActionJobList: {
+            actions: components["schemas"]["ActionJob"][];
+        };
+        /**
+         * @description The queue-side status; the verdict lives on the attempt.
+         * @enum {string}
+         */
+        JobStatus: "PENDING" | "RUNNING" | "SUCCESS" | "FAILED" | "CANCELLED";
+        /**
+         * @description Coarse failure classification (P3-12). Only TRANSIENT and RATE_LIMIT are
+         *     retryable: AUTH/BANNED cannot be fixed by running it again.
+         *
+         * @enum {string}
+         */
+        ErrorClass: "TRANSIENT" | "AUTH" | "RATE_LIMIT" | "BANNED" | "UNKNOWN";
+        /** @description One pool variant. Every banned-word entry must compile as a regex
+         *     (P3-03); a literal word is a valid regex, so the common case is free.
+         *      */
+        CreateTemplateRequest: {
+            platform: components["schemas"]["Platform"];
+            /** @description The variant body. {topic} forms are rendered from vars. */
+            text: string;
+            /** @description Every {var} used in text must be declared here, and used. */
+            vars: string[];
+            /** @description Relative pick probability (weight 3 is 3x weight 1). */
+            weight: number;
+            /** @description Regex denylist screened before a comment is queued. */
+            bannedWords?: string[];
+            /** @default true */
+            isActive: boolean;
+        };
+        CommentTemplate: {
+            id: string;
+            platform: components["schemas"]["Platform"];
+            text: string;
+            vars: string[];
+            weight: number;
+            bannedWords?: string[];
+            isActive: boolean;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        TemplateList: {
+            templates: components["schemas"]["CommentTemplate"][];
+        };
     };
     responses: {
         /** @description Error response. */
@@ -821,6 +990,8 @@ export interface components {
         ContainerId: string;
         /** @description The account ID. */
         AccountId: string;
+        /** @description The template ID. */
+        TemplateId: string;
         /** @description The proxy group ID. */
         ProxyGroupId: string;
         /** @description The official (monitored) account ID. */
@@ -1059,6 +1230,165 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Account removed. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    listActions: {
+        parameters: {
+            query?: {
+                status?: components["schemas"]["JobStatus"];
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The queue. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActionJobList"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    enqueueActions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EnqueueActionsRequest"];
+            };
+        };
+        responses: {
+            /** @description Jobs enqueued. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActionJobList"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    listTemplates: {
+        parameters: {
+            query?: {
+                platform?: components["schemas"]["Platform"];
+                includeInactive?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Templates. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateList"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    createTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateTemplateRequest"];
+            };
+        };
+        responses: {
+            /** @description Template created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommentTemplate"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    updateTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The template ID. */
+                templateId: components["parameters"]["TemplateId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateTemplateRequest"];
+            };
+        };
+        responses: {
+            /** @description Template updated. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommentTemplate"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    deleteTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The template ID. */
+                templateId: components["parameters"]["TemplateId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
             204: {
                 headers: {
                     [name: string]: unknown;

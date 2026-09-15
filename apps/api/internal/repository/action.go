@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/domain"
 	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/port"
@@ -270,6 +271,28 @@ func actionJobDomain(row sqlcgen.ActionJob) domain.ActionJob {
 		Error:       derefStr(row.Error),
 		CreatedAt:   tsTimeOrZero(row.CreatedAt),
 	}
+}
+
+// LatestActionLogsByJobs returns the newest attempt of each job in one round
+// trip (P3-13). The queue view pairs a job's live status with the verdict that
+// explains it; without this the page would run one log query per row.
+func (r *ActionRepo) LatestActionLogsByJobs(ctx context.Context, jobIDs []string) ([]domain.ActionLog, error) {
+	if len(jobIDs) == 0 {
+		return nil, nil
+	}
+	ids := make([]pgtype.UUID, 0, len(jobIDs))
+	for _, id := range jobIDs {
+		ids = append(ids, uuidValue(id))
+	}
+	rows, err := r.q.LatestActionLogsByJobs(ctx, ids)
+	if err != nil {
+		return nil, fmt.Errorf("repository.action.LatestActionLogsByJobs: %w", err)
+	}
+	out := make([]domain.ActionLog, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, actionLogDomain(row))
+	}
+	return out, nil
 }
 
 func actionLogDomain(row sqlcgen.ActionLog) domain.ActionLog {

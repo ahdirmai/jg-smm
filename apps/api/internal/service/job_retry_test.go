@@ -114,6 +114,19 @@ func (f *fakeActionStore) ListActionJobsByStatus(_ context.Context, status domai
 func (f *fakeActionStore) ListActionJobsByAccount(_ context.Context, accountID string, limit, offset *int) ([]domain.ActionJob, error) {
 	return nil, nil
 }
+func (f *fakeActionStore) LatestActionLogsByJobs(_ context.Context, jobIDs []string) ([]domain.ActionLog, error) {
+	want := make(map[string]bool, len(jobIDs))
+	for _, id := range jobIDs {
+		want[id] = true
+	}
+	out := make([]domain.ActionLog, 0, len(f.logs))
+	for _, l := range f.logs {
+		if want[l.ActionJobID] {
+			out = append(out, l)
+		}
+	}
+	return out, nil
+}
 
 // newRetryTestService wires a JobService over the fake store with a short
 // backoff so the reschedule math is readable in assertions. fixedClock is

@@ -129,6 +129,11 @@ type Querier interface {
 	GetWorkerByName(ctx context.Context, name string) (Worker, error)
 	InsertAuditLog(ctx context.Context, arg InsertAuditLogParams) (AuditLog, error)
 	InsertHeartbeat(ctx context.Context, arg InsertHeartbeatParams) error
+	// The newest attempt of each of a set of jobs in one round trip (P3-13): the
+	// queue view shows live status (job) plus the verdict that explains it (log),
+	// and this keeps a 50-row page at one query rather than one per row.
+	// DISTINCT ON is the per-group max: one row per job, the highest attempt.
+	LatestActionLogsByJobs(ctx context.Context, dollar_1 []pgtype.UUID) ([]ActionLog, error)
 	// `last()` picks the value of the final row in the bucket; with a 1-day bucket
 	// over a hypertable this collapses to "the most recent sample per post".
 	LatestMetricSnapshotsByPost(ctx context.Context) ([]LatestMetricSnapshotsByPostRow, error)

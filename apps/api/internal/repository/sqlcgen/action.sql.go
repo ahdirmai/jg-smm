@@ -211,6 +211,51 @@ func (q *Queries) GetActionLog(ctx context.Context, arg GetActionLogParams) (Act
 	return i, err
 }
 
+const latestActionLogsByJobs = `-- name: LatestActionLogsByJobs :many
+SELECT DISTINCT ON (action_job_id) id, action_job_id, attempt, status, verified, worker_id, rendered_text, response_excerpt, error_class, screenshot_url, duration_ms, ts, template_id
+FROM action_log
+WHERE action_job_id = ANY($1::uuid[])
+ORDER BY action_job_id, attempt DESC
+`
+
+// The newest attempt of each of a set of jobs in one round trip (P3-13): the
+// queue view shows live status (job) plus the verdict that explains it (log),
+// and this keeps a 50-row page at one query rather than one per row.
+// DISTINCT ON is the per-group max: one row per job, the highest attempt.
+func (q *Queries) LatestActionLogsByJobs(ctx context.Context, dollar_1 []pgtype.UUID) ([]ActionLog, error) {
+	rows, err := q.db.Query(ctx, latestActionLogsByJobs, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ActionLog{}
+	for rows.Next() {
+		var i ActionLog
+		if err := rows.Scan(
+			&i.ID,
+			&i.ActionJobID,
+			&i.Attempt,
+			&i.Status,
+			&i.Verified,
+			&i.WorkerID,
+			&i.RenderedText,
+			&i.ResponseExcerpt,
+			&i.ErrorClass,
+			&i.ScreenshotUrl,
+			&i.DurationMs,
+			&i.Ts,
+			&i.TemplateID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listActionJobs = `-- name: ListActionJobs :many
 SELECT id, type, target_id, account_id, worker_id, status, scheduled_at, started_at, finished_at, attempts, error, created_at, template_id
 FROM action_job
