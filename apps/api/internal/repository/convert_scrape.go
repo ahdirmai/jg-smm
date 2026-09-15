@@ -31,6 +31,19 @@ func jobStatusDomain(s sqlcgen.JobStatus) domain.JobStatus {
 	return domain.JobStatus(lowerSnake(string(s)))
 }
 
+// attempt_status is the verdict of ONE attempt (domain.AttemptStatus), kept
+// separate from job_status: a job RETRYs, an attempt FAILs.
+// Unlike job_type/job_status, AttemptStatus is UPPERCASE on both sides (the
+// domain matches the OpenAPI schema and the DB enum verbatim), so the mapping
+// is the identity: lowerSnake here would silently corrupt a round trip.
+func attemptStatusEnum(s domain.AttemptStatus) sqlcgen.AttemptStatus {
+	return sqlcgen.AttemptStatus(s)
+}
+
+func attemptStatusDomain(s sqlcgen.AttemptStatus) domain.AttemptStatus {
+	return domain.AttemptStatus(s)
+}
+
 func upperSnake(s string) string {
 	var b []byte
 	for i := 0; i < len(s); i++ {

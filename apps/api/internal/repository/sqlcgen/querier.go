@@ -27,13 +27,29 @@ type Querier interface {
 	ArchiveOfficialAccount(ctx context.Context, id pgtype.UUID) (OfficialAccount, error)
 	AssignAccount(ctx context.Context, arg AssignAccountParams) (AssignAccountRow, error)
 	// Atomic FIFO claim for one account: PENDING + scheduled_at <= now() ordered by
+	// scheduled_at, bumped to RUNNING, and stamped with the claiming worker. The
+	// worker id is written here (not at enqueue time) because a job is assigned to
+	// whichever worker owns the account's queue at claim time.
+	ClaimNextActionJob(ctx context.Context, arg ClaimNextActionJobParams) (ActionJob, error)
+	// Atomic FIFO claim for one account: PENDING + scheduled_at <= now() ordered by
 	// scheduled_at, bumped to RUNNING. The account index makes this cheap.
 	ClaimNextScrapeJob(ctx context.Context, accountID pgtype.UUID) (ScrapeJob, error)
+	// Terminal transition. The caller has already written the ActionLog row; this
+	// only projects the verdict onto the job so the queue can be listed without
+	// joining the log.
+	CompleteActionJob(ctx context.Context, arg CompleteActionJobParams) (ActionJob, error)
 	CompleteScrapeJob(ctx context.Context, arg CompleteScrapeJobParams) (ScrapeJob, error)
 	CountAccountsByWorker(ctx context.Context, workerID pgtype.UUID) (int64, error)
 	CountCommentsByPost(ctx context.Context, postID pgtype.UUID) (int64, error)
 	CountOfficialAccountsByPlatform(ctx context.Context, platform Platform) (int64, error)
 	CreateAccount(ctx context.Context, arg CreateAccountParams) (CreateAccountRow, error)
+	// ActionJob + ActionLog (P3-01): the action engine's bookkeeping.
+	//
+	// ActionJob mirrors ScrapeJob's claim shape on purpose (same FIFO per-account
+	// claim via (account_id, status, scheduled_at)); the worker callback and the
+	// dashboard treat both uniformly. ActionLog is the verdict source of truth;
+	// ActionJob.status is only a projection of the latest attempt.
+	CreateActionJob(ctx context.Context, arg CreateActionJobParams) (ActionJob, error)
 	CreateAnalyticsIngestRun(ctx context.Context, arg CreateAnalyticsIngestRunParams) (AnalyticsIngestRun, error)
 	CreateApifyRun(ctx context.Context, arg CreateApifyRunParams) (ApifyRun, error)
 	CreateAuthSession(ctx context.Context, arg CreateAuthSessionParams) (CreateAuthSessionRow, error)
@@ -57,6 +73,9 @@ type Querier interface {
 	// Account (executor identity) queries. password_enc is WRITE-ONLY: no query
 	// here ever selects it. UNIQUE(platform, username) + UNIQUE(worker_id, platform).
 	GetAccountByID(ctx context.Context, id pgtype.UUID) (GetAccountByIDRow, error)
+	GetActionJobByID(ctx context.Context, id pgtype.UUID) (ActionJob, error)
+	// The latest attempt of a job, by (job, attempt).
+	GetActionLog(ctx context.Context, arg GetActionLogParams) (ActionLog, error)
 	GetActiveAuthSession(ctx context.Context, tokenHash []byte) (GetActiveAuthSessionRow, error)
 	GetCommentByID(ctx context.Context, id pgtype.UUID) (Comment, error)
 	GetCommentByPlatformExternalID(ctx context.Context, arg GetCommentByPlatformExternalIDParams) (Comment, error)
@@ -103,6 +122,14 @@ type Querier interface {
 	LinkTargetPost(ctx context.Context, arg LinkTargetPostParams) error
 	ListAccounts(ctx context.Context, arg ListAccountsParams) ([]ListAccountsRow, error)
 	ListAccountsByWorker(ctx context.Context, workerID pgtype.UUID) ([]ListAccountsByWorkerRow, error)
+	ListActionJobs(ctx context.Context, arg ListActionJobsParams) ([]ActionJob, error)
+	ListActionJobsByAccount(ctx context.Context, arg ListActionJobsByAccountParams) ([]ActionJob, error)
+	ListActionJobsByStatus(ctx context.Context, arg ListActionJobsByStatusParams) ([]ActionJob, error)
+	// The failure-class view (P3-12): counts and samples per class come from here.
+	ListActionLogsByErrorClass(ctx context.Context, arg ListActionLogsByErrorClassParams) ([]ActionLog, error)
+	// Every attempt of a job, newest first: the dashboard drawer that debugs one
+	// action (P4-02) reads this.
+	ListActionLogsByJob(ctx context.Context, actionJobID pgtype.UUID) ([]ActionLog, error)
 	ListAnalyticsIngestRuns(ctx context.Context, arg ListAnalyticsIngestRunsParams) ([]AnalyticsIngestRun, error)
 	ListAnalyticsMentionsByAccount(ctx context.Context, arg ListAnalyticsMentionsByAccountParams) ([]AnalyticsMention, error)
 	ListAnalyticsMentionsByPlatform(ctx context.Context, arg ListAnalyticsMentionsByPlatformParams) ([]AnalyticsMention, error)
@@ -128,6 +155,9 @@ type Querier interface {
 	ListTopPostsByPlatform(ctx context.Context, arg ListTopPostsByPlatformParams) ([]Post, error)
 	ListUsers(ctx context.Context, arg ListUsersParams) ([]ListUsersRow, error)
 	ListWorkers(ctx context.Context, arg ListWorkersParams) ([]Worker, error)
+	// Backoff/jitter path (P3-11): the attempt failed with a retryable class, so
+	// the job goes back to PENDING at a future scheduled_at for the next tick.
+	RescheduleActionJob(ctx context.Context, arg RescheduleActionJobParams) (ActionJob, error)
 	// Moves a job back into the queue at a later time. Used by the scheduler's
 	// backoff/jitter path: the job is set PENDING and its scheduled_at pushed out,
 	// so the next eligible tick claims it again.
@@ -151,6 +181,13 @@ type Querier interface {
 	UpdateOfficialAccount(ctx context.Context, arg UpdateOfficialAccountParams) (OfficialAccount, error)
 	UpdateProxyGroup(ctx context.Context, arg UpdateProxyGroupParams) (ProxyGroup, error)
 	UpdateWorker(ctx context.Context, arg UpdateWorkerParams) (Worker, error)
+	// The upsert heart of the callback path. A worker first reports RUNNING (no
+	// screenshot yet, no verdict) and later the terminal verdict on the SAME row:
+	// UNIQUE (action_job_id, attempt) makes the pair one row.
+	// screenshot_url and response_excerpt use COALESCE so a terminal callback that
+	// omits them never erases what the RUNNING callback or an earlier attempt
+	// captured; rendered_text is the commanded input and is always authoritative.
+	UpsertActionLog(ctx context.Context, arg UpsertActionLogParams) (ActionLog, error)
 	// AnalyticsMention + AnalyticsIngestRun: provider-sourced mentions and the
 	// audit trail for the analytics ingest path (mirrors provision_log for workers).
 	UpsertAnalyticsMention(ctx context.Context, arg UpsertAnalyticsMentionParams) (AnalyticsMention, error)

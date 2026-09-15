@@ -48,6 +48,16 @@ func textOrNull(s string) *string {
 	return &s
 }
 
+// derefStr is the inverse of textOrNull: a NULL (or nil) pointer reads as the
+// empty string. Used on every nullable text column the domain models as a
+// plain string (error_class, response_excerpt, screenshot_url, ...).
+func derefStr(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+
 // inetOrNull parses an IP literal, returning NULL when empty or invalid. The
 // caller treats a bad IP as "unknown" rather than failing the request.
 func inetOrNull(s string) *netip.Addr {

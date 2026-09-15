@@ -101,6 +101,51 @@ func (ns NullAnalyticsProvider) Value() (driver.Value, error) {
 	return string(ns.AnalyticsProvider), nil
 }
 
+type AttemptStatus string
+
+const (
+	AttemptStatusRUNNING   AttemptStatus = "RUNNING"
+	AttemptStatusSUCCESS   AttemptStatus = "SUCCESS"
+	AttemptStatusFAILED    AttemptStatus = "FAILED"
+	AttemptStatusRETRY     AttemptStatus = "RETRY"
+	AttemptStatusCANCELLED AttemptStatus = "CANCELLED"
+)
+
+func (e *AttemptStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = AttemptStatus(s)
+	case string:
+		*e = AttemptStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for AttemptStatus: %T", src)
+	}
+	return nil
+}
+
+type NullAttemptStatus struct {
+	AttemptStatus AttemptStatus `json:"attempt_status"`
+	Valid         bool          `json:"valid"` // Valid is true if AttemptStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullAttemptStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.AttemptStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.AttemptStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullAttemptStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.AttemptStatus), nil
+}
+
 type AuthSessionRevokedReason string
 
 const (
@@ -694,6 +739,36 @@ type Account struct {
 	LastCheckedAt  pgtype.Timestamptz `json:"last_checked_at"`
 	LastError      *string            `json:"last_error"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type ActionJob struct {
+	ID          pgtype.UUID        `json:"id"`
+	Type        JobType            `json:"type"`
+	TargetID    pgtype.UUID        `json:"target_id"`
+	AccountID   pgtype.UUID        `json:"account_id"`
+	WorkerID    pgtype.UUID        `json:"worker_id"`
+	Status      JobStatus          `json:"status"`
+	ScheduledAt pgtype.Timestamptz `json:"scheduled_at"`
+	StartedAt   pgtype.Timestamptz `json:"started_at"`
+	FinishedAt  pgtype.Timestamptz `json:"finished_at"`
+	Attempts    int32              `json:"attempts"`
+	Error       *string            `json:"error"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type ActionLog struct {
+	ID              pgtype.UUID        `json:"id"`
+	ActionJobID     pgtype.UUID        `json:"action_job_id"`
+	Attempt         int32              `json:"attempt"`
+	Status          AttemptStatus      `json:"status"`
+	Verified        bool               `json:"verified"`
+	WorkerID        pgtype.UUID        `json:"worker_id"`
+	RenderedText    string             `json:"rendered_text"`
+	ResponseExcerpt *string            `json:"response_excerpt"`
+	ErrorClass      *string            `json:"error_class"`
+	ScreenshotUrl   *string            `json:"screenshot_url"`
+	DurationMs      int32              `json:"duration_ms"`
+	Ts              pgtype.Timestamptz `json:"ts"`
 }
 
 type AnalyticsIngestRun struct {

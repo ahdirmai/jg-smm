@@ -104,9 +104,16 @@ const (
 )
 
 // AttemptStatus is the verdict of one action attempt, reported by a worker.
+// Uppercase on purpose: it matches the DB attempt_status enum and the
+// OpenAPI schema verbatim, so the repo mapping is the identity.
 type AttemptStatus string
 
 const (
+	// AttemptRunning is the DB default: a worker has started the attempt but
+	// not yet reported a verdict. The callback API does not accept it (a
+	// callback carries a terminal verdict), but the read path must be able to
+	// represent a row that is still in flight.
+	AttemptRunning   AttemptStatus = "RUNNING"
 	AttemptSuccess   AttemptStatus = "SUCCESS"
 	AttemptFailed    AttemptStatus = "FAILED"
 	AttemptRetry     AttemptStatus = "RETRY"
@@ -115,7 +122,7 @@ const (
 
 func (s AttemptStatus) Valid() bool {
 	switch s {
-	case AttemptSuccess, AttemptFailed, AttemptRetry, AttemptCancelled:
+	case AttemptRunning, AttemptSuccess, AttemptFailed, AttemptRetry, AttemptCancelled:
 		return true
 	default:
 		return false
