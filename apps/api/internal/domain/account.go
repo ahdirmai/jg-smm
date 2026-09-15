@@ -102,3 +102,22 @@ const (
 	ProvisionApplied ProvisionStatus = "APPLIED"
 	ProvisionFailed  ProvisionStatus = "FAILED"
 )
+
+// AttemptStatus is the verdict of one action attempt, reported by a worker.
+type AttemptStatus string
+
+const (
+	AttemptSuccess   AttemptStatus = "SUCCESS"
+	AttemptFailed    AttemptStatus = "FAILED"
+	AttemptRetry     AttemptStatus = "RETRY"
+	AttemptCancelled AttemptStatus = "CANCELLED"
+)
+
+func (s AttemptStatus) Valid() bool {
+	switch s {
+	case AttemptSuccess, AttemptFailed, AttemptRetry, AttemptCancelled:
+		return true
+	default:
+		return false
+	}
+}

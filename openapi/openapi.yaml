@@ -14,6 +14,7 @@ tags:
   - name: health
   - name: auth
   - name: admin
+  - name: internal
 
 paths:
   /healthz:
@@ -132,6 +133,78 @@ paths:
         '403':
           $ref: '#/components/responses/Error'
 
+  /internal/action-callback:
+    post:
+      tags: [internal]
+      summary: Record an action attempt verdict
+      description: |
+        Posted by a worker after an action attempt completes. Workers never touch
+        the database (ADR 0011): they report outcomes here. Body is capped at 64 KiB.
+      operationId: postActionCallback
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActionCallback'
+      responses:
+        '200':
+          description: Verdict recorded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CallbackAck'
+        '400':
+          $ref: '#/components/responses/Error'
+
+  /internal/account-callback:
+    post:
+      tags: [internal]
+      summary: Record an account auth outcome
+      description: |
+        Posted by a worker when a login/2FA flow finishes (or needs input).
+        Reports the account auth status; credentials are never sent back.
+      operationId: postAccountCallback
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccountCallback'
+      responses:
+        '200':
+          description: Outcome recorded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CallbackAck'
+        '400':
+          $ref: '#/components/responses/Error'
+
+  /internal/heartbeat:
+    post:
+      tags: [internal]
+      summary: Record a worker heartbeat
+      description: |
+        Posted by each worker every 30s. Three consecutive failures make the
+        worker self-exit. Carries resource telemetry and the current job.
+      operationId: postHeartbeat
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Heartbeat'
+      responses:
+        '200':
+          description: Heartbeat recorded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CallbackAck'
+        '400':
+          $ref: '#/components/responses/Error'
+
 components:
   securitySchemes:
     accessCookie:
@@ -238,3 +311,82 @@ components:
           type: string
         message:
           type: string
+
+    CallbackAck:
+      type: object
+      required: [accepted]
+      properties:
+        accepted:
+          type: boolean
+
+    ActionCallback:
+      type: object
+      required: [attemptId, status]
+      properties:
+        attemptId:
+          type: string
+        status:
+          $ref: '#/components/schemas/AttemptStatus'
+        actionType:
+          type: string
+          description: e.g. like, comment, report.
+        targetUrl:
+          type: string
+        workerId:
+          type: string
+        screenshotPath:
+          type: string
+          description: File name only; the server applies path.Base and requires .png.
+        error:
+          type: string
+          maxLength: 4096
+
+    AttemptStatus:
+      type: string
+      enum: [SUCCESS, FAILED, RETRY, CANCELLED]
+
+    AccountCallback:
+      type: object
+      required: [accountId, authStatus]
+      properties:
+        accountId:
+          type: string
+        authStatus:
+          $ref: '#/components/schemas/AuthStatus'
+        handle:
+          type: string
+          description: Verified platform handle, set after a successful login.
+        error:
+          type: string
+          maxLength: 4096
+
+    AuthStatus:
+      type: string
+      enum: [AUTHENTICATING, NEEDS_INPUT, AUTHENTICATED, FAILED]
+
+    Heartbeat:
+      type: object
+      required: [workerId]
+      properties:
+        workerId:
+          type: string
+        browserStatus:
+          type: string
+          enum: [cold, ready, busy, error]
+        queueDepth:
+          type: integer
+          minimum: 0
+        currentJobId:
+          type: string
+        cpu:
+          type: number
+          format: double
+        mem:
+          type: number
+          format: double
+        jobsDone:
+          type: integer
+          minimum: 0
+        lastActionAt:
+          type: string
+          format: date-time

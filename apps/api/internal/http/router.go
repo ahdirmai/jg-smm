@@ -16,8 +16,9 @@ const (
 // optional handlers (e.g. Auth) are skipped when nil so the API can boot before
 // the database is wired.
 type Dependencies struct {
-	Health *HealthHandler
-	Auth   *AuthHandler
+	Health   *HealthHandler
+	Auth     *AuthHandler
+	Internal *InternalHandler
 }
 
 // NewRouter builds the Echo instance with middleware and routes. It does not
@@ -47,6 +48,10 @@ func NewRouter(deps Dependencies) *echo.Echo {
 		admin.GET("/ping", func(c echo.Context) error {
 			return c.JSON(200, map[string]string{"status": "ok"})
 		})
+	}
+
+	if deps.Internal != nil {
+		deps.Internal.Register(e)
 	}
 
 	return e

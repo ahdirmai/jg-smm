@@ -13,6 +13,30 @@ const (
 	AccessCookieScopes = "accessCookie.Scopes"
 )
 
+// Defines values for AttemptStatus.
+const (
+	AttemptStatusCANCELLED AttemptStatus = "CANCELLED"
+	AttemptStatusFAILED    AttemptStatus = "FAILED"
+	AttemptStatusRETRY     AttemptStatus = "RETRY"
+	AttemptStatusSUCCESS   AttemptStatus = "SUCCESS"
+)
+
+// Defines values for AuthStatus.
+const (
+	AuthStatusAUTHENTICATED  AuthStatus = "AUTHENTICATED"
+	AuthStatusAUTHENTICATING AuthStatus = "AUTHENTICATING"
+	AuthStatusFAILED         AuthStatus = "FAILED"
+	AuthStatusNEEDSINPUT     AuthStatus = "NEEDS_INPUT"
+)
+
+// Defines values for HeartbeatBrowserStatus.
+const (
+	HeartbeatBrowserStatusBusy  HeartbeatBrowserStatus = "busy"
+	HeartbeatBrowserStatusCold  HeartbeatBrowserStatus = "cold"
+	HeartbeatBrowserStatusError HeartbeatBrowserStatus = "error"
+	HeartbeatBrowserStatusReady HeartbeatBrowserStatus = "ready"
+)
+
 // Defines values for ReadinessStatusStatus.
 const (
 	Degraded ReadinessStatusStatus = "degraded"
@@ -26,6 +50,41 @@ const (
 	OWNER      Role = "OWNER"
 	STRATEGIST Role = "STRATEGIST"
 )
+
+// AccountCallback defines model for AccountCallback.
+type AccountCallback struct {
+	AccountId  string     `json:"accountId"`
+	AuthStatus AuthStatus `json:"authStatus"`
+	Error      *string    `json:"error,omitempty"`
+
+	// Handle Verified platform handle, set after a successful login.
+	Handle *string `json:"handle,omitempty"`
+}
+
+// ActionCallback defines model for ActionCallback.
+type ActionCallback struct {
+	// ActionType e.g. like, comment, report.
+	ActionType *string `json:"actionType,omitempty"`
+	AttemptId  string  `json:"attemptId"`
+	Error      *string `json:"error,omitempty"`
+
+	// ScreenshotPath File name only; the server applies path.Base and requires .png.
+	ScreenshotPath *string       `json:"screenshotPath,omitempty"`
+	Status         AttemptStatus `json:"status"`
+	TargetUrl      *string       `json:"targetUrl,omitempty"`
+	WorkerId       *string       `json:"workerId,omitempty"`
+}
+
+// AttemptStatus defines model for AttemptStatus.
+type AttemptStatus string
+
+// AuthStatus defines model for AuthStatus.
+type AuthStatus string
+
+// CallbackAck defines model for CallbackAck.
+type CallbackAck struct {
+	Accepted bool `json:"accepted"`
+}
 
 // ErrorBody defines model for ErrorBody.
 type ErrorBody struct {
@@ -42,6 +101,21 @@ type ErrorDetail struct {
 type HealthStatus struct {
 	Status string `json:"status"`
 }
+
+// Heartbeat defines model for Heartbeat.
+type Heartbeat struct {
+	BrowserStatus *HeartbeatBrowserStatus `json:"browserStatus,omitempty"`
+	Cpu           *float64                `json:"cpu,omitempty"`
+	CurrentJobId  *string                 `json:"currentJobId,omitempty"`
+	JobsDone      *int                    `json:"jobsDone,omitempty"`
+	LastActionAt  *time.Time              `json:"lastActionAt,omitempty"`
+	Mem           *float64                `json:"mem,omitempty"`
+	QueueDepth    *int                    `json:"queueDepth,omitempty"`
+	WorkerId      string                  `json:"workerId"`
+}
+
+// HeartbeatBrowserStatus defines model for Heartbeat.BrowserStatus.
+type HeartbeatBrowserStatus string
 
 // LoginRequest defines model for LoginRequest.
 type LoginRequest struct {
@@ -91,5 +165,14 @@ type Error = ErrorBody
 
 // LoginJSONRequestBody defines body for Login for application/json ContentType.
 type LoginJSONRequestBody = LoginRequest
+
+// PostAccountCallbackJSONRequestBody defines body for PostAccountCallback for application/json ContentType.
+type PostAccountCallbackJSONRequestBody = AccountCallback
+
+// PostActionCallbackJSONRequestBody defines body for PostActionCallback for application/json ContentType.
+type PostActionCallbackJSONRequestBody = ActionCallback
+
+// PostHeartbeatJSONRequestBody defines body for PostHeartbeat for application/json ContentType.
+type PostHeartbeatJSONRequestBody = Heartbeat
 
 type ErrorJSONResponse ErrorBody

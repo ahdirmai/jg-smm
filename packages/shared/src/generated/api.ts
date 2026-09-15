@@ -126,6 +126,72 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/internal/action-callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Record an action attempt verdict
+         * @description Posted by a worker after an action attempt completes. Workers never touch
+         *     the database (ADR 0011): they report outcomes here. Body is capped at 64 KiB.
+         *
+         */
+        post: operations["postActionCallback"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/internal/account-callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Record an account auth outcome
+         * @description Posted by a worker when a login/2FA flow finishes (or needs input).
+         *     Reports the account auth status; credentials are never sent back.
+         *
+         */
+        post: operations["postAccountCallback"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/internal/heartbeat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Record a worker heartbeat
+         * @description Posted by each worker every 30s. Three consecutive failures make the
+         *     worker self-exit. Carries resource telemetry and the current job.
+         *
+         */
+        post: operations["postHeartbeat"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -173,6 +239,45 @@ export interface components {
         ErrorDetail: {
             code: string;
             message: string;
+        };
+        CallbackAck: {
+            accepted: boolean;
+        };
+        ActionCallback: {
+            attemptId: string;
+            status: components["schemas"]["AttemptStatus"];
+            /** @description e.g. like, comment, report. */
+            actionType?: string;
+            targetUrl?: string;
+            workerId?: string;
+            /** @description File name only; the server applies path.Base and requires .png. */
+            screenshotPath?: string;
+            error?: string;
+        };
+        /** @enum {string} */
+        AttemptStatus: "SUCCESS" | "FAILED" | "RETRY" | "CANCELLED";
+        AccountCallback: {
+            accountId: string;
+            authStatus: components["schemas"]["AuthStatus"];
+            /** @description Verified platform handle, set after a successful login. */
+            handle?: string;
+            error?: string;
+        };
+        /** @enum {string} */
+        AuthStatus: "AUTHENTICATING" | "NEEDS_INPUT" | "AUTHENTICATED" | "FAILED";
+        Heartbeat: {
+            workerId: string;
+            /** @enum {string} */
+            browserStatus?: "cold" | "ready" | "busy" | "error";
+            queueDepth?: number;
+            currentJobId?: string;
+            /** Format: double */
+            cpu?: number;
+            /** Format: double */
+            mem?: number;
+            jobsDone?: number;
+            /** Format: date-time */
+            lastActionAt?: string;
         };
     };
     responses: {
@@ -348,6 +453,81 @@ export interface operations {
             };
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
+        };
+    };
+    postActionCallback: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ActionCallback"];
+            };
+        };
+        responses: {
+            /** @description Verdict recorded. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallbackAck"];
+                };
+            };
+            400: components["responses"]["Error"];
+        };
+    };
+    postAccountCallback: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccountCallback"];
+            };
+        };
+        responses: {
+            /** @description Outcome recorded. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallbackAck"];
+                };
+            };
+            400: components["responses"]["Error"];
+        };
+    };
+    postHeartbeat: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Heartbeat"];
+            };
+        };
+        responses: {
+            /** @description Heartbeat recorded. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallbackAck"];
+                };
+            };
+            400: components["responses"]["Error"];
         };
     };
 }

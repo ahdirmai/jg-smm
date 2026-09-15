@@ -21,6 +21,7 @@ type Account struct {
 	WorkerID     *string // nil = not yet packed into a container.
 	LastUsedAt   *time.Time
 	LastChecked  *time.Time
+	LastError    *string
 	CreatedAt    time.Time
 }
 

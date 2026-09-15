@@ -121,6 +121,7 @@ CREATE TABLE account (
     worker_id        uuid           REFERENCES worker (id) ON DELETE SET NULL,
     last_used_at     timestamptz,
     last_checked_at  timestamptz,
+    last_error       text,
     created_at       timestamptz    NOT NULL DEFAULT now(),
     -- JANTUNG: max one account per platform inside a single container.
     CONSTRAINT account_worker_platform_key UNIQUE (worker_id, platform),

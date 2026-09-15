@@ -1,6 +1,7 @@
 package http
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -37,6 +38,23 @@ func requestLogger() echo.MiddlewareFunc {
 				"durationMs", time.Since(start).Milliseconds(),
 			)
 			return nil
+		}
+	}
+}
+
+// limitBody rejects requests whose Content-Length (or streamed body) exceeds
+// max bytes. Used by the internal callback routes (P1-13) so a worker cannot
+// push unbounded payloads.
+func limitBody(max int64) echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			req := c.Request()
+			if req.ContentLength > max {
+				return echo.NewHTTPError(http.StatusRequestEntityTooLarge,
+					fmt.Sprintf("body exceeds %d bytes", max))
+			}
+			req.Body = http.MaxBytesReader(c.Response().Writer, req.Body, max)
+			return next(c)
 		}
 	}
 }
