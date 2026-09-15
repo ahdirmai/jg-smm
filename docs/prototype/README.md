@@ -11,25 +11,44 @@ API calls — review it in a browser, approve, then port 1:1 to
 open index.html
 
 # or serve it via http (better for relative assets)
-python3 -m http.server 24082
-# then browse http://localhost:24082
+pnpm run proto:serve        # python3 -m http.server 24085 --directory docs/prototype
+# then browse http://localhost:24085
 ```
+
+### Automated checks (real browser)
+
+```sh
+pnpm run proto:serve   # in one shell
+pnpm run proto:verify  # renders every page, asserts CSS + shell + console
+pnpm run proto:shots   # writes downscaled screenshots to docs/prototype/_shots
+```
+
+`verify.mjs` loads each page in headless Chromium, toggles dark↔light, and
+asserts that the body background **actually changes** (i.e. the Tailwind Play
+CDN mapped the design tokens and the theme is not locked). It fails on any
+non-favicon HTTP error or page error. Set `CHROME_PATH` to override the browser
+binary; otherwise it auto-discovers one from the Playwright cache.
 
 ## Screens
 
-| File               | Route to port                                                                     | Phase ticket |
-| ------------------ | --------------------------------------------------------------------------------- | ------------ |
-| `login.html`       | `/(auth)/login`                                                                   | P0-06        |
-| `dashboard.html`   | `/(dashboard)`                                                                    | P0-08        |
-| `workers.html`     | `/(dashboard)/workers` · container grid + live ticker + create-container dialog   | P1-19        |
-| `accounts.html`    | `/(dashboard)/accounts` · roster table + bulk ops                                 | P1-18        |
-| `add-account.html` | `/(dashboard)/accounts` · Add Account modal (3 steps)                             | P1-15        |
-| `bulk-import.html` | `/(dashboard)/accounts/bulk` · CSV upload, validation, challenge queue            | P1-15        |
-| `actions.html`     | `/(dashboard)/actions` · job queue + detail drawer                                | P3-03        |
-| `templates.html`   | `/(dashboard)/templates` · composer + variables + banned-words detector + preview | P1-15        |
-| `monitoring.html`  | `/(dashboard)/monitoring` · reach/views/mentions/live metrics                     | P2-08        |
-| `audit.html`       | `/(dashboard)/audit`                                                              | P1-16        |
-| `settings.html`    | `/(dashboard)/settings`                                                           | P1-16        |
+| File               | Route to port                                                                      | Phase ticket |
+| ------------------ | ---------------------------------------------------------------------------------- | ------------ |
+| `login.html`       | `/(auth)/login`                                                                    | P0-06        |
+| `dashboard.html`   | `/(dashboard)` · Strategist home: KPI strip, trend, top automation, top posts      | P0-08        |
+| `workers.html`     | `/(dashboard)/workers` · container grid + live ticker + create-container dialog    | P1-19        |
+| `accounts.html`    | `/(dashboard)/accounts` · worker-account roster + bulk ops                         | P1-18        |
+| `add-account.html` | `/(dashboard)/accounts` · Add Account modal (3 steps)                              | P1-15        |
+| `bulk-import.html` | `/(dashboard)/accounts/bulk` · CSV upload, validation, challenge queue             | P1-15        |
+| `actions.html`     | `/(dashboard)/actions` · action-to-target trigger + live job queue (dummy process) | P3-03        |
+| `templates.html`   | `/(dashboard)/templates` · composer + variables + banned-words detector + preview  | P1-15        |
+| `monitoring.html`  | `/(dashboard)/monitoring` · Official Accounts overview + per-platform links        | P2-08        |
+| `analytics-*.html` | `/(dashboard)/monitoring/<platform>` · reach/views/mentions (7 platforms)          | P2-08        |
+| `audit.html`       | `/(dashboard)/audit`                                                               | P1-16        |
+| `settings.html`    | `/(dashboard)/settings`                                                            | P1-16        |
+
+**Monitoring group** (nav submenu) holds the overview plus one analytics page per
+platform: `analytics-instagram`, `analytics-threads`, `analytics-facebook`,
+`analytics-linkedin`, `analytics-x`, `analytics-youtube`, `analytics-tiktok`.
 
 ## What this covers
 
@@ -62,3 +81,10 @@ the only standalone pages (no shell).
 After visual approval in each row, mark ✅ in this file. Approved screens become
 tickets (already tracked, `tickets/p1_*.md`) and are ported one commit at a
 time against OpenAPI + SSE.
+
+## Verification status
+
+Last run: **19/19 pages PASS** (`pnpm run proto:verify`). One real bug was found
+and fixed during verification: `actions.html` had `class="dark"` on `<body>`,
+which locked the theme tokens so the light/dark toggle did nothing. Theme state
+belongs on `<html>` only (set by `theme.js`).

@@ -27,7 +27,7 @@
 | P0-06  | Auth (JWT, argon2, RBAC)                 | DONE      | `1e08943` | 2026-09 | + Go 1.26 bump                                                                                                                             |
 | P0-07  | OpenAPI as contract SSOT                 | DONE      | `94b6052` | 2026-09 | oapi-codegen, openapi-typescript                                                                                                           |
 | P0-08  | Web dashboard shell (shadcn tokens)      | DONE      | `7babc59` | 2026-09 | sidebar shell, theme tokens, Tailwind 4.1.14                                                                                               |
-| P0-09  | Worker skeleton                          | CODE DONE | —         | 2026-09 | src structure per Dev Rule §7.2; typecheck+build+6 unit tests green locally. Container boot verification blocked on colima DNS (see below) |
+| P0-09  | Worker skeleton                          | CODE DONE | `45e8aab` | 2026-09 | src structure per Dev Rule §7.2; typecheck+build+6 unit tests green locally. Container boot verification blocked on colima DNS (see below) |
 | P0-10  | CI pipeline                              | TODO      | —         |         |                                                                                                                                            |
 | P0-11  | Pre-commit & Makefile finalize           | TODO      | —         |         |                                                                                                                                            |
 
@@ -40,8 +40,28 @@
 
 ## Frontend prototype (pre-implementation review)
 
-| Item                | Status | Commit | Date    | Notes                                                                                                                          |
-| ------------------- | ------ | ------ | ------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| Static FE prototype | REVIEW | —      | 2026-09 | `docs/prototype/` — 12 pages, Tailwind CDN + design tokens, no build step. Awaiting user approval before porting to `apps/web` |
+| Item                     | Status | Commit    | Date    | Notes                                                                                                          |
+| ------------------------ | ------ | --------- | ------- | -------------------------------------------------------------------------------------------------------------- |
+| Static FE prototype      | REVIEW | `6b59312` | 2026-09 | `docs/prototype/` — Tailwind CDN + design tokens, no build step. Awaiting user approval before porting.        |
+| Light + dark themes      | DONE   | `4216756` | 2026-09 | `theme.js` maps tokens into the Play CDN, persisted per browser, header toggle + floating button on standalone |
+| Per-platform analytics   | REVIEW | —         | 2026-09 | 7 new pages `analytics-{instagram,threads,facebook,linkedin,x,youtube,tiktok}.html`; Monitoring nav group      |
+| Dummy action-to-target   | REVIEW | —         | 2026-09 | `actions.html` + `actions.js` — inline stepper Queued→Dispatched→Running→Verifying→Success\|Failed             |
+| Automated browser verify | DONE   | —         | 2026-09 | `docs/prototype/verify.mjs` — 19/19 pages PASS (CSS resolves, theme toggles, nav shell, no console errors)     |
+| Screenshot capture tool  | DONE   | —         | 2026-09 | `docs/prototype/shots.mjs` → downscaled JPEGs in `docs/prototype/_shots/`                                      |
+
+### Prototype verification finding (fixed)
+
+- `actions.html` carried `class="dark"` on `<body>`, which locked the theme
+  tokens so the light/dark toggle had no effect (the body background did not
+  change). Fixed by removing it — theme state lives on `<html>` only, set by
+  `theme.js`. Confirmed by `pnpm run proto:verify` (body bg now differs between
+  themes on every page).
+
+### Scope split confirmed
+
+- **Worker accounts** execute actions (not measured in analytics).
+- **Official accounts** (client/brand, read-only) are the analytics subject;
+  their metrics come from a **3rd-party provider**, ingested distinct from the
+  worker action path.
 
 ---
