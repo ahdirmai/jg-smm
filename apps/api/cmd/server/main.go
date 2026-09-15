@@ -21,6 +21,7 @@ import (
 	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/adapter/crypto"
 	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/adapter/k8s"
 	storageadapter "github.com/ahdirmai/jg-smm-automation/apps/api/internal/adapter/storage"
+	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/adapter/transport"
 	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/config"
 	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/domain"
 	apihttp "github.com/ahdirmai/jg-smm-automation/apps/api/internal/http"
@@ -213,6 +214,39 @@ func main() {
 				Logger:      logger,
 			})
 			go scheduler.Run(ctx, time.Duration(cfg.ScrapeIntervalSeconds)*time.Second)
+		}
+
+		// Action scheduler (P3-07): claims due action jobs, enforces the
+		// cooldown (P3-09) + per-platform rate budget (P3-10), and publishes
+		// survivors onto the owning worker's Redis queue. Opt-in via
+		// ACTION_INTERVAL_SECONDS, mirroring the scrape scheduler: off by
+		// default locally so `make up` never depends on Redis being wired.
+		if cfg.ActionIntervalSeconds > 0 && cfg.RedisURL != "" {
+			rc, err := adapter.NewRedis(ctx, cfg.RedisURL)
+			if err != nil {
+				logger.Error("redis init failed", "err", err)
+				os.Exit(1)
+			}
+			defer rc.Close()
+			checkers["redis"] = rc
+
+			actionSched := service.NewActionScheduler(
+				actionRepo,
+				accountRepo,
+				scrapeRepo,
+				adapter.NewCooldownGate(rc.Client(), "smm:cooldown"),
+				adapter.NewRateLimiter(rc.Client(), "smm:ratelimit"),
+				transport.NewPublisher(rc.Client()),
+				service.ActionSchedulerConfig{
+					TickBudget: cfg.ActionBatchParallelism * 10,
+					Cooldown:   time.Duration(cfg.ActionCooldownSeconds) * time.Second,
+					RateWindow: time.Hour,
+					RateLimits: cfg.ActionRateLimits,
+					Clock:      time.Now,
+					Logger:     logger,
+				},
+			)
+			go actionSched.Run(ctx, time.Duration(cfg.ActionIntervalSeconds)*time.Second)
 		}
 
 		// Official-accounts API + analytics read models (P2-13 / P2-14).

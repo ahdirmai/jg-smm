@@ -111,6 +111,9 @@ services:
       # default so a local `make up` never starts background work.
       AGGREGATE_INTERVAL_SECONDS: ${AGGREGATE_INTERVAL_SECONDS:-0}
       ALERT_INTERVAL_SECONDS: ${ALERT_INTERVAL_SECONDS:-0}
+      # P3-07 action scheduler: claim due jobs -> cooldown + rate-limit gates ->
+      # worker queue. Off by default; enable to run the action engine.
+      ACTION_INTERVAL_SECONDS: ${ACTION_INTERVAL_SECONDS:-0}
       PROVISIONER_MODE: ${PROVISIONER_MODE:-static}
       PROVISION_AUTO_CREATE: ${PROVISION_AUTO_CREATE:-true}
       ACTION_BATCH_PARALLELISM: ${ACTION_BATCH_PARALLELISM:-2}

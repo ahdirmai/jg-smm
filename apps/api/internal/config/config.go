@@ -35,6 +35,14 @@ type Config struct {
 	MaxAccountsPerContainer int
 	// ActionBatchParallelism caps how many worker containers act concurrently.
 	ActionBatchParallelism int
+	// ActionIntervalSeconds runs the action scheduler loop in the API process
+	// (P3-07): it claims due action jobs, enforces the cooldown + rate-limit
+	// gates, and publishes survivors to the worker queues. 0 disables it (local
+	// dev); production enables it.
+	ActionIntervalSeconds int
+	// RedisURL is the redis:// URL for the worker transport (action queues,
+	// control channel), cooldown gate and rate limiter. Empty disables those.
+	RedisURL string
 	// ActionCooldownSeconds is the per-(account, target) cooldown gate (P3-09):
 	// the same account may not act on the same target twice inside this window.
 	// The ticket's contract is 60s; 0 disables the gate only for local play.
@@ -119,6 +127,8 @@ func Load() (Config, error) {
 		ProvisionAutoCreate:      envBool("PROVISION_AUTO_CREATE", true),
 		MaxAccountsPerContainer:  envInt("MAX_ACCOUNTS_PER_CONTAINER", 7),
 		ActionBatchParallelism:   envInt("ACTION_BATCH_PARALLELISM", 2),
+		ActionIntervalSeconds:    envInt("ACTION_INTERVAL_SECONDS", 0),
+		RedisURL:                 os.Getenv("REDIS_URL"),
 		ActionCooldownSeconds:    envInt("ACTION_COOLDOWN_SECONDS", 60),
 		ActionRateLimits: map[string]int{
 			"instagram": envInt("ACTION_RATE_LIMIT_INSTAGRAM", 30),
@@ -183,6 +193,9 @@ func Load() (Config, error) {
 	}
 	if cfg.AggregateIntervalSeconds < 0 {
 		return Config{}, fmt.Errorf("config: AGGREGATE_INTERVAL_SECONDS must be >= 0, got %d", cfg.AggregateIntervalSeconds)
+	}
+	if cfg.ActionIntervalSeconds < 0 {
+		return Config{}, fmt.Errorf("config: ACTION_INTERVAL_SECONDS must be >= 0, got %d", cfg.ActionIntervalSeconds)
 	}
 	if cfg.ActionCooldownSeconds < 0 {
 		return Config{}, fmt.Errorf("config: ACTION_COOLDOWN_SECONDS must be >= 0, got %d", cfg.ActionCooldownSeconds)
