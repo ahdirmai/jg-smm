@@ -23,6 +23,9 @@ type fakeActionStore struct {
 	logByAttempt map[string]domain.ActionLog
 	completed    []completedJob
 	rescheduled  []rescheduledJob
+	// pending is the queue the scheduler's ListActionJobsByStatus returns, in
+	// insertion order so a test can assert claim order.
+	pending []domain.ActionJob
 }
 
 type completedJob struct {
@@ -56,9 +59,21 @@ func (f *fakeActionStore) GetActionJob(_ context.Context, id string) (domain.Act
 	return domain.ActionJob{}, domain.ErrNotFound
 }
 func (f *fakeActionStore) CreateActionJob(_ context.Context, j domain.ActionJob) (domain.ActionJob, error) {
+	f.pending = append(f.pending, j)
 	return j, nil
 }
 func (f *fakeActionStore) ClaimNextActionJob(_ context.Context, accountID, workerID string) (domain.ActionJob, error) {
+	// Claim the first PENDING row for the account, mirroring the SQL claim.
+	for i := range f.pending {
+		if f.pending[i].Status == domain.JobStatusPending && f.pending[i].AccountID == accountID {
+			f.pending[i].Status = domain.JobStatusRunning
+			f.pending[i].Attempts++
+			if workerID != "" {
+				f.pending[i].WorkerID = workerID
+			}
+			return f.pending[i], nil
+		}
+	}
 	return domain.ActionJob{}, domain.ErrNotFound
 }
 func (f *fakeActionStore) CompleteActionJob(_ context.Context, id string, status domain.JobStatus, errMsg *string) (domain.ActionJob, error) {
@@ -85,7 +100,16 @@ func (f *fakeActionStore) ListActionJobs(_ context.Context, limit, offset *int) 
 	return nil, nil
 }
 func (f *fakeActionStore) ListActionJobsByStatus(_ context.Context, status domain.JobStatus, limit, offset *int) ([]domain.ActionJob, error) {
-	return nil, nil
+	if status != domain.JobStatusPending {
+		return nil, nil
+	}
+	out := make([]domain.ActionJob, 0, len(f.pending))
+	for _, j := range f.pending {
+		if j.Status == domain.JobStatusPending {
+			out = append(out, j)
+		}
+	}
+	return out, nil
 }
 func (f *fakeActionStore) ListActionJobsByAccount(_ context.Context, accountID string, limit, offset *int) ([]domain.ActionJob, error) {
 	return nil, nil
