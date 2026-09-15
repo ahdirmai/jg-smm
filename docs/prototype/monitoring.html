@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Monitoring — SMM Automation</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body class="dark" data-title="Monitoring" data-subtitle="Reach · views · mentions · live sources"
+    data-actions='<select class="input w-36"><option>Last 7 days</option><option>Last 30 days</option></select><button class="btn btn-outline btn-sm"><i data-lucide="refresh-cw" class="w-4 h-4"></i>Refresh</button>'>
+    <div id="app">
+      <section class="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <div class="card p-4"><div class="text-xs muted">Total reach</div><div class="kpi-value mt-1">184.2K</div><div class="text-xs mt-1"><span class="text-[hsl(var(--status-ready))]">▲ 12.4%</span></div></div>
+        <div class="card p-4"><div class="text-xs muted">Reels views</div><div class="kpi-value mt-1">92.7K</div><div class="text-xs mt-1"><span class="text-[hsl(var(--status-ready))]">▲ 21.0%</span></div></div>
+        <div class="card p-4"><div class="text-xs muted">Mentions</div><div class="kpi-value mt-1">1,504</div><div class="text-xs mt-1"><span class="text-[hsl(var(--status-error))]">▼ 4.2%</span></div></div>
+        <div class="card p-4"><div class="text-xs muted">Live viewers</div><div class="kpi-value mt-1">318</div><div class="text-xs mt-1 muted">2 live now</div></div>
+      </section>
+
+      <section class="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div class="card p-4 lg:col-span-2">
+          <div class="mb-3 flex items-center justify-between"><h2 class="text-sm font-semibold">Reach vs Views</h2><div class="flex gap-3 text-xs"><span class="flex items-center gap-1.5"><span class="dot dot-busy"></span>Reach</span><span class="flex items-center gap-1.5"><span class="dot dot-ready"></span>Views</span></div></div>
+          <div class="h-56 rounded-md border border-border bg-background/40 p-2">
+            <svg viewBox="0 0 600 200" preserveAspectRatio="none" class="h-full w-full">
+              <g fill="hsl(var(--status-busy)/0.6)">
+                <rect x="10" y="90" width="26" height="100" rx="3"/><rect x="60" y="70" width="26" height="120" rx="3"/>
+                <rect x="110" y="110" width="26" height="80" rx="3"/><rect x="160" y="60" width="26" height="130" rx="3"/>
+                <rect x="210" y="85" width="26" height="105" rx="3"/><rect x="260" y="45" width="26" height="145" rx="3"/>
+                <rect x="310" y="75" width="26" height="115" rx="3"/><rect x="360" y="55" width="26" height="135" rx="3"/>
+                <rect x="410" y="35" width="26" height="155" rx="3"/><rect x="460" y="65" width="26" height="125" rx="3"/>
+                <rect x="510" y="30" width="26" height="160" rx="3"/><rect x="560" y="50" width="26" height="140" rx="3"/>
+              </g>
+              <polyline fill="none" stroke="hsl(var(--status-ready))" stroke-width="2.5" points="23,150 73,140 123,155 173,130 223,145 273,120 323,135 373,115 423,105 473,125 523,95 573,110"/>
+            </svg>
+          </div>
+        </div>
+
+        <div class="card p-4">
+          <h2 class="text-sm font-semibold">Live sources</h2>
+          <p class="text-xs muted">TikTok &amp; IG lives (deferred platforms shown)</p>
+          <div class="mt-3 space-y-3">
+            <div class="rounded-md border border-[hsl(var(--destructive)/0.3)] bg-[hsl(var(--destructive)/0.08)] p-3">
+              <div class="flex items-center gap-2 text-sm font-medium"><span class="dot dot-error dot-pulse"></span>IG Live · @shop.abc</div>
+              <div class="mt-1 text-xs muted">Viewers 214 · started 12m ago</div>
+            </div>
+            <div class="rounded-md border border-border bg-background/40 p-3">
+              <div class="flex items-center gap-2 text-sm font-medium"><span class="dot dot-ready dot-pulse"></span>TikTok Live · @promo.us</div>
+              <div class="mt-1 text-xs muted">Viewers 104 · started 3m ago</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="mt-4 card">
+        <div class="border-b border-border p-4"><h2 class="text-sm font-semibold">Metric snapshots</h2><p class="text-xs muted">Ingested via Apify · aggregated hourly</p></div>
+        <div class="overflow-x-auto">
+          <table class="tbl">
+            <thead><tr><th>Time</th><th>Account</th><th>Platform</th><th class="text-right">Reach</th><th class="text-right">Views</th><th class="text-right">Likes</th><th class="text-right">Comments</th><th class="text-right">Mentions</th></tr></thead>
+            <tbody>
+              <tr><td class="text-xs muted">10:00</td><td>@growth.hacks.id</td><td><span class="badge">Instagram</span></td><td class="text-right mono">6,204</td><td class="text-right mono">3,110</td><td class="text-right mono">412</td><td class="text-right mono">38</td><td class="text-right mono">52</td></tr>
+              <tr><td class="text-xs muted">09:00</td><td>@growth.hacks</td><td><span class="badge">Threads</span></td><td class="text-right mono">4,880</td><td class="text-right mono">—</td><td class="text-right mono">301</td><td class="text-right mono">77</td><td class="text-right mono">14</td></tr>
+              <tr><td class="text-xs muted">09:00</td><td>@daily.deals</td><td><span class="badge">Instagram</span></td><td class="text-right mono">3,150</td><td class="text-right mono">2,004</td><td class="text-right mono">188</td><td class="text-right mono">9</td><td class="text-right mono">6</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="shell.js"></script>
+  </body>
+</html>

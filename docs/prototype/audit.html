@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Audit Log — SMM Automation</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body class="dark" data-title="Audit Log" data-subtitle="Who did what, when · immutable"
+    data-actions='<button class="btn btn-outline btn-sm"><i data-lucide="download" class="w-4 h-4"></i>Export</button>'>
+    <div id="app">
+      <section class="flex flex-wrap items-center gap-2">
+        <select class="input w-44"><option>All actors</option><option>ahdirmai (owner)</option><option>operator@local.test</option><option>system</option></select>
+        <select class="input w-44"><option>All actions</option><option>account.create</option><option>worker.create</option><option>action.publish</option><option>login.success</option></select>
+        <button class="btn btn-outline btn-sm"><i data-lucide="calendar" class="w-4 h-4"></i>Last 7 days</button>
+      </section>
+
+      <section class="mt-4 card overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="tbl">
+            <thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Target</th><th>Result</th><th>IP</th></tr></thead>
+            <tbody>
+              <tr><td class="text-xs muted">10:42:11</td><td>ahdirmai</td><td><span class="badge badge-info">worker.create</span></td><td class="mono">worker-9ac104</td><td><span class="badge badge-success">ok</span></td><td class="mono text-xs">10.0.0.4</td></tr>
+              <tr><td class="text-xs muted">10:41:02</td><td>ahdirmai</td><td><span class="badge badge-info">account.create</span></td><td>@shop.abc</td><td><span class="badge badge-success">ok</span></td><td class="mono text-xs">10.0.0.4</td></tr>
+              <tr><td class="text-xs muted">10:40:55</td><td>system</td><td><span class="badge">action.publish</span></td><td class="mono">job_8f21</td><td><span class="badge badge-success">ok</span></td><td class="mono text-xs">—</td></tr>
+              <tr><td class="text-xs muted">10:38:20</td><td>operator@local.test</td><td><span class="badge badge-info">login.success</span></td><td>@daily.deals</td><td><span class="badge badge-success">ok</span></td><td class="mono text-xs">10.0.0.9</td></tr>
+              <tr><td class="text-xs muted">10:35:07</td><td>system</td><td><span class="badge badge-warning">action.failed</span></td><td class="mono">job_8f19</td><td><span class="badge badge-destructive">cooldown</span></td><td class="mono text-xs">—</td></tr>
+              <tr><td class="text-xs muted">10:31:44</td><td>ahdirmai</td><td><span class="badge badge-destructive">account.remove</span></td><td>@promo.us</td><td><span class="badge badge-success">ok</span></td><td class="mono text-xs">10.0.0.4</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="flex items-center justify-between border-t border-border p-3 text-xs muted"><span>Showing 6 of 1,248 entries</span><div class="flex gap-1"><button class="btn btn-outline btn-sm">Prev</button><button class="btn btn-outline btn-sm">Next</button></div></div>
+      </section>
+    </div>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="shell.js"></script>
+  </body>
+</html>

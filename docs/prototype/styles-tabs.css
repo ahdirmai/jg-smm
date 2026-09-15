@@ -1,0 +1,11 @@
+/* Settings tab helpers (prototype only). */
+#settings-tabs .nav-item {
+  width: 100%;
+  justify-content: flex-start;
+  background: transparent;
+  cursor: pointer;
+}
+#settings-tabs .nav-item[aria-current='page'] {
+  background: hsl(var(--accent));
+  color: hsl(var(--accent-foreground));
+}

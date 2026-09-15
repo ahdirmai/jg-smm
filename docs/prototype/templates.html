@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Templates — SMM Automation</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body class="dark" data-title="Templates" data-subtitle="Reusable comment / reply copy · random but on-topic"
+    data-actions='<button class="btn btn-primary btn-sm"><i data-lucide="plus" class="w-4 h-4"></i>New template</button>'>
+    <div id="app">
+      <div class="grid grid-cols-1 gap-4 lg:grid-cols-[320px_1fr]">
+        <!-- Template list -->
+        <aside class="card">
+          <div class="border-b border-border p-3">
+            <input class="input" placeholder="Search templates…" />
+          </div>
+          <div class="divide-y divide-border">
+            <a href="#" class="block p-3 hover:bg-accent/50">
+              <div class="flex items-center justify-between"><span class="text-sm font-medium">Engagement — question</span><span class="badge badge-success">active</span></div>
+              <div class="mt-1 truncate text-xs muted">"Great point! What's your take on {topic}?"</div>
+              <div class="mt-1 text-xs muted">4 variants · ban-words ok</div>
+            </a>
+            <a href="#" class="block p-3 bg-[hsl(var(--accent)/0.5)]">
+              <div class="flex items-center justify-between"><span class="text-sm font-medium">Product drop — hype</span><span class="badge badge-warning">2 warnings</span></div>
+              <div class="mt-1 truncate text-xs muted">"{product} is finally here 🔥 link in bio"</div>
+              <div class="mt-1 text-xs muted">3 variants</div>
+            </a>
+            <a href="#" class="block p-3 hover:bg-accent/50">
+              <div class="flex items-center justify-between"><span class="text-sm font-medium">Reply — thank you</span><span class="badge badge-success">active</span></div>
+              <div class="mt-1 truncate text-xs muted">"Thanks {name}! Glad it helped 🙌"</div>
+              <div class="mt-1 text-xs muted">2 variants</div>
+            </a>
+          </div>
+        </aside>
+
+        <!-- Composer -->
+        <div class="space-y-4">
+          <div class="card p-4">
+            <div class="flex items-center justify-between">
+              <div><h2 class="text-sm font-semibold">Product drop — hype</h2><p class="text-xs muted">Used by 3 accounts · comment action</p></div>
+              <div class="flex gap-2"><button class="btn btn-outline btn-sm">Duplicate</button><button class="btn btn-destructive btn-sm">Delete</button></div>
+            </div>
+
+            <div class="mt-4">
+              <label class="label">Message</label>
+              <textarea class="input textarea" rows="4">{product} is finally here 🔥 link in bio — grab yours before it's gone!</textarea>
+              <div class="helper mt-1.5">Variables are replaced per job. Keep it natural — avoid repetition across accounts.</div>
+            </div>
+
+            <div class="mt-3">
+              <div class="label">Insert variable</div>
+              <div class="flex flex-wrap gap-2">
+                <button class="btn btn-outline btn-sm">{product}</button>
+                <button class="btn btn-outline btn-sm">{topic}</button>
+                <button class="btn btn-outline btn-sm">{name}</button>
+                <button class="btn btn-outline btn-sm">{hashtag}</button>
+              </div>
+            </div>
+
+            <!-- Ban-word detector -->
+            <div class="mt-4 rounded-md border border-[hsl(var(--warning)/0.4)] bg-[hsl(var(--warning)/0.08)] p-3 text-xs">
+              <div class="flex items-center gap-2 font-medium text-[hsl(var(--warning))]"><i data-lucide="shield-alert" class="w-4 h-4"></i>Ban-word detector · 2 flags</div>
+              <ul class="mt-1.5 list-inside list-disc space-y-0.5 muted">
+                <li>"link in bio" — flagged by Instagram for aggressive promotion</li>
+                <li>"before it's gone" — scarcity phrasing, raises spam score</li>
+              </ul>
+            </div>
+
+            <div class="mt-3 flex justify-end gap-2">
+              <button class="btn btn-ghost btn-sm">Cancel</button>
+              <button class="btn btn-primary btn-sm"><i data-lucide="save" class="w-4 h-4"></i>Save template</button>
+            </div>
+          </div>
+
+          <!-- Variants + preview -->
+          <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div class="card p-4">
+              <h3 class="text-sm font-semibold">Variants (random on send)</h3>
+              <div class="mt-3 space-y-2 text-sm">
+                <div class="rounded-md border border-border bg-background/40 p-2.5">"{product} is here 🔥 grab it now!"</div>
+                <div class="rounded-md border border-border bg-background/40 p-2.5">"Finally dropped — {product} 🔥"</div>
+                <div class="rounded-md border border-border bg-background/40 p-2.5">"{product} just landed. Don't sleep on it."</div>
+              </div>
+              <button class="btn btn-outline btn-sm mt-3"><i data-lucide="plus" class="w-4 h-4"></i>Add variant</button>
+            </div>
+
+            <div class="card p-4">
+              <h3 class="text-sm font-semibold">Preview</h3>
+              <p class="text-xs muted">Resolved against a sample job</p>
+              <div class="mt-3 rounded-lg border border-border bg-background/40 p-3">
+                <div class="flex items-center gap-2 text-xs"><span class="grid h-6 w-6 place-items-center rounded-full bg-secondary">GH</span><span class="font-medium">@growth.hacks.id</span><span class="muted ml-auto">now</span></div>
+                <p class="mt-2 text-sm">SMM Suite 2.0 is finally here 🔥 link in bio — grab yours before it's gone!</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="shell.js"></script>
+  </body>
+</html>

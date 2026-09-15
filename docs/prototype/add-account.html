@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Add Account — SMM Automation</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body class="dark">
+    <!-- Backdrop region shows the modal on its own page for review. -->
+    <div class="min-h-screen bg-[hsl(222_47%_5%)]/90 grid place-items-center px-4 py-10">
+      <div class="card w-full max-w-2xl p-0">
+        <div class="flex items-center justify-between border-b border-border p-4">
+          <div>
+            <h1 class="text-sm font-semibold">Add account</h1>
+            <p class="text-xs muted">Credentials are encrypted (AES-GCM); only the owning worker can log in.</p>
+          </div>
+          <a class="btn btn-ghost btn-icon btn-sm" href="accounts.html"><i data-lucide="x" class="w-4 h-4"></i></a>
+        </div>
+
+        <!-- Stepper -->
+        <div class="flex items-center gap-3 border-b border-border px-4 py-3 text-xs">
+          <span class="flex items-center gap-2"><span class="stepper-dot done"></span>Platform &amp; credentials</span>
+          <span class="h-px flex-1 bg-border"></span>
+          <span class="flex items-center gap-2"><span class="stepper-dot done"></span>Proxy</span>
+          <span class="h-px flex-1 bg-border"></span>
+          <span class="flex items-center gap-2"><span class="stepper-dot active"></span>Confirm &amp; login</span>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-[1fr_280px]">
+          <!-- Form body -->
+          <div class="space-y-4 p-4">
+            <div>
+              <label class="label">Platform</label>
+              <div class="grid grid-cols-2 gap-2">
+                <button class="btn btn-outline justify-start"><i data-lucide="instagram" class="w-4 h-4"></i>Instagram</button>
+                <button class="btn btn-outline justify-start border-[hsl(var(--primary))] bg-[hsl(var(--primary)/0.08)]"><i data-lucide="at-sign" class="w-4 h-4"></i>Threads</button>
+              </div>
+              <div class="helper mt-1.5">MVP supports Instagram &amp; Threads. Others shown disabled in the real app.</div>
+            </div>
+            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div><label class="label">Username / handle</label><input class="input" placeholder="@handle" value="@growth.hacks" /></div>
+              <div><label class="label">Password</label><input class="input" type="password" value="••••••••••" /></div>
+            </div>
+            <div>
+              <label class="label">Proxy group</label>
+              <select class="input"><option>sg-residential</option><option>id-mobile</option><option>None (direct)</option></select>
+              <div class="helper mt-1.5">Region auto-suggested from the proxy: <span class="text-foreground">sg</span>.</div>
+            </div>
+
+            <div class="rounded-md border border-border bg-background/40 p-3 text-xs">
+              <div class="font-medium">What happens next</div>
+              <ol class="mt-1.5 list-inside list-decimal space-y-0.5 muted">
+                <li>BE encrypts credentials and bin-packs the account to a container with a free slot.</li>
+                <li>Worker opens a headful browser and logs in on the virtual display.</li>
+                <li>If a 2FA / checkpoint appears, you'll be asked for input.</li>
+              </ol>
+            </div>
+          </div>
+
+          <!-- Live status side panel -->
+          <aside class="border-t border-border p-4 md:border-l md:border-t-0">
+            <div class="flex items-center gap-2"><span class="dot dot-busy dot-pulse"></span><h2 class="text-sm font-semibold">Live login</h2></div>
+            <p class="text-xs muted">Streaming via SSE</p>
+
+            <ol class="mt-4 space-y-3 text-sm">
+              <li class="flex items-center gap-2"><span class="stepper-dot done"></span>Creating pod</li>
+              <li class="flex items-center gap-2"><span class="stepper-dot done"></span>Booting browser</li>
+              <li class="flex items-center gap-2"><span class="stepper-dot active"></span>Waiting login</li>
+              <li class="flex items-center gap-2"><span class="stepper-dot"></span>Ready</li>
+            </ol>
+
+            <div class="mt-4 rounded-md border border-border bg-background/40 p-2.5 text-xs">
+              <div class="flex items-center justify-between"><span class="muted">Container</span><span class="mono">worker-9ac104</span></div>
+              <div class="mt-1 flex items-center justify-between"><span class="muted">Region</span><span>sg</span></div>
+            </div>
+
+            <!-- Needs-input branch -->
+            <div class="mt-4 rounded-md border border-[hsl(var(--warning)/0.4)] bg-[hsl(var(--warning)/0.08)] p-3">
+              <div class="flex items-center gap-2 text-sm font-medium text-[hsl(var(--warning))]"><i data-lucide="shield-alert" class="w-4 h-4"></i>2FA required</div>
+              <p class="mt-1 text-xs muted">Enter the code from the authenticator / SMS.</p>
+              <div class="mt-2 flex gap-2">
+                <input class="input flex-1" placeholder="000 000" />
+                <button class="btn btn-primary btn-sm">Submit</button>
+              </div>
+              <button class="btn btn-outline btn-sm mt-2 w-full justify-center"><i data-lucide="monitor" class="w-4 h-4"></i>Open live screen (noVNC)</button>
+            </div>
+
+            <div class="mt-4 rounded-md border border-[hsl(var(--destructive)/0.3)] bg-[hsl(var(--destructive)/0.08)] p-3 text-xs">
+              <div class="font-medium text-[hsl(var(--destructive))]">Failure example — CREDENTIALS_REJECTED</div>
+              <p class="mt-1 muted">Retry re-enrols login without recreating the pod.</p>
+              <div class="mt-2 flex gap-2">
+                <button class="btn btn-outline btn-sm flex-1 justify-center">Retry login</button>
+                <button class="btn btn-ghost btn-sm flex-1 justify-center text-[hsl(var(--destructive))]">Remove</button>
+              </div>
+            </div>
+          </aside>
+        </div>
+
+        <div class="flex items-center justify-between border-t border-border p-4">
+          <a class="btn btn-ghost btn-sm" href="accounts.html">Cancel</a>
+          <div class="flex gap-2">
+            <button class="btn btn-outline btn-sm">Back</button>
+            <button class="btn btn-primary btn-sm" onclick="location.href='accounts.html'"><i data-lucide="check" class="w-4 h-4"></i>Enroll &amp; login</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script>lucide.createIcons();</script>
+  </body>
+</html>

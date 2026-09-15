@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Accounts — SMM Automation</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body
+    class="dark"
+    data-title="Accounts"
+    data-subtitle="Roster · 9 accounts across 5 containers"
+    data-actions='<button class="btn btn-outline btn-sm" onclick="location.href=&quot;bulk-import.html&quot;"><i data-lucide="upload" class="w-4 h-4"></i>Bulk import</button><button class="btn btn-primary btn-sm" onclick="location.href=&quot;add-account.html&quot;"><i data-lucide="user-plus" class="w-4 h-4"></i>Add account</button>'
+  >
+    <div id="app">
+      <section class="flex flex-wrap items-center gap-2">
+        <select class="input w-40"><option>All platforms</option><option>Instagram</option><option>Threads</option></select>
+        <select class="input w-44"><option>All status</option><option>Authenticated</option><option>Authenticating</option><option>Needs input</option><option>Failed</option><option>Paused</option></select>
+        <select class="input w-36"><option>All workers</option><option>worker-7f3a91</option><option>worker-2b19c0</option></select>
+        <button class="btn btn-outline btn-sm"><i data-lucide="filter" class="w-4 h-4"></i>More</button>
+        <div class="ml-auto flex items-center gap-2 text-xs muted">
+          <span>4 selected</span>
+          <button class="btn btn-outline btn-sm"><i data-lucide="pause" class="w-4 h-4"></i>Pause</button>
+          <button class="btn btn-ghost btn-sm text-[hsl(var(--destructive))]">Remove</button>
+        </div>
+      </section>
+
+      <section class="mt-4 card overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="tbl">
+            <thead>
+              <tr>
+                <th class="w-8"><input type="checkbox" /></th>
+                <th>Account</th><th>Platform</th><th>Container</th><th>Region</th>
+                <th>Proxy</th><th>Status</th><th class="text-right">Last action</th><th class="w-10"></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><input type="checkbox" checked /></td>
+                <td><div class="flex items-center gap-2"><i data-lucide="instagram" class="w-4 h-4"></i><div><div class="text-sm font-medium">@growth.hacks.id</div><div class="text-xs muted">Growth Hacks ID</div></div></div></td>
+                <td><span class="badge">Instagram</span></td>
+                <td class="mono">worker-7f3a91</td><td>sg</td><td class="mono text-xs">sg-res-01</td>
+                <td><span class="badge badge-success"><span class="dot dot-ready"></span>Authenticated</span></td>
+                <td class="text-right text-xs muted">2m ago</td>
+                <td><button class="btn btn-ghost btn-icon btn-sm"><i data-lucide="more-vertical" class="w-4 h-4"></i></button></td>
+              </tr>
+              <tr>
+                <td><input type="checkbox" checked /></td>
+                <td><div class="flex items-center gap-2"><i data-lucide="at-sign" class="w-4 h-4"></i><div><div class="text-sm font-medium">@growth.hacks</div><div class="text-xs muted">Growth Hacks</div></div></div></td>
+                <td><span class="badge">Threads</span></td>
+                <td class="mono">worker-7f3a91</td><td>sg</td><td class="mono text-xs">sg-res-01</td>
+                <td><span class="badge badge-success"><span class="dot dot-ready"></span>Authenticated</span></td>
+                <td class="text-right text-xs muted">5m ago</td>
+                <td><button class="btn btn-ghost btn-icon btn-sm"><i data-lucide="more-vertical" class="w-4 h-4"></i></button></td>
+              </tr>
+              <tr>
+                <td><input type="checkbox" checked /></td>
+                <td><div class="flex items-center gap-2"><i data-lucide="instagram" class="w-4 h-4"></i><div><div class="text-sm font-medium">@daily.deals</div><div class="text-xs muted">Daily Deals</div></div></div></td>
+                <td><span class="badge">Instagram</span></td>
+                <td class="mono">worker-2b19c0</td><td>id</td><td class="mono text-xs">id-mob-02</td>
+                <td><span class="badge badge-info"><span class="dot dot-busy dot-pulse"></span>Running</span></td>
+                <td class="text-right text-xs muted">now</td>
+                <td><button class="btn btn-ghost btn-icon btn-sm"><i data-lucide="more-vertical" class="w-4 h-4"></i></button></td>
+              </tr>
+              <tr>
+                <td><input type="checkbox" checked /></td>
+                <td><div class="flex items-center gap-2"><i data-lucide="instagram" class="w-4 h-4"></i><div><div class="text-sm font-medium">@shop.abc</div><div class="text-xs muted">Shop ABC</div></div></div></td>
+                <td><span class="badge">Instagram</span></td>
+                <td class="mono">worker-9ac104</td><td>sg</td><td class="mono text-xs">sg-res-01</td>
+                <td><span class="badge badge-warning"><span class="dot dot-busy dot-pulse"></span>Needs input</span></td>
+                <td class="text-right text-xs muted">41s ago</td>
+                <td><button class="btn btn-ghost btn-icon btn-sm"><i data-lucide="more-vertical" class="w-4 h-4"></i></button></td>
+              </tr>
+              <tr>
+                <td><input type="checkbox" /></td>
+                <td><div class="flex items-center gap-2"><i data-lucide="instagram" class="w-4 h-4"></i><div><div class="text-sm font-medium">@promo.us</div><div class="text-xs muted">Promo US</div></div></div></td>
+                <td><span class="badge">Instagram</span></td>
+                <td class="mono">worker-11de77</td><td>us</td><td class="mono text-xs">—</td>
+                <td><span class="badge badge-destructive"><span class="dot dot-error"></span>Failed</span></td>
+                <td class="text-right text-xs muted">12m ago</td>
+                <td><button class="btn btn-ghost btn-icon btn-sm"><i data-lucide="more-vertical" class="w-4 h-4"></i></button></td>
+              </tr>
+              <tr>
+                <td><input type="checkbox" /></td>
+                <td><div class="flex items-center gap-2"><i data-lucide="instagram" class="w-4 h-4"></i><div><div class="text-sm font-medium">@brand.official</div><div class="text-xs muted">Brand Official</div></div></div></td>
+                <td><span class="badge">Instagram</span></td>
+                <td class="mono">—</td><td>sg</td><td class="mono text-xs">sg-res-02</td>
+                <td><span class="badge badge-outline"><span class="dot"></span>Paused</span></td>
+                <td class="text-right text-xs muted">2h ago</td>
+                <td><button class="btn btn-ghost btn-icon btn-sm"><i data-lucide="more-vertical" class="w-4 h-4"></i></button></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="flex items-center justify-between border-t border-border p-3 text-xs muted">
+          <span>Showing 6 of 9 accounts</span>
+          <div class="flex items-center gap-1">
+            <button class="btn btn-outline btn-sm">Prev</button>
+            <button class="btn btn-outline btn-sm">Next</button>
+          </div>
+        </div>
+      </section>
+
+      <p class="mt-3 text-xs muted">Accounts are bin-packed onto containers by the BE (max 1 per platform per container). Operators never pick the container.</p>
+    </div>
+
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="shell.js"></script>
+  </body>
+</html>

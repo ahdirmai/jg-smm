@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Actions — SMM Automation</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body class="dark" data-title="Actions / Job Queue" data-subtitle="Grouped by account · sequential per container"
+    data-actions='<button class="btn btn-outline btn-sm"><i data-lucide="filter" class="w-4 h-4"></i>Filters</button><button class="btn btn-primary btn-sm"><i data-lucide="plus" class="w-4 h-4"></i>New job</button>'>
+    <div id="app">
+      <div class="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_420px]">
+        <!-- Queue -->
+        <div class="space-y-4">
+          <div class="flex flex-wrap items-center gap-2">
+            <select class="input w-40"><option>All platforms</option><option>Instagram</option><option>Threads</option></select>
+            <select class="input w-40"><option>All types</option><option>comment</option><option>like</option><option>report</option><option>reply_comment</option></select>
+            <select class="input w-36"><option>All status</option><option>Pending</option><option>Running</option><option>Success</option><option>Failed</option></select>
+          </div>
+
+          <!-- Group: account -->
+          <div class="card">
+            <div class="flex items-center gap-2 border-b border-border p-3">
+              <i data-lucide="chevron-down" class="w-4 h-4 muted"></i>
+              <i data-lucide="instagram" class="w-4 h-4"></i>
+              <span class="text-sm font-medium">@growth.hacks.id</span>
+              <span class="badge">Instagram</span>
+              <span class="mono text-xs muted">worker-7f3a91</span>
+              <span class="ml-auto text-xs muted">6 jobs · next in 00:32</span>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="tbl">
+                <thead><tr><th>Job</th><th>Target</th><th>Type</th><th>Scheduled</th><th>Status</th><th class="text-right">Duration</th><th class="text-right">Retry</th></tr></thead>
+                <tbody>
+                  <tr class="bg-[hsl(var(--accent)/0.5)]">
+                    <td class="mono">job_8f21</td><td class="max-w-[16rem] truncate">instagram.com/p/Cx1…</td>
+                    <td><span class="badge">comment</span></td><td class="text-xs muted">now</td>
+                    <td><span class="badge badge-info"><span class="dot dot-busy dot-pulse"></span>Running</span></td>
+                    <td class="text-right mono">41s</td><td class="text-right mono">0/3</td>
+                  </tr>
+                  <tr>
+                    <td class="mono">job_8f19</td><td class="max-w-[16rem] truncate">instagram.com/p/Cw9…</td>
+                    <td><span class="badge">comment</span></td><td class="text-xs muted">-00:02</td>
+                    <td><span class="badge badge-destructive">Failed</span></td>
+                    <td class="text-right mono">1.2s</td><td class="text-right mono">1/3</td>
+                  </tr>
+                  <tr>
+                    <td class="mono">job_8f30</td><td class="max-w-[16rem] truncate">instagram.com/p/Cx1…</td>
+                    <td><span class="badge">like</span></td><td class="text-xs muted">+00:32</td>
+                    <td><span class="badge">Pending</span></td>
+                    <td class="text-right mono">—</td><td class="text-right mono">0/3</td>
+                  </tr>
+                  <tr>
+                    <td class="mono">job_8e77</td><td class="max-w-[16rem] truncate">instagram.com/p/Cv2…</td>
+                    <td><span class="badge">report</span></td><td class="text-xs muted">3m ago</td>
+                    <td><span class="badge badge-success">Success</span></td>
+                    <td class="text-right mono">4.8s</td><td class="text-right mono">0/3</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="flex items-center gap-2 border-b border-border p-3">
+              <i data-lucide="chevron-right" class="w-4 h-4 muted"></i>
+              <i data-lucide="at-sign" class="w-4 h-4"></i>
+              <span class="text-sm font-medium">@growth.hacks</span>
+              <span class="badge">Threads</span>
+              <span class="mono text-xs muted">worker-7f3a91</span>
+              <span class="ml-auto text-xs muted">3 jobs · queued</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Detail drawer -->
+        <aside class="card">
+          <div class="flex items-center justify-between border-b border-border p-4">
+            <div>
+              <div class="flex items-center gap-2"><span class="mono text-sm">job_8f19</span><span class="badge badge-destructive">Failed</span></div>
+              <div class="text-xs muted mt-0.5">comment · @growth.hacks.id · worker-7f3a91</div>
+            </div>
+            <button class="btn btn-ghost btn-icon btn-sm"><i data-lucide="x" class="w-4 h-4"></i></button>
+          </div>
+
+          <div class="space-y-4 p-4 text-sm">
+            <div>
+              <div class="label">Payload</div>
+              <pre class="mono overflow-x-auto rounded-md border border-border bg-background/60 p-3 text-xs">{ "action": "comment",
+  "target": "https://instagram.com/p/Cw9…",
+  "text": "This is gold! 🔥 #growth" }</pre>
+            </div>
+
+            <div>
+              <div class="label">Attempt history</div>
+              <div class="space-y-2 text-xs">
+                <div class="flex items-center gap-2"><span class="badge badge-destructive">FAILED</span><span class="muted">attempt 1 · cooldown gate blocked (60s)</span></div>
+                <div class="flex items-center gap-2"><span class="badge badge-success">RUNNING</span><span class="muted">attempt 0 · started 1.2s</span></div>
+              </div>
+            </div>
+
+            <div>
+              <div class="label">Screenshot</div>
+              <div class="grid h-32 place-items-center rounded-md border border-dashed border-border text-xs muted">
+                <div class="text-center"><i data-lucide="image" class="mx-auto w-5 h-5"></i>task-8f19-worker-7f3a91.jpg</div>
+              </div>
+            </div>
+
+            <div class="flex gap-2">
+              <button class="btn btn-outline btn-sm flex-1 justify-center"><i data-lucide="rotate-cw" class="w-4 h-4"></i>Retry</button>
+              <button class="btn btn-ghost btn-sm flex-1 justify-center text-[hsl(var(--destructive))]">Cancel</button>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </div>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="shell.js"></script>
+  </body>
+</html>

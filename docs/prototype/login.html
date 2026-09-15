@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Login — SMM Automation</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body class="dark">
+    <div class="grid min-h-screen place-items-center px-6">
+      <div class="w-full max-w-sm">
+        <div class="mb-6 flex flex-col items-center gap-3 text-center">
+          <span class="grid h-11 w-11 place-items-center rounded-xl bg-primary text-primary-foreground">
+            <i data-lucide="activity" class="w-6 h-6"></i>
+          </span>
+          <div>
+            <h1 class="text-xl font-semibold tracking-tight">Sign in to SMM Automation</h1>
+            <p class="text-sm muted">Use your team account.</p>
+          </div>
+        </div>
+
+        <form class="card p-6 space-y-4" onsubmit="event.preventDefault(); location.href='dashboard.html'">
+          <div>
+            <label class="label" for="email">Email</label>
+            <input id="email" class="input" type="email" placeholder="owner@local.test" value="owner@local.test" />
+          </div>
+          <div>
+            <div class="flex items-center justify-between">
+              <label class="label" for="password">Password</label>
+              <a href="#" class="helper underline-offset-4 hover:underline">Forgot?</a>
+            </div>
+            <input id="password" class="input" type="password" placeholder="••••••••" value="devpass-123456" />
+          </div>
+          <button class="btn btn-primary w-full justify-center" type="submit">Sign in</button>
+        </form>
+
+        <p class="mt-4 text-center text-xs muted">
+          Session via httpOnly JWT cookie · RBAC (owner / operator / viewer)
+        </p>
+      </div>
+    </div>
+
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script>lucide.createIcons();</script>
+  </body>
+</html>
