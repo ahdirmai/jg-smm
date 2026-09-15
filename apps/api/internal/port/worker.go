@@ -20,6 +20,10 @@ type K8sClient interface {
 	// Observe returns the currently-existing generation for a worker, or
 	// (0, false) when nothing exists. Used by the reconciler's diff.
 	Observe(ctx context.Context, workerID string) (generation int, exists bool, err error)
+	// ListRunning returns the IDs of every worker the driver currently observes
+	// as existing. Used by the orphan sweeper: any ID here without a Worker row
+	// is a resource leaking on the platform.
+	ListRunning(ctx context.Context) ([]string, error)
 }
 
 // Publisher pushes jobs and control messages onto the transport. Implementations

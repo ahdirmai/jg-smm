@@ -42,14 +42,15 @@ func (p *StaticProvisioner) CreateWorker(ctx context.Context, w domain.Worker) e
 	p.logger.Info("static provisioner: no cluster, recording intent",
 		"workerId", w.ID, "generation", w.Generation,
 		"note", "scale locally with `docker compose up --scale worker=N`")
-	return p.appendLog(ctx, w, domain.OpCreate, domain.ProvisionApplied, nil)
+	return nil
 }
 
-// DeleteWorker records a delete intent. The Worker row is left to the caller;
-// this only keeps the audit trail symmetric with the k8s driver.
+// DeleteWorker is a no-op locally: containers are scaled manually, so there is
+// nothing on the platform to remove. The audit row is written by the
+// LoggingDriver decorator that wraps every driver.
 func (p *StaticProvisioner) DeleteWorker(ctx context.Context, workerID string) error {
-	p.logger.Info("static provisioner: delete recorded", "workerId", workerID)
-	return p.appendLog(ctx, domain.Worker{ID: workerID}, domain.OpDelete, domain.ProvisionApplied, nil)
+	p.logger.Info("static provisioner: delete is local no-op", "workerId", workerID)
+	return nil
 }
 
 // Observe reports the generation stored on the Worker row. A live worker
@@ -72,16 +73,21 @@ func (p *StaticProvisioner) Observe(ctx context.Context, workerID string) (int, 
 	return w.Generation, true, nil
 }
 
-func (p *StaticProvisioner) appendLog(ctx context.Context, w domain.Worker, op domain.ProvisionOp, status domain.ProvisionStatus, errp *string) error {
-	if p.logs == nil {
-		return nil
+// ListRunning returns every worker the local tier observes: since local
+// containers are scaled manually and heartbeat into the Worker row, the row IS
+// the platform state. Orphans cannot occur here, but implementing the method
+// keeps the sweeper's contract identical across tiers.
+func (p *StaticProvisioner) ListRunning(ctx context.Context) ([]string, error) {
+	if p.workers == nil {
+		return nil, nil
 	}
-	return p.logs.Append(ctx, domain.ProvisionLog{
-		WorkerID:   w.ID,
-		Op:         op,
-		Generation: w.Generation,
-		Status:     status,
-		Error:      errp,
-		TS:         p.clock.Now(),
-	})
+	workers, err := p.workers.List(ctx, port.WorkerFilter{Limit: 500})
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(workers))
+	for _, w := range workers {
+		ids = append(ids, w.ID)
+	}
+	return ids, nil
 }

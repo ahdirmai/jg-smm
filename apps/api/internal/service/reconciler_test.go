@@ -14,14 +14,15 @@ import (
 
 // fakeDriver is an in-memory port.K8sClient recording every call.
 type fakeDriver struct {
-	mu           sync.Mutex
-	running      map[string]int // workerID -> running generation
-	createCalls  int
-	deleteCalls  int
-	failCreate   bool
-	failDelete   bool
-	failObserve  bool
-	observeCalls int
+	mu              sync.Mutex
+	running         map[string]int // workerID -> running generation
+	createCalls     int
+	deleteCalls     int
+	failCreate      bool
+	failDelete      bool
+	failObserve     bool
+	failListRunning bool
+	observeCalls    int
 }
 
 func newFakeDriver() *fakeDriver {
@@ -59,6 +60,19 @@ func (f *fakeDriver) Observe(ctx context.Context, workerID string) (int, bool, e
 	}
 	gen, ok := f.running[workerID]
 	return gen, ok, nil
+}
+
+func (f *fakeDriver) ListRunning(ctx context.Context) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.failListRunning {
+		return nil, errFake
+	}
+	ids := make([]string, 0, len(f.running))
+	for id := range f.running {
+		ids = append(ids, id)
+	}
+	return ids, nil
 }
 
 // fakeWorkerStore is a minimal port.WorkerStore for the reconciler.

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/domain"
+	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/service"
 )
 
 // TestStaticProvisionerObserveReadsWorkerRow is the local tier's equivalent of
@@ -14,7 +15,10 @@ func TestStaticProvisionerObserveReadsWorkerRow(t *testing.T) {
 	store := newMemWorkerStore()
 	logs := newMemLogStore()
 	clock := &fakeClock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
-	p := NewStaticProvisioner(store, logs, clock, nil)
+	// The LoggingDriver owns the audit trail for every driver (P1-06), so the
+	// static driver is wrapped exactly as main.go wires it.
+	p := service.NewLoggingDriver(
+		NewStaticProvisioner(store, logs, clock, nil), logs, clock, nil)
 
 	ctx := context.Background()
 

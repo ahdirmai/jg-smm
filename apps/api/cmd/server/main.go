@@ -108,18 +108,29 @@ func main() {
 
 		// Provisioning driver: k8s in a cluster, static (bookkeeping only) on
 		// a workstation. The reconciler is a pure loop over this port, so both
-		// tiers share the same code path (P1-03/P1-04).
-		driver, err := provisionDriver(ctx, cfg, workerRepo, logRepo, logger)
+		// tiers share the same code path (P1-03/P1-04). The LoggingDriver wraps
+		// either one so every create/delete lands in provision_log (P1-06).
+		raw, err := provisionDriver(ctx, cfg, workerRepo, logRepo, logger)
 		if err != nil {
 			logger.Error("provisioner init failed", "err", err)
 			os.Exit(1)
 		}
+		driver := service.NewLoggingDriver(raw, logRepo, adapter.SystemClock{}, logger)
 
 		// The desired-state loop is opt-in via RECONCILE_INTERVAL_SECONDS. It is
 		// off by default so `make up` locally never depends on it (P1-04).
 		if cfg.ReconcileIntervalSeconds > 0 {
 			reconciler := service.NewReconciler(workerRepo, driver, logger)
 			go reconciler.Run(ctx, time.Duration(cfg.ReconcileIntervalSeconds)*time.Second)
+
+			// Orphan sweeper: deletes platform resources whose Worker row is
+			// gone, after a 60s grace so a mid-create pod is never reaped
+			// (P1-06). Shares the reconcile interval.
+			sweeper := service.NewOrphanSweeper(workerRepo, driver, service.SweeperConfig{
+				Clock:  adapter.SystemClock{},
+				Logger: logger,
+			})
+			go sweeper.Run(ctx, time.Duration(cfg.ReconcileIntervalSeconds)*time.Second)
 		}
 	}
 

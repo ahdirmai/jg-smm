@@ -148,6 +148,24 @@ func (c *Client) Observe(ctx context.Context, workerID string) (int, bool, error
 	return generationOf(pod), true, nil
 }
 
+// ListRunning returns every worker ID the cluster currently hosts. It is the
+// orphan sweeper's source of truth for what exists on the platform.
+func (c *Client) ListRunning(ctx context.Context) ([]string, error) {
+	pods, err := c.core.CoreV1().Pods(c.ns).List(ctx, metav1.ListOptions{
+		LabelSelector: WorkerLabel,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("k8s: list worker pods: %w", err)
+	}
+	ids := make([]string, 0, len(pods.Items))
+	for i := range pods.Items {
+		if id := pods.Items[i].Labels[WorkerLabel]; id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids, nil
+}
+
 // ensurePVC creates the session volume if absent. Sessions survive pod restarts,
 // so a leftover PVC from a previous generation is intentionally reused.
 func (c *Client) ensurePVC(ctx context.Context, w domain.Worker) error {
