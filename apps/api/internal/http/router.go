@@ -21,6 +21,7 @@ type Dependencies struct {
 	Internal   *InternalHandler
 	Containers *ContainerHandler
 	Accounts   *AccountHandler
+	Stream     *StreamHandler
 }
 
 // NewRouter builds the Echo instance with middleware and routes. It does not
@@ -50,22 +51,24 @@ func NewRouter(deps Dependencies) *echo.Echo {
 		admin.GET("/ping", func(c echo.Context) error {
 			return c.JSON(200, map[string]string{"status": "ok"})
 		})
+
+		// Everything under /api needs an authenticated user with the `act`
+		// permission (OPERATOR+). Containers and accounts share this tier;
+		// SSE is the same channel (ADR 0010).
+		api := e.Group("/api", deps.Auth.requireAuth(), RequirePermission(domain.PermAct))
+		if deps.Containers != nil {
+			deps.Containers.Register(api)
+		}
+		if deps.Accounts != nil {
+			deps.Accounts.Register(api)
+		}
+		if deps.Stream != nil {
+			deps.Stream.Register(api)
+		}
 	}
 
 	if deps.Internal != nil {
 		deps.Internal.Register(e)
-	}
-
-	if deps.Containers != nil && deps.Auth != nil {
-		// Container ops need auth + the act permission (OPERATOR+). The group
-		// carries both; the handler only adds routes.
-		containers := e.Group("/api", deps.Auth.requireAuth(), RequirePermission(domain.PermAct))
-		deps.Containers.Register(containers)
-
-		// Accounts share the same permission tier as containers.
-		if deps.Accounts != nil {
-			deps.Accounts.Register(containers)
-		}
 	}
 
 	return e

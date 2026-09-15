@@ -116,12 +116,16 @@ func main() {
 
 		// Account API (P1-15 / P1-16): add/list/pause/resume/remove. The
 		// sealer is injected so the plaintext password never reaches the store.
+		// The hub fans lifecycle events to dashboards over SSE (P1-17).
+		hub := adapter.NewHub(cfg.SSEBuffer)
 		accountSvc := service.NewAccountService(accountRepo, workerRepo, packer, service.AccountConfig{
 			Sealer: sealer,
 			Clock:  adapter.SystemClock{},
+			Stream: hub,
 			Logger: logger,
 		})
 		deps.Accounts = apihttp.NewAccountHandler(accountSvc)
+		deps.Stream = apihttp.NewStreamHandler(hub)
 
 		// Provisioning driver: k8s in a cluster, static (bookkeeping only) on
 		// a workstation. The reconciler is a pure loop over this port, so both

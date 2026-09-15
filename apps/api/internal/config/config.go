@@ -47,6 +47,10 @@ type Config struct {
 	// CredentialKeyBase64 is the AES-256 key (base64) for credential encryption
 	// at rest. Required when the DB is configured.
 	CredentialKeyBase64 string
+	// SSEBuffer is the per-subscriber event queue. A slow dashboard that
+	// overflows it is disconnected (its EventSource reconnects) rather than
+	// blocking the API.
+	SSEBuffer int
 }
 
 // Load reads configuration from the environment, applying safe defaults.
@@ -67,6 +71,7 @@ func Load() (Config, error) {
 		JWTIssuer:                env("JWT_ISSUER", "smm-api"),
 		SecureCookies:            envBool("SECURE_COOKIES", false),
 		CredentialKeyBase64:      os.Getenv("CREDENTIAL_KEY"),
+		SSEBuffer:                envInt("SSE_BUFFER", 64),
 	}
 
 	if cfg.ProvisionerMode != "static" && cfg.ProvisionerMode != "k8s" {

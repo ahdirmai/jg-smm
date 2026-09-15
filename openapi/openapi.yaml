@@ -305,6 +305,35 @@ paths:
         '403':
           $ref: '#/components/responses/Error'
 
+  /api/stream:
+    get:
+      tags: [stream]
+      summary: Server-sent events channel
+      description: |
+        The dashboard's one server-to-browser channel (ADR 0010). Frames are
+        `event: <kind>` with a JSON `data:` body carrying the full entity, so
+        the client reconciles without a second fetch. Commands still go over
+        REST. Requires the `act` permission.
+
+        Event kinds: `account-updated`, `worker-health`, `provision-updated`.
+        The connection is kept open; an idle connection receives a `: keep-alive`
+        comment every 15s. On drop the browser's EventSource reconnects and
+        refetches.
+      operationId: streamEvents
+      security:
+        - accessCookie: []
+      responses:
+        '200':
+          description: SSE stream.
+          content:
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/StreamEvent'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+
   /internal/action-callback:
     post:
       tags: [internal]
@@ -483,6 +512,23 @@ components:
       properties:
         status:
           type: string
+
+    StreamEvent:
+      type: object
+      description: One server-sent events frame.
+      required: [kind, data]
+      properties:
+        kind:
+          type: string
+          description: The SSE `event:` line; the client dispatches on this.
+          enum:
+            - account-updated
+            - worker-health
+            - provision-updated
+        data:
+          type: object
+          additionalProperties: true
+          description: The full entity payload, sent on the `data:` line as JSON.
 
     ErrorBody:
       type: object

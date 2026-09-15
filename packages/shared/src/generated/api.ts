@@ -238,6 +238,35 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Server-sent events channel
+         * @description The dashboard's one server-to-browser channel (ADR 0010). Frames are
+         *     `event: <kind>` with a JSON `data:` body carrying the full entity, so
+         *     the client reconciles without a second fetch. Commands still go over
+         *     REST. Requires the `act` permission.
+         *
+         *     Event kinds: `account-updated`, `worker-health`, `provision-updated`.
+         *     The connection is kept open; an idle connection receives a `: keep-alive`
+         *     comment every 15s. On drop the browser's EventSource reconnects and
+         *     refetches.
+         *
+         */
+        get: operations["streamEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/internal/action-callback": {
         parameters: {
             query?: never;
@@ -344,6 +373,18 @@ export interface components {
         Role: "OWNER" | "STRATEGIST" | "OPERATOR" | "ANALYST";
         StatusResponse: {
             status: string;
+        };
+        /** @description One server-sent events frame. */
+        StreamEvent: {
+            /**
+             * @description The SSE `event:` line; the client dispatches on this.
+             * @enum {string}
+             */
+            kind: "account-updated" | "worker-health" | "provision-updated";
+            /** @description The full entity payload, sent on the `data:` line as JSON. */
+            data: {
+                [key: string]: unknown;
+            };
         };
         ErrorBody: {
             error: components["schemas"]["ErrorDetail"];
@@ -813,6 +854,28 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StatusResponse"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    streamEvents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description SSE stream. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": components["schemas"]["StreamEvent"];
                 };
             };
             401: components["responses"]["Error"];

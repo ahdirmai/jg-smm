@@ -149,6 +149,13 @@ const (
 	SetAccountStatusRequestStatusPAUSED SetAccountStatusRequestStatus = "PAUSED"
 )
 
+// Defines values for StreamEventKind.
+const (
+	AccountUpdated   StreamEventKind = "account-updated"
+	ProvisionUpdated StreamEventKind = "provision-updated"
+	WorkerHealth     StreamEventKind = "worker-health"
+)
+
 // Account defines model for Account.
 type Account struct {
 	AuthStatus AccountAuthStatus         `json:"authStatus"`
@@ -352,6 +359,18 @@ type SetAccountStatusRequestStatus string
 type StatusResponse struct {
 	Status string `json:"status"`
 }
+
+// StreamEvent One server-sent events frame.
+type StreamEvent struct {
+	// Data The full entity payload, sent on the `data:` line as JSON.
+	Data map[string]interface{} `json:"data"`
+
+	// Kind The SSE `event:` line; the client dispatches on this.
+	Kind StreamEventKind `json:"kind"`
+}
+
+// StreamEventKind The SSE `event:` line; the client dispatches on this.
+type StreamEventKind string
 
 // User defines model for User.
 type User struct {

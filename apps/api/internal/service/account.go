@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 
@@ -18,6 +19,7 @@ type AccountService struct {
 	packer   *Packer
 	sealer   port.Sealer
 	clock    port.Clock
+	stream   port.StreamPublisher
 	logger   *slog.Logger
 }
 
@@ -25,6 +27,7 @@ type AccountService struct {
 type AccountConfig struct {
 	Sealer port.Sealer
 	Clock  port.Clock
+	Stream port.StreamPublisher
 	Logger *slog.Logger
 }
 
@@ -43,6 +46,7 @@ func NewAccountService(accounts port.AccountStore, workers port.WorkerStore, pac
 		packer:   packer,
 		sealer:   cfg.Sealer,
 		clock:    cfg.Clock,
+		stream:   cfg.Stream,
 		logger:   cfg.Logger,
 	}
 }
@@ -82,6 +86,7 @@ func (s *AccountService) Create(ctx context.Context, in AccountInput) (AccountSu
 
 	// No packer (DB-only wiring) or nothing to pack into: leave it unassigned.
 	if s.packer == nil {
+		s.publishAccount(ctx, toAccountView(account))
 		return toAccountView(account), nil, nil
 	}
 	packed, worker, err := s.packer.Pack(ctx, account.ID, account.Platform)
@@ -89,8 +94,10 @@ func (s *AccountService) Create(ctx context.Context, in AccountInput) (AccountSu
 		// The account exists but has no container yet; that is a recoverable
 		// placement state, not a failed create.
 		s.logger.Warn("account created but not packed", "accountId", account.ID, "err", err)
+		s.publishAccount(ctx, toAccountView(account))
 		return toAccountView(account), nil, nil
 	}
+	s.publishAccount(ctx, toAccountView(packed))
 	return toAccountView(packed), &worker, nil
 }
 
@@ -122,7 +129,9 @@ func (s *AccountService) Pause(ctx context.Context, accountID string) (AccountSu
 		return AccountSummary{}, fmt.Errorf("account service: pause: %w", err)
 	}
 	s.logger.Info("account paused", "accountId", accountID)
-	return toAccountView(a), nil
+	view := toAccountView(a)
+	s.publishAccount(ctx, view)
+	return view, nil
 }
 
 // Resume reactivates a paused account. If a packer is wired it is placed back
@@ -141,7 +150,9 @@ func (s *AccountService) Resume(ctx context.Context, accountID string) (AccountS
 		return AccountSummary{}, fmt.Errorf("account service: resume: %w", err)
 	}
 	s.logger.Info("account resumed", "accountId", accountID)
-	return toAccountView(a), nil
+	view := toAccountView(a)
+	s.publishAccount(ctx, view)
+	return view, nil
 }
 
 // Remove deletes an account and releases its container slot. An AUTO container
@@ -156,6 +167,9 @@ func (s *AccountService) Remove(ctx context.Context, accountID string) error {
 		return fmt.Errorf("account service: delete: %w", err)
 	}
 	s.logger.Info("account removed", "accountId", accountID)
+	if s.stream != nil {
+		s.stream.Publish(ctx, port.EventAccountUpdated, []byte(`{"id":"`+accountID+`","removed":true}`))
+	}
 	return nil
 }
 
@@ -211,6 +225,21 @@ func toAccountView(a domain.Account) AccountSummary {
 		LastError:   a.LastError,
 		CreatedAt:   a.CreatedAt.Format(timeRFC3339),
 	}
+}
+
+// publishAccount fans the account out to dashboards. Payload is the full entity
+// (ADR 0010) so the browser reconciles without a second fetch. A missing
+// publisher is fine: the write already succeeded.
+func (s *AccountService) publishAccount(ctx context.Context, a AccountSummary) {
+	if s.stream == nil {
+		return
+	}
+	body, err := json.Marshal(a)
+	if err != nil {
+		s.logger.Warn("stream: marshal account", "err", err)
+		return
+	}
+	s.stream.Publish(ctx, port.EventAccountUpdated, body)
 }
 
 const timeRFC3339 = "2006-01-02T15:04:05Z07:00"

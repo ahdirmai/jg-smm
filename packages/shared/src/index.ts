@@ -1,5 +1,6 @@
 export * from './constants.js';
 export * from './generated/api.js';
+export * from './stream.js';
 
 import type { components } from './generated/api.js';
 
