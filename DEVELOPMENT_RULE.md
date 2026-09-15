@@ -377,6 +377,8 @@ Setiap keputusan arsitektur signifikan → `docs/adr/NNNN-slug.md` (format MADR:
 
 ### 17.1 ADR Existing
 
+> Index: `docs/adr/README.md` · template: `docs/adr/0000-template.md`.
+
 - `0001-container-per-device.md` — kenapa 1 container = 1 "device" meng-host N akun (maks 1 per platform): satu device nyata memang 1 sesi/platform, hemat resource vs 1-pod-per-akun, invarian dijaga `@@unique([workerId, platform])`. Trade-off: blast radius = N akun saat pod mati (dibatasi `MAX_ACCOUNTS_PER_CONTAINER`).
 - `0002-playwright-vs-apify-action.md` — action pakai Playwright (Node), scrape pakai Apify.
 - `0003-sequential-batch-action.md` — concurrency = 1 per container.

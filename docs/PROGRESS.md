@@ -31,6 +31,13 @@
 | P0-09  | Worker skeleton                               | DONE   | `45e8aab` | 2026-09 | src structure per Dev Rule §7.2; typecheck+build+6 unit tests green. **Container boot + heartbeat verified on colima**: 3 replicas up, noVNC :6080, heartbeat firing (after `--dns` fix)                                   |
 | P0-10  | CI pipeline                                   | DONE   | —         | 2026-09 | `.github/workflows/ci.yml`: 6 jobs — js (lint/typecheck/build/test/proto-verify), go, codegen drift, migrate up+down, Trivy fs, `ci-ok` gate. ESLint 9 flat config added (worker/web/shared/ui). `make ci` mirrors locally |
 | P0-11  | Pre-commit & Makefile finalize                | DONE   | —         | 2026-09 | `.pre-commit-config.yaml` (gitleaks v8.21.2 + hygiene), `.gitleaks.toml`, zero-dep `.githooks/pre-commit` fallback, `make env`/`hooks`/`ci`/`fmt-check`. `make up` end-to-end verified (api/web 200)                       |
+| P0-12  | ADR bootstrap                                 | DONE   | —         | 2026-09 | `docs/adr/` — MADR template + 12 ADRs (0001–0012) + index README; scaffolder `scripts/gen_adr.py` keeps them in sync with `DEVELOPMENT_RULE.md` §17.1                                                                      |
+
+### P0-12 detail
+
+- `docs/adr/0000-template.md` — MADR template (Context, Drivers, Options, Decision Outcome, Consequences, Confirmation, Pros/Cons, More Information).
+- `docs/adr/0001..0012` — the 12 decisions from `DEVELOPMENT_RULE.md` §17.1, one file each: container-per-device, Playwright-vs-Apify, sequential batch, single team, TimescaleDB, Redis List vs Pub/Sub, shadcn/ui, Go+sqlc+pgx, all-containerized, SSE, worker callback contract, desired-state provisioning.
+- `docs/adr/README.md` — index table + status rules; linked from `DEVELOPMENT_RULE.md` §17.1. Regenerate with `python3 scripts/gen_adr.py`.
 
 ### P0-10 detail
 
@@ -55,7 +62,7 @@
 - Files: `apps/worker/src/{index.ts,types.ts}` + `core/` (config, logger, heartbeat, browser, session, auth, controller), `platforms/` (adapter, registry, instagram, threads), `transport/` (queue, control, callback), `sel/`.
 - Unit test: `apps/worker/src/test/unit.test.ts` (6 tests, `node:test`) — green via `pnpm --filter @smm/worker test`.
 - Dev-rule deviation accepted: tests compile to `dist/test/**` and run there (native TS strip does not rewrite `.js` specifiers).
-- **Resolved (P0-11)**: `docker compose build worker` now succeeds inside colima; the earlier `apt-get` failure to `deb.debian.org` was fixed by restarting colima with `--dns 1.1.1.1 --dns 8.8.8.8`. Container boot + 30s heartbeat cadence confirmed (3 replicas, noVNC :6080).
+- **Resolved (during P0-11)**: `docker compose build worker` now succeeds inside colima; the earlier `apt-get` failure to `deb.debian.org` was fixed by restarting colima with `--dns 1.1.1.1 --dns 8.8.8.8`. Container boot + 30s heartbeat cadence confirmed (3 replicas, noVNC :6080).
 
 ## Frontend prototype (pre-implementation review)
 
