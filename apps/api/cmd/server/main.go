@@ -222,6 +222,16 @@ func main() {
 		})
 		deps.Analytics = apihttp.NewAnalyticsHandler(analyticsSvc)
 
+		// Alert engine (P2-07): views-drop and mention-spike rules over scraped
+		// metrics. Off by default; enabled with ALERT_INTERVAL_SECONDS.
+		if cfg.AlertIntervalSeconds > 0 {
+			alerts := service.NewAlertEngine(scrapeRepo, analyticsRepo, service.AlertEngineConfig{
+				Clock:  time.Now,
+				Logger: logger,
+			})
+			go alerts.Run(ctx, time.Duration(cfg.AlertIntervalSeconds)*time.Second)
+		}
+
 		// a workstation. The reconciler is a pure loop over this port, so both
 		// tiers share the same code path (P1-03/P1-04). The LoggingDriver wraps
 		// either one so every create/delete lands in provision_log (P1-06).

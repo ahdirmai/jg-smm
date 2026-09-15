@@ -75,6 +75,8 @@ type Config struct {
 	// AnalyticsIngestIntervalSeconds runs the official-account ingest cron
 	// (P2-12). 0 disables it.
 	AnalyticsIngestIntervalSeconds int
+	// AlertIntervalSeconds runs the monitoring rule engine (P2-07). 0 disables.
+	AlertIntervalSeconds int
 	// AnalyticsProvider selects which 3rd-party provider adapter the ingestor
 	// uses (PRD F5; provider-agnostic by design).
 	AnalyticsProvider string
@@ -121,6 +123,7 @@ func Load() (Config, error) {
 		ApifyActorPrefix: env("APIFY_ACTOR_PREFIX", "~smm"),
 
 		AnalyticsIngestIntervalSeconds: envInt("ANALYTICS_INGEST_INTERVAL_SECONDS", 0),
+		AlertIntervalSeconds:           envInt("ALERT_INTERVAL_SECONDS", 0),
 		AnalyticsProvider:              env("ANALYTICS_PROVIDER", "thirdparty_a"),
 		AnalyticsProviderBaseURL:       env("ANALYTICS_PROVIDER_BASE_URL", "https://provider.example.com/v1"),
 		AnalyticsProviderKey:           os.Getenv("ANALYTICS_PROVIDER_KEY"),
@@ -155,6 +158,9 @@ func Load() (Config, error) {
 	}
 	if cfg.AnalyticsIngestIntervalSeconds < 0 {
 		return Config{}, fmt.Errorf("config: ANALYTICS_INGEST_INTERVAL_SECONDS must be >= 0, got %d", cfg.AnalyticsIngestIntervalSeconds)
+	}
+	if cfg.AlertIntervalSeconds < 0 {
+		return Config{}, fmt.Errorf("config: ALERT_INTERVAL_SECONDS must be >= 0, got %d", cfg.AlertIntervalSeconds)
 	}
 	// The JWT secret is only meaningful once the API talks to the DB (auth on).
 	if cfg.DatabaseURL != "" && len(cfg.JWTSecret) < 16 {

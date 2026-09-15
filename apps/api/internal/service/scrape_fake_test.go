@@ -319,7 +319,21 @@ func (f *fakeScrapeStore) ListMetricSnapshots(ctx context.Context, postID string
 	return out, nil
 }
 func (f *fakeScrapeStore) LatestMetricSnapshots(ctx context.Context) ([]domain.MetricSnapshot, error) {
-	return f.snapshots, nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	// One row per post (the latest), mirroring the real GROUP BY post_id query.
+	latest := map[string]domain.MetricSnapshot{}
+	for _, s := range f.snapshots {
+		cur, ok := latest[s.PostID]
+		if !ok || s.TS.After(cur.TS) {
+			latest[s.PostID] = s
+		}
+	}
+	out := make([]domain.MetricSnapshot, 0, len(latest))
+	for _, s := range latest {
+		out = append(out, s)
+	}
+	return out, nil
 }
 func (f *fakeScrapeStore) TopPostsByMetric(ctx context.Context, metric string, limit int) ([]domain.MetricSnapshot, error) {
 	return f.snapshots, nil
