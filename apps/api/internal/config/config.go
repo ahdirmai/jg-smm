@@ -77,6 +77,9 @@ type Config struct {
 	AnalyticsIngestIntervalSeconds int
 	// AlertIntervalSeconds runs the monitoring rule engine (P2-07). 0 disables.
 	AlertIntervalSeconds int
+	// AggregateIntervalSeconds runs the top-post metric re-sampler (P2-05).
+	// 0 disables it; the ticket's cadence is 30 minutes (1800s).
+	AggregateIntervalSeconds int
 	// AnalyticsProvider selects which 3rd-party provider adapter the ingestor
 	// uses (PRD F5; provider-agnostic by design).
 	AnalyticsProvider string
@@ -124,6 +127,7 @@ func Load() (Config, error) {
 
 		AnalyticsIngestIntervalSeconds: envInt("ANALYTICS_INGEST_INTERVAL_SECONDS", 0),
 		AlertIntervalSeconds:           envInt("ALERT_INTERVAL_SECONDS", 0),
+		AggregateIntervalSeconds:       envInt("AGGREGATE_INTERVAL_SECONDS", 0),
 		AnalyticsProvider:              env("ANALYTICS_PROVIDER", "thirdparty_a"),
 		AnalyticsProviderBaseURL:       env("ANALYTICS_PROVIDER_BASE_URL", "https://provider.example.com/v1"),
 		AnalyticsProviderKey:           os.Getenv("ANALYTICS_PROVIDER_KEY"),
@@ -161,6 +165,9 @@ func Load() (Config, error) {
 	}
 	if cfg.AlertIntervalSeconds < 0 {
 		return Config{}, fmt.Errorf("config: ALERT_INTERVAL_SECONDS must be >= 0, got %d", cfg.AlertIntervalSeconds)
+	}
+	if cfg.AggregateIntervalSeconds < 0 {
+		return Config{}, fmt.Errorf("config: AGGREGATE_INTERVAL_SECONDS must be >= 0, got %d", cfg.AggregateIntervalSeconds)
 	}
 	// The JWT secret is only meaningful once the API talks to the DB (auth on).
 	if cfg.DatabaseURL != "" && len(cfg.JWTSecret) < 16 {

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -23,6 +24,9 @@ type fakeScrapeStore struct {
 	payloads   map[string][]byte // s3 key -> body
 	runPayload map[string][]string
 	claimCalls int
+	// failSnapshotFor, when set, makes CreateMetricSnapshot fail for this one
+	// post id — a failure-injection hook for the aggregator's per-post skip.
+	failSnapshotFor string
 }
 
 func newFakeScrapeStore() *fakeScrapeStore {
@@ -36,6 +40,9 @@ func newFakeScrapeStore() *fakeScrapeStore {
 }
 
 var _ port.ScrapeStore = (*fakeScrapeStore)(nil)
+
+// errInjected is the sentinel the failure-injection hooks return.
+var errInjected = errors.New("injected failure")
 
 func (f *fakeScrapeStore) UpsertTarget(ctx context.Context, t domain.Target) (domain.Target, error) {
 	f.mu.Lock()
@@ -304,6 +311,9 @@ func (f *fakeScrapeStore) ListRawPayloadsByRunID(ctx context.Context, runID stri
 func (f *fakeScrapeStore) CreateMetricSnapshot(ctx context.Context, s domain.MetricSnapshot) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.failSnapshotFor != "" && s.PostID == f.failSnapshotFor {
+		return errInjected
+	}
 	f.snapshots = append(f.snapshots, s)
 	return nil
 }

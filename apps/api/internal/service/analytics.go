@@ -162,20 +162,41 @@ type Freshness struct {
 }
 
 // Overview returns the latest metric per official account across platforms.
+// The KPI strip is one row per (account, scalar the provider reported); an
+// account with no snapshot in the window contributes nothing, so its cards
+// read "no data" instead of a misleading 0.
 func (s *AnalyticsService) Overview(ctx context.Context, windowDays int) (Overview, error) {
 	accs, err := s.store.ListOfficialAccounts(ctx, nil, nil)
 	if err != nil {
 		return Overview{}, fmt.Errorf("analytics.Overview: %w", err)
 	}
 	now := s.clock()
-	kpis := make([]KPI, 0, len(accs))
+	window := windowOrDefault(windowDays)
+
+	active := make([]domain.OfficialAccount, 0, len(accs))
+	byPlatform := make(map[domain.Platform][]domain.OfficialAccount)
 	for _, acc := range accs {
 		if acc.Status == domain.OfficialAccountArchived {
 			continue
 		}
-		kpis = append(kpis, accountKPIs(acc)...)
+		active = append(active, acc)
+		byPlatform[acc.Platform] = append(byPlatform[acc.Platform], acc)
 	}
-	return Overview{KPIs: kpis, Freshness: s.freshness(ctx, accs, now)}, nil
+
+	// AllPlatforms (not the map) drives the loop so the response order is stable.
+	kpis := make([]KPI, 0, len(active))
+	for _, p := range domain.AllPlatforms {
+		if len(byPlatform[p]) == 0 {
+			continue
+		}
+		snapshots, err := s.store.AnalyticsOverview(ctx, p, window)
+		if err != nil {
+			return Overview{}, fmt.Errorf("analytics.Overview: %w", err)
+		}
+		kpis = append(kpis, platformKPIs(snapshots, byPlatform[p])...)
+	}
+
+	return Overview{KPIs: kpis, Freshness: s.freshness(ctx, active, now)}, nil
 }
 
 // PlatformPage returns one platform's KPI strip + trend series.
@@ -195,13 +216,20 @@ func (s *AnalyticsService) PlatformPage(ctx context.Context, p domain.Platform, 
 	}
 	now := s.clock()
 
-	kpis := make([]KPI, 0, len(accs))
+	active := make([]domain.OfficialAccount, 0, len(accs))
 	for _, acc := range accs {
-		if acc.Status == domain.OfficialAccountArchived {
-			continue
+		if acc.Status != domain.OfficialAccountArchived {
+			active = append(active, acc)
 		}
-		kpis = append(kpis, accountKPIs(acc)...)
 	}
+
+	// KPIs come from the latest snapshot per account, not the account row: the
+	// account itself carries no metrics, only the ingest does.
+	snapshots, err := s.store.AnalyticsOverview(ctx, p, window)
+	if err != nil {
+		return PlatformResult{}, fmt.Errorf("analytics.PlatformPage kpis: %w", err)
+	}
+	kpis := platformKPIs(snapshots, active)
 
 	trend, err := s.store.AnalyticsTrendByPlatform(ctx, p, string(m), window)
 	if err != nil {
@@ -212,7 +240,7 @@ func (s *AnalyticsService) PlatformPage(ctx context.Context, p domain.Platform, 
 		Platform:  p,
 		KPIs:      kpis,
 		Trend:     trend,
-		Freshness: s.freshness(ctx, accs, now),
+		Freshness: s.freshness(ctx, active, now),
 	}, nil
 }
 
@@ -250,13 +278,62 @@ func (s *AnalyticsService) freshness(ctx context.Context, accs []domain.Official
 	return f
 }
 
-// accountKPIs emits the cross-platform KPI cards for one account from its
-// latest snapshot. Missing metrics stay nil — the card renders "no data", which
-// is honest, rather than 0 which reads as "zero followers".
-func accountKPIs(acc domain.OfficialAccount) []KPI {
-	return []KPI{
-		{OfficialAccountID: acc.ID, Handle: acc.Handle, Metric: domain.AnalyticsMetricFollowers},
+// platformKPIs turns the latest-snapshot rows for one platform into the KPI
+// list the dashboard charts. Handles come from the account rows (the snapshot
+// table has no handle), so an orphaned snapshot — account archived mid-window —
+// renders with an empty handle rather than crashing the page.
+func platformKPIs(snapshots []domain.AnalyticsSnapshot, accs []domain.OfficialAccount) []KPI {
+	handles := make(map[string]string, len(accs))
+	for _, acc := range accs {
+		handles[acc.ID] = acc.Handle
 	}
+	kpis := make([]KPI, 0, len(snapshots))
+	for _, snap := range snapshots {
+		for _, col := range snapshotMetrics(snap) {
+			v := col.value
+			kpis = append(kpis, KPI{
+				OfficialAccountID: snap.OfficialAccountID,
+				Handle:            handles[snap.OfficialAccountID],
+				Metric:            col.metric,
+				Value:             &v,
+			})
+		}
+	}
+	return kpis
+}
+
+// snapshotMetrics pairs each cross-platform scalar with the snapshot column
+// the provider populated. A nil column is skipped: absent data must not masquerade
+// as a zero, or every new account would show "0 followers".
+func snapshotMetrics(snap domain.AnalyticsSnapshot) []struct {
+	metric domain.AnalyticsMetric
+	value  int64
+} {
+	cols := []struct {
+		metric domain.AnalyticsMetric
+		value  *int64
+	}{
+		{domain.AnalyticsMetricFollowers, snap.Followers},
+		{domain.AnalyticsMetricReach, snap.Reach},
+		{domain.AnalyticsMetricViews, snap.Views},
+		{domain.AnalyticsMetricEngagements, snap.Engagements},
+		{domain.AnalyticsMetricMentions, snap.Mentions},
+		{domain.AnalyticsMetricProfileViews, snap.ProfileViews},
+	}
+	out := make([]struct {
+		metric domain.AnalyticsMetric
+		value  int64
+	}, 0, len(cols))
+	for _, col := range cols {
+		if col.value == nil {
+			continue
+		}
+		out = append(out, struct {
+			metric domain.AnalyticsMetric
+			value  int64
+		}{col.metric, *col.value})
+	}
+	return out
 }
 
 func windowOrDefault(days int) time.Duration {
