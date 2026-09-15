@@ -3,6 +3,7 @@
 import {
   Activity,
   LayoutDashboard,
+  LineChart,
   MessageSquareText,
   MonitorSmartphone,
   ScrollText,
@@ -12,6 +13,7 @@ import {
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
+import { ModeToggle } from '@/components/mode-toggle';
 import { cn } from '@/lib/utils';
 
 const NAV = [
@@ -20,6 +22,7 @@ const NAV = [
   { href: '/accounts', label: 'Accounts', icon: Users },
   { href: '/actions', label: 'Actions', icon: Activity },
   { href: '/templates', label: 'Templates', icon: MessageSquareText },
+  { href: '/monitoring', label: 'Monitoring', icon: LineChart },
   { href: '/audit', label: 'Audit Log', icon: ScrollText },
   { href: '/settings', label: 'Settings', icon: Settings },
 ] as const;
@@ -61,6 +64,9 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             );
           })}
         </nav>
+        <div className="border-t p-2">
+          <ModeToggle />
+        </div>
       </aside>
       <div className="flex min-w-0 flex-1 flex-col">
         <main className="flex-1 p-6">{children}</main>
