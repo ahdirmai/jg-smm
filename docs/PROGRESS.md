@@ -64,6 +64,13 @@
 - Dev-rule deviation accepted: tests compile to `dist/test/**` and run there (native TS strip does not rewrite `.js` specifiers).
 - **Resolved (during P0-11)**: `docker compose build worker` now succeeds inside colima; the earlier `apt-get` failure to `deb.debian.org` was fixed by restarting colima with `--dns 1.1.1.1 --dns 8.8.8.8`. Container boot + 30s heartbeat cadence confirmed (3 replicas, noVNC :6080).
 
+## P1 — Account Lifecycle & Provisioning
+
+| Ticket | Title            | Status | Commit | Date    | Notes                                                                                                                                                                                                                    |
+| ------ | ---------------- | ------ | ------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| P1-01  | ERD → migrations | DONE   | —      | 2026-09 | Migration 000003: platform/auth/account/worker/desired/source/provision enums + proxy_group, worker, account, heartbeat, provision_log. `UNIQUE(worker_id, platform)` + `UNIQUE(platform, username)` verified up→down→up |
+| P1-02  | Domain & port    | DONE   | —      | 2026-09 | `internal/domain` entities/enums (zero internal imports) + `internal/port` K8sClient/Publisher/WorkerStore/AccountStore/ProxyGroupStore/ProvisionLogStore. Arch test + domain unit tests green                           |
+
 ## Frontend prototype (pre-implementation review)
 
 | Item                     | Status | Commit    | Date    | Notes                                                                                                                                                      |
