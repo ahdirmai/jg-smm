@@ -79,6 +79,27 @@ func pageBounds(limit, offset int) (int32, int32) {
 	return int32(limit), int32(offset)
 }
 
+// ptrPage is pageBounds for the *int params the P2 stores use, where nil means
+// "default page". It keeps nil-safety out of every call site.
+func ptrPage(limit, offset *int) (int32, int32) {
+	l, o := -1, 0
+	if limit != nil {
+		l = *limit
+	}
+	if offset != nil {
+		o = *offset
+	}
+	return pageBounds(l, o)
+}
+
+// clampLimit bounds a bare limit (no offset) to the page ceiling.
+func clampLimit(limit int) int32 {
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	return int32(limit)
+}
+
 // platformEnum maps a lowercase domain platform to its UPPER Postgres enum.
 func platformEnum(p domain.Platform) sqlcgen.Platform {
 	return sqlcgen.Platform(strings.ToUpper(string(p)))
@@ -132,7 +153,8 @@ func tsPtr(t *time.Time) pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: t.UTC(), Valid: true}
 }
 
-// uuidStrPtr converts a nullable pgtype UUID to *string.
+// uuidStrPtr converts a nullable pgtype UUID to *string. An invalid (NULL)
+// UUID becomes nil, not a pointer to the empty string.
 func uuidStrPtr(id pgtype.UUID) *string {
 	if !id.Valid {
 		return nil

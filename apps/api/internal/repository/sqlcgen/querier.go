@@ -11,13 +11,43 @@ import (
 )
 
 type Querier interface {
+	// KPI strip per platform: latest value of each scalar metric per account on
+	// that platform over the trailing window. `last(x, ts)` over the bucket gives
+	// the most recent sample per account without a window-function round trip.
+	AnalyticsOverviewByPlatform(ctx context.Context, arg AnalyticsOverviewByPlatformParams) ([]AnalyticsOverviewByPlatformRow, error)
+	// Same shape, scoped to one account (the per-account drill-down view).
+	AnalyticsTrendByAccount(ctx context.Context, arg AnalyticsTrendByAccountParams) ([]AnalyticsTrendByAccountRow, error)
+	// Daily series of one metric summed across all accounts on a platform. The
+	// metric is picked by name so one query serves every KPI card; every branch is
+	// bigint so the CASE is type-homogeneous. gapfill needs both time bounds, which
+	// the WHERE supplies.
+	AnalyticsTrendByPlatform(ctx context.Context, arg AnalyticsTrendByPlatformParams) ([]AnalyticsTrendByPlatformRow, error)
 	// provision_log queries: append-only audit of every provisioner op.
 	AppendProvisionLog(ctx context.Context, arg AppendProvisionLogParams) error
+	ArchiveOfficialAccount(ctx context.Context, id pgtype.UUID) (OfficialAccount, error)
 	AssignAccount(ctx context.Context, arg AssignAccountParams) (AssignAccountRow, error)
+	// Atomic FIFO claim for one account: PENDING + scheduled_at <= now() ordered by
+	// scheduled_at, bumped to RUNNING. The account index makes this cheap.
+	ClaimNextScrapeJob(ctx context.Context, accountID pgtype.UUID) (ScrapeJob, error)
+	CompleteScrapeJob(ctx context.Context, arg CompleteScrapeJobParams) (ScrapeJob, error)
 	CountAccountsByWorker(ctx context.Context, workerID pgtype.UUID) (int64, error)
+	CountCommentsByPost(ctx context.Context, postID pgtype.UUID) (int64, error)
+	CountOfficialAccountsByPlatform(ctx context.Context, platform Platform) (int64, error)
 	CreateAccount(ctx context.Context, arg CreateAccountParams) (CreateAccountRow, error)
+	CreateAnalyticsIngestRun(ctx context.Context, arg CreateAnalyticsIngestRunParams) (AnalyticsIngestRun, error)
+	CreateApifyRun(ctx context.Context, arg CreateApifyRunParams) (ApifyRun, error)
 	CreateAuthSession(ctx context.Context, arg CreateAuthSessionParams) (CreateAuthSessionRow, error)
+	// MetricSnapshot: per-post metric time-series (Timescale hypertable).
+	// PK is (id, ts) because Timescale requires the partition column in every
+	// unique index, so every query filters on `ts` to hit a chunk range.
+	CreateMetricSnapshot(ctx context.Context, arg CreateMetricSnapshotParams) error
+	CreateOfficialAccount(ctx context.Context, arg CreateOfficialAccountParams) (OfficialAccount, error)
 	CreateProxyGroup(ctx context.Context, arg CreateProxyGroupParams) (ProxyGroup, error)
+	CreateRawPayload(ctx context.Context, arg CreateRawPayloadParams) (RawPayload, error)
+	// ScrapeJob + ApifyRun + RawPayload: the scrape pipeline bookkeeping.
+	// ScrapeJob is claimed by a scheduler tick (FIFO per account via the index on
+	// (account_id, status, scheduled_at)); no unique constraint enqueues order.
+	CreateScrapeJob(ctx context.Context, arg CreateScrapeJobParams) (ScrapeJob, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (CreateUserRow, error)
 	CreateWorker(ctx context.Context, arg CreateWorkerParams) (Worker, error)
 	DeleteAccount(ctx context.Context, id pgtype.UUID) error
@@ -28,9 +58,30 @@ type Querier interface {
 	// here ever selects it. UNIQUE(platform, username) + UNIQUE(worker_id, platform).
 	GetAccountByID(ctx context.Context, id pgtype.UUID) (GetAccountByIDRow, error)
 	GetActiveAuthSession(ctx context.Context, tokenHash []byte) (GetActiveAuthSessionRow, error)
+	GetCommentByID(ctx context.Context, id pgtype.UUID) (Comment, error)
+	GetCommentByPlatformExternalID(ctx context.Context, arg GetCommentByPlatformExternalIDParams) (Comment, error)
+	// backs the dashboard's freshness badge: the most recent terminal run tells the
+	// operator whether the analytics view they are reading is current or stale.
+	GetLatestAnalyticsIngestRun(ctx context.Context) (AnalyticsIngestRun, error)
+	// OfficialAccount: a monitored brand/client account (read-only). NOT an
+	// `account` (executor) — no credentials, no login, no actions. Metrics come
+	// from a 3rd-party provider and land in analytics_snapshot/analytics_mention.
+	GetOfficialAccountByID(ctx context.Context, id pgtype.UUID) (OfficialAccount, error)
+	// Post + Comment: scraped content. Both dedupe by (platform, external_id) so a
+	// re-scrape refreshes metrics instead of duplicating rows (idempotent ingest).
+	// The columns selected here mirror the Upsert RETURNING clause exactly.
+	GetPostByID(ctx context.Context, id pgtype.UUID) (Post, error)
+	GetPostByPlatformExternalID(ctx context.Context, arg GetPostByPlatformExternalIDParams) (Post, error)
 	// proxy_group queries. pool_key is encrypted at rest (AES-256-GCM, P1-07) and
 	// is only ever written by the credential-aware service, never decrypted here.
 	GetProxyGroupByID(ctx context.Context, id pgtype.UUID) (ProxyGroup, error)
+	GetScrapeJobByID(ctx context.Context, id pgtype.UUID) (ScrapeJob, error)
+	// Target: the scrape/action join point. Deduped by (platform, external_id).
+	// Upsert returns the canonical row so callers get an id whether it existed or
+	// not; the resolution columns (post_id/comment_id) are filled in by the ingest
+	// pipeline once the entity exists, not at target-create time.
+	GetTargetByID(ctx context.Context, id pgtype.UUID) (Target, error)
+	GetTargetByPlatformExternalID(ctx context.Context, arg GetTargetByPlatformExternalIDParams) (Target, error)
 	// Example queries exercising the sqlc pipeline (P0-05).
 	// Real per-domain query files land with their tables in later phases.
 	GetTeamConfig(ctx context.Context) (TeamConfig, error)
@@ -44,21 +95,71 @@ type Querier interface {
 	GetWorkerByName(ctx context.Context, name string) (Worker, error)
 	InsertAuditLog(ctx context.Context, arg InsertAuditLogParams) (AuditLog, error)
 	InsertHeartbeat(ctx context.Context, arg InsertHeartbeatParams) error
+	// `last()` picks the value of the final row in the bucket; with a 1-day bucket
+	// over a hypertable this collapses to "the most recent sample per post".
+	LatestMetricSnapshotsByPost(ctx context.Context) ([]LatestMetricSnapshotsByPostRow, error)
+	LinkTargetComment(ctx context.Context, arg LinkTargetCommentParams) error
+	LinkTargetPost(ctx context.Context, arg LinkTargetPostParams) error
 	ListAccounts(ctx context.Context, arg ListAccountsParams) ([]ListAccountsRow, error)
 	ListAccountsByWorker(ctx context.Context, workerID pgtype.UUID) ([]ListAccountsByWorkerRow, error)
+	ListAnalyticsIngestRuns(ctx context.Context, arg ListAnalyticsIngestRunsParams) ([]AnalyticsIngestRun, error)
+	ListAnalyticsMentionsByAccount(ctx context.Context, arg ListAnalyticsMentionsByAccountParams) ([]AnalyticsMention, error)
+	ListAnalyticsMentionsByPlatform(ctx context.Context, arg ListAnalyticsMentionsByPlatformParams) ([]AnalyticsMention, error)
+	ListAnalyticsSnapshotsByAccount(ctx context.Context, arg ListAnalyticsSnapshotsByAccountParams) ([]AnalyticsSnapshot, error)
 	ListAuditLogs(ctx context.Context, limit int32) ([]AuditLog, error)
+	ListCommentsByPost(ctx context.Context, arg ListCommentsByPostParams) ([]Comment, error)
+	ListMetricSnapshotsByPost(ctx context.Context, arg ListMetricSnapshotsByPostParams) ([]MetricSnapshot, error)
+	ListOfficialAccounts(ctx context.Context, arg ListOfficialAccountsParams) ([]OfficialAccount, error)
+	ListOfficialAccountsByPlatform(ctx context.Context, arg ListOfficialAccountsByPlatformParams) ([]OfficialAccount, error)
+	// every ACTIVE account for a provider, walked by the ingestor cron tick.
+	ListOfficialAccountsForIngest(ctx context.Context, arg ListOfficialAccountsForIngestParams) ([]OfficialAccount, error)
+	ListPendingScrapeJobsByAccount(ctx context.Context, arg ListPendingScrapeJobsByAccountParams) ([]ScrapeJob, error)
+	ListPosts(ctx context.Context, arg ListPostsParams) ([]Post, error)
 	ListProvisionLogsByWorker(ctx context.Context, arg ListProvisionLogsByWorkerParams) ([]ProvisionLog, error)
 	ListProxyGroups(ctx context.Context) ([]ProxyGroup, error)
+	ListRawPayloadsByRun(ctx context.Context, apifyRunID pgtype.UUID) ([]RawPayload, error)
+	ListScrapeJobs(ctx context.Context, arg ListScrapeJobsParams) ([]ScrapeJob, error)
+	ListScrapeJobsByStatus(ctx context.Context, arg ListScrapeJobsByStatusParams) ([]ScrapeJob, error)
+	ListTargets(ctx context.Context, arg ListTargetsParams) ([]Target, error)
+	// Top-N posts by a single metric on a platform, for the P2-05 aggregation and
+	// the dashboard's "top posts" table. metric_key must be a jsonb text field;
+	// `->>` keeps the bind a plain text parameter (no jsonb literal assembly).
+	ListTopPostsByPlatform(ctx context.Context, arg ListTopPostsByPlatformParams) ([]Post, error)
 	ListUsers(ctx context.Context, arg ListUsersParams) ([]ListUsersRow, error)
 	ListWorkers(ctx context.Context, arg ListWorkersParams) ([]Worker, error)
 	RevokeAllUserSessions(ctx context.Context, arg RevokeAllUserSessionsParams) error
 	RevokeAuthSession(ctx context.Context, arg RevokeAuthSessionParams) error
+	// P2-05 aggregation: top-100 posts by a metric over a trailing window, via a
+	// continuous-look-alike query on the latest snapshot per post.
+	TopPostsByMetric(ctx context.Context, arg TopPostsByMetricParams) ([]TopPostsByMetricRow, error)
 	TouchAuthSession(ctx context.Context, id pgtype.UUID) error
+	// written by the ingestor only after a successful snapshot write, so
+	// last_fetched_at always means "data present", not "attempt ran".
+	TouchOfficialAccountFetched(ctx context.Context, id pgtype.UUID) error
 	TouchWorkerHeartbeat(ctx context.Context, arg TouchWorkerHeartbeatParams) (Worker, error)
 	UnassignAccount(ctx context.Context, id pgtype.UUID) (UnassignAccountRow, error)
 	UpdateAccount(ctx context.Context, arg UpdateAccountParams) (UpdateAccountRow, error)
+	UpdateAnalyticsIngestRun(ctx context.Context, arg UpdateAnalyticsIngestRunParams) (AnalyticsIngestRun, error)
+	// finished_at is passed in (NULL while the run is still in flight) so the caller
+	// controls the terminal stamp without a CASE in SQL.
+	UpdateApifyRun(ctx context.Context, arg UpdateApifyRunParams) (ApifyRun, error)
+	UpdateOfficialAccount(ctx context.Context, arg UpdateOfficialAccountParams) (OfficialAccount, error)
 	UpdateProxyGroup(ctx context.Context, arg UpdateProxyGroupParams) (ProxyGroup, error)
 	UpdateWorker(ctx context.Context, arg UpdateWorkerParams) (Worker, error)
+	// AnalyticsMention + AnalyticsIngestRun: provider-sourced mentions and the
+	// audit trail for the analytics ingest path (mirrors provision_log for workers).
+	UpsertAnalyticsMention(ctx context.Context, arg UpsertAnalyticsMentionParams) (AnalyticsMention, error)
+	// AnalyticsSnapshot: official-account metric time-series (Timescale hypertable).
+	// Idempotent upsert on (official_account_id, ts, provider) so a retried ingest
+	// run refreshes the same row instead of duplicating it.
+	//
+	// `ts` is the hypertable partition column, so every query filters on it (a
+	// filter on `ts >= X` alone is enough for chunk exclusion; the upper bound is
+	// stated explicitly so `time_bucket_gapfill` can infer its range).
+	UpsertAnalyticsSnapshot(ctx context.Context, arg UpsertAnalyticsSnapshotParams) (AnalyticsSnapshot, error)
+	UpsertComment(ctx context.Context, arg UpsertCommentParams) (Comment, error)
+	UpsertPost(ctx context.Context, arg UpsertPostParams) (Post, error)
+	UpsertTarget(ctx context.Context, arg UpsertTargetParams) (Target, error)
 	UpsertTeamConfig(ctx context.Context, name string) (TeamConfig, error)
 }
 

@@ -6,6 +6,7 @@ package sqlcgen
 
 import (
 	"database/sql/driver"
+	"encoding/json"
 	"fmt"
 	"net/netip"
 
@@ -56,6 +57,48 @@ func (ns NullAccountStatus) Value() (driver.Value, error) {
 		return nil, nil
 	}
 	return string(ns.AccountStatus), nil
+}
+
+type AnalyticsProvider string
+
+const (
+	AnalyticsProviderTHIRDPARTYA AnalyticsProvider = "THIRDPARTY_A"
+	AnalyticsProviderTHIRDPARTYB AnalyticsProvider = "THIRDPARTY_B"
+)
+
+func (e *AnalyticsProvider) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = AnalyticsProvider(s)
+	case string:
+		*e = AnalyticsProvider(s)
+	default:
+		return fmt.Errorf("unsupported scan type for AnalyticsProvider: %T", src)
+	}
+	return nil
+}
+
+type NullAnalyticsProvider struct {
+	AnalyticsProvider AnalyticsProvider `json:"analytics_provider"`
+	Valid             bool              `json:"valid"` // Valid is true if AnalyticsProvider is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullAnalyticsProvider) Scan(value interface{}) error {
+	if value == nil {
+		ns.AnalyticsProvider, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.AnalyticsProvider.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullAnalyticsProvider) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.AnalyticsProvider), nil
 }
 
 type AuthSessionRevokedReason string
@@ -185,6 +228,186 @@ func (ns NullDesiredState) Value() (driver.Value, error) {
 		return nil, nil
 	}
 	return string(ns.DesiredState), nil
+}
+
+type IngestStatus string
+
+const (
+	IngestStatusPENDING IngestStatus = "PENDING"
+	IngestStatusRUNNING IngestStatus = "RUNNING"
+	IngestStatusSUCCESS IngestStatus = "SUCCESS"
+	IngestStatusFAILED  IngestStatus = "FAILED"
+	IngestStatusPARTIAL IngestStatus = "PARTIAL"
+)
+
+func (e *IngestStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = IngestStatus(s)
+	case string:
+		*e = IngestStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for IngestStatus: %T", src)
+	}
+	return nil
+}
+
+type NullIngestStatus struct {
+	IngestStatus IngestStatus `json:"ingest_status"`
+	Valid        bool         `json:"valid"` // Valid is true if IngestStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullIngestStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.IngestStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.IngestStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullIngestStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.IngestStatus), nil
+}
+
+type JobStatus string
+
+const (
+	JobStatusPENDING   JobStatus = "PENDING"
+	JobStatusRUNNING   JobStatus = "RUNNING"
+	JobStatusSUCCESS   JobStatus = "SUCCESS"
+	JobStatusFAILED    JobStatus = "FAILED"
+	JobStatusRETRY     JobStatus = "RETRY"
+	JobStatusCANCELLED JobStatus = "CANCELLED"
+)
+
+func (e *JobStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = JobStatus(s)
+	case string:
+		*e = JobStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for JobStatus: %T", src)
+	}
+	return nil
+}
+
+type NullJobStatus struct {
+	JobStatus JobStatus `json:"job_status"`
+	Valid     bool      `json:"valid"` // Valid is true if JobStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullJobStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.JobStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.JobStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullJobStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.JobStatus), nil
+}
+
+type JobType string
+
+const (
+	JobTypeSCRAPELIKE     JobType = "SCRAPE_LIKE"
+	JobTypeSCRAPECOMMENT  JobType = "SCRAPE_COMMENT"
+	JobTypeSCRAPEMETRIC   JobType = "SCRAPE_METRIC"
+	JobTypeSESSIONREFRESH JobType = "SESSION_REFRESH"
+	JobTypeACTIONLIKE     JobType = "ACTION_LIKE"
+	JobTypeACTIONCOMMENT  JobType = "ACTION_COMMENT"
+)
+
+func (e *JobType) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = JobType(s)
+	case string:
+		*e = JobType(s)
+	default:
+		return fmt.Errorf("unsupported scan type for JobType: %T", src)
+	}
+	return nil
+}
+
+type NullJobType struct {
+	JobType JobType `json:"job_type"`
+	Valid   bool    `json:"valid"` // Valid is true if JobType is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullJobType) Scan(value interface{}) error {
+	if value == nil {
+		ns.JobType, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.JobType.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullJobType) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.JobType), nil
+}
+
+type OfficialAccountStatus string
+
+const (
+	OfficialAccountStatusACTIVE   OfficialAccountStatus = "ACTIVE"
+	OfficialAccountStatusPAUSED   OfficialAccountStatus = "PAUSED"
+	OfficialAccountStatusARCHIVED OfficialAccountStatus = "ARCHIVED"
+)
+
+func (e *OfficialAccountStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = OfficialAccountStatus(s)
+	case string:
+		*e = OfficialAccountStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for OfficialAccountStatus: %T", src)
+	}
+	return nil
+}
+
+type NullOfficialAccountStatus struct {
+	OfficialAccountStatus OfficialAccountStatus `json:"official_account_status"`
+	Valid                 bool                  `json:"valid"` // Valid is true if OfficialAccountStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullOfficialAccountStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.OfficialAccountStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.OfficialAccountStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullOfficialAccountStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.OfficialAccountStatus), nil
 }
 
 type Platform string
@@ -320,6 +543,48 @@ func (ns NullRole) Value() (driver.Value, error) {
 	return string(ns.Role), nil
 }
 
+type TargetKind string
+
+const (
+	TargetKindPOST    TargetKind = "POST"
+	TargetKindCOMMENT TargetKind = "COMMENT"
+)
+
+func (e *TargetKind) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = TargetKind(s)
+	case string:
+		*e = TargetKind(s)
+	default:
+		return fmt.Errorf("unsupported scan type for TargetKind: %T", src)
+	}
+	return nil
+}
+
+type NullTargetKind struct {
+	TargetKind TargetKind `json:"target_kind"`
+	Valid      bool       `json:"valid"` // Valid is true if TargetKind is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullTargetKind) Scan(value interface{}) error {
+	if value == nil {
+		ns.TargetKind, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.TargetKind.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullTargetKind) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.TargetKind), nil
+}
+
 type WorkerSource string
 
 const (
@@ -431,6 +696,59 @@ type Account struct {
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 }
 
+type AnalyticsIngestRun struct {
+	ID          pgtype.UUID        `json:"id"`
+	Provider    AnalyticsProvider  `json:"provider"`
+	Scope       string             `json:"scope"`
+	Status      IngestStatus       `json:"status"`
+	StartedAt   pgtype.Timestamptz `json:"started_at"`
+	FinishedAt  pgtype.Timestamptz `json:"finished_at"`
+	AccountsOk  int32              `json:"accounts_ok"`
+	AccountsErr int32              `json:"accounts_err"`
+	ErrorClass  *string            `json:"error_class"`
+	Error       *string            `json:"error"`
+}
+
+type AnalyticsMention struct {
+	ID                pgtype.UUID        `json:"id"`
+	OfficialAccountID pgtype.UUID        `json:"official_account_id"`
+	Platform          Platform           `json:"platform"`
+	ExternalID        string             `json:"external_id"`
+	AuthorHandle      *string            `json:"author_handle"`
+	Text              string             `json:"text"`
+	Url               string             `json:"url"`
+	PostedAt          pgtype.Timestamptz `json:"posted_at"`
+	Sentiment         *string            `json:"sentiment"`
+	FetchedAt         pgtype.Timestamptz `json:"fetched_at"`
+}
+
+type AnalyticsSnapshot struct {
+	ID                pgtype.UUID        `json:"id"`
+	OfficialAccountID pgtype.UUID        `json:"official_account_id"`
+	Platform          Platform           `json:"platform"`
+	Ts                pgtype.Timestamptz `json:"ts"`
+	Followers         *int64             `json:"followers"`
+	Reach             *int64             `json:"reach"`
+	Views             *int64             `json:"views"`
+	Mentions          *int64             `json:"mentions"`
+	Engagements       *int64             `json:"engagements"`
+	ProfileViews      *int64             `json:"profile_views"`
+	Metrics           json.RawMessage    `json:"metrics"`
+	Provider          AnalyticsProvider  `json:"provider"`
+	ProviderRunID     *string            `json:"provider_run_id"`
+	FetchedAt         pgtype.Timestamptz `json:"fetched_at"`
+}
+
+type ApifyRun struct {
+	ID          pgtype.UUID        `json:"id"`
+	ScrapeJobID pgtype.UUID        `json:"scrape_job_id"`
+	ActorID     string             `json:"actor_id"`
+	RunID       string             `json:"run_id"`
+	Status      string             `json:"status"`
+	StartedAt   pgtype.Timestamptz `json:"started_at"`
+	FinishedAt  pgtype.Timestamptz `json:"finished_at"`
+}
+
 type AppUser struct {
 	ID           pgtype.UUID        `json:"id"`
 	Email        string             `json:"email"`
@@ -463,6 +781,18 @@ type AuthSession struct {
 	RevokedReason NullAuthSessionRevokedReason `json:"revoked_reason"`
 }
 
+type Comment struct {
+	ID           pgtype.UUID        `json:"id"`
+	PostID       pgtype.UUID        `json:"post_id"`
+	Platform     Platform           `json:"platform"`
+	ExternalID   string             `json:"external_id"`
+	AuthorHandle string             `json:"author_handle"`
+	Text         string             `json:"text"`
+	Metrics      json.RawMessage    `json:"metrics"`
+	ScrapedAt    pgtype.Timestamptz `json:"scraped_at"`
+	ParentID     pgtype.UUID        `json:"parent_id"`
+}
+
 type Heartbeat struct {
 	ID       pgtype.UUID        `json:"id"`
 	WorkerID pgtype.UUID        `json:"worker_id"`
@@ -470,6 +800,46 @@ type Heartbeat struct {
 	Cpu      float64            `json:"cpu"`
 	Mem      float64            `json:"mem"`
 	JobsDone int32              `json:"jobs_done"`
+}
+
+type MetricSnapshot struct {
+	ID         pgtype.UUID        `json:"id"`
+	PostID     pgtype.UUID        `json:"post_id"`
+	Ts         pgtype.Timestamptz `json:"ts"`
+	Views      int64              `json:"views"`
+	Likes      int64              `json:"likes"`
+	Comments   int64              `json:"comments"`
+	Shares     int64              `json:"shares"`
+	Reach      *int64             `json:"reach"`
+	ReelsViews *int64             `json:"reels_views"`
+}
+
+type OfficialAccount struct {
+	ID            pgtype.UUID           `json:"id"`
+	Platform      Platform              `json:"platform"`
+	Handle        string                `json:"handle"`
+	DisplayName   *string               `json:"display_name"`
+	ProfileUrl    *string               `json:"profile_url"`
+	AvatarUrl     *string               `json:"avatar_url"`
+	Status        OfficialAccountStatus `json:"status"`
+	Provider      AnalyticsProvider     `json:"provider"`
+	ProviderRef   *string               `json:"provider_ref"`
+	Tags          []string              `json:"tags"`
+	LastFetchedAt pgtype.Timestamptz    `json:"last_fetched_at"`
+	CreatedAt     pgtype.Timestamptz    `json:"created_at"`
+}
+
+type Post struct {
+	ID              pgtype.UUID        `json:"id"`
+	Platform        Platform           `json:"platform"`
+	ExternalID      string             `json:"external_id"`
+	AuthorHandle    string             `json:"author_handle"`
+	AuthorID        string             `json:"author_id"`
+	Text            *string            `json:"text"`
+	MediaUrls       []string           `json:"media_urls"`
+	Metrics         json.RawMessage    `json:"metrics"`
+	ScrapedAt       pgtype.Timestamptz `json:"scraped_at"`
+	AuthorAccountID pgtype.UUID        `json:"author_account_id"`
 }
 
 type ProvisionLog struct {
@@ -492,6 +862,41 @@ type ProxyGroup struct {
 	MaxConcurrency int32              `json:"max_concurrency"`
 	DailyBudgetMb  int32              `json:"daily_budget_mb"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type RawPayload struct {
+	ID         pgtype.UUID        `json:"id"`
+	ApifyRunID pgtype.UUID        `json:"apify_run_id"`
+	S3Key      string             `json:"s3_key"`
+	Bytes      int64              `json:"bytes"`
+	ReceivedAt pgtype.Timestamptz `json:"received_at"`
+}
+
+type ScrapeJob struct {
+	ID          pgtype.UUID        `json:"id"`
+	Type        JobType            `json:"type"`
+	TargetID    pgtype.UUID        `json:"target_id"`
+	AccountID   pgtype.UUID        `json:"account_id"`
+	WorkerID    pgtype.UUID        `json:"worker_id"`
+	Status      JobStatus          `json:"status"`
+	ScheduledAt pgtype.Timestamptz `json:"scheduled_at"`
+	StartedAt   pgtype.Timestamptz `json:"started_at"`
+	FinishedAt  pgtype.Timestamptz `json:"finished_at"`
+	Attempts    int32              `json:"attempts"`
+	Error       *string            `json:"error"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type Target struct {
+	ID         pgtype.UUID        `json:"id"`
+	Kind       TargetKind         `json:"kind"`
+	Platform   Platform           `json:"platform"`
+	ExternalID string             `json:"external_id"`
+	Url        string             `json:"url"`
+	Meta       json.RawMessage    `json:"meta"`
+	PostID     pgtype.UUID        `json:"post_id"`
+	CommentID  pgtype.UUID        `json:"comment_id"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 }
 
 type TeamConfig struct {
