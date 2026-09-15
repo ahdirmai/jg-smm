@@ -40,9 +40,26 @@ type AttemptRecord struct {
 	Status     domain.AttemptStatus
 	Screenshot string
 	Error      *string
+	// ErrorClass is the coarse classification of a failure (P3-12): the retry
+	// policy branches on it and the dashboard groups failures by it. It is
+	// derived here, from the worker's free-text error, so the writer of the
+	// action_log never has to trust a class the caller remembered to set.
+	ErrorClass domain.ErrorClass
 	ActionType *string
 	TargetURL  *string
 	WorkerID   *string
+}
+
+// ClassifyAttempt returns the error class for one attempt verdict (P3-12). A
+// success or a cancellation carries no class; only a failure or a retry needs
+// one, and the class is derived from the worker's free-text error so the
+// action_log writer and the retry policy agree. Exported because the callback
+// handler and the retry scheduler both branch on it.
+func ClassifyAttempt(status domain.AttemptStatus, errMsg string) domain.ErrorClass {
+	if status != domain.AttemptFailed && status != domain.AttemptRetry {
+		return ""
+	}
+	return domain.ClassifyActionError(errMsg)
 }
 
 // RecordAttempt persists an action verdict. The job tables land in P3; until
@@ -52,12 +69,18 @@ func (s *JobService) RecordAttempt(ctx context.Context, r AttemptRecord) error {
 	if !r.Status.Valid() {
 		return fmt.Errorf("%w: invalid attempt status %q", domain.ErrValidation, r.Status)
 	}
+	// Classify a failure at the boundary (P3-12): the worker reports free text,
+	// the retry policy and the dashboard need a closed class. A success carries
+	// no class, and an empty error string classifies as UNKNOWN (not retryable),
+	// so a callback that reports failure with no reason cannot quietly retry.
+	r.ErrorClass = ClassifyAttempt(r.Status, errorOrEmpty(r.Error))
 	s.logger.Info("action callback received",
 		"attemptId", r.AttemptID,
 		"status", r.Status,
 		"actionType", deref(r.ActionType),
 		"workerId", deref(r.WorkerID),
 		"screenshot", r.Screenshot,
+		"errorClass", string(r.ErrorClass),
 	)
 	// P3 will persist this into action_log once that table exists.
 	return fmt.Errorf("%w: action verdict persistence lands in P3", domain.ErrUnavailable)
@@ -168,6 +191,15 @@ func (s *JobService) heartbeatStatus(w domain.Worker, r HeartbeatRecord) domain.
 type realClock struct{}
 
 func (realClock) Now() time.Time { return time.Now().UTC() }
+
+// errorOrEmpty unboxes a pointer-typed error message; nil is the empty string
+// (the classifier maps that to UNKNOWN, which is not retryable).
+func errorOrEmpty(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
 
 func deref[T any](p *T) any {
 	if p == nil {
