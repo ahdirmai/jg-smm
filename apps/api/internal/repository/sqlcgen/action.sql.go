@@ -27,8 +27,7 @@ WHERE id = (
     FOR UPDATE SKIP LOCKED
     LIMIT 1
 )
-RETURNING id, type, target_id, account_id, worker_id, status, scheduled_at,
-          started_at, finished_at, attempts, error, created_at
+RETURNING id, type, target_id, account_id, worker_id, status, scheduled_at, started_at, finished_at, attempts, error, created_at, template_id
 `
 
 type ClaimNextActionJobParams struct {
@@ -56,6 +55,7 @@ func (q *Queries) ClaimNextActionJob(ctx context.Context, arg ClaimNextActionJob
 		&i.Attempts,
 		&i.Error,
 		&i.CreatedAt,
+		&i.TemplateID,
 	)
 	return i, err
 }
@@ -66,8 +66,7 @@ SET status      = $2,
     finished_at = now(),
     error       = $3
 WHERE id = $1
-RETURNING id, type, target_id, account_id, worker_id, status, scheduled_at,
-          started_at, finished_at, attempts, error, created_at
+RETURNING id, type, target_id, account_id, worker_id, status, scheduled_at, started_at, finished_at, attempts, error, created_at, template_id
 `
 
 type CompleteActionJobParams struct {
@@ -95,16 +94,16 @@ func (q *Queries) CompleteActionJob(ctx context.Context, arg CompleteActionJobPa
 		&i.Attempts,
 		&i.Error,
 		&i.CreatedAt,
+		&i.TemplateID,
 	)
 	return i, err
 }
 
 const createActionJob = `-- name: CreateActionJob :one
 
-INSERT INTO action_job (type, target_id, account_id, worker_id, status, scheduled_at)
-VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, type, target_id, account_id, worker_id, status, scheduled_at,
-          started_at, finished_at, attempts, error, created_at
+INSERT INTO action_job (type, target_id, account_id, worker_id, template_id, status, scheduled_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, type, target_id, account_id, worker_id, status, scheduled_at, started_at, finished_at, attempts, error, created_at, template_id
 `
 
 type CreateActionJobParams struct {
@@ -112,6 +111,7 @@ type CreateActionJobParams struct {
 	TargetID    pgtype.UUID        `json:"target_id"`
 	AccountID   pgtype.UUID        `json:"account_id"`
 	WorkerID    pgtype.UUID        `json:"worker_id"`
+	TemplateID  pgtype.UUID        `json:"template_id"`
 	Status      JobStatus          `json:"status"`
 	ScheduledAt pgtype.Timestamptz `json:"scheduled_at"`
 }
@@ -128,6 +128,7 @@ func (q *Queries) CreateActionJob(ctx context.Context, arg CreateActionJobParams
 		arg.TargetID,
 		arg.AccountID,
 		arg.WorkerID,
+		arg.TemplateID,
 		arg.Status,
 		arg.ScheduledAt,
 	)
@@ -145,13 +146,13 @@ func (q *Queries) CreateActionJob(ctx context.Context, arg CreateActionJobParams
 		&i.Attempts,
 		&i.Error,
 		&i.CreatedAt,
+		&i.TemplateID,
 	)
 	return i, err
 }
 
 const getActionJobByID = `-- name: GetActionJobByID :one
-SELECT id, type, target_id, account_id, worker_id, status, scheduled_at,
-       started_at, finished_at, attempts, error, created_at
+SELECT id, type, target_id, account_id, worker_id, status, scheduled_at, started_at, finished_at, attempts, error, created_at, template_id
 FROM action_job
 WHERE id = $1
 `
@@ -172,13 +173,13 @@ func (q *Queries) GetActionJobByID(ctx context.Context, id pgtype.UUID) (ActionJ
 		&i.Attempts,
 		&i.Error,
 		&i.CreatedAt,
+		&i.TemplateID,
 	)
 	return i, err
 }
 
 const getActionLog = `-- name: GetActionLog :one
-SELECT id, action_job_id, attempt, status, verified, worker_id, rendered_text,
-       response_excerpt, error_class, screenshot_url, duration_ms, ts
+SELECT id, action_job_id, attempt, status, verified, worker_id, rendered_text, response_excerpt, error_class, screenshot_url, duration_ms, ts, template_id
 FROM action_log
 WHERE action_job_id = $1 AND attempt = $2
 `
@@ -205,13 +206,13 @@ func (q *Queries) GetActionLog(ctx context.Context, arg GetActionLogParams) (Act
 		&i.ScreenshotUrl,
 		&i.DurationMs,
 		&i.Ts,
+		&i.TemplateID,
 	)
 	return i, err
 }
 
 const listActionJobs = `-- name: ListActionJobs :many
-SELECT id, type, target_id, account_id, worker_id, status, scheduled_at,
-       started_at, finished_at, attempts, error, created_at
+SELECT id, type, target_id, account_id, worker_id, status, scheduled_at, started_at, finished_at, attempts, error, created_at, template_id
 FROM action_job
 ORDER BY scheduled_at DESC
 LIMIT $1 OFFSET $2
@@ -244,6 +245,7 @@ func (q *Queries) ListActionJobs(ctx context.Context, arg ListActionJobsParams) 
 			&i.Attempts,
 			&i.Error,
 			&i.CreatedAt,
+			&i.TemplateID,
 		); err != nil {
 			return nil, err
 		}
@@ -256,8 +258,7 @@ func (q *Queries) ListActionJobs(ctx context.Context, arg ListActionJobsParams) 
 }
 
 const listActionJobsByAccount = `-- name: ListActionJobsByAccount :many
-SELECT id, type, target_id, account_id, worker_id, status, scheduled_at,
-       started_at, finished_at, attempts, error, created_at
+SELECT id, type, target_id, account_id, worker_id, status, scheduled_at, started_at, finished_at, attempts, error, created_at, template_id
 FROM action_job
 WHERE account_id = $1
 ORDER BY scheduled_at DESC
@@ -292,6 +293,7 @@ func (q *Queries) ListActionJobsByAccount(ctx context.Context, arg ListActionJob
 			&i.Attempts,
 			&i.Error,
 			&i.CreatedAt,
+			&i.TemplateID,
 		); err != nil {
 			return nil, err
 		}
@@ -304,8 +306,7 @@ func (q *Queries) ListActionJobsByAccount(ctx context.Context, arg ListActionJob
 }
 
 const listActionJobsByStatus = `-- name: ListActionJobsByStatus :many
-SELECT id, type, target_id, account_id, worker_id, status, scheduled_at,
-       started_at, finished_at, attempts, error, created_at
+SELECT id, type, target_id, account_id, worker_id, status, scheduled_at, started_at, finished_at, attempts, error, created_at, template_id
 FROM action_job
 WHERE status = $1
 ORDER BY scheduled_at
@@ -340,6 +341,7 @@ func (q *Queries) ListActionJobsByStatus(ctx context.Context, arg ListActionJobs
 			&i.Attempts,
 			&i.Error,
 			&i.CreatedAt,
+			&i.TemplateID,
 		); err != nil {
 			return nil, err
 		}
@@ -352,8 +354,7 @@ func (q *Queries) ListActionJobsByStatus(ctx context.Context, arg ListActionJobs
 }
 
 const listActionLogsByErrorClass = `-- name: ListActionLogsByErrorClass :many
-SELECT id, action_job_id, attempt, status, verified, worker_id, rendered_text,
-       response_excerpt, error_class, screenshot_url, duration_ms, ts
+SELECT id, action_job_id, attempt, status, verified, worker_id, rendered_text, response_excerpt, error_class, screenshot_url, duration_ms, ts, template_id
 FROM action_log
 WHERE error_class = $1
 ORDER BY ts DESC
@@ -389,6 +390,7 @@ func (q *Queries) ListActionLogsByErrorClass(ctx context.Context, arg ListAction
 			&i.ScreenshotUrl,
 			&i.DurationMs,
 			&i.Ts,
+			&i.TemplateID,
 		); err != nil {
 			return nil, err
 		}
@@ -401,8 +403,7 @@ func (q *Queries) ListActionLogsByErrorClass(ctx context.Context, arg ListAction
 }
 
 const listActionLogsByJob = `-- name: ListActionLogsByJob :many
-SELECT id, action_job_id, attempt, status, verified, worker_id, rendered_text,
-       response_excerpt, error_class, screenshot_url, duration_ms, ts
+SELECT id, action_job_id, attempt, status, verified, worker_id, rendered_text, response_excerpt, error_class, screenshot_url, duration_ms, ts, template_id
 FROM action_log
 WHERE action_job_id = $1
 ORDER BY attempt DESC
@@ -432,6 +433,7 @@ func (q *Queries) ListActionLogsByJob(ctx context.Context, actionJobID pgtype.UU
 			&i.ScreenshotUrl,
 			&i.DurationMs,
 			&i.Ts,
+			&i.TemplateID,
 		); err != nil {
 			return nil, err
 		}
@@ -449,8 +451,7 @@ SET status       = 'PENDING',
     scheduled_at = $2,
     finished_at  = NULL
 WHERE id = $1
-RETURNING id, type, target_id, account_id, worker_id, status, scheduled_at,
-          started_at, finished_at, attempts, error, created_at
+RETURNING id, type, target_id, account_id, worker_id, status, scheduled_at, started_at, finished_at, attempts, error, created_at, template_id
 `
 
 type RescheduleActionJobParams struct {
@@ -476,27 +477,28 @@ func (q *Queries) RescheduleActionJob(ctx context.Context, arg RescheduleActionJ
 		&i.Attempts,
 		&i.Error,
 		&i.CreatedAt,
+		&i.TemplateID,
 	)
 	return i, err
 }
 
 const upsertActionLog = `-- name: UpsertActionLog :one
 INSERT INTO action_log (
-    action_job_id, attempt, status, verified, worker_id, rendered_text,
+    action_job_id, attempt, status, verified, worker_id, template_id, rendered_text,
     response_excerpt, error_class, screenshot_url, duration_ms
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 ON CONFLICT (action_job_id, attempt) DO UPDATE
 SET status           = EXCLUDED.status,
     verified         = EXCLUDED.verified,
     worker_id        = COALESCE(EXCLUDED.worker_id, action_log.worker_id),
+    template_id      = COALESCE(EXCLUDED.template_id, action_log.template_id),
     response_excerpt = COALESCE(EXCLUDED.response_excerpt, action_log.response_excerpt),
     error_class      = COALESCE(EXCLUDED.error_class, action_log.error_class),
     screenshot_url   = COALESCE(EXCLUDED.screenshot_url, action_log.screenshot_url),
     duration_ms      = EXCLUDED.duration_ms,
     ts               = now()
-RETURNING id, action_job_id, attempt, status, verified, worker_id, rendered_text,
-          response_excerpt, error_class, screenshot_url, duration_ms, ts
+RETURNING id, action_job_id, attempt, status, verified, worker_id, rendered_text, response_excerpt, error_class, screenshot_url, duration_ms, ts, template_id
 `
 
 type UpsertActionLogParams struct {
@@ -505,6 +507,7 @@ type UpsertActionLogParams struct {
 	Status          AttemptStatus `json:"status"`
 	Verified        bool          `json:"verified"`
 	WorkerID        pgtype.UUID   `json:"worker_id"`
+	TemplateID      pgtype.UUID   `json:"template_id"`
 	RenderedText    string        `json:"rendered_text"`
 	ResponseExcerpt *string       `json:"response_excerpt"`
 	ErrorClass      *string       `json:"error_class"`
@@ -525,6 +528,7 @@ func (q *Queries) UpsertActionLog(ctx context.Context, arg UpsertActionLogParams
 		arg.Status,
 		arg.Verified,
 		arg.WorkerID,
+		arg.TemplateID,
 		arg.RenderedText,
 		arg.ResponseExcerpt,
 		arg.ErrorClass,
@@ -545,6 +549,7 @@ func (q *Queries) UpsertActionLog(ctx context.Context, arg UpsertActionLogParams
 		&i.ScreenshotUrl,
 		&i.DurationMs,
 		&i.Ts,
+		&i.TemplateID,
 	)
 	return i, err
 }

@@ -53,6 +53,16 @@ type Querier interface {
 	CreateAnalyticsIngestRun(ctx context.Context, arg CreateAnalyticsIngestRunParams) (AnalyticsIngestRun, error)
 	CreateApifyRun(ctx context.Context, arg CreateApifyRunParams) (ApifyRun, error)
 	CreateAuthSession(ctx context.Context, arg CreateAuthSessionParams) (CreateAuthSessionRow, error)
+	// CommentTemplate (P3-02): the comment pool. A template is platform-scoped,
+	// declares the vars its text may reference ({topic}), carries a pick weight and
+	// a per-template denylist, and can be soft-disabled without deleting the rows
+	// that explain past action_logs.
+	//
+	// Dedupe: PickForTarget excludes any template already used against THIS target
+	// in the last 7 days, so the same variant does not repeat on one post. It is a
+	// query, not a constraint: a CHECK cannot express a temporal join, and dedupe
+	// is a pool property (which variants are still fresh), not a row property.
+	CreateCommentTemplate(ctx context.Context, arg CreateCommentTemplateParams) (CommentTemplate, error)
 	// MetricSnapshot: per-post metric time-series (Timescale hypertable).
 	// PK is (id, ts) because Timescale requires the partition column in every
 	// unique index, so every query filters on `ts` to hit a chunk range.
@@ -67,6 +77,9 @@ type Querier interface {
 	CreateUser(ctx context.Context, arg CreateUserParams) (CreateUserRow, error)
 	CreateWorker(ctx context.Context, arg CreateWorkerParams) (Worker, error)
 	DeleteAccount(ctx context.Context, id pgtype.UUID) error
+	// Hard delete is allowed: ON DELETE SET NULL keeps the history readable, it
+	// only loses the link to the variant's definition.
+	DeleteCommentTemplate(ctx context.Context, id pgtype.UUID) error
 	DeleteExpiredAuthSessions(ctx context.Context) (int64, error)
 	DeleteProxyGroup(ctx context.Context, id pgtype.UUID) error
 	DeleteWorker(ctx context.Context, id pgtype.UUID) error
@@ -79,6 +92,7 @@ type Querier interface {
 	GetActiveAuthSession(ctx context.Context, tokenHash []byte) (GetActiveAuthSessionRow, error)
 	GetCommentByID(ctx context.Context, id pgtype.UUID) (Comment, error)
 	GetCommentByPlatformExternalID(ctx context.Context, arg GetCommentByPlatformExternalIDParams) (Comment, error)
+	GetCommentTemplateByID(ctx context.Context, id pgtype.UUID) (CommentTemplate, error)
 	// backs the dashboard's freshness badge: the most recent terminal run tells the
 	// operator whether the analytics view they are reading is current or stale.
 	GetLatestAnalyticsIngestRun(ctx context.Context) (AnalyticsIngestRun, error)
@@ -135,6 +149,10 @@ type Querier interface {
 	ListAnalyticsMentionsByPlatform(ctx context.Context, arg ListAnalyticsMentionsByPlatformParams) ([]AnalyticsMention, error)
 	ListAnalyticsSnapshotsByAccount(ctx context.Context, arg ListAnalyticsSnapshotsByAccountParams) ([]AnalyticsSnapshot, error)
 	ListAuditLogs(ctx context.Context, limit int32) ([]AuditLog, error)
+	// The pool view for one platform. include_inactive is the dashboard's
+	// "show paused variants" toggle; the pool a pick draws from is always active-only
+	// (see PickForTarget).
+	ListCommentTemplates(ctx context.Context, arg ListCommentTemplatesParams) ([]CommentTemplate, error)
 	ListCommentsByPost(ctx context.Context, arg ListCommentsByPostParams) ([]Comment, error)
 	ListMetricSnapshotsByPost(ctx context.Context, arg ListMetricSnapshotsByPostParams) ([]MetricSnapshot, error)
 	ListOfficialAccounts(ctx context.Context, arg ListOfficialAccountsParams) ([]OfficialAccount, error)
@@ -155,6 +173,11 @@ type Querier interface {
 	ListTopPostsByPlatform(ctx context.Context, arg ListTopPostsByPlatformParams) ([]Post, error)
 	ListUsers(ctx context.Context, arg ListUsersParams) ([]ListUsersRow, error)
 	ListWorkers(ctx context.Context, arg ListWorkersParams) ([]Worker, error)
+	// The dedupe pool for one (platform, target): every active template that has
+	// NOT been used against this target in the last 7 days, heaviest first. The
+	// caller does the weighted random pick over this candidate set (see the
+	// template service) — weighting in SQL needs a seed and is harder to test.
+	PickForTarget(ctx context.Context, arg PickForTargetParams) ([]CommentTemplate, error)
 	// Backoff/jitter path (P3-11): the attempt failed with a retryable class, so
 	// the job goes back to PENDING at a future scheduled_at for the next tick.
 	RescheduleActionJob(ctx context.Context, arg RescheduleActionJobParams) (ActionJob, error)
@@ -178,6 +201,9 @@ type Querier interface {
 	// finished_at is passed in (NULL while the run is still in flight) so the caller
 	// controls the terminal stamp without a CASE in SQL.
 	UpdateApifyRun(ctx context.Context, arg UpdateApifyRunParams) (ApifyRun, error)
+	// Full-row update: weight/vars/banned_words/is_active all change together from
+	// the composer, so a partial-update builder would only hide a missed field.
+	UpdateCommentTemplate(ctx context.Context, arg UpdateCommentTemplateParams) (CommentTemplate, error)
 	UpdateOfficialAccount(ctx context.Context, arg UpdateOfficialAccountParams) (OfficialAccount, error)
 	UpdateProxyGroup(ctx context.Context, arg UpdateProxyGroupParams) (ProxyGroup, error)
 	UpdateWorker(ctx context.Context, arg UpdateWorkerParams) (Worker, error)

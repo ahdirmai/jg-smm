@@ -6,14 +6,12 @@
 -- ActionJob.status is only a projection of the latest attempt.
 
 -- name: CreateActionJob :one
-INSERT INTO action_job (type, target_id, account_id, worker_id, status, scheduled_at)
-VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, type, target_id, account_id, worker_id, status, scheduled_at,
-          started_at, finished_at, attempts, error, created_at;
+INSERT INTO action_job (type, target_id, account_id, worker_id, template_id, status, scheduled_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING *;
 
 -- name: GetActionJobByID :one
-SELECT id, type, target_id, account_id, worker_id, status, scheduled_at,
-       started_at, finished_at, attempts, error, created_at
+SELECT *
 FROM action_job
 WHERE id = $1;
 
@@ -37,8 +35,7 @@ WHERE id = (
     FOR UPDATE SKIP LOCKED
     LIMIT 1
 )
-RETURNING id, type, target_id, account_id, worker_id, status, scheduled_at,
-          started_at, finished_at, attempts, error, created_at;
+RETURNING *;
 
 -- name: CompleteActionJob :one
 -- Terminal transition. The caller has already written the ActionLog row; this
@@ -49,8 +46,7 @@ SET status      = $2,
     finished_at = now(),
     error       = $3
 WHERE id = $1
-RETURNING id, type, target_id, account_id, worker_id, status, scheduled_at,
-          started_at, finished_at, attempts, error, created_at;
+RETURNING *;
 
 -- name: RescheduleActionJob :one
 -- Backoff/jitter path (P3-11): the attempt failed with a retryable class, so
@@ -60,27 +56,23 @@ SET status       = 'PENDING',
     scheduled_at = $2,
     finished_at  = NULL
 WHERE id = $1
-RETURNING id, type, target_id, account_id, worker_id, status, scheduled_at,
-          started_at, finished_at, attempts, error, created_at;
+RETURNING *;
 
 -- name: ListActionJobs :many
-SELECT id, type, target_id, account_id, worker_id, status, scheduled_at,
-       started_at, finished_at, attempts, error, created_at
+SELECT *
 FROM action_job
 ORDER BY scheduled_at DESC
 LIMIT $1 OFFSET $2;
 
 -- name: ListActionJobsByStatus :many
-SELECT id, type, target_id, account_id, worker_id, status, scheduled_at,
-       started_at, finished_at, attempts, error, created_at
+SELECT *
 FROM action_job
 WHERE status = $1
 ORDER BY scheduled_at
 LIMIT $2 OFFSET $3;
 
 -- name: ListActionJobsByAccount :many
-SELECT id, type, target_id, account_id, worker_id, status, scheduled_at,
-       started_at, finished_at, attempts, error, created_at
+SELECT *
 FROM action_job
 WHERE account_id = $1
 ORDER BY scheduled_at DESC
@@ -94,42 +86,39 @@ LIMIT $2 OFFSET $3;
 -- omits them never erases what the RUNNING callback or an earlier attempt
 -- captured; rendered_text is the commanded input and is always authoritative.
 INSERT INTO action_log (
-    action_job_id, attempt, status, verified, worker_id, rendered_text,
+    action_job_id, attempt, status, verified, worker_id, template_id, rendered_text,
     response_excerpt, error_class, screenshot_url, duration_ms
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 ON CONFLICT (action_job_id, attempt) DO UPDATE
 SET status           = EXCLUDED.status,
     verified         = EXCLUDED.verified,
     worker_id        = COALESCE(EXCLUDED.worker_id, action_log.worker_id),
+    template_id      = COALESCE(EXCLUDED.template_id, action_log.template_id),
     response_excerpt = COALESCE(EXCLUDED.response_excerpt, action_log.response_excerpt),
     error_class      = COALESCE(EXCLUDED.error_class, action_log.error_class),
     screenshot_url   = COALESCE(EXCLUDED.screenshot_url, action_log.screenshot_url),
     duration_ms      = EXCLUDED.duration_ms,
     ts               = now()
-RETURNING id, action_job_id, attempt, status, verified, worker_id, rendered_text,
-          response_excerpt, error_class, screenshot_url, duration_ms, ts;
+RETURNING *;
 
 -- name: GetActionLog :one
 -- The latest attempt of a job, by (job, attempt).
-SELECT id, action_job_id, attempt, status, verified, worker_id, rendered_text,
-       response_excerpt, error_class, screenshot_url, duration_ms, ts
+SELECT *
 FROM action_log
 WHERE action_job_id = $1 AND attempt = $2;
 
 -- name: ListActionLogsByJob :many
 -- Every attempt of a job, newest first: the dashboard drawer that debugs one
 -- action (P4-02) reads this.
-SELECT id, action_job_id, attempt, status, verified, worker_id, rendered_text,
-       response_excerpt, error_class, screenshot_url, duration_ms, ts
+SELECT *
 FROM action_log
 WHERE action_job_id = $1
 ORDER BY attempt DESC;
 
 -- name: ListActionLogsByErrorClass :many
 -- The failure-class view (P3-12): counts and samples per class come from here.
-SELECT id, action_job_id, attempt, status, verified, worker_id, rendered_text,
-       response_excerpt, error_class, screenshot_url, duration_ms, ts
+SELECT *
 FROM action_log
 WHERE error_class = $1
 ORDER BY ts DESC

@@ -19,6 +19,7 @@ type ActionJob struct {
 	TargetID    string
 	AccountID   string
 	WorkerID    string
+	TemplateID  string
 	Status      JobStatus
 	ScheduledAt time.Time
 	StartedAt   *time.Time
@@ -49,6 +50,7 @@ type ActionLog struct {
 	Status          AttemptStatus
 	Verified        bool
 	WorkerID        string
+	TemplateID      string
 	RenderedText    string
 	ResponseExcerpt string
 	ErrorClass      string

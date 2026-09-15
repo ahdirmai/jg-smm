@@ -754,6 +754,7 @@ type ActionJob struct {
 	Attempts    int32              `json:"attempts"`
 	Error       *string            `json:"error"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	TemplateID  pgtype.UUID        `json:"template_id"`
 }
 
 type ActionLog struct {
@@ -769,6 +770,7 @@ type ActionLog struct {
 	ScreenshotUrl   *string            `json:"screenshot_url"`
 	DurationMs      int32              `json:"duration_ms"`
 	Ts              pgtype.Timestamptz `json:"ts"`
+	TemplateID      pgtype.UUID        `json:"template_id"`
 }
 
 type AnalyticsIngestRun struct {
@@ -866,6 +868,17 @@ type Comment struct {
 	Metrics      json.RawMessage    `json:"metrics"`
 	ScrapedAt    pgtype.Timestamptz `json:"scraped_at"`
 	ParentID     pgtype.UUID        `json:"parent_id"`
+}
+
+type CommentTemplate struct {
+	ID          pgtype.UUID        `json:"id"`
+	Platform    Platform           `json:"platform"`
+	Text        string             `json:"text"`
+	Vars        []string           `json:"vars"`
+	Weight      int32              `json:"weight"`
+	BannedWords []string           `json:"banned_words"`
+	IsActive    bool               `json:"is_active"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
 type Heartbeat struct {
