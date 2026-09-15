@@ -2,19 +2,22 @@
  * Composition root. Wires config, logger, heartbeat, transport and the action
  * controller, then owns the process lifecycle (graceful shutdown).
  *
- * P0-09 skeleton: heartbeat runs for real so the container is observably alive;
- * the BLPOP queue loop and control subscriber are surfaced but not yet looping
- * (their implementations land in the P1 worker tickets). Nothing here throws on
- * boot — a missing BE endpoint must not crash the container.
+ * The BLPOP loop is strictly sequential per container (concurrency=1 lives
+ * here, not in the controller): the next job is popped only after the previous
+ * one plus its jitter finishes. Nothing here throws on boot — a missing BE
+ * endpoint must not crash the container.
  */
 import { loadConfig } from './core/config.js';
 import { createLogger } from './core/logger.js';
 import { createHeartbeat, type HeartbeatPayload } from './core/heartbeat.js';
 import { createController } from './core/controller.js';
-import { clearAuthContext } from './core/auth.js';
+import { clearAuthContext, runLogin, submitAuthInput } from './core/auth.js';
+import { launchBrowser, newAccountContext, type BrowserHandle } from './core/browser.js';
+import { readSession } from './core/session.js';
 import { createCallback } from './transport/callback.js';
 import { createQueueConsumer } from './transport/queue.js';
 import { createControlSubscriber, isControlMessage } from './transport/control.js';
+import { configureAdapters } from './platforms/deps.js';
 import { supportedPlatforms } from './platforms/registry.js';
 
 const config = loadConfig();
@@ -30,18 +33,33 @@ logger.info('worker starting', {
 });
 
 // --- composition ---------------------------------------------------------
+// Adapter boot deps are set once, before any job can run, so the screenshot
+// name is deterministic from the first action (§7.3).
+configureAdapters({
+  workerId: config.workerId,
+  screenshotDir: process.env.SCREENSHOT_DIR ?? '/data/screenshots',
+});
+
 const callback = createCallback(config, logger);
 const queue = createQueueConsumer(config.redisUrl, config.workerId, logger);
 const control = createControlSubscriber(config.redisUrl, config.workerId, logger);
 
+// One headful browser per container, launched lazily: in dry-run (the compose
+// default) no page is ever opened, so a dev box without Xvfb still boots clean.
+let browserHandle: BrowserHandle | undefined;
+async function browser() {
+  if (!browserHandle) browserHandle = await launchBrowser({ display: config.display });
+  return browserHandle.browser;
+}
+
 const controller = createController({
   logger,
   jitterRangeMs: [30_000, 90_000],
-  contextFor: async () => {
-    // Context resolution lands with the login tickets (P1-10): the account
-    // context is hydrated from the persisted storageState on the PVC.
-    throw new Error('context resolution not implemented yet (P1-10)');
-  },
+  contextFor: async (job) =>
+    // A fresh context per job is the isolation boundary (P3-07); the session
+    // persisted by login is hydrated from the PVC so a restart needs no
+    // re-login (§7.1).
+    newAccountContext(await browser(), job.platform, await readSession(job.platform)),
 });
 
 // --- heartbeat -----------------------------------------------------------
@@ -64,6 +82,13 @@ setInterval(async () => {
 }, 5_000).unref();
 
 // --- control channel (P1-11) --------------------------------------------
+// Shared by auth-login and auth-input: one browser, one screenshot dir.
+const authDeps = {
+  browser,
+  workerId: config.workerId,
+  ...(process.env.SCREENSHOT_DIR ? { screenshotDir: process.env.SCREENSHOT_DIR } : {}),
+};
+
 void control
   .start(async (message) => {
     if (!isControlMessage(message)) {
@@ -73,10 +98,9 @@ void control
     logger.info('control message', { type: message.type, accountId: message.accountId });
     switch (message.type) {
       case 'auth-login':
-        // runLogin lands with the headful-login ticket (P1-10).
-        logger.warn('auth-login not implemented yet (P1-10)', {
-          accountId: message.accountId,
-        });
+        // Operator headful login: the credential is typed in the noVNC view,
+        // never held by the worker. The context is parked for auth-input.
+        await runLogin(message.accountId, message.platform, authDeps);
         break;
       case 'auth-input': {
         const code = typeof message.payload?.value === 'string' ? message.payload.value : '';
@@ -84,10 +108,7 @@ void control
           logger.warn('auth-input without a value', { accountId: message.accountId });
           break;
         }
-        // submitAuthInput lands with the 2FA ticket (P1-12).
-        logger.warn('auth-input not implemented yet (P1-12)', {
-          accountId: message.accountId,
-        });
+        await submitAuthInput(message.accountId, code, authDeps);
         break;
       }
       case 'auth-clear':
@@ -151,6 +172,7 @@ async function shutdown(signal: string): Promise<void> {
   heartbeat.stop();
   queue.stop();
   await control.stop().catch(() => undefined);
+  await browserHandle?.close().catch(() => undefined);
   process.exit(0);
 }
 

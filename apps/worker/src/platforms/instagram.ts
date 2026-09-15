@@ -1,31 +1,56 @@
 /**
- * Instagram adapter (MVP). Skeleton: the DOM selectors, login flow and actions
- * land in the P3 Instagram tickets, but the interface is fixed now so the
- * controller wiring is real. Selectors live in `../sel` (single patch point).
+ * Instagram adapter (P3-04). Actions are thin: the DOM steps live once in
+ * `dom.ts` (shared with Threads — both are Meta markup) and the selectors in
+ * `../sel`, so this file is only the platform identity + its login URL. When
+ * IG changes markup, `sel/index.ts` is the single patch point (§7.3).
+ *
+ * No action trusts optimism: like counts only when the button state flipped,
+ * a comment only when its text is visible in the feed (§7.4). A dead session
+ * is reported as AUTH (never retried) by the shared wrapper.
  */
 import type { BrowserContext } from 'playwright';
 
 import type { ActionJob } from '../types.js';
-import type { AdapterResult, LoginCredentials, LoginResultLike, PlatformAdapter } from './adapter.js';
+import type {
+  AdapterResult,
+  LoginCredentials,
+  LoginResultLike,
+  PlatformAdapter,
+} from './adapter.js';
+import {
+  commentOnPost,
+  credentialLogin,
+  likePost,
+  missingText,
+  runAction,
+  waitForCommentText,
+  failShot,
+} from './dom.js';
 
-const NOT_IMPLEMENTED = 'instagram adapter not implemented yet (P0-09 skeleton)';
-
-function stub(): never {
-  throw new Error(NOT_IMPLEMENTED);
-}
+const LOGIN_URL = 'https://www.instagram.com/accounts/login/';
 
 export const instagramAdapter: PlatformAdapter = {
   platform: 'instagram',
-  async login(_ctx: BrowserContext, _credentials: LoginCredentials): Promise<LoginResultLike> {
-    stub();
+
+  login(ctx: BrowserContext, credentials: LoginCredentials): Promise<LoginResultLike> {
+    return credentialLogin(ctx, 'instagram', credentials, LOGIN_URL);
   },
-  async like(_ctx: BrowserContext, _job: ActionJob): Promise<AdapterResult> {
-    stub();
+
+  like(ctx: BrowserContext, job: ActionJob): Promise<AdapterResult> {
+    return runAction(ctx, 'instagram', job, likePost);
   },
-  async comment(_ctx: BrowserContext, _job: ActionJob): Promise<AdapterResult> {
-    stub();
+
+  comment(ctx: BrowserContext, job: ActionJob): Promise<AdapterResult> {
+    if (!job.text) return Promise.resolve(missingText());
+    return runAction(ctx, 'instagram', job, (d) => commentOnPost(d, job.text as string));
   },
-  async verify(_ctx: BrowserContext, _job: ActionJob): Promise<AdapterResult> {
-    stub();
+
+  verify(ctx: BrowserContext, job: ActionJob): Promise<AdapterResult> {
+    if (!job.text) return Promise.resolve(missingText());
+    return runAction(ctx, 'instagram', job, async (d) => {
+      const rendered = await waitForCommentText(d, job.text as string);
+      if (rendered) return { ok: true, renderedText: rendered };
+      return failShot(d, 'comment not visible in feed (verification failed)');
+    });
   },
 };

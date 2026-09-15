@@ -12,6 +12,7 @@ import type { Browser, BrowserContext } from 'playwright';
 import type { Platform } from '@smm/shared';
 
 import { FIXED_VIEWPORT } from './browser.js';
+import { captureScreenshot } from './screenshot.js';
 import { readSession, writeSession } from './session.js';
 
 /** Live login contexts awaiting operator input, keyed by accountId. */
@@ -32,6 +33,8 @@ export interface AuthDeps {
   browser: () => Promise<Browser>;
   /** Where screenshots land (basename only in the result). */
   screenshotDir?: string;
+  /** Worker id, for the deterministic screenshot name (§7.3). */
+  workerId?: string;
   /** Injectable clock for deterministic tests. */
   now?: () => number;
   /** Injectable hook to override the per-platform login URL (tests). */
@@ -40,16 +43,68 @@ export interface AuthDeps {
 
 /**
  * The cookies that prove a session per platform. A login is `verified` only
- * when all of them are present — never when the URL merely looks logged in.
- */
-const SESSION_COOKIES: Partial<Record<Platform, string[]>> = {
+ * when all of them are present — never when the URL merely looks logged in. */
+export const SESSION_COOKIES: Partial<Record<Platform, string[]>> = {
   instagram: ['sessionid', 'ds_user_id'],
   threads: ['sessionid'],
 };
 
 const POLL_INTERVAL_MS = 1_000;
 /** Upper bound on a login attempt before it is reported `failed`. */
-const LOGIN_TIMEOUT_MS = 180_000;
+export const LOGIN_TIMEOUT_MS = 180_000;
+
+export interface SessionVerdict {
+  proven: boolean;
+  /** Session cookie value when `proven`. */
+  handle?: string;
+  /** A 2FA/checkpoint field is showing: operator input needed. */
+  needsInput: boolean;
+}
+
+/**
+ * Probe the live context for session proof. Exported so the adapter login path
+ * (P3-04/P3-05) verifies a login by the same cookie standard as the operator
+ * headful flow — one definition of "logged in" (DRY).
+ */
+export async function probeSession(
+  platform: Platform,
+  ctx: BrowserContext,
+): Promise<SessionVerdict> {
+  const wanted = SESSION_COOKIES[platform] ?? [];
+  const cookies = await ctx.cookies();
+  const have = new Set(cookies.map((c) => c.name));
+  const proven = wanted.length > 0 && wanted.every((name) => have.has(name));
+  const handle = cookies.find((c) => c.name === wanted[0])?.value;
+  return {
+    proven,
+    needsInput: await needsOperatorInput(ctx),
+    ...(handle ? { handle } : {}),
+  };
+}
+
+/**
+ * Poll the session until it is proven, input is requested, or the bound runs
+ * out. Pure: it never parks or closes a context, so callers own that policy
+ * (the operator flow parks; the adapter flow does not).
+ */
+export async function pollLoginOutcome(
+  platform: Platform,
+  ctx: BrowserContext,
+  deps: { now?: () => number } = {},
+): Promise<LoginResult> {
+  const started = (deps.now ?? Date.now)();
+  for (;;) {
+    if ((deps.now ?? Date.now)() - started > LOGIN_TIMEOUT_MS) {
+      return { outcome: 'failed' };
+    }
+    const verdict = await probeSession(platform, ctx);
+    if (verdict.proven) {
+      return { outcome: 'verified', ...(verdict.handle ? { handle: verdict.handle } : {}) };
+    }
+    if (verdict.needsInput) return { outcome: 'needs_input' };
+    await sleep(POLL_INTERVAL_MS);
+  }
+}
 
 /**
  * Start a login and block until an outcome is reached. The worker never holds
@@ -117,37 +172,23 @@ async function waitForOutcome(
   ctx: BrowserContext,
   deps: AuthDeps,
 ): Promise<LoginResult> {
-  const started = (deps.now ?? Date.now)();
-  const wanted = SESSION_COOKIES[platform] ?? [];
-
-  for (;;) {
-    if ((deps.now ?? Date.now)() - started > LOGIN_TIMEOUT_MS) {
-      return failedResult(accountId);
+  // Persist on success and park on needs_input; pollLoginOutcome only decides.
+  const outcome = await pollLoginOutcome(platform, ctx, deps.now ? { now: deps.now } : {});
+  if (outcome.outcome === 'verified') {
+    // Persist so a restart needs no re-login. A disk failure must never
+    // downgrade a verified login to failed — the session is an optimisation.
+    try {
+      await writeSession(platform, await ctx.storageState());
+    } catch {
+      // Best effort; the login itself already succeeded.
     }
-
-    const cookies = await ctx.cookies();
-    const have = new Set(cookies.map((c) => c.name));
-    const proven = wanted.length > 0 && wanted.every((name) => have.has(name));
-    if (proven) {
-      // Persist so a restart needs no re-login. A disk failure must never
-      // downgrade a verified login to failed — the session is an optimisation.
-      try {
-        await writeSession(platform, await ctx.storageState());
-      } catch {
-        // Best effort; the login itself already succeeded.
-      }
-      const handle = cookies.find((c) => c.name === wanted[0])?.value;
-      clearAuthContext(accountId);
-      return { outcome: 'verified', ...(handle ? { handle } : {}) };
-    }
-
-    if (await needsOperatorInput(ctx)) {
-      const shot = await takeScreenshot(ctx, accountId, deps);
-      return { outcome: 'needs_input', screenshot: shot };
-    }
-
-    await sleep(POLL_INTERVAL_MS);
   }
+  if (outcome.outcome === 'needs_input') {
+    const shot = await takeScreenshot(ctx, accountId, deps);
+    return { outcome: 'needs_input', ...(shot ? { screenshot: shot } : {}) };
+  }
+  clearAuthContext(accountId);
+  return outcome;
 }
 
 async function needsOperatorInput(ctx: BrowserContext): Promise<boolean> {
@@ -165,17 +206,17 @@ async function takeScreenshot(
   ctx: BrowserContext,
   accountId: string,
   deps: AuthDeps,
-): Promise<string> {
-  const basename = `${accountId}-${(deps.now ?? Date.now)()}.png`;
+): Promise<string | undefined> {
   const page = ctx.pages()[ctx.pages().length - 1];
-  if (page && deps.screenshotDir) {
-    const { mkdir, writeFile } = await import('node:fs/promises');
-    const { join } = await import('node:path');
-    const buf = await page.screenshot().catch(() => Buffer.alloc(0));
-    await mkdir(deps.screenshotDir, { recursive: true });
-    await writeFile(join(deps.screenshotDir, basename), buf);
-  }
-  return basename;
+  if (!page) return undefined;
+  // CDP capture (§7.3): page.screenshot() waits on font settle and times out
+  // on a Meta page. Never throws — the login verdict does not depend on it.
+  return await captureScreenshot(
+    page,
+    accountId,
+    deps.workerId ?? 'login',
+    deps.screenshotDir ? { dir: deps.screenshotDir } : {},
+  );
 }
 
 function loginUrlFor(platform: Platform, deps: AuthDeps): string {
