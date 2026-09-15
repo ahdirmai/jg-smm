@@ -11,6 +11,7 @@ import { loadConfig } from './core/config.js';
 import { createLogger } from './core/logger.js';
 import { createHeartbeat, type HeartbeatPayload } from './core/heartbeat.js';
 import { createController } from './core/controller.js';
+import { clearAuthContext } from './core/auth.js';
 import { createCallback } from './transport/callback.js';
 import { createQueueConsumer } from './transport/queue.js';
 import { createControlSubscriber, isControlMessage } from './transport/control.js';
@@ -30,31 +31,39 @@ logger.info('worker starting', {
 
 // --- composition ---------------------------------------------------------
 const callback = createCallback(config, logger);
-const queue = createQueueConsumer(config, logger);
-const control = createControlSubscriber(config.workerId, logger);
+const queue = createQueueConsumer(config.redisUrl, config.workerId, logger);
+const control = createControlSubscriber(config.redisUrl, config.workerId, logger);
 
 const controller = createController({
   logger,
+  jitterRangeMs: [30_000, 90_000],
   contextFor: async () => {
-    throw new Error('context resolution not implemented yet (P0-09 skeleton)');
+    // Context resolution lands with the login tickets (P1-10): the account
+    // context is hydrated from the persisted storageState on the PVC.
+    throw new Error('context resolution not implemented yet (P1-10)');
   },
 });
 
 // --- heartbeat -----------------------------------------------------------
-const lastActionAt: string | null = null;
+const state = { lastActionAt: null as string | null, queueDepth: 0 };
 const heartbeat = createHeartbeat(
   config,
   logger,
   (): HeartbeatPayload => ({
     workerId: config.workerId,
     browserStatus: 'idle',
-    queueDepth: 0,
-    lastActionAt,
+    queueDepth: state.queueDepth,
+    lastActionAt: state.lastActionAt,
   }),
 );
 heartbeat.start();
 
-// --- control channel (dispatch seam only) --------------------------------
+// Refresh the backlog lazily so the heartbeat reports truth, not a stale 0.
+setInterval(async () => {
+  state.queueDepth = await queue.depth().catch(() => 0);
+}, 5_000).unref();
+
+// --- control channel (P1-11) --------------------------------------------
 void control
   .start(async (message) => {
     if (!isControlMessage(message)) {
@@ -62,17 +71,76 @@ void control
       return;
     }
     logger.info('control message', { type: message.type, accountId: message.accountId });
-    // Auth handlers land with the login tickets.
+    switch (message.type) {
+      case 'auth-login':
+        // runLogin lands with the headful-login ticket (P1-10).
+        logger.warn('auth-login not implemented yet (P1-10)', {
+          accountId: message.accountId,
+        });
+        break;
+      case 'auth-input': {
+        const code = typeof message.payload?.value === 'string' ? message.payload.value : '';
+        if (!code) {
+          logger.warn('auth-input without a value', { accountId: message.accountId });
+          break;
+        }
+        // submitAuthInput lands with the 2FA ticket (P1-12).
+        logger.warn('auth-input not implemented yet (P1-12)', {
+          accountId: message.accountId,
+        });
+        break;
+      }
+      case 'auth-clear':
+        clearAuthContext(message.accountId);
+        break;
+      default:
+        logger.warn('unknown control type', { type: message.type });
+    }
   })
   .catch((err) => logger.warn('control subscriber unavailable', { error: (err as Error).message }));
 
-// --- action loop (seam; real BLPOP loop lands in P1) ---------------------
-logger.info('action loop ready (sequential, batch)', {
-  queue: `queue:action:${config.workerId}`,
-});
-void controller;
-void callback;
-void queue;
+// --- action loop (P1-09): BLPOP one job, run it, callback, repeat --------
+// Strictly sequential per container: the next job is only popped after the
+// previous one (plus its jitter) finishes.
+let loopRunning = false;
+async function runActionLoop(): Promise<void> {
+  if (loopRunning) return;
+  loopRunning = true;
+  logger.info('action loop started (sequential, batch)', {
+    queue: `queue:action:${config.workerId}`,
+  });
+
+  for (;;) {
+    const job = await queue.next();
+    if (!job) {
+      // Only null when stopping.
+      break;
+    }
+    logger.info('job received', { jobId: job.id, action: job.action, platform: job.platform });
+
+    if (config.dryRun) {
+      logger.info('dry-run: skipping action', { jobId: job.id, action: job.action });
+      await callback.post({
+        jobId: job.id,
+        accountId: job.accountId,
+        workerId: config.workerId,
+        attempt: job.attempt,
+        status: 'success',
+        durationMs: 0,
+      });
+      continue;
+    }
+
+    const result = await controller.run(job);
+    state.lastActionAt = new Date().toISOString();
+    await callback.post(result);
+  }
+  loopRunning = false;
+}
+
+void runActionLoop().catch((err) =>
+  logger.error('action loop crashed', { error: (err as Error).message }),
+);
 
 // --- lifecycle -----------------------------------------------------------
 let shuttingDown = false;
