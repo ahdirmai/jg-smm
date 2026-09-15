@@ -4,13 +4,15 @@
 
 ## 1. Konfirmasi (sudah disetujui)
 
-| #   | Keputusan          | Nilai                                    |
-| --- | ------------------ | ---------------------------------------- |
-| 1   | Platform MVP       | **Instagram + Threads**; target akhir **7 platform** (Threads, Facebook, Instagram, LinkedIn, X, YouTube, TikTok) — lihat `PLATFORM_MATRIX.md` |
-| 2   | Comment generation | Template pool                            |
-| 3   | Action             | Comment / Like ke post/comment target    |
-| 4   | Tenant             | Single team (no multi-tenant)            |
-| 5   | Akun               | Sudah tersedia, ratusan                  |
+| #   | Keputusan                   | Nilai                                                                                                                                                        |
+| --- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | Platform MVP                | **Instagram + Threads**; target akhir **7 platform** (Threads, Facebook, Instagram, LinkedIn, X, YouTube, TikTok) — lihat `PLATFORM_MATRIX.md`               |
+| 2   | Comment generation          | Template pool                                                                                                                                                |
+| 3   | Action                      | Comment / Like ke post/comment target                                                                                                                        |
+| 4   | Tenant                      | Single team (no multi-tenant)                                                                                                                                |
+| 5   | Akun                        | Sudah tersedia, ratusan                                                                                                                                      |
+| 6   | Akun worker vs akun resmi   | **Dua konsep terpisah.** Akun worker = eksekutor action (F2/F6). **Official Account** = akun brand/client yang **dipantau** (read-only, tanpa login/action). |
+| 7   | Sumber analytics akun resmi | **3rd-party provider** (provider-agnostic; bukan self-scrape)                                                                                                |
 
 Implikasi:
 
@@ -18,6 +20,7 @@ Implikasi:
 - Threads = Meta, scraper Apify actor berbeda; rate limit lebih ketat dari IG. Action tetap via Playwright (browser automation), bukan Meta API.
 - 100+ akun = kesehatan akun kritis → health score + auto-quarantine wajib jalan hari-1.
 - 100+ akun = proxy budget besar → geo-grouping wajib, cap per region.
+- **Pemisahan dua domain akun** (worker vs official) berarti analitik platform resmi **tidak** dihitung dari akun worker. Akun worker murni eksekutor; metrik performa brand datang dari **Official Account** via 3rd-party. Lihat F5.
 
 ## 2. Latar Belakang
 
@@ -29,17 +32,17 @@ Tim Social Media Ops butuh satu panel untuk:
 
 ## 3. Persona
 
-- **Strategist** — baca KPI, tren, laporan. Read-mostly.
+- **Strategist** — baca KPI, tren, laporan. Read-mostly. Pemakai utama halaman Monitoring/Official Accounts.
 - **Operator** — kelola worker, antri action, pantau kegagalan. Action-heavy.
-- **Analyst** — bangun report custom, export. Query-heavy.
+- **Analyst** — bangun report custom, export (termasuk analytics akun resmi). Query-heavy.
 
 ## 4. Scope
 
 **In (MVP):**
 
 - Scrape Instagram + Threads: post, comment, like, share, repost, like-on-comment, reply-comment, views.
-- Monitoring: reach, reels views, mention, live status (read-only flag).
-- Action: comment-on-post, like-on-post, comment-on-comment, like-on-comment.
+- **Monitoring akun resmi (Official Accounts):** reach, reels/video views, mention, status live, per platform — bersumber dari 3rd-party provider.
+- Action: comment-on-post, like-on-post, comment-on-comment, like-on-comment, report-on-post, report-on-comment.
 - Worker orchestration: container spawn/terminate, IP geo grouping, healthcheck.
 - Comment generation: template pool + variabel injection.
 - Login akun interaktif: worker headful (Playwright + Xvfb), operator selesaikan 2FA/checkpoint via noVNC atau input kode OTP; session `storageState` persist per akun (PVC).
@@ -49,7 +52,7 @@ Tim Social Media Ops butuh satu panel untuk:
 
 **Out (MVP):**
 
-- 5 platform lain (Facebook, LinkedIn, X, YouTube, TikTok) — slot adapter siap, brief diisi bertahap (`PLATFORM_MATRIX.md` + `platforms/`).
+- 5 platform lain (Facebook, LinkedIn, X, YouTube, TikTok) — slot adapter siap, brief diisi bertahap (`PLATFORM_MATRIX.md` + `platforms/`). Halaman analytics-nya tetap dirender (struktur per-platform) walau datanya kosong sampai adapter/platform aktif.
 - Live IG/Threads streaming viewer.
 - LLM-generated comments.
 - Abuse-report button ke platform.
@@ -96,11 +99,24 @@ Tim Social Media Ops butuh satu panel untuk:
 - F4.3 Raw payload → S3 (atau MinIO); normalisasi → Postgres.
 - F4.4 Scrape target: post URL, profile URL, hashtag, mention.
 
-### F5 — Monitoring
+### F5 — Monitoring Akun Resmi (Official Accounts)
 
-- F5.1 MetricSnapshot tiap 30 menit untuk top-100 post aktif.
-- F5.2 Alert: views drop >50% 24 jam, mention spike >3x.
-- F5.3 Reach/Reels views dihitung dari `insights` field jika ada.
+> **Dua domain akun yang tidak boleh dicampur.**
+>
+> - **Worker Account** (`Account`) — eksekutor action. Login + Playwright. **Tidak** masuk analitik performa.
+> - **Official Account** (`OfficialAccount`) — akun brand/client yang **dipantau**. **Read-only**: tanpa kredensial, tanpa login, tanpa action. Ini **subjek** analitik.
+
+- F5.1 **Daftar Official Account**: user menambahkan `platform + handle` (+ URL profil opsional). Tidak ada kredensial; verifikasi kepemilikan (opsional) lewat metadata provider.
+- F5.2 **Ingest metrik via 3rd-party provider** (provider-agnostic). BE menarik/menerima snapshot per akun per platform secara **terjadwal** (default tiap 30 menit) dan **on-demand**. Jalur ingest **terpisah** dari jalur action worker (lihat `SYSTEM_DESIGN.md` → Data Flow → Analytics).
+- F5.3 **Snapshot time-series**: setiap tarikan menulis baris `AnalyticsSnapshot` (`officialAccountId`, `ts`, `metrics` JSONB + kolom query cepat `reach`, `views`, `mentions`, `followers`). Query tren = `(officialAccountId, ts)`.
+- F5.4 **Metrik per platform berbeda** (definisi & ketersediaan per platform ada di `PLATFORM_MATRIX.md` §2.3). Contoh IG/Threads: reach, profile views, follower delta, mention, top posts. Contoh YouTube: views, watch time, subs. Contoh TikTok: views, live viewers.
+- F5.5 **Halaman analytics per platform** — 7 halaman, satu per platform, layout konsisten, KPI berbeda per platform. Plus **Overview** yang mengagregasi seluruh akun resmi.
+- F5.6 **Live monitoring**: status live TikTok / live IG (viewer count, durasi) — sumber tetap provider; ditandai `LIVE`/`OFFLINE`.
+- F5.7 **Mention tracking**: daftar mention terhadap akun resmi (author, teks, url, sentiment-opsional dari provider).
+- F5.8 **Alert**: penurunan views/reach >50% dalam 24 jam, lonjakan mention >3x baseline, akun resmi berhenti ter-ingest (`AnalyticsIngestRun` gagal berulang).
+- F5.9 **Data provenance**: tiap snapshot menyimpan `provider` + `providerRunId` + `fetchedAt`, agar bisa diaudit & provider bisa diganti tanpa kehilangan histori.
+- F5.10 **Degradasi anggun**: provider down ≠ blocking dashboard; UI menampilkan snapshot terakhir + badge `stale` (umur data) dan status `AnalyticsIngestRun` terakhir.
+- F5.11 **Batas MVP**: akun resmi tidak melakukan action apa pun ke platform (read-only). Bila nanti ada auto-engage ke akun resmi, dibuat requirement terpisah.
 
 ### F6 — Action
 
@@ -171,15 +187,15 @@ Tim Social Media Ops butuh satu panel untuk:
 
 ## 6. Non-Functional Requirements
 
-| Aspek              | Target                         |
-| ------------------ | ------------------------------ |
-| Availability       | 99% (single region MVP)        |
-| Scrape latency     | target → data tampil < 5 menit |
-| Action latency     | schedule → eksekusi < 2 menit  |
+| Aspek              | Target                                  |
+| ------------------ | --------------------------------------- |
+| Availability       | 99% (single region MVP)                 |
+| Scrape latency     | target → data tampil < 5 menit          |
+| Action latency     | schedule → eksekusi < 2 menit           |
 | Containers         | 50 (MVP, ~100 akun), 250+ (v1, dinamis) |
-| Data retention     | 90 hari hot, 1 tahun cold      |
-| p95 dashboard load | < 1.5 dtk                      |
-| A11y               | WCAG 2.1 AA                    |
+| Data retention     | 90 hari hot, 1 tahun cold               |
+| p95 dashboard load | < 1.5 dtk                               |
+| A11y               | WCAG 2.1 AA                             |
 
 ## 7. KPI
 
@@ -187,17 +203,19 @@ Tim Social Media Ops butuh satu panel untuk:
 - Action success rate ≥ 90%.
 - Worker uptime ≥ 98%.
 - MTTR worker failure < 5 menit.
+- **Analytics freshness**: ≥ 90% Official Account punya snapshot < 60 menit pada jam operasional.
+- **Analytics ingest success**: ≥ 98% `AnalyticsIngestRun` sukses per hari.
 
 ## 8. Release Plan
 
-| Versi | Isi                                                                            | ETA       |
-| ----- | ------------------------------------------------------------------------------ | --------- |
-| v0.1  | IG scrape read-only + auth single-team                                         | 3 minggu  |
-| v0.2  | Container-per-device orchestrator + bin-packing + proxy binding + Threads adapter + Add-account UI | 5 minggu  |
-| v0.3  | Monitoring + health score + alert                                              | 7 minggu  |
-| v0.4  | Action Playwright (like + comment) + template sequential                       | 9 minggu  |
-| v0.5  | Report + scale ke ~50 container (100 akun) stabil                              | 11 minggu |
-| v1.0  | GA — 2 platform stabil, 100+ akun                                              | 13 minggu |
+| Versi | Isi                                                                                                        | ETA       |
+| ----- | ---------------------------------------------------------------------------------------------------------- | --------- |
+| v0.1  | IG scrape read-only + auth single-team                                                                     | 3 minggu  |
+| v0.2  | Container-per-device orchestrator + bin-packing + proxy binding + Threads adapter + Add-account UI         | 5 minggu  |
+| v0.3  | Monitoring akun resmi (Official Accounts) + ingest 3rd-party + halaman per-platform + health score + alert | 7 minggu  |
+| v0.4  | Action Playwright (like + comment) + template sequential                                                   | 9 minggu  |
+| v0.5  | Report + scale ke ~50 container (100 akun) stabil                                                          | 11 minggu |
+| v1.0  | GA — 2 platform stabil, 100+ akun                                                                          | 13 minggu |
 
 ## 9. Risiko
 
@@ -208,14 +226,17 @@ Tim Social Media Ops butuh satu panel untuk:
 - **IG rate limit** — 30/jam per akun ketat. Mitigasi: queue per akun + jitter acak.
 - **Container blast radius** — 1 pod crash = N akun idle (N = platform/container, ≤2 MVP). Mitigasi: K8s readiness probe + orphan sweeper; ukuran container dibatasi `MAX_ACCOUNTS_PER_CONTAINER`.
 - **Playwright detection** — IG/Threads update anti-bot. Mitigasi: stealth plugin + viewport random + canvas noise.
+- **Ketergantungan 3rd-party analytics** — provider down / ubah API / rate limit → data akun resmi basi. Mitigasi: snapshot terakhir + badge `stale`, provider-agnostic adapter, `AnalyticsIngestRun` retry + alert.
+- **Kualitas data provider** — metrik bisa berbeda dari native platform. Mitigasi: simpan `provider` + `fetchedAt` tiap snapshot (provenance) dan tampilkan sumber di UI.
 
 ## 10. User Stories per Persona
 
 **Strategist (read-mostly):**
 
-- US-S1: Sebagai strategist, saya ingin lihat KPI mingguan per akun sehingga saya bisa laporkan ke klien.
+- US-S1: Sebagai strategist, saya ingin lihat KPI mingguan per **akun resmi** sehingga saya bisa laporkan ke klien.
 - US-S2: Sebagai strategist, saya ingin pantau mention spike sehingga saya bisa reaktif.
 - US-S3: Sebagai strategist, saya ingin export CSV metrik sehingga saya bisa olah di spreadsheet.
+- US-S4: Sebagai strategist, saya ingin melihat analytics tiap platform resmi di halaman terpisah sehingga metrik yang berbeda tidak tercampur.
 
 **Operator (action-heavy):**
 
@@ -236,7 +257,7 @@ Tim Social Media Ops butuh satu panel untuk:
 | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | v0.1  | 1 akun IG terscrape end-to-end; Post + Comment masuk DB; tampil di dashboard                                                                                        |
 | v0.2  | Tambah akun via dashboard → login interaktif s/d `authenticated` (termasuk alur `needs_input` 2FA); hapus akun → pod+PVC bersih; orphan sweeper recover 1 akun mati |
-| v0.3  | Scrape IG + Threads paralel; metric snapshot tersimpan; alert mention spike fires                                                                                   |
+| v0.3  | Analytics akun resmi (IG + Threads) ter-ingest dari provider: snapshot tersimpan, tren tampil, alert mention spike fires; tambah Official Account via UI            |
 | v0.4  | 100 like/comment tereksekusi via Playwright dengan success rate ≥ 85%; comment terverifikasi muncul di feed (bukan klaim buta)                                      |
 | v0.5  | Report CSV/JSON export valid; alert worker down < 90 dtk                                                                                                            |
 | v1.0  | 100+ akun stabil 30 hari; add/remove akun via UI tanpa redeploy; health score akurat; nol ban                                                                       |

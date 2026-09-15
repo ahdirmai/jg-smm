@@ -12,15 +12,15 @@
 
 ## 1. Daftar Platform (Target Akhir)
 
-| Kode | Platform | Status MVP | Slug brief |
-| --- | --- | --- | --- |
-| `INSTAGRAM` | Instagram | **AKTIF** | `platforms/instagram.md` |
-| `THREADS` | Threads | **AKTIF** | `platforms/threads.md` |
-| `FACEBOOK` | Facebook | deferred (slot siap) | `platforms/facebook.md` |
-| `X` | X (Twitter) | deferred (slot siap) | `platforms/x.md` |
-| `LINKEDIN` | LinkedIn | deferred (slot siap) | `platforms/linkedin.md` |
-| `YOUTUBE` | YouTube | deferred (slot siap) | `platforms/youtube.md` |
-| `TIKTOK` | TikTok | deferred (slot siap) | `platforms/tiktok.md` |
+| Kode        | Platform    | Status MVP           | Slug brief               |
+| ----------- | ----------- | -------------------- | ------------------------ |
+| `INSTAGRAM` | Instagram   | **AKTIF**            | `platforms/instagram.md` |
+| `THREADS`   | Threads     | **AKTIF**            | `platforms/threads.md`   |
+| `FACEBOOK`  | Facebook    | deferred (slot siap) | `platforms/facebook.md`  |
+| `X`         | X (Twitter) | deferred (slot siap) | `platforms/x.md`         |
+| `LINKEDIN`  | LinkedIn    | deferred (slot siap) | `platforms/linkedin.md`  |
+| `YOUTUBE`   | YouTube     | deferred (slot siap) | `platforms/youtube.md`   |
+| `TIKTOK`    | TikTok      | deferred (slot siap) | `platforms/tiktok.md`    |
 
 Enum `Platform` di `ERD.md` sudah memuat ke-7 nilai ini — **tidak ada** migrasi enum saat menambah platform.
 
@@ -32,36 +32,78 @@ Legend: **✅** didukung/diimplementasi · **🟡** brief-tbd (desain konsep ada
 
 ### 2.1 Scrape (via Apify actor per platform)
 
-| Kapabilitas | IG | Threads | FB | X | LinkedIn | YouTube | TikTok |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| Scrape post by URL | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| Scrape profile/handle | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| Scrape hashtag | ✅ | 🟡 | ⬜ | ⬜ | ⬜ | 🟡 | ⬜ |
-| Scrape mention | ✅ | ✅ | ⬜ | ⬜ | ⬜ | 🟡 | ⬜ |
-| Scrape comments | ✅ | ✅ | ⬜ | ⬜ | ⬜ | 🟡 | ⬜ |
-| Metric: reach | ✅ | 🟡 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| Metric: views (video/reels) | ✅ | 🟡 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| Live views | 🟡 | ❌ | ⬜ | ❌ | ❌ | 🟡 | 🟡 |
+| Kapabilitas                 | IG  | Threads | FB  | X   | LinkedIn | YouTube | TikTok |
+| --------------------------- | --- | ------- | --- | --- | -------- | ------- | ------ |
+| Scrape post by URL          | ✅  | ✅      | ⬜  | ⬜  | ⬜       | ⬜      | ⬜     |
+| Scrape profile/handle       | ✅  | ✅      | ⬜  | ⬜  | ⬜       | ⬜      | ⬜     |
+| Scrape hashtag              | ✅  | 🟡      | ⬜  | ⬜  | ⬜       | 🟡      | ⬜     |
+| Scrape mention              | ✅  | ✅      | ⬜  | ⬜  | ⬜       | 🟡      | ⬜     |
+| Scrape comments             | ✅  | ✅      | ⬜  | ⬜  | ⬜       | 🟡      | ⬜     |
+| Metric: reach               | ✅  | 🟡      | ⬜  | ⬜  | ⬜       | ⬜      | ⬜     |
+| Metric: views (video/reels) | ✅  | 🟡      | ⬜  | ⬜  | ⬜       | ⬜      | ⬜     |
+| Live views                  | 🟡  | ❌      | ⬜  | ❌  | ❌       | 🟡      | 🟡     |
 
 ### 2.2 Action (semua via Playwright)
 
 Action yang diminta: **Comment Posting, Reply Comment, Like, Comment, Share, Repost, Like Comment, Reply Comment, Report** + pemantauan **Views Posting / Reach / Live**.
 
-| Action | IG | Threads | FB | X | LinkedIn | YouTube | TikTok |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| Comment on post | ✅ | ✅ | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
-| Reply comment | ✅ | ✅ | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
-| Like post | ✅ | ✅ | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
-| Like comment | ✅ | ✅ | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
-| Report post | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| Report comment | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| Share | ⬜ | 🟡 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| Repost | ❌ | 🟡 | ⬜ | 🟡 | 🟡 | ❌ | 🟡 |
-| Views (read/harvest) | ✅ | 🟡 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| Action               | IG  | Threads | FB  | X   | LinkedIn | YouTube | TikTok |
+| -------------------- | --- | ------- | --- | --- | -------- | ------- | ------ |
+| Comment on post      | ✅  | ✅      | 🟡  | 🟡  | 🟡       | 🟡      | 🟡     |
+| Reply comment        | ✅  | ✅      | 🟡  | 🟡  | 🟡       | 🟡      | 🟡     |
+| Like post            | ✅  | ✅      | 🟡  | 🟡  | 🟡       | 🟡      | 🟡     |
+| Like comment         | ✅  | ✅      | 🟡  | 🟡  | 🟡       | 🟡      | 🟡     |
+| Report post          | 🟡  | 🟡      | ⬜  | ⬜  | ⬜       | ⬜      | ⬜     |
+| Report comment       | 🟡  | 🟡      | ⬜  | ⬜  | ⬜       | ⬜      | ⬜     |
+| Share                | ⬜  | 🟡      | ⬜  | ⬜  | ⬜       | ⬜      | ⬜     |
+| Repost               | ❌  | 🟡      | ⬜  | 🟡  | 🟡       | ❌      | 🟡     |
+| Views (read/harvest) | ✅  | 🟡      | ⬜  | ⬜  | ⬜       | ⬜      | ⬜     |
 
 > **Catatan penting:** sel **🟡/⬜** = brief per-platform **wajib dikonfirmasi** sebelum implementasi (alur UI, selector, aturan anti-spam platform, verifikasi ground truth). Nilai di atas adalah **dugaan awal**, bukan komitmen. Brief per platform ditulis di `platforms/<slug>.md` (format §5, disetujui user). Setiap platform punya kebijakan berbeda — mis. LinkedIn/X lebih ketat & berisiko tinggi untuk automation; YouTube comment butuh state channel tertentu.
 >
 > **Action brief berbeda tiap platform** (diinginkan user). Kontrak adapter **sama**; isinya (alur + selector + verifikasi) **berbeda** dan ditulis di brief masing-masing.
+
+---
+
+### 2.3 Monitoring Akun Resmi (Official Accounts · 3rd-party analytics)
+
+> **Bukan worker.** Akun resmi = akun brand/client yang **dipantau** (read-only, tanpa login/action).
+> Semua metrik di bawah datang dari **3rd-party provider** (bukan self-scrape, bukan Playwright),
+> melalui adapter provider tunggal (lihat `SYSTEM_DESIGN.md` → Analytics). Setiap platform punya
+> **halaman analytics sendiri**; KPI-nya berbeda-beda.
+
+Legend: **✅** tersedia di provider (target MVP bila platform aktif) · **🟡** kemungkinan tersedia, perlu konfirmasi provider · **⬜** belum/tidak untuk MVP.
+
+| Metrik                               | IG  | Threads | FB  | X   | LinkedIn | YouTube | TikTok |
+| ------------------------------------ | --- | ------- | --- | --- | -------- | ------- | ------ |
+| Followers                            | ✅  | ✅      | 🟡  | 🟡  | 🟡       | ✅      | ✅     |
+| Reach                                | ✅  | ✅      | 🟡  | 🟡  | 🟡       | 🟡      | 🟡     |
+| Views (post/video/reels)             | ✅  | ✅      | 🟡  | 🟡  | 🟡       | ✅      | ✅     |
+| Profile views                        | ✅  | 🟡      | 🟡  | 🟡  | 🟡       | ⬜      | 🟡     |
+| Engagements (likes+comments+shares)  | ✅  | ✅      | 🟡  | 🟡  | 🟡       | ✅      | ✅     |
+| Mentions                             | ✅  | ✅      | 🟡  | 🟡  | 🟡       | 🟡      | 🟡     |
+| Followers delta (growth)             | ✅  | ✅      | 🟡  | 🟡  | 🟡       | ✅      | ✅     |
+| Post-level breakdown                 | ✅  | ✅      | 🟡  | 🟡  | 🟡       | ✅      | ✅     |
+| Watch time                           | ❌  | ❌      | ⬜  | ⬜  | ⬜       | ✅      | 🟡     |
+| Live viewers (live TikTok / live IG) | 🟡  | ❌      | ⬜  | ❌  | ❌       | 🟡      | 🟡     |
+| Sentiment (mention)                  | 🟡  | 🟡      | ⬜  | 🟡  | ⬜       | ⬜      | ⬜     |
+| Demographics (age/gender/geo)        | 🟡  | ⬜      | 🟡  | ⬜  | 🟡       | 🟡      | 🟡     |
+| Best posting time                    | 🟡  | 🟡      | 🟡  | 🟡  | 🟡       | 🟡      | 🟡     |
+
+**KPI default per halaman analytics** (tiap halaman menampilkan strip KPI + tren + tabel post/mention):
+
+| Halaman   | KPI utama                                              |
+| --------- | ------------------------------------------------------ |
+| Instagram | Followers, Reach, Profile views, Engagements, Mentions |
+| Threads   | Followers, Views, Replies, Reposts, Mentions           |
+| Facebook  | Page followers, Reach, Engagements, Mentions           |
+| LinkedIn  | Followers, Impressions, Engagements, Mentions          |
+| X         | Followers, Impressions, Engagements, Mentions          |
+| YouTube   | Subscribers, Views, Watch time, Comments               |
+| TikTok    | Followers, Views, Likes, Shares, Live viewers          |
+
+> **Status data.** Setiap KPI dapat `lastFetchedAt` + badge `stale` bila > 60 menit. Provider belum dipilih;
+> hook adapter sudah disiapkan, jadi integrasi riil = isi satu implementasi `Provider` — tanpa ubah ERD/FE.
 
 ---
 
@@ -79,6 +121,7 @@ interface ScrapeAdapter {
   Capabilities()              // mana yang didukung (dipakai UI untuk disable fitur)
 }
 ```
+
 Registry: `map[Platform]ScrapeAdapter` di `internal/adapter/apify/registry.go`.
 
 ### 3.2 Action Adapter (Worker, Playwright)
@@ -98,6 +141,7 @@ interface ActionAdapter {
   SEL                                          // selector object (satu titik patch saat markup berubah)
 }
 ```
+
 Registry: `map[Platform]ActionAdapter` di `apps/worker/src/platforms/registry.js`.
 
 ### 3.3 Aturan Kontrak (berlaku semua platform)
@@ -112,14 +156,14 @@ Registry: `map[Platform]ActionAdapter` di `apps/worker/src/platforms/registry.js
 
 ## 4. Rollout Plan (bertahap)
 
-| Fase | Platform baru | Prasyarat | Deliverable |
-| --- | --- | --- | --- |
-| MVP (P2–P3) | — (IG + Threads) | — | IG & Threads penuh |
-| R1 | **Facebook** | brief FB + actor + adapter + test | scrape + action dasar FB |
-| R2 | **X** | brief X + adapter (hati-hati risiko ban) | scrape + action dasar X |
-| R3 | **LinkedIn** | brief LI + adapter | scrape + action dasar LI |
-| R4 | **YouTube** | brief YT (comment butuh channel state) | scrape + comment |
-| R5 | **TikTok** | brief TT + live monitoring | scrape + action dasar TT + live |
+| Fase        | Platform baru    | Prasyarat                                | Deliverable                     |
+| ----------- | ---------------- | ---------------------------------------- | ------------------------------- |
+| MVP (P2–P3) | — (IG + Threads) | —                                        | IG & Threads penuh              |
+| R1          | **Facebook**     | brief FB + actor + adapter + test        | scrape + action dasar FB        |
+| R2          | **X**            | brief X + adapter (hati-hati risiko ban) | scrape + action dasar X         |
+| R3          | **LinkedIn**     | brief LI + adapter                       | scrape + action dasar LI        |
+| R4          | **YouTube**      | brief YT (comment butuh channel state)   | scrape + comment                |
+| R5          | **TikTok**       | brief TT + live monitoring               | scrape + action dasar TT + live |
 
 **Urutan alasan:** FB → X → LinkedIn (meta-ecosystem dulu, engagement tinggi), lalu YouTube/TikTok (kebutuhan khusus: video/live).
 

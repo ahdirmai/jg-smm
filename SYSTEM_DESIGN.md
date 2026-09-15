@@ -18,6 +18,7 @@ graph LR
     PROV[Provisioner]
     ORPH[Orphan Sweeper]
     PUB[Publisher]
+    ING[Analytics Ingestor]
   end
   subgraph DB [Data Layer - Container]
     PG[(Postgres + TimescaleDB)]
@@ -34,6 +35,7 @@ graph LR
     APIFY[Apify Actors]
     PROXY[Residential Proxy]
     PLAT[IG / Threads]
+    PROV3P[3rd-party Analytics Provider]
   end
 
   UI --> API
@@ -52,6 +54,11 @@ graph LR
   PUB --> RD
   HUB --> SSE
   API --> HUB
+  API --> ING
+  SCHED --> ING
+  ING --> PROV3P
+  ING --> PG
+  ING --> HUB
   RD --> P1
   RD --> P2
   RD --> PN
@@ -78,6 +85,13 @@ graph LR
 - Worker → BE: `POST /internal/session-pull` (mTLS) saat boot per platform; `GET` session tidak pernah lintas worker.
 - Publikasi job: **BE satu-satunya publisher** (`PUBLISH`/`LPUSH`), worker tidak pernah publish.
 
+**Jalur analytics (terpisah, read-only):**
+
+- BE (Ingestor) → 3rd-party provider: HTTP outbound saja. Provider **tidak** pernah dapat kredensial akun worker; `OfficialAccount` tidak punya kredensial.
+- BE → DB: tulis `AnalyticsSnapshot` / `AnalyticsMention` / `AnalyticsIngestRun`. Tidak lewat Redis queue action, tidak lewat worker.
+- BE → FE: SSE event `analytics-updated` (sama seperti jalur lain, satu Hub).
+- Tidak ada jalur analytics → worker. Akun resmi **tidak** pernah di-eksekusi oleh Playwright.
+
 ### Model Transport (Hybrid)
 
 | Jalur                                | Mekanisme                                                                        | Alasan                                                                                                                                               |
@@ -86,6 +100,7 @@ graph LR
 | Kontrol akun (login/challenge/clear) | **Redis Pub/Sub** `control-<workerId>`                                           | Instruksi bertarget per container; kredensial tidak boleh bocor ke seluruh fleet. Fire-and-forget OK karena ada state di DB + retry manual operator. |
 | Verdict worker                       | **HTTP callback** ke BE                                                          | BE satu-satunya penulis DB → satu titik validasi/sanitasi.                                                                                           |
 | Real-time FE                         | **SSE** (`GET /api/stream`)                                                      | Satu arah server→browser; command dari FE lewat REST. Auto-reconnect bawaan, tanpa library.                                                          |
+| Analytics ingest (akun resmi)        | **HTTP outbound ke provider + cron** (tanpa Redis queue, tanpa worker)           | Read-only, idempotent per `(account, ts)`. Gagal = retry job berikutnya + alert; tidak boleh mengganggu jalur action.                                |
 
 ## Sequence — Add Account (login interaktif + provisioning)
 
@@ -174,21 +189,22 @@ sequenceDiagram
 
 ## Komponen
 
-| Komponen       | Tanggung Jawab                                                                                                                     | Stack                                                                                                                |
-| -------------- | ---------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| Frontend       | Dashboard 3 persona, shadcn/ui minimalist profesional, real-time                                                                   | Next.js 15 App Router, React 19, shadcn/ui, Tailwind v4, TanStack Query, Zustand, recharts, native EventSource (SSE) |
-| API            | REST + auth + business logic                                                                                                       | **Go 1.26**, Echo v4, `log/slog`, golang-jwt/v5, go-playground/validator                                             |
-| DB Layer       | Type-safe query ke Postgres                                                                                                        | **pgx/v5 + sqlc** (code-gen dari `db/queries/*.sql`)                                                                 |
-| Migration      | Schema Postgres                                                                                                                    | **golang-migrate** (raw SQL up/down)                                                                                 |
-| SSE Hub        | Push verdict/heartbeat ke FE (server→browser)                                                                                      | Echo + `net/http` Flusher (tanpa library)                                                                            |
-| Scheduler      | Cron scrape + cookie refresh + orphan sweep                                                                                        | **robfig/cron/v3**                                                                                                   |
-| Provisioner    | Spawn/kill pod per akun via K8s API                                                                                                | **k8s.io/client-go**, RBAC `smm-provisioner`                                                                         |
-| Publisher      | Fan-out + instruksi bertarget ke worker                                                                                            | **go-redis/v9** (`PUBLISH control-<id>`, `LPUSH queue:action:<id>`)                                                  |
-| Queue          | Antrian action job (durable, sequential per akun)                                                                                  | Redis List + go-redis/v9 (producer); worker `BLPOP`                                                                  |
-| Worker         | 1 container = 1 "device", host N akun (maks 1/platform); Playwright **headful** (action sequential) + Apify SDK (scrape ephemeral) | **Node.js 22** + Playwright + stealth + apify-client + Xvfb/x11vnc/noVNC                                             |
-| Postgres       | State utama + time-series                                                                                                          | `timescale/timescaledb:2.14.2-pg16` (container, bukan RDS)                                                           |
-| Redis          | Cache + queue action (Redis List) + Pub/Sub kontrol                                                                                | `redis:7-alpine` (container, AOF on, RDB hourly)                                                                     |
-| Object Storage | Raw payload Apify, screenshot, backup WAL/RDB                                                                                      | `minio/minio` (container, erasure-coded 4 node)                                                                      |
+| Komponen           | Tanggung Jawab                                                                                                                     | Stack                                                                                                                |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Frontend           | Dashboard 3 persona, shadcn/ui minimalist profesional, real-time                                                                   | Next.js 15 App Router, React 19, shadcn/ui, Tailwind v4, TanStack Query, Zustand, recharts, native EventSource (SSE) |
+| API                | REST + auth + business logic                                                                                                       | **Go 1.26**, Echo v4, `log/slog`, golang-jwt/v5, go-playground/validator                                             |
+| DB Layer           | Type-safe query ke Postgres                                                                                                        | **pgx/v5 + sqlc** (code-gen dari `db/queries/*.sql`)                                                                 |
+| Migration          | Schema Postgres                                                                                                                    | **golang-migrate** (raw SQL up/down)                                                                                 |
+| SSE Hub            | Push verdict/heartbeat ke FE (server→browser)                                                                                      | Echo + `net/http` Flusher (tanpa library)                                                                            |
+| Scheduler          | Cron scrape + cookie refresh + orphan sweep + **analytics ingest**                                                                 | **robfig/cron/v3**                                                                                                   |
+| Analytics Ingestor | Tarik metrik Official Account dari 3rd-party provider → normalisasi → `AnalyticsSnapshot`                                          | Modul Go di API (`internal/service/analytics`), adapter provider di `internal/adapter/provider`                      |
+| Provisioner        | Spawn/kill pod per akun via K8s API                                                                                                | **k8s.io/client-go**, RBAC `smm-provisioner`                                                                         |
+| Publisher          | Fan-out + instruksi bertarget ke worker                                                                                            | **go-redis/v9** (`PUBLISH control-<id>`, `LPUSH queue:action:<id>`)                                                  |
+| Queue              | Antrian action job (durable, sequential per akun)                                                                                  | Redis List + go-redis/v9 (producer); worker `BLPOP`                                                                  |
+| Worker             | 1 container = 1 "device", host N akun (maks 1/platform); Playwright **headful** (action sequential) + Apify SDK (scrape ephemeral) | **Node.js 22** + Playwright + stealth + apify-client + Xvfb/x11vnc/noVNC                                             |
+| Postgres           | State utama + time-series                                                                                                          | `timescale/timescaledb:2.14.2-pg16` (container, bukan RDS)                                                           |
+| Redis              | Cache + queue action (Redis List) + Pub/Sub kontrol                                                                                | `redis:7-alpine` (container, AOF on, RDB hourly)                                                                     |
+| Object Storage     | Raw payload Apify, screenshot, backup WAL/RDB                                                                                      | `minio/minio` (container, erasure-coded 4 node)                                                                      |
 
 ## Data Flow
 
@@ -212,6 +228,41 @@ sequenceDiagram
 7. Gagal → klasifikasi `error_class` → backoff eksponensial max 3 retry → healthScore −10. `< 30` → auto-quarantine + alert.
 
 Throughput: ~1 action / 60 dtk = 60/jam per container; per batch aktif ≈ N × 60/jam (N = `ACTION_BATCH_PARALLELISM`). IG cap 30/jam per akun → headroom tetap besar.
+
+### Analytics (Official Accounts — read-only, 3rd-party)
+
+> **Jalur terpisah dari worker.** Tidak menyentuh Playwright, Redis queue action, atau PVC
+> session. Tidak ada login/action. Hanya baca-dari-provider → tulis snapshot.
+
+1. Scheduler (`robfig/cron`) tiap 30 menit, atau user menekan **Refresh** di halaman Monitoring → enqueue `AnalyticsIngestRun` (`scope=all` | `platform:<P>` | `account:<id>`).
+2. Ingestor Go memilih `OfficialAccount` `status=ACTIVE` untuk scope itu, lalu memanggil **provider adapter** (interface tunggal: `FetchMetrics(account) -> MetricsResult`). Adapter per provider; provider-agnostic di domain.
+3. Adapter panggil API provider (HTTP client, retry + timeout), dapat metrik per akun per platform.
+4. Normalisasi → tulis satu baris `AnalyticsSnapshot` per akun (`metrics` JSONB + kolom scalar `reach`/`views`/`mentions`/`followers` + provenance `provider`/`providerRunId`/`fetchedAt`); upsert `AnalyticsMention` (dedupe `platform+externalId`); update `OfficialAccount.lastFetchedAt`.
+5. Emit SSE event `analytics-updated` (scope + jumlah akun) → FE invalidasi TanStack Query.
+6. Tutup `AnalyticsIngestRun` (`SUCCESS` / `PARTIAL` / `FAILED` + `accountsOk`/`accountsErr`/`errorClass`). Gagal berulang → alert (F5.8).
+
+Isolasi kegagalan: provider down **tidak** memblokir jalur action/scrape. Dashboard menampilkan snapshot terakhir + badge `stale` (umur = `now() - lastFetchedAt`) dan status `AnalyticsIngestRun` terakhir — degradasi anggun, bukan error page.
+
+Kontrak provider (batas integrasi):
+
+```go
+// internal/adapter/provider/provider.go
+type MetricsResult struct {
+    Followers, Reach, Views, Mentions, Engagements, ProfileViews *int
+    Extra   map[string]any    // metrik platform-spesifik → AnalyticsSnapshot.metrics
+    RunID   string
+    FetchedAt time.Time
+}
+
+type Provider interface {
+    Name() string
+    FetchMetrics(ctx context.Context, acct domain.OfficialAccount) (MetricsResult, error)
+    FetchMentions(ctx context.Context, acct domain.OfficialAccount, since time.Time) ([]domain.Mention, error)
+}
+```
+
+> MVP: satu adapter aktif (placeholder sampai provider dipilih). Karena semua lewat
+> `Provider`, ganti/ tambah provider = tambah adapter, tanpa ubah domain, ERD, atau FE.
 
 ## Tech Stack (versi target)
 
@@ -284,7 +335,7 @@ Throughput: ~1 action / 60 dtk = 60/jam per container; per batch aktif ≈ N × 
 ## Observability
 
 - Trace: OpenTelemetry-Go → Jaeger.
-- Metric: Prometheus → Grafana (scrape success rate, action latency, worker heartbeat gap, proxy bytes, apify cost).
+- Metric: Prometheus → Grafana (scrape success rate, action latency, worker heartbeat gap, proxy bytes, apify cost, **analytics ingest success rate**, **analytics data staleness per platform**).
 - Log: `slog` → Loki.
 - Alert:
   - Worker heartbeat gap > 90 dtk.
@@ -292,6 +343,8 @@ Throughput: ~1 action / 60 dtk = 60/jam per container; per batch aktif ≈ N × 
   - Scrape 429 dari Apify > 10 / jam.
   - Daily proxy spend > 90% budget.
   - Boot timeout (pod stuck > 90 dtk).
+  - **Analytics: akun resmi tanpa snapshot > 60 menit** (jam operasional).
+  - **Analytics: `AnalyticsIngestRun` gagal > 3x berturut-turut** (provider down / kredensial API provider habis).
 
 ## Resiliensi
 

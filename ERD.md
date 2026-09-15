@@ -58,6 +58,11 @@ enum DesiredState { RUNNING STOPPED }
 enum WorkerSource { MANUAL AUTO } // MANUAL = dibuat user dari dashboard; AUTO = auto-create saat bin-packing
 enum ProvisionOp  { CREATE DELETE }
 enum AccountStatus { PENDING ACTIVE PAUSED QUARANTINED DEAD ARCHIVED }
+
+// --- Analytics akun resmi (subjek monitoring; BUKAN akun worker) ---
+enum OfficialAccountStatus { ACTIVE PAUSED ARCHIVED }
+enum AnalyticsProvider     { THIRDPARTY_A THIRDPARTY_B } // provider-agnostic; nilai riil diisi saat integrasi
+enum IngestStatus          { PENDING RUNNING SUCCESS FAILED PARTIAL }
 ```
 
 Entity (kolom kunci, tipe snake_case di DDL):
@@ -304,6 +309,85 @@ model MetricSnapshot {
   @@index([postId, ts])
 }
 
+// --- Official Accounts: akun brand/client yang DIPANTAU (read-only) ---
+// Berbeda dari `Account` (akun worker = eksekutor action). Tidak punya
+// kredensial, tidak login, tidak ada action. Ini subjek analitik.
+model OfficialAccount {
+  id             String   @id @default(cuid())
+  platform       Platform
+  handle         String
+  displayName    String?
+  profileUrl     String?
+  avatarUrl      String?
+  status         OfficialAccountStatus @default(ACTIVE)
+  provider       AnalyticsProvider     @default(THIRDPARTY_A)
+  providerRef    String?   // id akun di sisi provider (kalau ada)
+  tags           String[]  @default([]) // grouping/label (brand, klien, region)
+  lastFetchedAt  DateTime?              // snapshot terakhir yang sukses
+  createdAt      DateTime  @default(now())
+  snapshots      AnalyticsSnapshot[]
+  mentions       AnalyticsMention[]
+  @@unique([platform, handle])
+  @@index([status, platform])
+}
+
+// Snapshot metrik time-series per akun resmi per platform.
+// `metrics` JSONB menyimpan metrik platform-spesifik; kolom scalar di
+// bawah adalah metrik lintas-platform yang sering di-query (biar ada index).
+model AnalyticsSnapshot {
+  id                String   @id @default(cuid())
+  officialAccountId String
+  officialAccount   OfficialAccount @relation(fields: [officialAccountId], references: [id])
+  platform          Platform
+  ts                DateTime @default(now())
+  followers         Int?
+  reach             Int?
+  views             Int?     // reels/video/live views
+  mentions          Int?
+  engagements       Int?
+  profileViews      Int?
+  metrics           Json     @default("{}") // metrik platform-spesifik + raw provider payload
+  provider          AnalyticsProvider
+  providerRunId     String?
+  fetchedAt         DateTime // waktu provider menarik (bisa ≠ ts)
+  @@index([officialAccountId, ts])
+  @@index([platform, ts])
+}
+
+// Mention terhadap akun resmi (dari provider).
+model AnalyticsMention {
+  id                String   @id @default(cuid())
+  officialAccountId String
+  officialAccount   OfficialAccount @relation(fields: [officialAccountId], references: [id])
+  platform          Platform
+  externalId        String
+  authorHandle      String?
+  text              String
+  url               String
+  postedAt          DateTime
+  sentiment         String?  // provider-opsional: positive/neutral/negative
+  fetchedAt         DateTime
+  @@unique([platform, externalId])
+  @@index([officialAccountId, postedAt])
+}
+
+// Satu baris per upaya ingest (job tarik metrik). Audit + observability
+// jalur analytics, mirror dari ProvisionLog untuk jalur worker.
+model AnalyticsIngestRun {
+  id          String   @id @default(cuid())
+  provider    AnalyticsProvider
+  scope       String   // "platform:INSTAGRAM" | "account:<id>" | "all"
+  status      IngestStatus @default(PENDING)
+  startedAt   DateTime @default(now())
+  finishedAt  DateTime?
+  accountsOk  Int      @default(0)
+  accountsErr Int      @default(0)
+  errorClass  String?
+  error       String?
+  @@index([provider, startedAt])
+  @@index([status, startedAt])
+}
+
 model CommentTemplate {
   id          String   @id @default(cuid())
   platform    Platform
@@ -409,6 +493,10 @@ model Setting {
 - `Account(status, healthScore)` — eligible worker selection.
 - `Post(platform, externalId)` unique — lookup post dari scrape.
 - `MetricSnapshot(postId, ts)` — time-series query.
+- `OfficialAccount(platform, handle)` unique — lookup akun resmi lintas platform.
+- `AnalyticsSnapshot(officialAccountId, ts)` — time-series analytics akun resmi.
+- `AnalyticsMention(platform, externalId)` unique — dedupe mention dari provider.
+- `AnalyticsIngestRun(status, startedAt)` — observability job ingest.
 - `ActionJob(accountId, status, scheduledAt)` — antrian per akun.
 - `ScrapeJob(accountId, status, scheduledAt)` — fair scheduler per akun.
 - `Worker(lastHeartbeat)` — health sweep.
@@ -441,3 +529,9 @@ model Setting {
 - `Worker.status` lifecycle: `PENDING` (pod creating) → `READY` (browser up) → `IDLE`/`BUSY` (job) → `DRAINING` (shutdown) → `DEAD` (pod mati / paused); `ERROR` (boot/timeout gagal) & `QUARANTINED` (container diparkir, tak boleh respawn).
 - `Account.status` values: `pending|active|paused|quarantined|dead|archived`. `pending` = terdaftar tapi belum lolos login; `paused` = di-skip scheduler (container tetap hidup); `archived` = soft delete + purge setelah auto-cleanup.
 - `JobType.SESSION_REFRESH` = trigger re-login Playwright sebelum cookie expired (F10).
+- **`OfficialAccount` ≠ `Account`.** `Account` = akun worker (punya `workerId`, `credentials`, `authStatus`, menjalankan action). `OfficialAccount` = akun brand yang dipantau (tanpa kredensial/login/action, punya `provider` + snapshot). Tidak ada relasi antar keduanya — domain terpisah. Akun worker **tidak** muncul di analitik.
+- `AnalyticsSnapshot.metrics` JSONB = tempat metrik platform-spesifik (mis. IG: `profileViews`, `reelViews`; YouTube: `watchTime`, `subscribers`; TikTok: `liveViewers`). Kolom scalar (`reach`, `views`, `mentions`, `followers`) = subset yang paling sering di-query, di-mirror agar bisa di-index.
+- `AnalyticsSnapshot` menyimpan `provider` + `providerRunId` + `fetchedAt` (provenance) sehingga provider bisa diganti tanpa kehilangan histori, dan umur data bisa ditampilkan sebagai badge `stale`.
+- `AnalyticsIngestRun` = audit tiap upaya tarik metrik (mirror `ProvisionLog` di jalur worker): kalau gagal berulang → alert (F5.8).
+- `OfficialAccount.lastFetchedAt` = snapshot sukses terakhir; FE memakai selisih `now() - lastFetchedAt` untuk badge freshness.
+- Retensi: `AnalyticsSnapshot` mengikuti 90 hari hot / 1 tahun cold (sama seperti `MetricSnapshot`); agregasi harian disimpan sebagai snapshot `ts` ter-truncate ke hari.
