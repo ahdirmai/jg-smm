@@ -12,6 +12,52 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AccountStatus string
+
+const (
+	AccountStatusPENDING     AccountStatus = "PENDING"
+	AccountStatusACTIVE      AccountStatus = "ACTIVE"
+	AccountStatusPAUSED      AccountStatus = "PAUSED"
+	AccountStatusQUARANTINED AccountStatus = "QUARANTINED"
+	AccountStatusDEAD        AccountStatus = "DEAD"
+	AccountStatusARCHIVED    AccountStatus = "ARCHIVED"
+)
+
+func (e *AccountStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = AccountStatus(s)
+	case string:
+		*e = AccountStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for AccountStatus: %T", src)
+	}
+	return nil
+}
+
+type NullAccountStatus struct {
+	AccountStatus AccountStatus `json:"account_status"`
+	Valid         bool          `json:"valid"` // Valid is true if AccountStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullAccountStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.AccountStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.AccountStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullAccountStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.AccountStatus), nil
+}
+
 type AuthSessionRevokedReason string
 
 const (
@@ -53,6 +99,181 @@ func (ns NullAuthSessionRevokedReason) Value() (driver.Value, error) {
 		return nil, nil
 	}
 	return string(ns.AuthSessionRevokedReason), nil
+}
+
+type AuthStatus string
+
+const (
+	AuthStatusAUTHENTICATING AuthStatus = "AUTHENTICATING"
+	AuthStatusNEEDSINPUT     AuthStatus = "NEEDS_INPUT"
+	AuthStatusAUTHENTICATED  AuthStatus = "AUTHENTICATED"
+	AuthStatusFAILED         AuthStatus = "FAILED"
+)
+
+func (e *AuthStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = AuthStatus(s)
+	case string:
+		*e = AuthStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for AuthStatus: %T", src)
+	}
+	return nil
+}
+
+type NullAuthStatus struct {
+	AuthStatus AuthStatus `json:"auth_status"`
+	Valid      bool       `json:"valid"` // Valid is true if AuthStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullAuthStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.AuthStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.AuthStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullAuthStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.AuthStatus), nil
+}
+
+type DesiredState string
+
+const (
+	DesiredStateRUNNING DesiredState = "RUNNING"
+	DesiredStateSTOPPED DesiredState = "STOPPED"
+)
+
+func (e *DesiredState) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = DesiredState(s)
+	case string:
+		*e = DesiredState(s)
+	default:
+		return fmt.Errorf("unsupported scan type for DesiredState: %T", src)
+	}
+	return nil
+}
+
+type NullDesiredState struct {
+	DesiredState DesiredState `json:"desired_state"`
+	Valid        bool         `json:"valid"` // Valid is true if DesiredState is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullDesiredState) Scan(value interface{}) error {
+	if value == nil {
+		ns.DesiredState, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.DesiredState.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullDesiredState) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.DesiredState), nil
+}
+
+type Platform string
+
+const (
+	PlatformINSTAGRAM Platform = "INSTAGRAM"
+	PlatformTHREADS   Platform = "THREADS"
+	PlatformFACEBOOK  Platform = "FACEBOOK"
+	PlatformTIKTOK    Platform = "TIKTOK"
+	PlatformLINKEDIN  Platform = "LINKEDIN"
+	PlatformX         Platform = "X"
+	PlatformYOUTUBE   Platform = "YOUTUBE"
+)
+
+func (e *Platform) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = Platform(s)
+	case string:
+		*e = Platform(s)
+	default:
+		return fmt.Errorf("unsupported scan type for Platform: %T", src)
+	}
+	return nil
+}
+
+type NullPlatform struct {
+	Platform Platform `json:"platform"`
+	Valid    bool     `json:"valid"` // Valid is true if Platform is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullPlatform) Scan(value interface{}) error {
+	if value == nil {
+		ns.Platform, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.Platform.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullPlatform) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.Platform), nil
+}
+
+type ProvisionOp string
+
+const (
+	ProvisionOpCREATE ProvisionOp = "CREATE"
+	ProvisionOpDELETE ProvisionOp = "DELETE"
+)
+
+func (e *ProvisionOp) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = ProvisionOp(s)
+	case string:
+		*e = ProvisionOp(s)
+	default:
+		return fmt.Errorf("unsupported scan type for ProvisionOp: %T", src)
+	}
+	return nil
+}
+
+type NullProvisionOp struct {
+	ProvisionOp ProvisionOp `json:"provision_op"`
+	Valid       bool        `json:"valid"` // Valid is true if ProvisionOp is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullProvisionOp) Scan(value interface{}) error {
+	if value == nil {
+		ns.ProvisionOp, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.ProvisionOp.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullProvisionOp) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.ProvisionOp), nil
 }
 
 type Role string
@@ -99,6 +320,117 @@ func (ns NullRole) Value() (driver.Value, error) {
 	return string(ns.Role), nil
 }
 
+type WorkerSource string
+
+const (
+	WorkerSourceMANUAL WorkerSource = "MANUAL"
+	WorkerSourceAUTO   WorkerSource = "AUTO"
+)
+
+func (e *WorkerSource) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = WorkerSource(s)
+	case string:
+		*e = WorkerSource(s)
+	default:
+		return fmt.Errorf("unsupported scan type for WorkerSource: %T", src)
+	}
+	return nil
+}
+
+type NullWorkerSource struct {
+	WorkerSource WorkerSource `json:"worker_source"`
+	Valid        bool         `json:"valid"` // Valid is true if WorkerSource is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullWorkerSource) Scan(value interface{}) error {
+	if value == nil {
+		ns.WorkerSource, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.WorkerSource.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullWorkerSource) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.WorkerSource), nil
+}
+
+type WorkerStatus string
+
+const (
+	WorkerStatusPENDING     WorkerStatus = "PENDING"
+	WorkerStatusREADY       WorkerStatus = "READY"
+	WorkerStatusIDLE        WorkerStatus = "IDLE"
+	WorkerStatusBUSY        WorkerStatus = "BUSY"
+	WorkerStatusDRAINING    WorkerStatus = "DRAINING"
+	WorkerStatusERROR       WorkerStatus = "ERROR"
+	WorkerStatusDEAD        WorkerStatus = "DEAD"
+	WorkerStatusQUARANTINED WorkerStatus = "QUARANTINED"
+)
+
+func (e *WorkerStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = WorkerStatus(s)
+	case string:
+		*e = WorkerStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for WorkerStatus: %T", src)
+	}
+	return nil
+}
+
+type NullWorkerStatus struct {
+	WorkerStatus WorkerStatus `json:"worker_status"`
+	Valid        bool         `json:"valid"` // Valid is true if WorkerStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullWorkerStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.WorkerStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.WorkerStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullWorkerStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.WorkerStatus), nil
+}
+
+type Account struct {
+	ID             pgtype.UUID        `json:"id"`
+	Platform       Platform           `json:"platform"`
+	Username       string             `json:"username"`
+	PasswordEnc    []byte             `json:"password_enc"`
+	AuthStatus     AuthStatus         `json:"auth_status"`
+	Handle         *string            `json:"handle"`
+	LastVerifiedAt pgtype.Timestamptz `json:"last_verified_at"`
+	Credentials    []byte             `json:"credentials"`
+	CookieExpiryAt pgtype.Timestamptz `json:"cookie_expiry_at"`
+	ProxyGroupID   pgtype.UUID        `json:"proxy_group_id"`
+	HealthScore    int32              `json:"health_score"`
+	Status         AccountStatus      `json:"status"`
+	Tags           []string           `json:"tags"`
+	WorkerID       pgtype.UUID        `json:"worker_id"`
+	LastUsedAt     pgtype.Timestamptz `json:"last_used_at"`
+	LastCheckedAt  pgtype.Timestamptz `json:"last_checked_at"`
+	LastError      *string            `json:"last_error"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
 type AppUser struct {
 	ID           pgtype.UUID        `json:"id"`
 	Email        string             `json:"email"`
@@ -131,8 +463,65 @@ type AuthSession struct {
 	RevokedReason NullAuthSessionRevokedReason `json:"revoked_reason"`
 }
 
+type Heartbeat struct {
+	ID       pgtype.UUID        `json:"id"`
+	WorkerID pgtype.UUID        `json:"worker_id"`
+	Ts       pgtype.Timestamptz `json:"ts"`
+	Cpu      float64            `json:"cpu"`
+	Mem      float64            `json:"mem"`
+	JobsDone int32              `json:"jobs_done"`
+}
+
+type ProvisionLog struct {
+	ID         pgtype.UUID        `json:"id"`
+	WorkerID   pgtype.UUID        `json:"worker_id"`
+	Op         ProvisionOp        `json:"op"`
+	Generation int32              `json:"generation"`
+	K8sRef     *string            `json:"k8s_ref"`
+	Status     string             `json:"status"`
+	Error      *string            `json:"error"`
+	Ts         pgtype.Timestamptz `json:"ts"`
+}
+
+type ProxyGroup struct {
+	ID             pgtype.UUID        `json:"id"`
+	Name           string             `json:"name"`
+	Region         string             `json:"region"`
+	Provider       string             `json:"provider"`
+	PoolKey        []byte             `json:"pool_key"`
+	MaxConcurrency int32              `json:"max_concurrency"`
+	DailyBudgetMb  int32              `json:"daily_budget_mb"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
 type TeamConfig struct {
 	ID        pgtype.UUID        `json:"id"`
 	Name      string             `json:"name"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type Worker struct {
+	ID             pgtype.UUID        `json:"id"`
+	Name           string             `json:"name"`
+	ContainerID    *string            `json:"container_id"`
+	ControlChannel *string            `json:"control_channel"`
+	ActionQueue    *string            `json:"action_queue"`
+	SessionPvc     *string            `json:"session_pvc"`
+	NovncService   *string            `json:"novnc_service"`
+	DesiredState   DesiredState       `json:"desired_state"`
+	Source         WorkerSource       `json:"source"`
+	Region         string             `json:"region"`
+	Status         WorkerStatus       `json:"status"`
+	Generation     int32              `json:"generation"`
+	ObservedGen    *int32             `json:"observed_gen"`
+	ProvisionErr   *string            `json:"provision_err"`
+	BrowserStatus  string             `json:"browser_status"`
+	CurrentJobID   pgtype.UUID        `json:"current_job_id"`
+	LastHeartbeat  pgtype.Timestamptz `json:"last_heartbeat"`
+	LastActionAt   pgtype.Timestamptz `json:"last_action_at"`
+	LastError      *string            `json:"last_error"`
+	QueueDepth     int32              `json:"queue_depth"`
+	RestartCount   int32              `json:"restart_count"`
+	ImageVersion   string             `json:"image_version"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 }

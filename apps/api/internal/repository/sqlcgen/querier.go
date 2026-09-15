@@ -11,22 +11,54 @@ import (
 )
 
 type Querier interface {
+	// provision_log queries: append-only audit of every provisioner op.
+	AppendProvisionLog(ctx context.Context, arg AppendProvisionLogParams) error
+	AssignAccount(ctx context.Context, arg AssignAccountParams) (AssignAccountRow, error)
+	CountAccountsByWorker(ctx context.Context, workerID pgtype.UUID) (int64, error)
+	CreateAccount(ctx context.Context, arg CreateAccountParams) (CreateAccountRow, error)
 	CreateAuthSession(ctx context.Context, arg CreateAuthSessionParams) (CreateAuthSessionRow, error)
+	CreateProxyGroup(ctx context.Context, arg CreateProxyGroupParams) (ProxyGroup, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (CreateUserRow, error)
+	CreateWorker(ctx context.Context, arg CreateWorkerParams) (Worker, error)
+	DeleteAccount(ctx context.Context, id pgtype.UUID) error
 	DeleteExpiredAuthSessions(ctx context.Context) (int64, error)
+	DeleteProxyGroup(ctx context.Context, id pgtype.UUID) error
+	DeleteWorker(ctx context.Context, id pgtype.UUID) error
+	// Account (executor identity) queries. password_enc is WRITE-ONLY: no query
+	// here ever selects it. UNIQUE(platform, username) + UNIQUE(worker_id, platform).
+	GetAccountByID(ctx context.Context, id pgtype.UUID) (GetAccountByIDRow, error)
 	GetActiveAuthSession(ctx context.Context, tokenHash []byte) (GetActiveAuthSessionRow, error)
+	// proxy_group queries. pool_key is encrypted at rest (AES-256-GCM, P1-07) and
+	// is only ever written by the credential-aware service, never decrypted here.
+	GetProxyGroupByID(ctx context.Context, id pgtype.UUID) (ProxyGroup, error)
 	// Example queries exercising the sqlc pipeline (P0-05).
 	// Real per-domain query files land with their tables in later phases.
 	GetTeamConfig(ctx context.Context) (TeamConfig, error)
 	GetUserByEmail(ctx context.Context, lower string) (AppUser, error)
 	// Auth queries (P0-06).
 	GetUserByID(ctx context.Context, id pgtype.UUID) (AppUser, error)
+	// Worker (container) lifecycle queries. One worker = one container hosting
+	// at most one account per platform (UNIQUE(worker_id, platform) on account).
+	// generation guards idempotent reconcile (pod label smm.generation).
+	GetWorkerByID(ctx context.Context, id pgtype.UUID) (Worker, error)
+	GetWorkerByName(ctx context.Context, name string) (Worker, error)
 	InsertAuditLog(ctx context.Context, arg InsertAuditLogParams) (AuditLog, error)
+	InsertHeartbeat(ctx context.Context, arg InsertHeartbeatParams) error
+	ListAccounts(ctx context.Context, arg ListAccountsParams) ([]ListAccountsRow, error)
+	ListAccountsByWorker(ctx context.Context, workerID pgtype.UUID) ([]ListAccountsByWorkerRow, error)
 	ListAuditLogs(ctx context.Context, limit int32) ([]AuditLog, error)
+	ListProvisionLogsByWorker(ctx context.Context, arg ListProvisionLogsByWorkerParams) ([]ProvisionLog, error)
+	ListProxyGroups(ctx context.Context) ([]ProxyGroup, error)
 	ListUsers(ctx context.Context, arg ListUsersParams) ([]ListUsersRow, error)
+	ListWorkers(ctx context.Context, arg ListWorkersParams) ([]Worker, error)
 	RevokeAllUserSessions(ctx context.Context, arg RevokeAllUserSessionsParams) error
 	RevokeAuthSession(ctx context.Context, arg RevokeAuthSessionParams) error
 	TouchAuthSession(ctx context.Context, id pgtype.UUID) error
+	TouchWorkerHeartbeat(ctx context.Context, arg TouchWorkerHeartbeatParams) (Worker, error)
+	UnassignAccount(ctx context.Context, id pgtype.UUID) (UnassignAccountRow, error)
+	UpdateAccount(ctx context.Context, arg UpdateAccountParams) (UpdateAccountRow, error)
+	UpdateProxyGroup(ctx context.Context, arg UpdateProxyGroupParams) (ProxyGroup, error)
+	UpdateWorker(ctx context.Context, arg UpdateWorkerParams) (Worker, error)
 	UpsertTeamConfig(ctx context.Context, name string) (TeamConfig, error)
 }
 

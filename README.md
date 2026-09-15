@@ -1,7 +1,8 @@
-# jg-smm-automation — Social Media Management
+# jg-smm — Social Media Management
 
-Scrape, monitor, and automate actions across social platforms (IG/Threads for MVP).
-Spec set lives in the repo root (`PRD.md`, `ERD.md`, `SYSTEM_DESIGN.md`, ...).
+Scrape, monitor, and automate actions across social platforms (IG/Threads for
+MVP). Spec set lives in the repo root (`PRD.md`, `ERD.md`, `SYSTEM_DESIGN.md`,
+...).
 
 ## Layout
 
@@ -85,6 +86,27 @@ make down      # stop (volumes kept)
 
 Smoke checks after boot: `curl localhost:24080/healthz` (API),
 `localhost:24081` (web), `localhost:24901` (MinIO console).
+
+## Observability (app + infra logging)
+
+The platform must log both application behaviour and infrastructure signals so
+the team can debug a failed action and see the container state behind it.
+
+| Layer       | What is logged                                       | Where it lands                     |
+| ----------- | ---------------------------------------------------- | ---------------------------------- |
+| API         | Structured `slog` JSON (request, error, latency)     | `internal/obs` → stdout, collected |
+| API         | Every worker callback (heartbeat / auth / attempt)   | `JobService` log lines + DB rows   |
+| Worker      | Lifecycle, queue take/ack, browser state transitions | `apps/worker/src/core/logger`      |
+| Provisioner | Every CREATE/DELETE op                               | `provision_log` table (audit)      |
+| Infra       | Worker CPU/mem/jobs telemetry                        | `heartbeat` table + worker row     |
+| Infra       | Health probes (postgres/redis readiness)             | `/healthz` + container HEALTHCHECK |
+
+Principles (see `DEVELOPMENT_RULE.md`):
+
+- Never log credentials or ciphertext (the CI `credential-guard` job enforces this).
+- Structured logs only (key/value JSON), never `fmt.Println` in services.
+- Heartbeats double as liveness: a stale `worker.last_heartbeat` is the signal
+  the reconciler acts on.
 
 ## Auth (local)
 
