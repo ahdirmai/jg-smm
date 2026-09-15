@@ -68,6 +68,12 @@ export const api = {
 
   listContainers: (signal?: AbortSignal) =>
     request<ContainerList>('/api/containers', signal ? { signal } : undefined),
+  createContainer: (name: string, region: string) =>
+    request<Container>('/api/containers', {
+      method: 'POST',
+      body: JSON.stringify({ name, region }),
+    }),
+  deleteContainer: (id: string) => request<void>(`/api/containers/${id}`, { method: 'DELETE' }),
 
   // The queue (P3-13). Enqueue is intent only: account + permalink + type.
   // Comment text is composed server-side from templates, never sent here.
