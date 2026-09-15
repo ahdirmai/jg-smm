@@ -12,6 +12,9 @@
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
+    "proto:serve": "python3 -m http.server 24085 --directory docs/prototype",
+    "proto:verify": "node docs/prototype/verify.mjs",
+    "proto:shots": "node docs/prototype/shots.mjs",
     "clean": "turbo run clean && rm -rf node_modules"
   },
   "devDependencies": {
