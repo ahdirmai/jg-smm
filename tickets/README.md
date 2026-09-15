@@ -56,6 +56,12 @@ Satu file per tiket (generated dari `TICKETS.md`). Jangan edit manual — jalank
 | P2-07 | Alert engine | P1 | M | [p2_07.md](p2_07.md) |
 | P2-08 | Monitoring dashboard FE | P1 | M | [p2_08.md](p2_08.md) |
 | P2-09 | Live monitoring (deferred) | P2 | S | [p2_09.md](p2_09.md) |
+| P2-10 | ERD akun resmi | P0 | M | [p2_10.md](p2_10.md) |
+| P2-11 | Provider adapter | P0 | M | [p2_11.md](p2_11.md) |
+| P2-12 | Analytics ingestor | P0 | L | [p2_12.md](p2_12.md) |
+| P2-13 | Official Account API+CRUD | P0 | M | [p2_13.md](p2_13.md) |
+| P2-14 | Analytics API + SSE | P0 | M | [p2_14.md](p2_14.md) |
+| P2-15 | FE Monitoring per-platform | P1 | L | [p2_15.md](p2_15.md) |
 
 ## P3 — Action Engine (Playwright)
 
@@ -106,4 +112,4 @@ Satu file per tiket (generated dari `TICKETS.md`). Jangan edit manual — jalank
 | P5-09 | Docs final sync | P0 | M | [p5_09.md](p5_09.md) |
 | P5-10 | GA sign-off | P0 | L | [p5_10.md](p5_10.md) |
 
-**Total: 74 tiket.**
+**Total: 80 tiket.**
