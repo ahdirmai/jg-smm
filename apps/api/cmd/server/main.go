@@ -88,6 +88,24 @@ func main() {
 		jobSvc := service.NewJobService(workerRepo, accountRepo, logRepo, adapter.SystemClock{}, logger)
 		deps.Internal = apihttp.NewInternalHandler(jobSvc)
 
+		// Bin-packing: accounts land in the first container with a free platform
+		// slot; PROVISION_AUTO_CREATE is the fallback that spawns an AUTO
+		// container when the fleet is full (P1-05).
+		packer := service.NewPacker(workerRepo, accountRepo, service.PackerConfig{
+			MaxPerContainer: cfg.MaxAccountsPerContainer,
+			AutoCreate:      cfg.ProvisionAutoCreate,
+			Clock:           adapter.SystemClock{},
+			Logger:          logger,
+		})
+
+		// Container API (P1-19): create/list/delete MANUAL containers. The
+		// reconciler provisions the pod from the row this service writes.
+		containerSvc := service.NewContainerService(workerRepo, accountRepo, packer, service.ContainerConfig{
+			Clock:  adapter.SystemClock{},
+			Logger: logger,
+		})
+		deps.Containers = apihttp.NewContainerHandler(containerSvc)
+
 		// Provisioning driver: k8s in a cluster, static (bookkeeping only) on
 		// a workstation. The reconciler is a pure loop over this port, so both
 		// tiers share the same code path (P1-03/P1-04).

@@ -63,14 +63,15 @@ func (f *fakeDriver) Observe(ctx context.Context, workerID string) (int, bool, e
 
 // fakeWorkerStore is a minimal port.WorkerStore for the reconciler.
 type fakeWorkerStore struct {
-	mu       sync.Mutex
-	workers  map[string]domain.Worker
-	failList bool
-	failUpd  bool
+	mu             sync.Mutex
+	workers        map[string]domain.Worker
+	failList       bool
+	failUpd        bool
+	duplicateNames map[string]bool
 }
 
 func newFakeWorkerStore() *fakeWorkerStore {
-	return &fakeWorkerStore{workers: map[string]domain.Worker{}}
+	return &fakeWorkerStore{workers: map[string]domain.Worker{}, duplicateNames: map[string]bool{}}
 }
 
 func (s *fakeWorkerStore) seed(w domain.Worker) {
@@ -122,6 +123,9 @@ func (s *fakeWorkerStore) Create(ctx context.Context, w domain.Worker) (domain.W
 	defer s.mu.Unlock()
 	if w.ID == "" {
 		w.ID = "auto-" + w.Name
+	}
+	if s.duplicateNames[w.Name] {
+		return domain.Worker{}, domain.ErrConflict
 	}
 	s.workers[w.ID] = w
 	return w, nil

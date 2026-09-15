@@ -16,9 +16,10 @@ const (
 // optional handlers (e.g. Auth) are skipped when nil so the API can boot before
 // the database is wired.
 type Dependencies struct {
-	Health   *HealthHandler
-	Auth     *AuthHandler
-	Internal *InternalHandler
+	Health     *HealthHandler
+	Auth       *AuthHandler
+	Internal   *InternalHandler
+	Containers *ContainerHandler
 }
 
 // NewRouter builds the Echo instance with middleware and routes. It does not
@@ -52,6 +53,13 @@ func NewRouter(deps Dependencies) *echo.Echo {
 
 	if deps.Internal != nil {
 		deps.Internal.Register(e)
+	}
+
+	if deps.Containers != nil && deps.Auth != nil {
+		// Container ops need auth + the act permission (OPERATOR+). The group
+		// carries both; the handler only adds routes.
+		containers := e.Group("/api", deps.Auth.requireAuth(), RequirePermission(domain.PermAct))
+		deps.Containers.Register(containers)
 	}
 
 	return e

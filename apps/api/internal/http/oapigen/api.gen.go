@@ -6,6 +6,7 @@ package oapigen
 import (
 	"time"
 
+	"github.com/oapi-codegen/nullable"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
@@ -27,6 +28,58 @@ const (
 	AuthStatusAUTHENTICATING AuthStatus = "AUTHENTICATING"
 	AuthStatusFAILED         AuthStatus = "FAILED"
 	AuthStatusNEEDSINPUT     AuthStatus = "NEEDS_INPUT"
+)
+
+// Defines values for ContainerDesiredState.
+const (
+	RUNNING ContainerDesiredState = "RUNNING"
+	STOPPED ContainerDesiredState = "STOPPED"
+)
+
+// Defines values for ContainerSource.
+const (
+	AUTO   ContainerSource = "AUTO"
+	MANUAL ContainerSource = "MANUAL"
+)
+
+// Defines values for ContainerStatus.
+const (
+	ContainerStatusBUSY        ContainerStatus = "BUSY"
+	ContainerStatusDEAD        ContainerStatus = "DEAD"
+	ContainerStatusDRAINING    ContainerStatus = "DRAINING"
+	ContainerStatusERROR       ContainerStatus = "ERROR"
+	ContainerStatusIDLE        ContainerStatus = "IDLE"
+	ContainerStatusPENDING     ContainerStatus = "PENDING"
+	ContainerStatusQUARANTINED ContainerStatus = "QUARANTINED"
+	ContainerStatusREADY       ContainerStatus = "READY"
+)
+
+// Defines values for ContainerAccountAuthStatus.
+const (
+	ContainerAccountAuthStatusAUTHENTICATED  ContainerAccountAuthStatus = "AUTHENTICATED"
+	ContainerAccountAuthStatusAUTHENTICATING ContainerAccountAuthStatus = "AUTHENTICATING"
+	ContainerAccountAuthStatusFAILED         ContainerAccountAuthStatus = "FAILED"
+	ContainerAccountAuthStatusNEEDSINPUT     ContainerAccountAuthStatus = "NEEDS_INPUT"
+	ContainerAccountAuthStatusQUARANTINED    ContainerAccountAuthStatus = "QUARANTINED"
+)
+
+// Defines values for ContainerAccountPlatform.
+const (
+	Facebook  ContainerAccountPlatform = "facebook"
+	Instagram ContainerAccountPlatform = "instagram"
+	Linkedin  ContainerAccountPlatform = "linkedin"
+	Threads   ContainerAccountPlatform = "threads"
+	Tiktok    ContainerAccountPlatform = "tiktok"
+	X         ContainerAccountPlatform = "x"
+	Youtube   ContainerAccountPlatform = "youtube"
+)
+
+// Defines values for ContainerAccountStatus.
+const (
+	ACTIVE   ContainerAccountStatus = "ACTIVE"
+	ARCHIVED ContainerAccountStatus = "ARCHIVED"
+	DEAD     ContainerAccountStatus = "DEAD"
+	PAUSED   ContainerAccountStatus = "PAUSED"
 )
 
 // Defines values for HeartbeatBrowserStatus.
@@ -84,6 +137,61 @@ type AuthStatus string
 // CallbackAck defines model for CallbackAck.
 type CallbackAck struct {
 	Accepted bool `json:"accepted"`
+}
+
+// Container defines model for Container.
+type Container struct {
+	Accounts           *[]ContainerAccount    `json:"accounts,omitempty"`
+	CreatedAt          time.Time              `json:"createdAt"`
+	DesiredState       ContainerDesiredState  `json:"desiredState"`
+	Generation         int                    `json:"generation"`
+	Id                 string                 `json:"id"`
+	Name               string                 `json:"name"`
+	ObservedGeneration nullable.Nullable[int] `json:"observedGeneration,omitempty"`
+	Region             string                 `json:"region"`
+	Source             ContainerSource        `json:"source"`
+	Status             ContainerStatus        `json:"status"`
+}
+
+// ContainerDesiredState defines model for Container.DesiredState.
+type ContainerDesiredState string
+
+// ContainerSource defines model for Container.Source.
+type ContainerSource string
+
+// ContainerStatus defines model for Container.Status.
+type ContainerStatus string
+
+// ContainerAccount defines model for ContainerAccount.
+type ContainerAccount struct {
+	AuthStatus ContainerAccountAuthStatus `json:"authStatus"`
+	Id         string                     `json:"id"`
+	Platform   ContainerAccountPlatform   `json:"platform"`
+	Status     ContainerAccountStatus     `json:"status"`
+	Username   string                     `json:"username"`
+}
+
+// ContainerAccountAuthStatus defines model for ContainerAccount.AuthStatus.
+type ContainerAccountAuthStatus string
+
+// ContainerAccountPlatform defines model for ContainerAccount.Platform.
+type ContainerAccountPlatform string
+
+// ContainerAccountStatus defines model for ContainerAccount.Status.
+type ContainerAccountStatus string
+
+// ContainerList defines model for ContainerList.
+type ContainerList struct {
+	Containers []Container `json:"containers"`
+}
+
+// CreateContainerRequest defines model for CreateContainerRequest.
+type CreateContainerRequest struct {
+	// Name Optional display name. Omit to get a generated name.
+	Name *string `json:"name,omitempty"`
+
+	// Region ISO 3166-1 alpha-2 region for proxy placement.
+	Region string `json:"region"`
 }
 
 // ErrorBody defines model for ErrorBody.
@@ -160,11 +268,17 @@ type User struct {
 	Role  Role                `json:"role"`
 }
 
+// ContainerId defines model for ContainerId.
+type ContainerId = string
+
 // Error defines model for Error.
 type Error = ErrorBody
 
 // LoginJSONRequestBody defines body for Login for application/json ContentType.
 type LoginJSONRequestBody = LoginRequest
+
+// CreateContainerJSONRequestBody defines body for CreateContainer for application/json ContentType.
+type CreateContainerJSONRequestBody = CreateContainerRequest
 
 // PostAccountCallbackJSONRequestBody defines body for PostAccountCallback for application/json ContentType.
 type PostAccountCallbackJSONRequestBody = AccountCallback

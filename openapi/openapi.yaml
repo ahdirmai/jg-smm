@@ -113,6 +113,78 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
 
+  /api/containers:
+    post:
+      tags: [containers]
+      summary: Create a container manually
+      description: |
+        Creates a MANUAL worker container in the RUNNING desired state. The
+        reconciler provisions its pod+PVC from the row. MANUAL containers are
+        never auto-deleted, even at zero accounts (the operator owns their life).
+        Requires the `act` permission (OPERATOR+).
+      operationId: createContainer
+      security:
+        - accessCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateContainerRequest'
+      responses:
+        '201':
+          description: Container created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Container'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+    get:
+      tags: [containers]
+      summary: List containers
+      description: Returns every container with its hosted accounts.
+      operationId: listContainers
+      security:
+        - accessCookie: []
+      responses:
+        '200':
+          description: Containers and their accounts.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContainerList'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+
+  /api/containers/{containerId}:
+    parameters:
+      - $ref: '#/components/parameters/ContainerId'
+    delete:
+      tags: [containers]
+      summary: Delete a container
+      description: |
+        Sets desired state STOPPED; the reconciler tears down pod+PVC+service
+        and the row is removed. Requires the `act` permission.
+      operationId: deleteContainer
+      security:
+        - accessCookie: []
+      responses:
+        '204':
+          description: Container deleted.
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+
   /api/admin/ping:
     get:
       tags: [admin]
@@ -206,6 +278,15 @@ paths:
           $ref: '#/components/responses/Error'
 
 components:
+  parameters:
+    ContainerId:
+      name: containerId
+      in: path
+      required: true
+      schema:
+        type: string
+      description: The container ID.
+
   securitySchemes:
     accessCookie:
       type: apiKey
@@ -318,6 +399,81 @@ components:
       properties:
         accepted:
           type: boolean
+
+    CreateContainerRequest:
+      type: object
+      required: [region]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: Optional display name. Omit to get a generated name.
+        region:
+          type: string
+          minLength: 2
+          maxLength: 2
+          description: ISO 3166-1 alpha-2 region for proxy placement.
+          example: ID
+
+    Container:
+      type: object
+      required: [id, name, desiredState, source, region, status, generation, createdAt]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        desiredState:
+          type: string
+          enum: [RUNNING, STOPPED]
+        source:
+          type: string
+          enum: [MANUAL, AUTO]
+        region:
+          type: string
+        status:
+          type: string
+          enum: [PENDING, READY, IDLE, BUSY, DRAINING, ERROR, DEAD, QUARANTINED]
+        generation:
+          type: integer
+        observedGeneration:
+          type: integer
+          nullable: true
+        accounts:
+          type: array
+          items:
+            $ref: '#/components/schemas/ContainerAccount'
+        createdAt:
+          type: string
+          format: date-time
+
+    ContainerAccount:
+      type: object
+      required: [id, platform, username, authStatus, status]
+      properties:
+        id:
+          type: string
+        platform:
+          type: string
+          enum: [instagram, threads, facebook, linkedin, x, youtube, tiktok]
+        username:
+          type: string
+        authStatus:
+          type: string
+          enum: [AUTHENTICATING, NEEDS_INPUT, AUTHENTICATED, FAILED, QUARANTINED]
+        status:
+          type: string
+          enum: [ACTIVE, PAUSED, ARCHIVED, DEAD]
+
+    ContainerList:
+      type: object
+      required: [containers]
+      properties:
+        containers:
+          type: array
+          items:
+            $ref: '#/components/schemas/Container'
 
     ActionCallback:
       type: object

@@ -7,6 +7,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/labstack/echo/v4 v4.15.4
+	github.com/oapi-codegen/nullable v1.2.0
 	github.com/oapi-codegen/runtime v1.1.1
 	github.com/redis/go-redis/v9 v9.7.0
 	golang.org/x/crypto v0.57.0

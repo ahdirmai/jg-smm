@@ -106,6 +106,59 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/containers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List containers
+         * @description Returns every container with its hosted accounts.
+         */
+        get: operations["listContainers"];
+        put?: never;
+        /**
+         * Create a container manually
+         * @description Creates a MANUAL worker container in the RUNNING desired state. The
+         *     reconciler provisions its pod+PVC from the row. MANUAL containers are
+         *     never auto-deleted, even at zero accounts (the operator owns their life).
+         *     Requires the `act` permission (OPERATOR+).
+         *
+         */
+        post: operations["createContainer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/containers/{containerId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The container ID. */
+                containerId: components["parameters"]["ContainerId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete a container
+         * @description Sets desired state STOPPED; the reconciler tears down pod+PVC+service
+         *     and the row is removed. Requires the `act` permission.
+         *
+         */
+        delete: operations["deleteContainer"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/ping": {
         parameters: {
             query?: never;
@@ -243,6 +296,44 @@ export interface components {
         CallbackAck: {
             accepted: boolean;
         };
+        CreateContainerRequest: {
+            /** @description Optional display name. Omit to get a generated name. */
+            name?: string;
+            /**
+             * @description ISO 3166-1 alpha-2 region for proxy placement.
+             * @example ID
+             */
+            region: string;
+        };
+        Container: {
+            id: string;
+            name: string;
+            /** @enum {string} */
+            desiredState: "RUNNING" | "STOPPED";
+            /** @enum {string} */
+            source: "MANUAL" | "AUTO";
+            region: string;
+            /** @enum {string} */
+            status: "PENDING" | "READY" | "IDLE" | "BUSY" | "DRAINING" | "ERROR" | "DEAD" | "QUARANTINED";
+            generation: number;
+            observedGeneration?: number | null;
+            accounts?: components["schemas"]["ContainerAccount"][];
+            /** Format: date-time */
+            createdAt: string;
+        };
+        ContainerAccount: {
+            id: string;
+            /** @enum {string} */
+            platform: "instagram" | "threads" | "facebook" | "linkedin" | "x" | "youtube" | "tiktok";
+            username: string;
+            /** @enum {string} */
+            authStatus: "AUTHENTICATING" | "NEEDS_INPUT" | "AUTHENTICATED" | "FAILED" | "QUARANTINED";
+            /** @enum {string} */
+            status: "ACTIVE" | "PAUSED" | "ARCHIVED" | "DEAD";
+        };
+        ContainerList: {
+            containers: components["schemas"]["Container"][];
+        };
         ActionCallback: {
             attemptId: string;
             status: components["schemas"]["AttemptStatus"];
@@ -291,7 +382,10 @@ export interface components {
             };
         };
     };
-    parameters: never;
+    parameters: {
+        /** @description The container ID. */
+        ContainerId: string;
+    };
     requestBodies: never;
     headers: never;
     pathItems: never;
@@ -431,6 +525,79 @@ export interface operations {
                 };
             };
             401: components["responses"]["Error"];
+        };
+    };
+    listContainers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Containers and their accounts. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContainerList"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    createContainer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateContainerRequest"];
+            };
+        };
+        responses: {
+            /** @description Container created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Container"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    deleteContainer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The container ID. */
+                containerId: components["parameters"]["ContainerId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Container deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
         };
     };
     adminPing: {
