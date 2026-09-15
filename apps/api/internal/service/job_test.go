@@ -47,7 +47,7 @@ func TestClassifyAttempt(t *testing.T) {
 // the classification is the P3-12 contract and must hold now so P3-11 stores a
 // real class instead of backfilling one.
 func TestRecordAttemptClassifies(t *testing.T) {
-	svc := NewJobService(nil, nil, nil, nil, nil)
+	svc := NewJobService(nil, nil, nil, nil, nil, nil)
 	ctx := t.Context()
 
 	// A banned-account failure: the callback must be accepted and classified,

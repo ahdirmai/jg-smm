@@ -1229,6 +1229,19 @@ components:
         error:
           type: string
           maxLength: 4096
+        renderedText:
+          type: string
+          maxLength: 4096
+          description: The final comment text the worker posted (template already rendered), stored on the attempt so a verdict replays without the pool.
+        responseExcerpt:
+          type: string
+          maxLength: 1024
+          description: First runes of the platform response; the debug trail behind a verdict.
+        durationMs:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Measured run time of the attempt.
 
     AttemptStatus:
       type: string

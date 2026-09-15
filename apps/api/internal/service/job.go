@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/domain"
@@ -17,21 +19,48 @@ type JobService struct {
 	workers  port.WorkerStore
 	accounts port.AccountStore
 	logs     port.ProvisionLogStore
-	clock    port.Clock
-	logger   *slog.Logger
+	// actions persists action verdicts (P3-11). Nil in earlier phases or tests;
+	// a callback then reports persistence as unavailable instead of panicking.
+	actions port.ActionStore
+	// retry is the action-attempt retry policy (P3-11): how far an attempt may
+	// escalate and how long to wait before the next one.
+	retry  RetryPolicy
+	clock  port.Clock
+	logger *slog.Logger
 }
 
-// NewJobService wires the service. workers/accounts/logs may be nil during
-// earlier phases; the affected endpoints then report the store as unavailable
-// rather than panicking.
-func NewJobService(workers port.WorkerStore, accounts port.AccountStore, logs port.ProvisionLogStore, clock port.Clock, logger *slog.Logger) *JobService {
+// RetryPolicy is the action retry budget (P3-11): a retryable failure gets at
+// most MaxAttempts tries total, spaced by escalating Backoff. 4xx-class
+// verdicts never retry — the classifier marks those AUTH/BANNED/UNKNOWN, and
+// re-running an action on a dead session cannot change the outcome.
+type RetryPolicy struct {
+	MaxAttempts int
+	Backoff     time.Duration
+}
+
+// DefaultRetryPolicy is the ticket's contract: 3 attempts, escalating base
+// backoff. The scheduler adds jitter; the value here is the floor.
+var DefaultRetryPolicy = RetryPolicy{MaxAttempts: 3, Backoff: 30 * time.Second}
+
+// NewJobService wires the service. workers/accounts/logs/actions may be nil
+// during earlier phases; the affected endpoints then report the store as
+// unavailable rather than panicking.
+func NewJobService(workers port.WorkerStore, accounts port.AccountStore, logs port.ProvisionLogStore, actions port.ActionStore, clock port.Clock, logger *slog.Logger) *JobService {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	if clock == nil {
 		clock = realClock{}
 	}
-	return &JobService{workers: workers, accounts: accounts, logs: logs, clock: clock, logger: logger}
+	return &JobService{
+		workers:  workers,
+		accounts: accounts,
+		logs:     logs,
+		actions:  actions,
+		retry:    DefaultRetryPolicy,
+		clock:    clock,
+		logger:   logger,
+	}
 }
 
 // AttemptRecord is a sanitised action-attempt verdict.
@@ -48,6 +77,13 @@ type AttemptRecord struct {
 	ActionType *string
 	TargetURL  *string
 	WorkerID   *string
+	// RenderedText is the final comment text the worker posted; the log stores
+	// it so a verdict is replayable without the template pool.
+	RenderedText *string
+	// ResponseExcerpt is the first runes of the platform response (debug trail).
+	ResponseExcerpt *string
+	// DurationMs is the measured run time of the attempt.
+	DurationMs int64
 }
 
 // ClassifyAttempt returns the error class for one attempt verdict (P3-12). A
@@ -62,9 +98,15 @@ func ClassifyAttempt(status domain.AttemptStatus, errMsg string) domain.ErrorCla
 	return domain.ClassifyActionError(errMsg)
 }
 
-// RecordAttempt persists an action verdict. The job tables land in P3; until
-// then the verdict is validated and logged so the transport path is exercised
-// end to end, and callers get a clear "not yet persisted" error they can act on.
+// RecordAttempt persists an action verdict (P3-11). It is the single writer
+// for action_log rows: the worker only POSTs, so this service validates the
+// enums, derives the error class, normalises the screenshot name, and applies
+// the retry policy. Never throws: a malformed callback is a 400, a store
+// failure is a 500 the worker's own 3x callback retry can ride over.
+//
+// Idempotency: the (action_job_id, attempt) pair is UNIQUE, so the RUNNING
+// report and the terminal verdict are one row no matter how many times the
+// callback is replayed — the Idempotency-Key of this endpoint IS that pair.
 func (s *JobService) RecordAttempt(ctx context.Context, r AttemptRecord) error {
 	if !r.Status.Valid() {
 		return fmt.Errorf("%w: invalid attempt status %q", domain.ErrValidation, r.Status)
@@ -82,8 +124,32 @@ func (s *JobService) RecordAttempt(ctx context.Context, r AttemptRecord) error {
 		"screenshot", r.Screenshot,
 		"errorClass", string(r.ErrorClass),
 	)
-	// P3 will persist this into action_log once that table exists.
-	return fmt.Errorf("%w: action verdict persistence lands in P3", domain.ErrUnavailable)
+	if s.actions == nil {
+		return fmt.Errorf("%w: action store unavailable", domain.ErrUnavailable)
+	}
+	jobID, attempt, err := parseAttemptID(r.AttemptID)
+	if err != nil {
+		return fmt.Errorf("%w: %v", domain.ErrValidation, err)
+	}
+	// The verdict is written first: even the retry decision below reads from the
+	// log, and a crash between the upsert and the reschedule leaves a FAILED
+	// row, not a lost one.
+	log := domain.ActionLog{
+		ActionJobID:     jobID,
+		Attempt:         attempt,
+		Status:          r.Status,
+		Verified:        r.Status == domain.AttemptSuccess,
+		WorkerID:        derefStrPtr(r.WorkerID),
+		RenderedText:    derefStrPtr(r.RenderedText),
+		ResponseExcerpt: derefStrPtr(r.ResponseExcerpt),
+		ErrorClass:      string(r.ErrorClass),
+		ScreenshotURL:   r.Screenshot,
+		DurationMs:      r.DurationMs,
+	}
+	if _, err := s.actions.UpsertActionLog(ctx, log); err != nil {
+		return fmt.Errorf("persist attempt: %w", err)
+	}
+	return s.applyVerdict(ctx, jobID, attempt, r)
 }
 
 // AuthOutcome is a sanitised login/2FA result for an account.
@@ -192,9 +258,88 @@ type realClock struct{}
 
 func (realClock) Now() time.Time { return time.Now().UTC() }
 
+// parseAttemptID splits the callback's "<jobId>:<attempt>" key. The pair is the
+// idempotency key of the whole endpoint: it names exactly one row in
+// action_log, so a replayed callback updates the same verdict instead of
+// appending a duplicate.
+func parseAttemptID(id string) (string, int, error) {
+	parts := strings.SplitN(id, ":", 2)
+	if len(parts) != 2 || parts[0] == "" {
+		return "", 0, fmt.Errorf("attempt_id must be \"<jobId>:<attempt>\", got %q", id)
+	}
+	n, err := strconv.Atoi(parts[1])
+	if err != nil || n <= 0 {
+		return "", 0, fmt.Errorf("attempt number must be a positive integer, got %q", parts[1])
+	}
+	return parts[0], n, nil
+}
+
+// applyVerdict projects a terminal verdict onto the job row and decides the
+// retry. The ActionLog row is already written and is the source of truth; this
+// only keeps the queue listable without a join and returns a retryable job to
+// the pool when the policy allows it.
+//
+// RUNNING is explicitly NOT a verdict: it is the worker announcing it started,
+// so it writes a log row and touches nothing else. Treating it as terminal
+// would complete a job the worker has not finished yet.
+//
+// Retry rule (P3-11): only a class marked Retryable gets another attempt, and
+// only while the attempt budget holds. AUTH and BANNED never retry — the
+// session is gone or the account is locked, and a repeat cannot fix either. A
+// non-retryable failure or a success completes the job immediately.
+func (s *JobService) applyVerdict(ctx context.Context, jobID string, attempt int, r AttemptRecord) error {
+	if r.Status == domain.AttemptRunning {
+		return nil
+	}
+	if r.Status != domain.AttemptFailed && r.Status != domain.AttemptRetry {
+		// SUCCESS or CANCELLED: terminal. Verified is set on the log row; the
+		// job row just needs the projection.
+		status := domain.JobStatusSuccess
+		if r.Status == domain.AttemptCancelled {
+			status = domain.JobStatusCancelled
+		}
+		if _, err := s.actions.CompleteActionJob(ctx, jobID, status, nil); err != nil {
+			return fmt.Errorf("complete job: %w", err)
+		}
+		return nil
+	}
+
+	// A failure decides here whether the job gets another life.
+	if r.ErrorClass.Retryable() && attempt < s.retry.MaxAttempts {
+		backoff := s.retry.Backoff << (attempt - 1)
+		at := s.clock.Now().Add(backoff)
+		if _, err := s.actions.RescheduleActionJob(ctx, jobID, at); err != nil {
+			return fmt.Errorf("reschedule retry: %w", err)
+		}
+		s.logger.Info("action retry scheduled",
+			"jobId", jobID,
+			"attempt", attempt,
+			"errorClass", string(r.ErrorClass),
+			"backoffMs", backoff.Milliseconds(),
+		)
+		return nil
+	}
+
+	// Budget exhausted or the class is final (AUTH/BANNED/UNKNOWN): the job is
+	// FAILED with the reason preserved on the row for triage.
+	if _, err := s.actions.CompleteActionJob(ctx, jobID, domain.JobStatusFailed, r.Error); err != nil {
+		return fmt.Errorf("fail job: %w", err)
+	}
+	return nil
+}
+
 // errorOrEmpty unboxes a pointer-typed error message; nil is the empty string
 // (the classifier maps that to UNKNOWN, which is not retryable).
 func errorOrEmpty(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+
+// derefStrPtr unboxes a pointer string to the plain string the domain uses for
+// nullable text columns (empty means NULL at the repo boundary).
+func derefStrPtr(p *string) string {
 	if p == nil {
 		return ""
 	}

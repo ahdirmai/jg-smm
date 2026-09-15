@@ -96,7 +96,8 @@ func main() {
 		workerRepo := repository.NewWorkerRepo(pg.Queries())
 		accountRepo := repository.NewAccountRepo(pg.Queries())
 		logRepo := repository.NewProvisionLogRepo(pg.Queries())
-		jobSvc := service.NewJobService(workerRepo, accountRepo, logRepo, adapter.SystemClock{}, logger)
+		actionRepo := repository.NewActionRepo(pg.Queries())
+		jobSvc := service.NewJobService(workerRepo, accountRepo, logRepo, actionRepo, adapter.SystemClock{}, logger)
 		deps.Internal = apihttp.NewInternalHandler(jobSvc)
 
 		// Bin-packing: accounts land in the first container with a free platform

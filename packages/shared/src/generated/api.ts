@@ -769,6 +769,15 @@ export interface components {
             /** @description File name only; the server applies path.Base and requires .png. */
             screenshotPath?: string;
             error?: string;
+            /** @description The final comment text the worker posted (template already rendered), stored on the attempt so a verdict replays without the pool. */
+            renderedText?: string;
+            /** @description First runes of the platform response; the debug trail behind a verdict. */
+            responseExcerpt?: string;
+            /**
+             * Format: int64
+             * @description Measured run time of the attempt.
+             */
+            durationMs?: number;
         };
         /** @enum {string} */
         AttemptStatus: "SUCCESS" | "FAILED" | "RETRY" | "CANCELLED";

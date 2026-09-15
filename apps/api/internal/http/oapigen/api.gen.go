@@ -216,7 +216,16 @@ type ActionCallback struct {
 	// ActionType e.g. like, comment, report.
 	ActionType *string `json:"actionType,omitempty"`
 	AttemptId  string  `json:"attemptId"`
+
+	// DurationMs Measured run time of the attempt.
+	DurationMs *int64  `json:"durationMs,omitempty"`
 	Error      *string `json:"error,omitempty"`
+
+	// RenderedText The final comment text the worker posted (template already rendered), stored on the attempt so a verdict replays without the pool.
+	RenderedText *string `json:"renderedText,omitempty"`
+
+	// ResponseExcerpt First runes of the platform response; the debug trail behind a verdict.
+	ResponseExcerpt *string `json:"responseExcerpt,omitempty"`
 
 	// ScreenshotPath File name only; the server applies path.Base and requires .png.
 	ScreenshotPath *string       `json:"screenshotPath,omitempty"`

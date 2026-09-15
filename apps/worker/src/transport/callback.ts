@@ -17,14 +17,25 @@ function backoffMs(attempt: number): number {
   return attempt * 500;
 }
 
-export function createCallback(config: WorkerConfig, logger: Logger, options: CallbackOptions = {}) {
+export function createCallback(
+  config: WorkerConfig,
+  logger: Logger,
+  options: CallbackOptions = {},
+) {
   const maxAttempts = options.maxAttempts ?? 3;
   const timeoutMs = options.timeoutMs ?? 8_000;
   const doFetch = options.fetchImpl ?? fetch;
   const url = `${config.apiUrl}/internal/action-callback`;
 
   async function post(result: ActionResult): Promise<void> {
-    const body = JSON.stringify({ ...result, workerId: config.workerId });
+    // The API's idempotency key is the (job, attempt) pair as
+    // "<jobId>:<attempt>" — one attempt is exactly one row, so a replayed
+    // callback updates the verdict instead of duplicating it.
+    const body = JSON.stringify({
+      ...result,
+      attemptId: `${result.jobId}:${result.attempt}`,
+      workerId: config.workerId,
+    });
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
         const res = await doFetch(url, {

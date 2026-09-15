@@ -23,6 +23,10 @@ const MaxCallbackBytes = 64 << 10 // 64 KiB
 // worker cannot store unbounded text in the DB.
 const maxErrorRunes = 4096
 
+// maxExcerptRunes is the budget for the platform-response excerpt: it is a
+// debug trail, not a log dump, and the schema caps it at 1024.
+const maxExcerptRunes = 1024
+
 // screenshotExt is the only accepted extension for evidence file names.
 const screenshotExt = ".png"
 
@@ -69,13 +73,16 @@ func (h *InternalHandler) actionCallback(c echo.Context) error {
 	}
 
 	err = h.jobs.RecordAttempt(c.Request().Context(), service.AttemptRecord{
-		AttemptID:  req.AttemptId,
-		Status:     status,
-		Screenshot: screenshot,
-		Error:      truncatePtr(req.Error, maxErrorRunes),
-		ActionType: req.ActionType,
-		TargetURL:  req.TargetUrl,
-		WorkerID:   req.WorkerId,
+		AttemptID:       req.AttemptId,
+		Status:          status,
+		Screenshot:      screenshot,
+		Error:           truncatePtr(req.Error, maxErrorRunes),
+		ActionType:      req.ActionType,
+		TargetURL:       req.TargetUrl,
+		WorkerID:        req.WorkerId,
+		RenderedText:    req.RenderedText,
+		ResponseExcerpt: truncatePtr(req.ResponseExcerpt, maxExcerptRunes),
+		DurationMs:      derefInt64(req.DurationMs),
 	})
 	return h.translate(c, err)
 }
@@ -218,6 +225,14 @@ func truncatePtr(p *string, max int) *string {
 }
 
 func ptrInt(p *int) int {
+	if p == nil {
+		return 0
+	}
+	return *p
+}
+
+// derefInt64 unboxes an optional int64 the schema models as a pointer.
+func derefInt64(p *int64) int64 {
 	if p == nil {
 		return 0
 	}
