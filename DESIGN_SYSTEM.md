@@ -17,6 +17,10 @@
 
 ## 2. Instalasi
 
+> **Implementasi (P0-08).** shadcn components disimpan sebagai source di `packages/ui/src/components` (diekspor via `@smm/ui`), bukan via alias `@/components/ui` per-app. `tailwindcss` + `@tailwindcss/postcss` dipakai versi **4.1.x** (v4.0.0 bentrok dengan scanner internal Next 15 saat build). Token CSS ada di `apps/web/app/globals.css`; `@source` di sana memindai `packages/ui/src` agar utility yang dipakai komponen shared ikut ter-emit. Font: `Inter` (`--font-inter`) + `JetBrains Mono` via `next/font`. Dark di-set dengan class `dark` di `<html>` + `next-themes` (`defaultTheme=dark`).
+
+CLI shadcn tetap dipakai untuk menambah komponen baru (outputnya diarahkan ke `packages/ui/src/components`):
+
 ```bash
 pnpm dlx shadcn@latest init -d
 pnpm dlx shadcn@latest add button card input label textarea select \
@@ -195,7 +199,7 @@ Basis: shadcn `Card`. **1 kartu = 1 container (device)**. Header = container (re
   <CardHeader className="flex flex-row items-center gap-3 p-0 pb-3">
     <span className="font-mono text-xs text-muted-foreground">{workerName}</span>
     <Badge variant="outline">US-CA</Badge>
-    {desiredState === "STOPPED" && <Badge variant="outline">Paused</Badge>}
+    {desiredState === 'STOPPED' && <Badge variant="outline">Paused</Badge>}
     <div className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
       <StatusDot variant={browserStatus} />
       <span>hb: {heartbeatAge}s</span>
@@ -242,10 +246,10 @@ Badge 8 px lingkaran, hanya warna + aria-label. Dipakai di mana warna status rel
 
 ```tsx
 const map = {
-  cold: { color: "bg-[hsl(var(--status-cold))]", label: "Cold" },
-  ready: { color: "bg-[hsl(var(--status-ready))]", label: "Ready" },
-  busy: { color: "bg-[hsl(var(--status-busy))]", label: "Busy" },
-  error: { color: "bg-[hsl(var(--status-error))]", label: "Error" },
+  cold: { color: 'bg-[hsl(var(--status-cold))]', label: 'Cold' },
+  ready: { color: 'bg-[hsl(var(--status-ready))]', label: 'Ready' },
+  busy: { color: 'bg-[hsl(var(--status-busy))]', label: 'Busy' },
+  error: { color: 'bg-[hsl(var(--status-error))]', label: 'Error' },
 } as const;
 ```
 
@@ -260,7 +264,7 @@ const map = {
 Render children hanya jika role user termasuk.
 
 ```tsx
-<RoleGuard allow={["OPERATOR", "OWNER"]}>
+<RoleGuard allow={['OPERATOR', 'OWNER']}>
   <Button variant="destructive">Kill</Button>
 </RoleGuard>
 ```

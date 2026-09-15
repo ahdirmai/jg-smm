@@ -9,7 +9,7 @@ Spec set lives in the repo root (`PRD.md`, `ERD.md`, `SYSTEM_DESIGN.md`, ...).
 apps/api      Go 1.26 API (Echo + pgx + sqlc)
 apps/web      Next.js 15 dashboard (shadcn/ui)
 apps/worker   Node 22 worker (Playwright + Apify)
-packages/     shared TS constants/types, shadcn/ui, base tsconfig
+packages/     shared TS constants/types (OpenAPI-generated), shadcn/ui, base tsconfig
 infra/        docker + k8s manifests
 docs/adr/     architecture decision records
 tickets/      one file per ticket (generated from TICKETS.md)
