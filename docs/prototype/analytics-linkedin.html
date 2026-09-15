@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Instagram Analytics — SMM Automation</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="theme.js"></script>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body
+    data-title="LinkedIn — Analytics"
+    data-subtitle="Official accounts (monitored) · LinkedIn"
+    data-actions='<button class="btn btn-outline btn-sm"><i data-lucide="calendar" class="w-4 h-4"></i>Last 30 days</button><button class="btn btn-primary btn-sm"><i data-lucide="download" class="w-4 h-4"></i>Export</button>'
+  >
+    <div id="app">
+      <!-- Official account selector + provider note -->
+      <section class="flex flex-wrap items-center gap-2">
+        <select class="input w-56">
+          <option>All official accounts</option>
+          <option>@linkedin.official</option>
+          <option>@linkedin.brand</option>
+        </select>
+        <select class="input w-40"><option>All regions</option><option>sg</option><option>id</option></select>
+        <button class="btn btn-outline btn-sm"><i data-lucide="users" class="w-4 h-4"></i>Compare accounts</button>
+        <div class="ml-auto text-xs muted">Source: <span class="badge badge-info">3rd-party analytics</span> · read-only</div>
+      </section>
+
+      <section class="grid grid-cols-2 gap-4 lg:grid-cols-4" id="kpis"></section>
+
+      <section class="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div id="chart" class="contents"></div>
+        <div class="card p-4">
+          <h2 class="text-sm font-semibold">Audience</h2>
+          <p class="text-xs muted">Follower mix</p>
+          <div class="mt-4 space-y-3 text-sm">
+            <div><div class="flex justify-between"><span>Singapore</span><span class="mono">38%</span></div><div class="mt-1 h-1.5 rounded-full bg-secondary"><div class="h-full w-[38%] rounded-full bg-primary"></div></div></div>
+            <div><div class="flex justify-between"><span>Indonesia</span><span class="mono">28%</span></div><div class="mt-1 h-1.5 rounded-full bg-secondary"><div class="h-full w-[28%] rounded-full bg-primary"></div></div></div>
+            <div><div class="flex justify-between"><span>US</span><span class="mono">20%</span></div><div class="mt-1 h-1.5 rounded-full bg-secondary"><div class="h-full w-[20%] rounded-full bg-primary"></div></div></div>
+            <div><div class="flex justify-between"><span>Other</span><span class="mono">14%</span></div><div class="mt-1 h-1.5 rounded-full bg-secondary"><div class="h-full w-[14%] rounded-full bg-primary"></div></div></div>
+          </div>
+          <div class="mt-4 sep"></div>
+          <div class="mt-3 flex items-center justify-between text-xs"><span class="muted">Follower growth (30d)</span><span class="text-success">▲ 940</span></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="flex items-center justify-between border-b border-border p-4">
+          <div><h2 class="text-sm font-semibold">Top posts</h2><p class="text-xs muted">Instagram · last 30 days</p></div>
+          <button class="btn btn-outline btn-sm"><i data-lucide="filter" class="w-4 h-4"></i>Filter</button>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="tbl">
+            <thead><tr><th>Post</th><th>Type</th><th>Date</th><th class="text-right" id="post-metrics"></th></tr></thead>
+            <tbody id="posts"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="analytics-empty" class="hidden card p-4 text-xs muted">
+        Not yet enabled in the MVP — layout shown for review.
+      </section>
+    </div>
+
+    <script>
+      window.ANALYTICS = {
+        metrics: [
+          { label: 'Impressions', value: 78400, delta: 14.3, icon: 'eye' },
+          { label: 'Unique visitors', value: 12600, delta: 6.2, icon: 'users' },
+          { label: 'Reactions', value: 3480, delta: 8.4, icon: 'thumbs-up' },
+          { label: 'Comments', value: 512, delta: 3.6, icon: 'message-circle' },
+          { label: 'Reshares', value: 288, delta: 1.2, icon: 'repeat' },
+          { label: 'Follower growth', value: 940, delta: 2.4, icon: 'user-plus' },
+        ],
+        seriesA: [60, 72, 68, 84, 96, 92, 108, 120, 128, 124, 138, 150, 158, 164, 178],
+        seriesB: [22, 26, 25, 31, 36, 34, 42, 47, 52, 50, 56, 62, 67, 70, 76],
+        trendTitle: 'Impressions vs Unique visitors',
+        posts: [
+          { title: "Article · \"Scaling automation in 2026\"", kind: 'Article', date: 'Sep 10', m1: 15200, m2: 2100, m3: 180 },
+          { title: "Post · \"We are hiring engineers\"", kind: 'Post', date: 'Sep 06', m1: 9800, m2: 1400, m3: 96 },
+          { title: "Document · \"Q3 growth report\"", kind: 'Document', date: 'Sep 01', m1: 7400, m2: 1800, m3: 74 },
+        ],
+      };
+    </script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="shell.js"></script>
+    <script src="analytics.js"></script>
+  </body>
+</html>

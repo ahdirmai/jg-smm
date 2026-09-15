@@ -7,16 +7,33 @@
  * so page authors write top-level sections with NO manual mt-* — vertical rhythm
  * comes from `space-y-4` here. Two-column pages use `grid ... gap-4`.
  *
+ * Nav is a tree: the "Monitoring" group expands into Overview + one page per
+ * platform (each platform has its own analytics layout — see analytics-*.html).
+ *
  * Static prototype only; the real app uses apps/web/components/dashboard-shell.tsx.
  * ========================================================================== */
 (function () {
+  // Flat items first; a { group } entry renders an expandable section.
   const NAV = [
     { href: 'dashboard.html', label: 'Dashboard', icon: 'layout-dashboard' },
     { href: 'workers.html', label: 'Workers', icon: 'monitor-smartphone' },
     { href: 'accounts.html', label: 'Accounts', icon: 'users' },
     { href: 'actions.html', label: 'Actions', icon: 'activity' },
     { href: 'templates.html', label: 'Templates', icon: 'message-square-text' },
-    { href: 'monitoring.html', label: 'Monitoring', icon: 'gauge' },
+    {
+      group: 'Monitoring',
+      icon: 'gauge',
+      items: [
+        { href: 'monitoring.html', label: 'Overview' },
+        { href: 'analytics-instagram.html', label: 'Instagram' },
+        { href: 'analytics-threads.html', label: 'Threads' },
+        { href: 'analytics-facebook.html', label: 'Facebook' },
+        { href: 'analytics-linkedin.html', label: 'LinkedIn' },
+        { href: 'analytics-x.html', label: 'X' },
+        { href: 'analytics-youtube.html', label: 'YouTube' },
+        { href: 'analytics-tiktok.html', label: 'TikTok' },
+      ],
+    },
     { href: 'audit.html', label: 'Audit Log', icon: 'scroll-text' },
     { href: 'settings.html', label: 'Settings', icon: 'settings' },
   ];
@@ -25,10 +42,30 @@
 
   const icon = (name, cls = 'w-4 h-4') => `<i data-lucide="${name}" class="${cls}"></i>`;
 
-  const navHtml = NAV.map((item) => {
-    const active = item.href.toLowerCase() === current;
-    return `<a class="nav-item" href="${item.href}"${active ? ' aria-current="page"' : ''}>
-      ${icon(item.icon)}<span>${item.label}</span></a>`;
+  const item = (label, href, active) =>
+    `<a class="nav-item${active ? ' nav-sub' : ''}" href="${href}"${
+      href.toLowerCase() === current ? ' aria-current="page"' : ''
+    }>${label}</a>`;
+
+  const navHtml = NAV.map((entry) => {
+    if (!entry.group) {
+      const active = entry.href.toLowerCase() === current;
+      return `<a class="nav-item" href="${entry.href}"${active ? ' aria-current="page"' : ''}>
+        ${icon(entry.icon)}<span>${entry.label}</span></a>`;
+    }
+    // Group: expanded when any child (or the group's own icon) is the current page.
+    const kids = entry.items;
+    const hasActive = kids.some((k) => k.href.toLowerCase() === current);
+    const sub = kids
+      .map((k) => item(k.label, k.href, hasActive && k.href.toLowerCase() === current))
+      .join('');
+    return `<div class="nav-group" data-open="${hasActive ? 'true' : 'false'}">
+      <button type="button" class="nav-item nav-group-toggle" aria-expanded="${hasActive}">
+        ${icon(entry.icon)}<span>${entry.group}</span>
+        ${icon('chevron-down', 'w-4 h-4 ml-auto nav-caret')}
+      </button>
+      <div class="nav-children">${sub}</div>
+    </div>`;
   }).join('');
 
   const title = document.body.dataset.title || 'Dashboard';
@@ -45,14 +82,14 @@
 
   const html = `
   <div class="flex min-h-screen">
-    <aside class="hidden md:flex w-56 shrink-0 flex-col border-r border-border bg-card">
+    <aside class="hidden md:flex w-60 shrink-0 flex-col border-r border-border bg-card">
       <a href="dashboard.html" class="flex h-14 items-center gap-2 border-b border-border px-4">
         <span class="grid h-7 w-7 place-items-center rounded-md bg-primary text-primary-foreground">
           ${icon('activity', 'w-4 h-4')}
         </span>
         <span class="text-sm font-semibold tracking-tight">SMM Automation</span>
       </a>
-      <nav class="flex-1 space-y-1 p-2">${navHtml}</nav>
+      <nav class="flex-1 space-y-1 overflow-y-auto p-2">${navHtml}</nav>
       <div class="border-t border-border p-3">
         <div class="flex items-center gap-2.5">
           <span class="grid h-8 w-8 place-items-center rounded-full bg-secondary text-xs font-semibold">AD</span>
@@ -97,7 +134,21 @@
     const pageBody = app.innerHTML;
     app.outerHTML = html;
     document.getElementById('page').innerHTML = pageBody;
+    bindNavGroups();
     if (window.lucide) window.lucide.createIcons();
     if (window.smmTheme) window.smmTheme.set(window.smmTheme.get());
   });
+
+  // Expand/collapse nav groups; the class toggles the CSS grid-rows animation.
+  function bindNavGroups() {
+    document.querySelectorAll('.nav-group').forEach((group) => {
+      const toggle = group.querySelector('.nav-group-toggle');
+      if (!toggle) return;
+      toggle.addEventListener('click', () => {
+        const open = group.dataset.open === 'true';
+        group.dataset.open = open ? 'false' : 'true';
+        toggle.setAttribute('aria-expanded', String(!open));
+      });
+    });
+  }
 })();

@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Instagram Analytics — SMM Automation</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="theme.js"></script>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body
+    data-title="Facebook — Analytics"
+    data-subtitle="Official accounts (monitored) · Facebook"
+    data-actions='<button class="btn btn-outline btn-sm"><i data-lucide="calendar" class="w-4 h-4"></i>Last 30 days</button><button class="btn btn-primary btn-sm"><i data-lucide="download" class="w-4 h-4"></i>Export</button>'
+  >
+    <div id="app">
+      <!-- Official account selector + provider note -->
+      <section class="flex flex-wrap items-center gap-2">
+        <select class="input w-56">
+          <option>All official accounts</option>
+          <option>@facebook.official</option>
+          <option>@facebook.brand</option>
+        </select>
+        <select class="input w-40"><option>All regions</option><option>sg</option><option>id</option></select>
+        <button class="btn btn-outline btn-sm"><i data-lucide="users" class="w-4 h-4"></i>Compare accounts</button>
+        <div class="ml-auto text-xs muted">Source: <span class="badge badge-info">3rd-party analytics</span> · read-only</div>
+      </section>
+
+      <section class="grid grid-cols-2 gap-4 lg:grid-cols-4" id="kpis"></section>
+
+      <section class="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div id="chart" class="contents"></div>
+        <div class="card p-4">
+          <h2 class="text-sm font-semibold">Audience</h2>
+          <p class="text-xs muted">Follower mix</p>
+          <div class="mt-4 space-y-3 text-sm">
+            <div><div class="flex justify-between"><span>Indonesia</span><span class="mono">44%</span></div><div class="mt-1 h-1.5 rounded-full bg-secondary"><div class="h-full w-[44%] rounded-full bg-primary"></div></div></div>
+            <div><div class="flex justify-between"><span>Philippines</span><span class="mono">22%</span></div><div class="mt-1 h-1.5 rounded-full bg-secondary"><div class="h-full w-[22%] rounded-full bg-primary"></div></div></div>
+            <div><div class="flex justify-between"><span>Vietnam</span><span class="mono">18%</span></div><div class="mt-1 h-1.5 rounded-full bg-secondary"><div class="h-full w-[18%] rounded-full bg-primary"></div></div></div>
+            <div><div class="flex justify-between"><span>Other</span><span class="mono">16%</span></div><div class="mt-1 h-1.5 rounded-full bg-secondary"><div class="h-full w-[16%] rounded-full bg-primary"></div></div></div>
+          </div>
+          <div class="mt-4 sep"></div>
+          <div class="mt-3 flex items-center justify-between text-xs"><span class="muted">Follower growth (30d)</span><span class="text-success">▲ 1,530</span></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="flex items-center justify-between border-b border-border p-4">
+          <div><h2 class="text-sm font-semibold">Top posts</h2><p class="text-xs muted">Instagram · last 30 days</p></div>
+          <button class="btn btn-outline btn-sm"><i data-lucide="filter" class="w-4 h-4"></i>Filter</button>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="tbl">
+            <thead><tr><th>Post</th><th>Type</th><th>Date</th><th class="text-right" id="post-metrics"></th></tr></thead>
+            <tbody id="posts"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="analytics-empty" class="hidden card p-4 text-xs muted">
+        Not yet enabled in the MVP — layout shown for review.
+      </section>
+    </div>
+
+    <script>
+      window.ANALYTICS = {
+        metrics: [
+          { label: 'Reach', value: 132400, delta: 7.6, icon: 'eye' },
+          { label: 'Page views', value: 21400, delta: 4.1, icon: 'mouse-pointer-click' },
+          { label: 'Reactions', value: 8340, delta: 2.9, icon: 'thumbs-up' },
+          { label: 'Comments', value: 1120, delta: -0.8, icon: 'message-circle' },
+          { label: 'Shares', value: 640, delta: 5.0, icon: 'share-2' },
+          { label: 'Follower growth', value: 1530, delta: 1.7, icon: 'user-plus' },
+        ],
+        seriesA: [80, 95, 90, 102, 118, 112, 130, 142, 150, 146, 160, 175, 182, 190, 205],
+        seriesB: [30, 36, 34, 42, 50, 48, 58, 64, 70, 68, 76, 84, 90, 94, 102],
+        trendTitle: 'Reach vs Page views',
+        posts: [
+          { title: "Post · \"Weekend promo is live\"", kind: 'Post', date: 'Sep 11', m1: 21400, m2: 8600, m3: 420 },
+          { title: "Photo · \"Team offsite 2026\"", kind: 'Photo', date: 'Sep 07', m1: 12880, m2: 4100, m3: 210 },
+          { title: "Video · \"How it works in 60s\"", kind: 'Video', date: 'Sep 02', m1: 9600, m2: 5300, m3: 180 },
+        ],
+      };
+    </script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="shell.js"></script>
+    <script src="analytics.js"></script>
+  </body>
+</html>

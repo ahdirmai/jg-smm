@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Instagram Analytics — SMM Automation</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="theme.js"></script>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body
+    data-title="Threads — Analytics"
+    data-subtitle="Official accounts (monitored) · Threads"
+    data-actions='<button class="btn btn-outline btn-sm"><i data-lucide="calendar" class="w-4 h-4"></i>Last 30 days</button><button class="btn btn-primary btn-sm"><i data-lucide="download" class="w-4 h-4"></i>Export</button>'
+  >
+    <div id="app">
+      <!-- Official account selector + provider note -->
+      <section class="flex flex-wrap items-center gap-2">
+        <select class="input w-56">
+          <option>All official accounts</option>
+          <option>@threads.official</option>
+          <option>@threads.brand</option>
+        </select>
+        <select class="input w-40"><option>All regions</option><option>sg</option><option>id</option></select>
+        <button class="btn btn-outline btn-sm"><i data-lucide="users" class="w-4 h-4"></i>Compare accounts</button>
+        <div class="ml-auto text-xs muted">Source: <span class="badge badge-info">3rd-party analytics</span> · read-only</div>
+      </section>
+
+      <section class="grid grid-cols-2 gap-4 lg:grid-cols-4" id="kpis"></section>
+
+      <section class="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div id="chart" class="contents"></div>
+        <div class="card p-4">
+          <h2 class="text-sm font-semibold">Audience</h2>
+          <p class="text-xs muted">Follower mix</p>
+          <div class="mt-4 space-y-3 text-sm">
+            <div><div class="flex justify-between"><span>Indonesia</span><span class="mono">52%</span></div><div class="mt-1 h-1.5 rounded-full bg-secondary"><div class="h-full w-[52%] rounded-full bg-primary"></div></div></div>
+            <div><div class="flex justify-between"><span>Singapore</span><span class="mono">19%</span></div><div class="mt-1 h-1.5 rounded-full bg-secondary"><div class="h-full w-[19%] rounded-full bg-primary"></div></div></div>
+            <div><div class="flex justify-between"><span>US</span><span class="mono">15%</span></div><div class="mt-1 h-1.5 rounded-full bg-secondary"><div class="h-full w-[15%] rounded-full bg-primary"></div></div></div>
+            <div><div class="flex justify-between"><span>Other</span><span class="mono">14%</span></div><div class="mt-1 h-1.5 rounded-full bg-secondary"><div class="h-full w-[14%] rounded-full bg-primary"></div></div></div>
+          </div>
+          <div class="mt-4 sep"></div>
+          <div class="mt-3 flex items-center justify-between text-xs"><span class="muted">Follower growth (30d)</span><span class="text-success">▲ 2,140</span></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="flex items-center justify-between border-b border-border p-4">
+          <div><h2 class="text-sm font-semibold">Top posts</h2><p class="text-xs muted">Instagram · last 30 days</p></div>
+          <button class="btn btn-outline btn-sm"><i data-lucide="filter" class="w-4 h-4"></i>Filter</button>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="tbl">
+            <thead><tr><th>Post</th><th>Type</th><th>Date</th><th class="text-right" id="post-metrics"></th></tr></thead>
+            <tbody id="posts"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="analytics-empty" class="hidden card p-4 text-xs muted">
+        Not yet enabled in the MVP — layout shown for review.
+      </section>
+    </div>
+
+    <script>
+      window.ANALYTICS = {
+        metrics: [
+          { label: 'Views', value: 96400, delta: 18.2, icon: 'eye' },
+          { label: 'Likes', value: 6120, delta: 5.4, icon: 'heart' },
+          { label: 'Replies', value: 884, delta: 9.1, icon: 'reply' },
+          { label: 'Reposts', value: 431, delta: 12.0, icon: 'repeat' },
+          { label: 'Quotes', value: 96, delta: 2.0, icon: 'quote' },
+          { label: 'Follower growth', value: 2140, delta: 3.3, icon: 'user-plus' },
+        ],
+        seriesA: [90, 110, 105, 125, 140, 138, 155, 170, 182, 175, 195, 210, 222, 230, 245],
+        seriesB: [40, 48, 45, 55, 62, 60, 70, 78, 85, 82, 92, 101, 110, 114, 124],
+        trendTitle: 'Views vs Likes',
+        posts: [
+          { title: "Thread · \"What is your biggest bottleneck?\"", kind: 'Thread', date: 'Sep 12', m1: 28540, m2: 1732, m3: 402 },
+          { title: "Thread · \"Shipping fast > perfect\"", kind: 'Thread', date: 'Sep 08', m1: 11033, m2: 640, m3: 121 },
+          { title: "Thread · \"Unpopular opinion on growth\"", kind: 'Thread', date: 'Sep 03', m1: 8420, m2: 510, m3: 88 },
+        ],
+      };
+    </script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="shell.js"></script>
+    <script src="analytics.js"></script>
+  </body>
+</html>

@@ -318,6 +318,35 @@
   color: hsl(var(--accent-foreground));
 }
 
+/* Nav tree: expandable group (Monitoring → Overview + one page per platform). */
+.nav-group-toggle {
+  width: 100%;
+  background: transparent;
+  border: 0;
+}
+.nav-group .nav-caret {
+  transition: transform 0.18s ease;
+}
+.nav-group[data-open='true'] .nav-caret {
+  transform: rotate(180deg);
+}
+.nav-children {
+  display: grid;
+  grid-template-rows: 0fr;
+  row-gap: 0.15rem;
+  transition: grid-template-rows 0.18s ease;
+}
+.nav-group[data-open='true'] .nav-children {
+  grid-template-rows: 1fr;
+}
+.nav-children > * {
+  overflow: hidden;
+}
+.nav-sub {
+  padding-left: 2.4rem;
+  font-size: 0.8125rem;
+}
+
 /* Misc */
 .sep {
   height: 1px;
@@ -362,6 +391,17 @@
 .stepper-dot.active {
   background: hsl(var(--status-busy));
   box-shadow: 0 0 0 3px hsl(var(--status-busy) / 0.2);
+}
+
+/* Inline action pipeline: Queued → Dispatched → Running → Verifying. */
+.stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+.stepper .stepper-dot {
+  width: 0.5rem;
+  height: 0.5rem;
 }
 /* Modal / sheet backdrop */
 .backdrop {
