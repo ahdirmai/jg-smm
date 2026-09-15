@@ -232,6 +232,17 @@ func main() {
 			go alerts.Run(ctx, time.Duration(cfg.AlertIntervalSeconds)*time.Second)
 		}
 
+		// Metric aggregator (P2-05): re-samples the top-N posts' latest metrics
+		// so the monitoring hypertable stays continuous between scrapes. Off by
+		// default; enabled with AGGREGATE_INTERVAL_SECONDS (ticket: 30 min).
+		if cfg.AggregateIntervalSeconds > 0 {
+			agg := service.NewMetricAggregator(scrapeRepo, service.MetricAggregatorConfig{
+				Clock:  time.Now,
+				Logger: logger,
+			})
+			go agg.Run(ctx, time.Duration(cfg.AggregateIntervalSeconds)*time.Second)
+		}
+
 		// a workstation. The reconciler is a pure loop over this port, so both
 		// tiers share the same code path (P1-03/P1-04). The LoggingDriver wraps
 		// either one so every create/delete lands in provision_log (P1-06).

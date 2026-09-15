@@ -107,6 +107,10 @@ services:
       ANALYTICS_PROVIDER_BASE_URL: ${ANALYTICS_PROVIDER_BASE_URL:-https://provider.example.com/v1}
       ANALYTICS_PROVIDER_KEY: ${ANALYTICS_PROVIDER_KEY:-dev-stub-provider-key}
       ANALYTICS_INGEST_INTERVAL_SECONDS: ${ANALYTICS_INGEST_INTERVAL_SECONDS:-0}
+      # P2-05 top-post re-sampler and P2-07 alert engine: opt-in loops, off by
+      # default so a local `make up` never starts background work.
+      AGGREGATE_INTERVAL_SECONDS: ${AGGREGATE_INTERVAL_SECONDS:-0}
+      ALERT_INTERVAL_SECONDS: ${ALERT_INTERVAL_SECONDS:-0}
       PROVISIONER_MODE: ${PROVISIONER_MODE:-static}
       PROVISION_AUTO_CREATE: ${PROVISION_AUTO_CREATE:-true}
       ACTION_BATCH_PARALLELISM: ${ACTION_BATCH_PARALLELISM:-2}
