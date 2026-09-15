@@ -161,19 +161,77 @@ func TestTemplateValidate(t *testing.T) {
 	}
 }
 
-// TestScreenBanned covers the denylist the enqueue path screens a rendered
-// comment against (P3-03 wraps this into the pipeline).
-func TestScreenBanned(t *testing.T) {
-	if !ScreenBanned("this is SPAM", []string{"spam"}) {
-		t.Fatal("case-insensitive match expected")
+// TestPickBannedScreen covers the denylist screen the compose pipeline runs
+// before a comment may reach a worker queue (P3-03): a rendered comment that
+// hits a template's own pattern is rejected with ErrBannedPattern, and a clean
+// one passes through.
+func TestPickBannedScreen(t *testing.T) {
+	cases := []struct {
+		name    string
+		text    string
+		banned  []string
+		wantErr bool
+	}{
+		{
+			name:    "literal word still matches (a literal is a valid regex)",
+			text:    "this is SPAM and that is fine",
+			banned:  []string{"spam"},
+			wantErr: true,
+		},
+		{
+			name:    "phrase match",
+			text:    "buy now!!!",
+			banned:  []string{"buy now"},
+			wantErr: true,
+		},
+		{
+			name:    "regex shape: leetspeak brand",
+			text:    "check out c0ke zero",
+			banned:  []string{"c[0o]ke"},
+			wantErr: true,
+		},
+		{
+			name:   "clean text passes",
+			text:   "clean text",
+			banned: []string{"spam"},
+		},
+		{
+			name:   "nil denylist never flags",
+			text:   "clean text",
+			banned: nil,
+		},
+		{
+			name:   "empty entry never flags everything",
+			text:   "clean text",
+			banned: []string{""},
+		},
 	}
-	if !ScreenBanned("buy now!!!", []string{"buy now"}) {
-		t.Fatal("phrase match expected")
-	}
-	if ScreenBanned("clean text", nil) {
-		t.Fatal("nil denylist must not flag clean text")
-	}
-	if ScreenBanned("clean text", []string{""}) {
-		t.Fatal("empty word must not flag everything")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &fakeTemplateStore{
+				candidates: []domain.CommentTemplate{
+					{ID: "t1", Platform: domain.PlatformInstagram, Text: tc.text, Vars: nil, Weight: 1, BannedWords: tc.banned},
+				},
+			}
+			svc := newTestTemplateService(store, rand.New(rand.NewSource(1)))
+
+			out, err := svc.Pick(context.Background(), domain.PlatformInstagram, "target-1", nil)
+
+			if tc.wantErr {
+				if !errors.Is(err, domain.ErrBannedPattern) {
+					t.Fatalf("expected ErrBannedPattern, got %v", err)
+				}
+				if out.RenderedText != "" {
+					t.Fatalf("a banned comment must not be returned for queuing, got %q", out.RenderedText)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("expected no error, got %v", err)
+			}
+			if out.RenderedText != tc.text {
+				t.Fatalf("expected the clean text to pass through, got %q", out.RenderedText)
+			}
+		})
 	}
 }

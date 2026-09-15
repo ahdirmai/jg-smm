@@ -25,6 +25,14 @@ type narrowAccount interface {
 	GetByID(ctx context.Context, id string) (domain.Account, error)
 }
 
+// narrowComposer is the slice of the template engine the scheduler needs
+// (P3-03): compose a denylist-screened comment for a target, or explain why
+// none may ship. Kept narrow so the loop is testable with a stub, and so a
+// future composer change does not ripple into the scheduler signature.
+type narrowComposer interface {
+	Pick(ctx context.Context, platform domain.Platform, targetID string, values map[string]string) (PickOutcome, error)
+}
+
 // ActionScheduler (P3-07/P3-10) is the API-side loop that drains the action
 // queue: it claims due action jobs, enforces the two safety gates, and
 // publishes each survivor to the worker that owns the account.
@@ -44,6 +52,7 @@ type ActionScheduler struct {
 	actions   port.ActionStore
 	accounts  narrowAccount
 	scrapes   narrowTarget
+	composer  narrowComposer
 	cooldown  port.CooldownGate
 	limits    port.RateLimiter
 	transport port.Publisher
@@ -70,13 +79,16 @@ type ActionSchedulerConfig struct {
 	Logger *slog.Logger
 }
 
-// NewActionScheduler wires the loop. cooldown/limits/transport may be nil: the
-// scheduler then skips those gates (local play) rather than panic, and every
-// job still flows to the worker.
+// NewActionScheduler wires the loop. composer/cooldown/limits/transport may be
+// nil: the scheduler then skips those steps (local play) rather than panic, and
+// every job still flows to the worker. A nil composer means comment text is not
+// composed — the job publishes with no text and the worker rejects it, so a
+// real deployment always sets one.
 func NewActionScheduler(
 	actions port.ActionStore,
 	accounts narrowAccount,
 	scrapes narrowTarget,
+	composer narrowComposer,
 	cooldown port.CooldownGate,
 	limits port.RateLimiter,
 	transport port.Publisher,
@@ -101,6 +113,7 @@ func NewActionScheduler(
 		actions:   actions,
 		accounts:  accounts,
 		scrapes:   scrapes,
+		composer:  composer,
 		cooldown:  cooldown,
 		limits:    limits,
 		transport: transport,
@@ -200,6 +213,18 @@ func (s *ActionScheduler) dispatchOne(ctx context.Context, job domain.ActionJob)
 	}
 	workerID := *acc.WorkerID
 
+	// Compose the comment text before any gate is spent (P3-03): a banned or
+	// unrenderable comment cannot ship no matter how much budget it burns, so
+	// screening it first is what "ditolak sebelum queue" means. A like needs no
+	// text. Both rejections are terminal, not reschedules: re-running the
+	// compose would draw the same banned text or the same empty pool, so a loop
+	// would only hide the problem while looking busy.
+	text, err := s.composeText(ctx, job, acc.Platform)
+	if err != nil {
+		s.fail(ctx, job, truncateErr(err.Error()))
+		return
+	}
+
 	// Gate 1: cooldown. A cooled-down target means we already acted on it
 	// recently; skipping now is the whole point of the gate.
 	if s.cooldown != nil {
@@ -233,7 +258,7 @@ func (s *ActionScheduler) dispatchOne(ctx context.Context, job domain.ActionJob)
 		}
 	}
 
-	if err := s.publish(ctx, job, acc, workerID, tgt.URL); err != nil {
+	if err := s.publish(ctx, job, acc, workerID, tgt.URL, text); err != nil {
 		// Transport down: the job was NOT delivered, so release the cooldown
 		// slot by simply letting it lapse (TTL is short) and requeue the job.
 		s.reschedule(ctx, job, s.cfg.Cooldown, fmt.Sprintf("publish: %v", err))
@@ -242,9 +267,26 @@ func (s *ActionScheduler) dispatchOne(ctx context.Context, job domain.ActionJob)
 	s.log.Info("action published", "job", job.ID, "worker", workerID, "attempt", job.Attempts)
 }
 
+// composeText resolves the text a comment job will post, screened against the
+// denylist. Returns empty text for non-comment actions (a like posts nothing)
+// and when no composer is wired (local play / tests).
+func (s *ActionScheduler) composeText(ctx context.Context, job domain.ActionJob, platform domain.Platform) (string, error) {
+	if s.composer == nil || job.Type != domain.JobTypeActionComment {
+		return "", nil
+	}
+	// ponytail: template var values ({topic}, {product}) come from Target.Meta
+	// once its shape is pinned; plain-text templates ship now, and a template
+	// with an unfilled var is rejected by the engine rather than posted raw.
+	out, err := s.composer.Pick(ctx, platform, job.TargetID, nil)
+	if err != nil {
+		return "", fmt.Errorf("compose: %w", err)
+	}
+	return out.RenderedText, nil
+}
+
 // publish serialises the job exactly as the worker's ActionJob expects and
 // appends it to that worker's durable queue (FIFO).
-func (s *ActionScheduler) publish(ctx context.Context, job domain.ActionJob, acc domain.Account, workerID, targetURL string) error {
+func (s *ActionScheduler) publish(ctx context.Context, job domain.ActionJob, acc domain.Account, workerID, targetURL, text string) error {
 	if s.transport == nil {
 		return errors.New("transport not configured")
 	}
@@ -254,6 +296,7 @@ func (s *ActionScheduler) publish(ctx context.Context, job domain.ActionJob, acc
 		Platform:  string(acc.Platform),
 		Action:    actionName(job.Type),
 		TargetURL: targetURL,
+		Text:      text,
 		Attempt:   job.Attempts,
 	})
 	if err != nil {
@@ -286,13 +329,16 @@ func (s *ActionScheduler) fail(ctx context.Context, job domain.ActionJob, reason
 }
 
 // workerActionJob is the wire shape the worker BLPOPs. Kept here so the
-// scheduler is the only place that decides what a worker sees.
+// scheduler is the only place that decides what a worker sees. Text is the
+// already-composed, denylist-screened comment body; the worker never composes
+// or screens, only posts what it was given (ADR 0011: policy in the API).
 type workerActionJob struct {
 	ID        string `json:"id"`
 	AccountID string `json:"accountId"`
 	Platform  string `json:"platform"`
 	Action    string `json:"action"`
 	TargetURL string `json:"targetUrl"`
+	Text      string `json:"text,omitempty"`
 	Attempt   int    `json:"attempt"`
 }
 

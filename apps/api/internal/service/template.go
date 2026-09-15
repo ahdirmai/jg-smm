@@ -67,6 +67,17 @@ func (s *TemplateService) Pick(ctx context.Context, platform domain.Platform, ta
 		// posting nothing.
 		return PickOutcome{}, fmt.Errorf("%w: template %s left an unresolved placeholder in %q", domain.ErrValidation, t.ID, text)
 	}
+	// Denylist screen (P3-03): a banned comment is rejected here, before it can
+	// reach a worker queue. The patterns were compile-checked when the template
+	// was saved, so a compile error now is only a lost race with an edit — and
+	// the safe read then is to reject the comment rather than ship an unscreened
+	// one. The error names the pattern that fired: an operator staring at
+	// "rejected" with no rule cannot fix the denylist.
+	if patterns, err := domain.CompileBanned(t.BannedWords); err == nil {
+		if pattern, hit := domain.MatchBanned(text, patterns); hit {
+			return PickOutcome{}, fmt.Errorf("%w: template %s denylist pattern %q matched %q", domain.ErrBannedPattern, t.ID, pattern, text)
+		}
+	}
 	return PickOutcome{TemplateID: t.ID, RenderedText: text}, nil
 }
 
@@ -90,46 +101,4 @@ func (s *TemplateService) weightedPick(candidates []domain.CommentTemplate) doma
 	// Unreachable when weights are positive (the schema guarantees > 0); the
 	// guard is only for a zero-weight candidate set, which cannot reach here.
 	return candidates[len(candidates)-1]
-}
-
-// ScreenBanned reports whether the rendered text contains any word in the
-// template's own denylist or the global team denylist. P3-03 wraps this into
-// the screening pipeline; it lives on the service so the enqueue path calls
-// one engine rather than a store plus a checker.
-func ScreenBanned(text string, banned []string) bool {
-	if len(banned) == 0 {
-		return false
-	}
-	lowered := lowerASCII(text)
-	for _, w := range banned {
-		if w == "" {
-			continue
-		}
-		if containsSubstr(lowered, lowerASCII(w)) {
-			return true
-		}
-	}
-	return false
-}
-
-func lowerASCII(s string) string {
-	b := []byte(s)
-	for i := range b {
-		if b[i] >= 'A' && b[i] <= 'Z' {
-			b[i] += 'a' - 'A'
-		}
-	}
-	return string(b)
-}
-
-func containsSubstr(haystack, needle string) bool {
-	if needle == "" {
-		return true
-	}
-	for i := 0; i+len(needle) <= len(haystack); i++ {
-		if haystack[i:i+len(needle)] == needle {
-			return true
-		}
-	}
-	return false
 }

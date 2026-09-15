@@ -230,10 +230,22 @@ func main() {
 			defer rc.Close()
 			checkers["redis"] = rc
 
+			// The composer is the template engine (P3-02/P3-03): it picks an unused
+			// variant for the target, renders it, and denylist-screens the result,
+			// so the only text a worker ever receives is already safe to post.
+			// Clock + RNG default inside the constructor (seeded from the clock).
+			composer := service.NewTemplateService(
+				repository.NewTemplateRepo(pg.Queries()),
+				nil,
+				nil,
+				logger,
+			)
+
 			actionSched := service.NewActionScheduler(
 				actionRepo,
 				accountRepo,
 				scrapeRepo,
+				composer,
 				adapter.NewCooldownGate(rc.Client(), "smm:cooldown"),
 				adapter.NewRateLimiter(rc.Client(), "smm:ratelimit"),
 				transport.NewPublisher(rc.Client()),

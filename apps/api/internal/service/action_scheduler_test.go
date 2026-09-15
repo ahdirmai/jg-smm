@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -90,15 +91,34 @@ func (t *schedTransport) PublishControl(_ context.Context, workerID string, msg 
 	return nil
 }
 
+// schedComposer scripts the compose step (P3-03): it returns a fixed rendered
+// text, or the error the test wants the loop to react to (ErrBannedPattern,
+// ErrTemplatePoolEmpty). nil means "no composer wired" (local play).
+type schedComposer struct {
+	text   string
+	err    error
+	values map[string]string
+}
+
+func (c *schedComposer) Pick(_ context.Context, _ domain.Platform, _ string, values map[string]string) (PickOutcome, error) {
+	if values != nil {
+		c.values = values
+	}
+	if c.err != nil {
+		return PickOutcome{}, c.err
+	}
+	return PickOutcome{TemplateID: "tmpl-1", RenderedText: c.text}, nil
+}
+
 // newSched builds a scheduler over the scripted fakes with deterministic time.
-func newSched(t *testing.T, actions *fakeActionStore, cd *schedCooldown, lm *schedLimits, tr *schedTransport) *ActionScheduler {
+func newSched(t *testing.T, actions *fakeActionStore, cd *schedCooldown, lm *schedLimits, tr *schedTransport, composer narrowComposer) *ActionScheduler {
 	t.Helper()
 	now := time.Unix(2_000_000, 0).UTC()
 	s := NewActionScheduler(
 		actions,
 		&schedAccounts{workerID: "worker-1"},
 		&schedTargets{url: "https://instagram.com/p/x"},
-		cd, lm, tr,
+		composer, cd, lm, tr,
 		ActionSchedulerConfig{
 			TickBudget: 5,
 			Cooldown:   60 * time.Second,
@@ -133,7 +153,7 @@ func TestActionSchedulerPublishes(t *testing.T) {
 	cd := &schedCooldown{allow: true}
 	lm := &schedLimits{allow: true}
 	tr := &schedTransport{}
-	s := newSched(t, store, cd, lm, tr)
+	s := newSched(t, store, cd, lm, tr, nil)
 
 	// Seed a PENDING job the claim query will return.
 	seedPending(store, "job-1")
@@ -159,7 +179,7 @@ func TestActionSchedulerCooldownBlocks(t *testing.T) {
 	cd := &schedCooldown{allow: false}
 	lm := &schedLimits{allow: true}
 	tr := &schedTransport{}
-	s := newSched(t, store, cd, lm, tr)
+	s := newSched(t, store, cd, lm, tr, nil)
 	seedPending(store, "job-c")
 
 	if err := s.Tick(context.Background()); err != nil {
@@ -179,7 +199,7 @@ func TestActionSchedulerRateLimitBlocks(t *testing.T) {
 	cd := &schedCooldown{allow: true}
 	lm := &schedLimits{allow: false, retryAfter: 30 * time.Minute}
 	tr := &schedTransport{}
-	s := newSched(t, store, cd, lm, tr)
+	s := newSched(t, store, cd, lm, tr, nil)
 	seedPending(store, "job-r")
 	base := s.clock()
 
@@ -204,7 +224,7 @@ func TestActionSchedulerGateErrorRequeues(t *testing.T) {
 	cd := &schedCooldown{err: errors.New("redis down")}
 	lm := &schedLimits{allow: true}
 	tr := &schedTransport{}
-	s := newSched(t, store, cd, lm, tr)
+	s := newSched(t, store, cd, lm, tr, nil)
 	seedPending(store, "job-e")
 
 	if err := s.Tick(context.Background()); err != nil {
@@ -224,7 +244,7 @@ func TestActionSchedulerNoWorkerRequeues(t *testing.T) {
 	cd := &schedCooldown{allow: true}
 	lm := &schedLimits{allow: true}
 	tr := &schedTransport{}
-	s := newSched(t, store, cd, lm, tr)
+	s := newSched(t, store, cd, lm, tr, nil)
 	s.accounts = &schedAccounts{workerID: "", acc: domain.Account{ID: "acct-1"}}
 	seedPending(store, "job-nw")
 
@@ -245,7 +265,7 @@ func TestActionSchedulerTransportFailureRequeues(t *testing.T) {
 	cd := &schedCooldown{allow: true}
 	lm := &schedLimits{allow: true}
 	tr := &schedTransport{err: errors.New("connection refused")}
-	s := newSched(t, store, cd, lm, tr)
+	s := newSched(t, store, cd, lm, tr, nil)
 	seedPending(store, "job-t")
 
 	if err := s.Tick(context.Background()); err != nil {
@@ -263,7 +283,7 @@ func TestActionSchedulerMissingTargetFails(t *testing.T) {
 	cd := &schedCooldown{allow: true}
 	lm := &schedLimits{allow: true}
 	tr := &schedTransport{}
-	s := newSched(t, store, cd, lm, tr)
+	s := newSched(t, store, cd, lm, tr, nil)
 	// Seed a PENDING job the claim query will return.
 	seedPending(store, "job-mt")
 	// A target store that always misses.
@@ -283,7 +303,7 @@ func TestActionSchedulerMissingTargetFails(t *testing.T) {
 // Nothing due anywhere: an empty tick is success, not an error.
 func TestActionSchedulerEmptyTick(t *testing.T) {
 	store := newFakeActionStore()
-	s := newSched(t, store, &schedCooldown{allow: true}, &schedLimits{allow: true}, &schedTransport{})
+	s := newSched(t, store, &schedCooldown{allow: true}, &schedLimits{allow: true}, &schedTransport{}, nil)
 
 	if err := s.Tick(context.Background()); err != nil {
 		t.Fatalf("an empty tick must not error, got %v", err)
@@ -296,7 +316,7 @@ func TestActionSchedulerSkipsFutureJob(t *testing.T) {
 	cd := &schedCooldown{allow: true}
 	lm := &schedLimits{allow: true}
 	tr := &schedTransport{}
-	s := newSched(t, store, cd, lm, tr)
+	s := newSched(t, store, cd, lm, tr, nil)
 	// A job scheduled AFTER the fixed clock — not due.
 	store.pending = append(store.pending, domain.ActionJob{
 		ID:          "job-future",
@@ -336,4 +356,113 @@ func (missingTargets) GetTarget(_ context.Context, id string) (domain.Target, er
 // scheduler's ListActionJobsByStatus returns.
 func seedPending(store *fakeActionStore, id string) {
 	store.pending = append(store.pending, aDueAction(store, id))
+}
+
+// --- P3-03 compose + denylist gate ---------------------------------------
+
+// A comment job ships the composed, screened text; the worker never composes.
+func TestActionSchedulerComposesText(t *testing.T) {
+	store := newFakeActionStore()
+	store.logByAttempt = map[string]domain.ActionLog{}
+	tr := &schedTransport{}
+	composer := &schedComposer{text: "nice post {topic}", values: nil}
+	s := newSched(t, store, &schedCooldown{allow: true}, &schedLimits{allow: true}, tr, composer)
+
+	seedPending(store, "job-text")
+
+	if err := s.Tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if len(tr.jobs) != 1 {
+		t.Fatalf("one job must reach the transport, got %d", len(tr.jobs))
+	}
+	if tr.jobs[0].Text != "nice post {topic}" {
+		t.Fatalf("the composed text must ride the payload, got %q", tr.jobs[0].Text)
+	}
+	// Nothing was failed or rescheduled: a clean comment simply ships.
+	if len(store.completed) != 0 || len(store.rescheduled) != 0 {
+		t.Fatalf("a clean comment must not be failed or rescheduled, got completed=%v rescheduled=%v", store.completed, store.rescheduled)
+	}
+}
+
+// A like job needs no composer: no text, and no dependency on the template pool.
+func TestActionSchedulerLikeSkipsComposer(t *testing.T) {
+	store := newFakeActionStore()
+	store.logByAttempt = map[string]domain.ActionLog{}
+	tr := &schedTransport{}
+	s := newSched(t, store, &schedCooldown{allow: true}, &schedLimits{allow: true}, tr,
+		&schedComposer{err: domain.ErrBannedPattern}) // must NOT be consulted
+	seedPending(store, "job-like")
+	store.pending[0].Type = domain.JobTypeActionLike
+
+	if err := s.Tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if len(tr.jobs) != 1 {
+		t.Fatalf("the like must still publish, got %d", len(tr.jobs))
+	}
+	if tr.jobs[0].Text != "" {
+		t.Fatalf("a like carries no text, got %q", tr.jobs[0].Text)
+	}
+}
+
+// The denylist fires before the queue: a banned comment is failed terminally,
+// never published, and never rescheduled — and it spends no cooldown or rate
+// budget on the way out (P3-03 AC: "komentar banned ditolak sebelum queue").
+func TestActionSchedulerBannedCommentFailsBeforeQueue(t *testing.T) {
+	store := newFakeActionStore()
+	store.logByAttempt = map[string]domain.ActionLog{}
+	cd := &schedCooldown{allow: true}
+	lm := &schedLimits{allow: true}
+	tr := &schedTransport{}
+	s := newSched(t, store, cd, lm, tr, &schedComposer{err: domain.ErrBannedPattern})
+
+	seedPending(store, "job-banned")
+
+	if err := s.Tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if len(tr.jobs) != 0 {
+		t.Fatalf("a banned comment must never reach a worker queue, got %d", len(tr.jobs))
+	}
+	if cd.calls != 0 {
+		t.Fatalf("a banned comment must not spend a cooldown slot, got %d calls", cd.calls)
+	}
+	if len(lm.platforms) != 0 {
+		t.Fatalf("a banned comment must not spend rate budget, got %v", lm.platforms)
+	}
+	if len(store.completed) != 1 || store.completed[0].status != domain.JobStatusFailed {
+		t.Fatalf("the job must be failed, got %v", store.completed)
+	}
+	if store.completed[0].err == nil || !strings.Contains(*store.completed[0].err, "banned") {
+		t.Fatalf("the failure must name the denylist, got %v", store.completed[0].err)
+	}
+	if len(store.rescheduled) != 0 {
+		t.Fatalf("a banned comment must not be rescheduled (it is not retryable), got %v", store.rescheduled)
+	}
+}
+
+// An empty pool is a terminal failure, not a reschedule loop: re-running the
+// compose would find the same empty pool, so spinning would only hide it.
+func TestActionSchedulerEmptyPoolFailsNotLoops(t *testing.T) {
+	store := newFakeActionStore()
+	store.logByAttempt = map[string]domain.ActionLog{}
+	tr := &schedTransport{}
+	s := newSched(t, store, &schedCooldown{allow: true}, &schedLimits{allow: true}, tr,
+		&schedComposer{err: domain.ErrTemplatePoolEmpty})
+
+	seedPending(store, "job-empty")
+
+	if err := s.Tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if len(tr.jobs) != 0 {
+		t.Fatalf("no comment may ship from an empty pool, got %d", len(tr.jobs))
+	}
+	if len(store.completed) != 1 || store.completed[0].status != domain.JobStatusFailed {
+		t.Fatalf("the job must be failed, got %v", store.completed)
+	}
+	if len(store.rescheduled) != 0 {
+		t.Fatalf("an empty pool must not loop forever, got %v", store.rescheduled)
+	}
 }
