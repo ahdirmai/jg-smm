@@ -41,14 +41,15 @@
 
 ## Frontend prototype (pre-implementation review)
 
-| Item                     | Status | Commit    | Date    | Notes                                                                                                          |
-| ------------------------ | ------ | --------- | ------- | -------------------------------------------------------------------------------------------------------------- |
-| Static FE prototype      | REVIEW | `6b59312` | 2026-09 | `docs/prototype/` — Tailwind CDN + design tokens, no build step. Awaiting user approval before porting.        |
-| Light + dark themes      | DONE   | `4216756` | 2026-09 | `theme.js` maps tokens into the Play CDN, persisted per browser, header toggle + floating button on standalone |
-| Per-platform analytics   | REVIEW | —         | 2026-09 | 7 new pages `analytics-{instagram,threads,facebook,linkedin,x,youtube,tiktok}.html`; Monitoring nav group      |
-| Dummy action-to-target   | REVIEW | —         | 2026-09 | `actions.html` + `actions.js` — inline stepper Queued→Dispatched→Running→Verifying→Success\|Failed             |
-| Automated browser verify | DONE   | —         | 2026-09 | `docs/prototype/verify.mjs` — 19/19 pages PASS (CSS resolves, theme toggles, nav shell, no console errors)     |
-| Screenshot capture tool  | DONE   | —         | 2026-09 | `docs/prototype/shots.mjs` → downscaled JPEGs in `docs/prototype/_shots/`                                      |
+| Item                     | Status | Commit    | Date    | Notes                                                                                                                                                      |
+| ------------------------ | ------ | --------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Static FE prototype      | REVIEW | `6b59312` | 2026-09 | `docs/prototype/` — Tailwind CDN + design tokens, no build step. Awaiting user approval before porting.                                                    |
+| Light + dark themes      | DONE   | `4216756` | 2026-09 | `theme.js` maps tokens into the Play CDN, persisted per browser, header toggle + floating button on standalone                                             |
+| Per-platform analytics   | REVIEW | —         | 2026-09 | 7 new pages `analytics-{instagram,threads,facebook,linkedin,x,youtube,tiktok}.html`; Monitoring nav group                                                  |
+| Dummy action-to-target   | REVIEW | —         | 2026-09 | `actions.html` + `actions.js` — inline stepper Queued→Dispatched→Running→Verifying→Success\|Failed                                                         |
+| Automated browser verify | DONE   | —         | 2026-09 | `docs/prototype/verify.mjs` — 19/19 pages PASS (CSS resolves, theme toggles, nav shell, no console errors)                                                 |
+| Screenshot capture tool  | DONE   | —         | 2026-09 | `docs/prototype/shots.mjs` → downscaled JPEGs in `docs/prototype/_shots/`; supports explicit targets and `--all` (28 shots)                                |
+| Design refinement pass   | DONE   | —         | 2026-09 | Desaturated palette (no neon), segmented Light\|Dark switch, primary-tinted active nav, soft card shadow in light only. Re-verified 19/19 + 28 screenshots |
 
 ### Prototype verification finding (fixed)
 
@@ -57,6 +58,21 @@
   change). Fixed by removing it — theme state lives on `<html>` only, set by
   `theme.js`. Confirmed by `pnpm run proto:verify` (body bg now differs between
   themes on every page).
+
+### Design refinement (this pass)
+
+- **Palette desaturated** (`docs/prototype/styles.css`): light `--background`
+  `220 20% 97%` (soft off-white, not pure white), dark `222 20% 10%` (soft
+  charcoal, not near-black); `--primary` muted indigo `230 45% 48%` / `230 52% 66%`;
+  success/warning/info/destructive desaturated. Badges softened to `/0.28`
+  border + `/0.1` fill; stepper-dot glow removed.
+- **Segmented theme switch** (`theme.js` `switchMarkup()`/`bindThemeSwitch()`, used
+  by `shell.js`, `login.html`, `index.html`): explicit `Light|Dark`, `aria-pressed`
+  state, synced via the `smmthemechange` event.
+- **Active nav** now uses a primary tint (`hsl(var(--primary) / 0.12)`) + primary
+  text so the current route reads clearly.
+- **Evidence**: `node docs/prototype/shots.mjs --all` → 28 screenshots (14 pages ×
+  2 themes) in `docs/prototype/_shots/`.
 
 ### Scope split confirmed
 

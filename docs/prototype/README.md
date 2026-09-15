@@ -23,6 +23,13 @@ pnpm run proto:verify  # renders every page, asserts CSS + shell + console
 pnpm run proto:shots   # writes downscaled screenshots to docs/prototype/_shots
 ```
 
+The screenshot tool accepts explicit targets or a full sweep:
+
+```sh
+node docs/prototype/shots.mjs dashboard.html:light actions.html:dark
+node docs/prototype/shots.mjs --all   # every page in both themes (28 shots)
+```
+
 `verify.mjs` loads each page in headless Chromium, toggles dark↔light, and
 asserts that the body background **actually changes** (i.e. the Tailwind Play
 CDN mapped the design tokens and the theme is not locked). It fails on any
@@ -53,7 +60,8 @@ platform: `analytics-instagram`, `analytics-threads`, `analytics-facebook`,
 ## What this covers
 
 - Shell (sidebar nav + topbar + `⌘K`) — `shell.js`
-- **Light + dark mode** — `theme.js` seeds from `localStorage` / `prefers-color-scheme` (dark default), maps the design tokens into the Tailwind Play CDN, and is toggled from the header (shell pages) or the floating button (login / index). Choice persists per browser.
+- **Light + dark mode** — `theme.js` seeds from `localStorage` / `prefers-color-scheme` (dark default), maps the design tokens into the Tailwind Play CDN, and is toggled from a **labeled segmented Light|Dark switch** in the header (shell pages) or the floating switch (login / index). Choice persists per browser and stays in sync across pages via the `smmthemechange` event.
+- **Calm palette.** Saturation is deliberately modest — no neon/glow. Light mode uses a soft off-white (`220 20% 97%`) rather than pure white; dark mode a soft charcoal (`222 20% 10%`) rather than near-black. Accent is a muted indigo (`230 45% 48%` light / `230 52% 66%` dark). Status/feedback colors are desaturated too. Intended for long operator shifts by the Social Media Specialist team.
 - shadcn/ui-style components: button variants, card, badge variants (success / warning / destructive / info / outline), table, input, textarea, select, dialog (`<dialog>`), drawer (static aside), skeleton shimmer, status dot, stepper
 - Status colors from DESIGN SYSTEM §4.1: cold / ready / busy / error
 - Operator console layout pattern: filters → auto-fit grid + right-hand SSE ticker column
@@ -84,7 +92,18 @@ time against OpenAPI + SSE.
 
 ## Verification status
 
-Last run: **19/19 pages PASS** (`pnpm run proto:verify`). One real bug was found
-and fixed during verification: `actions.html` had `class="dark"` on `<body>`,
-which locked the theme tokens so the light/dark toggle did nothing. Theme state
-belongs on `<html>` only (set by `theme.js`).
+Last run: **19/19 pages PASS** (`pnpm run proto:verify`), screenshots refreshed
+for all 14 shipped pages in both themes. One real bug was found and fixed during
+verification: `actions.html` had `class="dark"` on `<body>`, which locked the
+theme tokens so the light/dark toggle did nothing. Theme state belongs on
+`<html>` only (set by `theme.js`).
+
+## Design pass log
+
+- **Desaturated palette** (`styles.css`): killed neon tints, softened badges to
+  `/0.28` border + `/0.1` fill, removed the stepper-dot glow, kept a single soft
+  card shadow in light mode only (dark relies on border contrast).
+- **Segmented theme switch** (`theme.js`, `shell.js`, `login.html`, `index.html`):
+  explicit Light|Dark control, `aria-pressed` reflects state, synced on change.
+- **Active nav** is a primary tint (`hsl(var(--primary) / 0.12)`) with primary
+  text, not a plain neutral accent, so the current page reads clearly.

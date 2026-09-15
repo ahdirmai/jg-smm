@@ -5,6 +5,7 @@
  * Usage:
  *   node docs/prototype/shots.mjs dashboard.html:dark actions.html:light
  *   node docs/prototype/shots.mjs            # captures a sensible default set
+ *   node docs/prototype/shots.mjs --all      # every page in both themes
  *
  * Requires a static server on http://127.0.0.1:24085 serving this directory.
  */
@@ -16,6 +17,23 @@ import { dirname, join } from 'node:path';
 const BASE = process.env.PROTO_BASE || 'http://127.0.0.1:24085';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT = join(HERE, '_shots');
+
+const ALL_PAGES = [
+  'index',
+  'login',
+  'dashboard',
+  'workers',
+  'accounts',
+  'add-account',
+  'bulk-import',
+  'actions',
+  'templates',
+  'monitoring',
+  'analytics-instagram',
+  'analytics-threads',
+  'audit',
+  'settings',
+];
 
 const DEFAULT_TARGETS = [
   'dashboard.html:dark',
@@ -36,7 +54,11 @@ function resolveExecutable() {
     .sort((a, b) => Number(b.split('-')[1]) - Number(a.split('-')[1]));
   const candidates = [
     (d) =>
-      join(cache, d, 'chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing'),
+      join(
+        cache,
+        d,
+        'chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing',
+      ),
     (d) => join(cache, d, 'chrome-mac/Chromium.app/Contents/MacOS/Chromium'),
     (d) => join(cache, d, 'chrome-linux/chrome'),
   ];
@@ -49,10 +71,18 @@ function resolveExecutable() {
 }
 
 mkdirSync(OUT, { recursive: true });
-const targets = process.argv.slice(2).length ? process.argv.slice(2) : DEFAULT_TARGETS;
+const args = process.argv.slice(2);
+const targets = args.includes('--all')
+  ? ALL_PAGES.flatMap((p) => [`${p}.html:light`, `${p}.html:dark`])
+  : args.length
+    ? args
+    : DEFAULT_TARGETS;
 
 const browser = await chromium.launch({ executablePath: resolveExecutable(), headless: true });
-const ctx = await browser.newContext({ viewport: { width: 1600, height: 1000 }, deviceScaleFactor: 1 });
+const ctx = await browser.newContext({
+  viewport: { width: 1600, height: 1000 },
+  deviceScaleFactor: 1,
+});
 const page = await ctx.newPage();
 
 for (const t of targets) {
