@@ -1,10 +1,14 @@
 # MVP-1-SMM — top-level task runner.
-# Full target set (seed) grows in P0-11; this covers P0-02 (stack) and
-# P0-04 (migrations).
+# One place to run the stack, migrations, codegen and CI-equivalent checks.
+# `make help` lists everything.
 
 COMPOSE ?= docker compose
 # Local worker replicas. Max 3 on a 16 GB machine (INFRA_ANALYST.md §15.2).
 WORKERS ?= 3
+
+# Bootstrap owner account created by `make seed` (override on the CLI).
+SEED_ADMIN_EMAIL ?= owner@smm.local
+SEED_ADMIN_PASSWORD ?= changeme-changeme
 
 # Migrations run in a throwaway container so the DB URL stays the single source
 # of truth in compose.yaml (host port 24543, not the in-network 5432).
@@ -19,13 +23,16 @@ SQLC_RUN = docker run --rm -v "$(PWD)/apps/api":/src -w /src sqlc/sqlc:$(SQLC_VE
 # Code generation from the OpenAPI SSOT (openapi/openapi.yaml).
 OAPI_CODEGEN_VERSION ?= v2.4.1
 
-.PHONY: help up down logs ps bootstrap lint typecheck test build ci fmt-check migrate migrate-down migrate-create migrate-status sqlc sqlc-check seed generate generate-go generate-ts
+.PHONY: help up env down logs ps bootstrap hooks lint typecheck test build ci fmt-check migrate migrate-down migrate-create migrate-status sqlc sqlc-check seed generate generate-go generate-ts
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
-up: ## Bring the whole stack up (idempotent), with $(WORKERS) worker replicas
+up: env ## Bring the whole stack up (idempotent), with $(WORKERS) worker replicas
 	$(COMPOSE) up -d --scale worker=$(WORKERS)
+
+env: ## Create .env from infra/docker/.env.example if missing
+	@if [ ! -f .env ]; then cp infra/docker/.env.example .env; echo "created .env from example"; fi
 
 down: ## Stop the stack (keeps volumes)
 	$(COMPOSE) down
@@ -39,9 +46,14 @@ ps: ## Show stack status
 build: ## Build all images
 	$(COMPOSE) build
 
-bootstrap: ## Install JS deps and Go modules
+bootstrap: ## Install JS deps, Go modules, and wire the git hooks
 	pnpm install
 	cd apps/api && go mod download
+	@$(MAKE) hooks
+
+hooks: ## Point git at the in-repo hooks (.githooks) — gitleaks secret guard
+	git config core.hooksPath .githooks
+	@echo "git hooks installed from .githooks (pre-commit secret scan)"
 
 typecheck: ## Typecheck TS workspaces
 	pnpm typecheck

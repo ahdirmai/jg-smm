@@ -1,0 +1,31 @@
+# gitleaks configuration — extend the default rule set.
+# Docs: https://github.com/gitleaks/gitleaks
+title = "MVP-1-SMM"
+
+[extend]
+# Use gitleaks' built-in rules as the baseline, then scope out false positives.
+useDefault = true
+
+[allowlist]
+description = "Repo-wide allowlist: local-dev placeholders, generated code, docs"
+
+# Local compose defaults are non-secret and deliberately committed.
+paths = [
+  # Generated or vendored code never contains first-party secrets.
+  '''internal/repository/sqlcgen/''',
+  '''internal/http/oapigen/''',
+  '''node_modules/''',
+  # Prototype/tooling screenshots are binaries, not source.
+  '''docs/prototype/_shots/''',
+]
+
+# Placeholder values that look like secrets but are local-only defaults.
+regexes = [
+  '''smm:smm''',
+  '''smmsmmsmm''',
+  '''POSTGRES_PASSWORD=smm''',
+  '''SEED_ADMIN_PASSWORD=changeme''',
+]
+
+# Explicit documentation-only markers.
+stopwords = ["example", "placeholder", "changeme", "dummy"]

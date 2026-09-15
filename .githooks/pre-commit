@@ -1,0 +1,42 @@
+#!/usr/bin/env sh
+#
+# Optional zero-dependency pre-commit guard (fallback for contributors who have
+# not installed pre-commit). Enable it once with:
+#
+#   git config core.hooksPath .githooks
+#
+# It blocks staged secrets and large binaries. It intentionally does NOT run the
+# full lint/test suite — that is CI's job (see .github/workflows/ci.yml).
+
+set -eu
+
+fail() {
+  printf '\n\033[31m✖ pre-commit: %s\033[0m\n\n' "$1" >&2
+  exit 1
+}
+
+staged=$(git diff --cached --name-only --diff-filter=ACM)
+
+# --- 1. Secrets: run gitleaks on the staged tree if available --------------
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks protect --staged --config .gitleaks.toml --redact \
+    || fail "gitleaks found a potential secret in the staged changes."
+else
+  # No gitleaks binary: fall back to a conservative pattern scan of added lines.
+  pattern='(AKIA[0-9A-Z]{16})|(-----BEGIN [A-Z ]*PRIVATE KEY-----)|(xox[baprs]-[0-9A-Za-z-]+)|(ghp_[0-9A-Za-z]{36})'
+  if git diff --cached -U0 | grep -E '^\+' | grep -vE '^\+\+\+' | grep -Eq "$pattern"; then
+    fail "possible secret detected (install gitleaks for a thorough scan)."
+  fi
+fi
+
+# --- 2. Guard against committing large binaries ----------------------------
+max_kb=2048
+for f in $staged; do
+  [ -f "$f" ] || continue
+  size_kb=$(wc -c <"$f" | awk '{print int($1/1024)}')
+  if [ "$size_kb" -gt "$max_kb" ]; then
+    fail "$f is ${size_kb}KB (> ${max_kb}KB). Use Git LFS or keep it out of the repo."
+  fi
+done
+
+printf '\033[32m✔ pre-commit checks passed\033[0m\n'
