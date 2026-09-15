@@ -2,9 +2,12 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { subscribeStream } from '@smm/shared';
+
 import { api, type ActionItem, type ActionJob, type JobStatus } from '../api';
 
-const POLL_MS = 5_000;
+const SSE_URL = process.env.NEXT_PUBLIC_SSE_URL ?? 'http://localhost:8080/api/stream';
+
 
 export type ActionsState = {
   actions: ActionJob[];
@@ -15,9 +18,11 @@ export type ActionsState = {
 };
 
 /**
- * The action queue. The list is the operator's read on dispatch health. There
- * is no action SSE frame yet, so a short poll reconciles verdicts; swap to a
- * stream subscription once the backend emits one.
+ * The action queue. The list is the operator's read on dispatch health. A
+ * worker verdict publishes an `action-updated` frame (P4-03); the frame carries
+ * ids + verdict, and the browser refetches the queue — the read is
+ * authoritative, so a race between the log and the job row still converges
+ * (ADR 0010: frame is a signal, not a patch).
  */
 export function useActions(status?: JobStatus): ActionsState {
   const [actions, setActions] = useState<ActionJob[]>([]);
@@ -46,12 +51,14 @@ export function useActions(status?: JobStatus): ActionsState {
     void refresh();
   }, [refresh]);
 
-  // A queue row changes when a worker reports, not when the operator acts, so
-  // a poll is the honest read. Slow enough to be idle-cost, fast enough to see
-  // a batch land.
+  // EventSource auto-reconnects on drop; on reconnect the queue is refetched
+  // (AC "reconnect refetch"), which closes the gap of any frames missed while
+  // the socket was down.
   useEffect(() => {
-    const t = setInterval(() => void refresh(), POLL_MS);
-    return () => clearInterval(t);
+    return subscribeStream(SSE_URL, 'action-updated', {
+      onEvent: () => void refresh(),
+      onError: () => {},
+    });
   }, [refresh]);
 
   const enqueue = useCallback(

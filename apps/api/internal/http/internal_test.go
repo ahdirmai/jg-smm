@@ -202,7 +202,7 @@ func (s *fakeProxyGroupStore) Delete(_ context.Context, id string) error {
 func newTestInternal() (*InternalHandler, *service.JobService, *fakeWorkerStore, *fakeAccountStore) {
 	workers := newMemWorkerStoreForHTTP()
 	accounts := newMemAccountStoreForHTTP()
-	jobs := service.NewJobService(workers, accounts, nil, nil, stubClock{t: time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)}, nil)
+	jobs := service.NewJobService(workers, accounts, nil, nil, stubClock{t: time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)}, nil, nil)
 	return NewInternalHandler(jobs), jobs, workers, accounts
 }
 

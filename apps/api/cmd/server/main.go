@@ -92,13 +92,17 @@ func main() {
 			os.Exit(1)
 		}
 
+		// The hub fans lifecycle events to dashboards over SSE (P1-17). Created
+		// before the services that publish through it.
+		hub := adapter.NewHub(cfg.SSEBuffer)
+
 		// Worker callbacks (heartbeat / auth outcome / action verdict). The
 		// worker container POSTs here; it never touches the DB directly.
 		workerRepo := repository.NewWorkerRepo(pg.Queries())
 		accountRepo := repository.NewAccountRepo(pg.Queries())
 		logRepo := repository.NewProvisionLogRepo(pg.Queries())
 		actionRepo := repository.NewActionRepo(pg.Queries())
-		jobSvc := service.NewJobService(workerRepo, accountRepo, logRepo, actionRepo, adapter.SystemClock{}, logger)
+		jobSvc := service.NewJobService(workerRepo, accountRepo, logRepo, actionRepo, adapter.SystemClock{}, hub, logger)
 		deps.Internal = apihttp.NewInternalHandler(jobSvc)
 
 		// Bin-packing: accounts land in the first container with a free platform
@@ -121,8 +125,6 @@ func main() {
 
 		// Account API (P1-15 / P1-16): add/list/pause/resume/remove. The
 		// sealer is injected so the plaintext password never reaches the store.
-		// The hub fans lifecycle events to dashboards over SSE (P1-17).
-		hub := adapter.NewHub(cfg.SSEBuffer)
 		accountSvc := service.NewAccountService(accountRepo, workerRepo, packer, service.AccountConfig{
 			Sealer: sealer,
 			Clock:  adapter.SystemClock{},

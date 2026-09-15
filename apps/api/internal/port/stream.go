@@ -27,4 +27,5 @@ const (
 	EventAccountUpdated   = "account-updated"
 	EventWorkerHealth     = "worker-health"
 	EventProvisionUpdated = "provision-updated"
+	EventActionUpdated    = "action-updated"
 )

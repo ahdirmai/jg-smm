@@ -1,9 +1,13 @@
 package service
 
 import (
+	"context"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/domain"
+	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/port"
 )
 
 // P3-12 callback-path classification. The classifier itself is proven in the
@@ -47,7 +51,7 @@ func TestClassifyAttempt(t *testing.T) {
 // the classification is the P3-12 contract and must hold now so P3-11 stores a
 // real class instead of backfilling one.
 func TestRecordAttemptClassifies(t *testing.T) {
-	svc := NewJobService(nil, nil, nil, nil, nil, nil)
+	svc := NewJobService(nil, nil, nil, nil, nil, nil, nil)
 	ctx := t.Context()
 
 	// A banned-account failure: the callback must be accepted and classified,
@@ -65,3 +69,48 @@ func TestRecordAttemptClassifies(t *testing.T) {
 
 // strPtr boxes a string for the pointer-typed error field.
 func strPtr(s string) *string { return &s }
+
+// captureStream is a StreamPublisher that records frames so a test can prove a
+// verdict reached the dashboard channel (P4-03).
+type captureStream struct {
+	frames []struct {
+		kind string
+		body string
+	}
+}
+
+func (c *captureStream) Publish(_ context.Context, kind string, payload []byte) {
+	c.frames = append(c.frames, struct {
+		kind string
+		body string
+	}{kind: kind, body: string(payload)})
+}
+
+func TestRecordAttemptPublishesActionFrame(t *testing.T) {
+	store := newFakeActionStore()
+	stream := &captureStream{}
+	svc := NewJobService(nil, nil, nil, store, fixedClock{t: time.Unix(1_000_000, 0).UTC()}, stream, nil)
+
+	err := svc.RecordAttempt(context.Background(), AttemptRecord{
+		AttemptID:    "job-1:1",
+		Status:       domain.AttemptSuccess,
+		RenderedText: func() *string { s := "nice shot!"; return &s }(),
+		WorkerID:     func() *string { s := "worker-1"; return &s }(),
+	})
+	if err != nil {
+		t.Fatalf("record attempt: %v", err)
+	}
+
+	if len(stream.frames) != 1 {
+		t.Fatalf("frames = %d, want 1", len(stream.frames))
+	}
+	if stream.frames[0].kind != port.EventActionUpdated {
+		t.Errorf("frame kind = %q, want %s", stream.frames[0].kind, port.EventActionUpdated)
+	}
+	body := stream.frames[0].body
+	for _, want := range []string{`"jobId":"job-1"`, `"verified":true`, `"renderedText":"nice shot!"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("frame body missing %s: %s", want, body)
+		}
+	}
+}

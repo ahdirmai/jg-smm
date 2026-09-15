@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -24,8 +25,11 @@ type JobService struct {
 	actions port.ActionStore
 	// retry is the action-attempt retry policy (P3-11): how far an attempt may
 	// escalate and how long to wait before the next one.
-	retry  RetryPolicy
-	clock  port.Clock
+	retry RetryPolicy
+	clock port.Clock
+	// stream fans action verdicts to dashboards (P4-03). Optional: a nil
+	// publisher means the callback still persists, the dashboard just polls.
+	stream port.StreamPublisher
 	logger *slog.Logger
 }
 
@@ -45,7 +49,7 @@ var DefaultRetryPolicy = RetryPolicy{MaxAttempts: 3, Backoff: 30 * time.Second}
 // NewJobService wires the service. workers/accounts/logs/actions may be nil
 // during earlier phases; the affected endpoints then report the store as
 // unavailable rather than panicking.
-func NewJobService(workers port.WorkerStore, accounts port.AccountStore, logs port.ProvisionLogStore, actions port.ActionStore, clock port.Clock, logger *slog.Logger) *JobService {
+func NewJobService(workers port.WorkerStore, accounts port.AccountStore, logs port.ProvisionLogStore, actions port.ActionStore, clock port.Clock, stream port.StreamPublisher, logger *slog.Logger) *JobService {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -59,6 +63,7 @@ func NewJobService(workers port.WorkerStore, accounts port.AccountStore, logs po
 		actions:  actions,
 		retry:    DefaultRetryPolicy,
 		clock:    clock,
+		stream:   stream,
 		logger:   logger,
 	}
 }
@@ -149,7 +154,34 @@ func (s *JobService) RecordAttempt(ctx context.Context, r AttemptRecord) error {
 	if _, err := s.actions.UpsertActionLog(ctx, log); err != nil {
 		return fmt.Errorf("persist attempt: %w", err)
 	}
+	// Fan the verdict to dashboards (P4-03): the queue page reads this frame
+	// instead of polling. The frame carries the ids + verdict, not the job
+	// row; the browser refetches the queue (ADR 0010: frame is a signal, the
+	// read is authoritative) so a race between the log and the job row still
+	// converges to the stored truth.
+	s.publishAction(ctx, log)
 	return s.applyVerdict(ctx, jobID, attempt, r)
+}
+
+// publishAction fans an action verdict to dashboards. A nil publisher is the
+// "no realtime" mode: the write already landed, the queue just polls.
+func (s *JobService) publishAction(ctx context.Context, l domain.ActionLog) {
+	if s.stream == nil {
+		return
+	}
+	body, err := json.Marshal(map[string]any{
+		"jobId":        l.ActionJobID,
+		"attempt":      l.Attempt,
+		"status":       l.Status,
+		"verified":     l.Verified,
+		"errorClass":   l.ErrorClass,
+		"renderedText": l.RenderedText,
+	})
+	if err != nil {
+		s.logger.Warn("stream: marshal action frame", "err", err)
+		return
+	}
+	s.stream.Publish(ctx, port.EventActionUpdated, body)
 }
 
 // AuthOutcome is a sanitised login/2FA result for an account.
