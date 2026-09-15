@@ -41,6 +41,32 @@ func TestLoad_InvalidBatchParallelism(t *testing.T) {
 	}
 }
 
+func TestLoad_MaxAccountsPerContainer(t *testing.T) {
+	t.Setenv("PROVISIONER_MODE", "")
+	t.Setenv("MAX_ACCOUNTS_PER_CONTAINER", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.MaxAccountsPerContainer != 7 {
+		t.Errorf("default MaxAccountsPerContainer = %d, want 7", cfg.MaxAccountsPerContainer)
+	}
+
+	t.Setenv("MAX_ACCOUNTS_PER_CONTAINER", "3")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.MaxAccountsPerContainer != 3 {
+		t.Errorf("MaxAccountsPerContainer = %d, want 3", cfg.MaxAccountsPerContainer)
+	}
+
+	t.Setenv("MAX_ACCOUNTS_PER_CONTAINER", "0")
+	if _, err := Load(); err == nil {
+		t.Fatal("want error for MAX_ACCOUNTS_PER_CONTAINER < 1")
+	}
+}
+
 func TestLoad_ReconcileInterval(t *testing.T) {
 	t.Setenv("PROVISIONER_MODE", "")
 	t.Setenv("RECONCILE_INTERVAL_SECONDS", "")

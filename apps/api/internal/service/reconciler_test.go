@@ -2,8 +2,11 @@ package service
 
 import (
 	"context"
+	"sort"
+	"strconv"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/domain"
 	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/port"
@@ -102,14 +105,25 @@ func (s *fakeWorkerStore) List(ctx context.Context, f port.WorkerFilter) ([]doma
 	if s.failList {
 		return nil, errFake
 	}
+	// Deterministic created-at order so packing picks the oldest container
+	// first (stable across map iteration).
 	var out []domain.Worker
 	for _, w := range s.workers {
 		out = append(out, w)
 	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].CreatedAt.Before(out[j].CreatedAt)
+	})
 	return out, nil
 }
 
 func (s *fakeWorkerStore) Create(ctx context.Context, w domain.Worker) (domain.Worker, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if w.ID == "" {
+		w.ID = "auto-" + w.Name
+	}
+	s.workers[w.ID] = w
 	return w, nil
 }
 
@@ -126,7 +140,12 @@ func (s *fakeWorkerStore) Update(ctx context.Context, w domain.Worker) (domain.W
 	return w, nil
 }
 
-func (s *fakeWorkerStore) Delete(ctx context.Context, id string) error { return nil }
+func (s *fakeWorkerStore) Delete(ctx context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.workers, id)
+	return nil
+}
 
 func (s *fakeWorkerStore) RecordHeartbeat(ctx context.Context, hb domain.Heartbeat, snap port.WorkerSnapshot) error {
 	return nil
@@ -135,6 +154,7 @@ func (s *fakeWorkerStore) RecordHeartbeat(ctx context.Context, hb domain.Heartbe
 var errFake = context.Canceled
 
 func workerFixture(id string, desired domain.DesiredState, gen int, observed *int) domain.Worker {
+	n, _ := strconv.Atoi(id[1:])
 	return domain.Worker{
 		ID:           id,
 		Name:         "worker-" + id,
@@ -144,10 +164,33 @@ func workerFixture(id string, desired domain.DesiredState, gen int, observed *in
 		Status:       domain.WorkerPending,
 		Generation:   gen,
 		ObservedGen:  observed,
+		CreatedAt:    time.Date(2026, 1, 1, 0, n, 0, 0, time.UTC),
 	}
 }
 
 func intPtr(n int) *int { return &n }
+
+func accountFixture(id string, platform domain.Platform) domain.Account {
+	return domain.Account{
+		ID:         id,
+		Platform:   platform,
+		Username:   "user-" + id,
+		AuthStatus: domain.AuthAuthenticating,
+		Status:     domain.AccountActive,
+	}
+}
+
+func accountFixtureWithWorker(id string, platform domain.Platform, workerID string) domain.Account {
+	a := accountFixture(id, platform)
+	a.WorkerID = &workerID
+	return a
+}
+
+func workerFixtureWithSource(id string, source domain.WorkerSource, desired domain.DesiredState, gen int, observed *int) domain.Worker {
+	w := workerFixture(id, desired, gen, observed)
+	w.Source = source
+	return w
+}
 
 // ---- diff unit tests (pure, no side effects) ----
 

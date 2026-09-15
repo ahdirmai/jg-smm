@@ -30,6 +30,9 @@ type Config struct {
 	WorkerImage string
 	// ProvisionAutoCreate allows bin-packing to auto-create a worker container.
 	ProvisionAutoCreate bool
+	// MaxAccountsPerContainer caps accounts per container. The platform unique
+	// constraint is the real authority; this bounds total density.
+	MaxAccountsPerContainer int
 	// ActionBatchParallelism caps how many worker containers act concurrently.
 	ActionBatchParallelism int
 	// ShutdownTimeoutSeconds is the graceful drain budget.
@@ -57,6 +60,7 @@ func Load() (Config, error) {
 		K8sNamespace:             env("K8S_NAMESPACE", "smm"),
 		WorkerImage:              env("WORKER_IMAGE", ""),
 		ProvisionAutoCreate:      envBool("PROVISION_AUTO_CREATE", true),
+		MaxAccountsPerContainer:  envInt("MAX_ACCOUNTS_PER_CONTAINER", 7),
 		ActionBatchParallelism:   envInt("ACTION_BATCH_PARALLELISM", 2),
 		ShutdownTimeoutSeconds:   envInt("SHUTDOWN_TIMEOUT_SECONDS", 10),
 		JWTSecret:                os.Getenv("JWT_SECRET"),
@@ -73,6 +77,9 @@ func Load() (Config, error) {
 	}
 	if cfg.ActionBatchParallelism < 1 {
 		return Config{}, fmt.Errorf("config: ACTION_BATCH_PARALLELISM must be >= 1, got %d", cfg.ActionBatchParallelism)
+	}
+	if cfg.MaxAccountsPerContainer < 1 {
+		return Config{}, fmt.Errorf("config: MAX_ACCOUNTS_PER_CONTAINER must be >= 1, got %d", cfg.MaxAccountsPerContainer)
 	}
 	// The JWT secret is only meaningful once the API talks to the DB (auth on).
 	if cfg.DatabaseURL != "" && len(cfg.JWTSecret) < 16 {
