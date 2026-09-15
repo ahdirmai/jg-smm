@@ -41,7 +41,7 @@ const controller = createController({
 });
 
 // --- heartbeat -----------------------------------------------------------
-let lastActionAt: string | null = null;
+const lastActionAt: string | null = null;
 const heartbeat = createHeartbeat(
   config,
   logger,

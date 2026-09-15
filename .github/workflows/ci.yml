@@ -1,0 +1,192 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel superseded runs on the same ref (cheap, keeps the queue short).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '22'
+  GO_VERSION: '1.26'
+  PNPM_VERSION: '9.12.0'
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # JS workspaces (web + worker + packages): install, lint, typecheck, build,
+  # unit tests. Turbo caches by content hash.
+  # ---------------------------------------------------------------------------
+  js:
+    name: js (lint · typecheck · build · test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Turbo cache
+        uses: actions/cache@v4
+        with:
+          path: .turbo
+          key: turbo-${{ runner.os }}-${{ github.sha }}
+          restore-keys: turbo-${{ runner.os }}-
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build
+        run: pnpm build
+
+      - name: Test
+        run: pnpm test
+
+      - name: Install Playwright Chromium (worker tests & prototype verifier)
+        run: pnpm --filter @smm/worker exec playwright install --with-deps chromium
+
+      - name: Prototype verify (real-browser, 19 pages)
+        run: |
+          python3 -m http.server 24085 --directory docs/prototype &
+          sleep 2
+          node docs/prototype/verify.mjs
+
+  # ---------------------------------------------------------------------------
+  # OpenAPI → generated code must be in sync (spec is the SSOT).
+  # ---------------------------------------------------------------------------
+  codegen:
+    name: codegen (openapi drift)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: apps/api/go.sum
+
+      - name: Generate Go types from the spec
+        working-directory: apps/api
+        run: |
+          go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.4.1 \
+            --config oapi-codegen.yaml ../../openapi/openapi.yaml
+
+      - name: Fail if generated Go code is stale
+        run: |
+          if ! git diff --exit-code -- apps/api/internal/http/oapigen; then
+            echo "::error::openapi Go types are stale; run 'make generate-go' and commit"
+            exit 1
+          fi
+
+  # ---------------------------------------------------------------------------
+  # Go API: format check, vet, build, unit tests.
+  # ---------------------------------------------------------------------------
+  go:
+    name: go (fmt · vet · build · test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: apps/api/go.sum
+
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "gofmt found unformatted files:"; echo "$unformatted"; exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build
+        run: go build ./...
+
+      - name: Test
+        run: go test ./...
+
+  # ---------------------------------------------------------------------------
+  # Migrations must apply cleanly and roll back on a real Postgres.
+  # ---------------------------------------------------------------------------
+  migrate-dry:
+    name: migrate (up · down)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: timescale/timescaledb:2.17.2-pg16
+        env:
+          POSTGRES_USER: smm
+          POSTGRES_PASSWORD: smm
+          POSTGRES_DB: smm
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U smm"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      MIGRATE_URL: postgres://smm:smm@localhost:5432/smm?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install golang-migrate
+        run: |
+          curl -fsSL https://github.com/golang-migrate/migrate/releases/download/v4.17.1/migrate.linux-amd64.tar.gz \
+            | tar xz migrate
+          sudo install migrate /usr/local/bin/migrate
+
+      - name: Up
+        run: migrate -path apps/api/db/migrations -database "$MIGRATE_URL" up
+
+      - name: Down (roll back every migration)
+        run: migrate -path apps/api/db/migrations -database "$MIGRATE_URL" down -all
+
+  # ---------------------------------------------------------------------------
+  # Container image scan. Blocks on fixable HIGH/CRITICAL findings.
+  # ---------------------------------------------------------------------------
+  trivy:
+    name: trivy (fs scan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Filesystem scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+          scanners: vuln,secret,misconfig
+
+  # ---------------------------------------------------------------------------
+  # Gate for branch protection — a single required check.
+  # ---------------------------------------------------------------------------
+  ci-ok:
+    name: ci-ok
+    needs: [js, go, codegen, migrate-dry, trivy]
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "all checks passed"

@@ -19,7 +19,7 @@ SQLC_RUN = docker run --rm -v "$(PWD)/apps/api":/src -w /src sqlc/sqlc:$(SQLC_VE
 # Code generation from the OpenAPI SSOT (openapi/openapi.yaml).
 OAPI_CODEGEN_VERSION ?= v2.4.1
 
-.PHONY: help up down logs ps bootstrap typecheck test build migrate migrate-down migrate-create migrate-status sqlc sqlc-check seed generate generate-go generate-ts
+.PHONY: help up down logs ps bootstrap lint typecheck test build ci fmt-check migrate migrate-down migrate-create migrate-status sqlc sqlc-check seed generate generate-go generate-ts
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -45,6 +45,19 @@ bootstrap: ## Install JS deps and Go modules
 
 typecheck: ## Typecheck TS workspaces
 	pnpm typecheck
+
+lint: ## Lint TS workspaces (ESLint 9 flat config)
+	pnpm lint
+
+fmt-check: ## Fail if any Go file is not gofmt-clean
+	@cd apps/api && unformatted="$$(gofmt -l .)"; \
+		if [ -n "$$unformatted" ]; then echo "gofmt found unformatted files:"; echo "$$unformatted"; exit 1; fi; \
+		echo "gofmt clean"
+
+ci: lint typecheck fmt-check ## Run the checks CI runs, locally (no containers needed)
+	pnpm build
+	pnpm test
+	cd apps/api && go vet ./... && go build ./... && go test ./...
 
 test: ## Run all tests
 	pnpm test
