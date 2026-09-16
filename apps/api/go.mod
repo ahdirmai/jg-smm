@@ -11,7 +11,7 @@ require (
 	github.com/oapi-codegen/nullable v1.2.0
 	github.com/oapi-codegen/runtime v1.1.1
 	github.com/prometheus/client_golang v1.12.1
-	github.com/redis/go-redis/v9 v9.7.0
+	github.com/redis/go-redis/v9 v9.7.3
 	golang.org/x/crypto v0.57.0
 	golang.org/x/time v0.15.0
 	k8s.io/api v0.32.3

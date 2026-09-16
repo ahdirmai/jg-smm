@@ -27,14 +27,15 @@ func NewAnalyticsHandler(svc *service.AnalyticsService) *AnalyticsHandler {
 	return &AnalyticsHandler{analytics: svc}
 }
 
-// Register mounts both route sets. The group in router.go already applies auth.
+// Register mounts both route sets. The group in router.go applies auth + the
+// `read` floor; mutating routes add `act` (P5-04).
 func (h *AnalyticsHandler) Register(g *echo.Group) {
-	g.POST("/official-accounts", h.createOfficialAccount)
+	g.POST("/official-accounts", h.createOfficialAccount, RequirePermission(domain.PermAct))
 	g.GET("/official-accounts", h.listOfficialAccounts)
-	g.DELETE("/official-accounts/:officialAccountId", h.archiveOfficialAccount)
+	g.DELETE("/official-accounts/:officialAccountId", h.archiveOfficialAccount, RequirePermission(domain.PermAct))
 	// Static routes must be registered before the /analytics/:platform param
 	// route, otherwise Echo matches "refresh" as a platform name.
-	g.POST("/analytics/refresh", h.analyticsRefresh)
+	g.POST("/analytics/refresh", h.analyticsRefresh, RequirePermission(domain.PermAct))
 	g.GET("/analytics/overview", h.analyticsOverview)
 	g.GET("/analytics/:platform", h.analyticsByPlatform)
 }

@@ -25,10 +25,11 @@ func NewProxyGroupHandler(groups *service.ProxyGroupService) *ProxyGroupHandler 
 }
 
 // Register mounts the proxy group routes on the auth+RBAC /api group.
+// Mutating routes add the `act` gate (P5-04).
 func (h *ProxyGroupHandler) Register(g *echo.Group) {
-	g.POST("/proxy-groups", h.create)
+	g.POST("/proxy-groups", h.create, RequirePermission(domain.PermAct))
 	g.GET("/proxy-groups", h.list)
-	g.DELETE("/proxy-groups/:proxyGroupId", h.remove)
+	g.DELETE("/proxy-groups/:proxyGroupId", h.remove, RequirePermission(domain.PermAct))
 }
 
 func (h *ProxyGroupHandler) create(c echo.Context) error {

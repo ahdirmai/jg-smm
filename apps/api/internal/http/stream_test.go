@@ -122,7 +122,11 @@ func TestStreamRequiresAuth(t *testing.T) {
 	}
 }
 
-func TestStreamAnalystForbidden(t *testing.T) {
+// P5-04: the /api group floor is `read`, and STRATEGIST/ANALYST hold it, so
+// the SSE channel is a read the analyst role may open. This used to assert
+// 403, which was the RBAC bug — a read-only role was locked out of the
+// dashboard's own realtime channel.
+func TestStreamAnalystAllowed(t *testing.T) {
 	srv, _ := newStreamTestServer(t, domain.RoleAnalyst)
 	cookies := loginCookieJar(t, srv.URL)
 	resp, err := doWithCookies("GET", srv.URL, "/api/stream", cookies, nil)
@@ -130,8 +134,8 @@ func TestStreamAnalystForbidden(t *testing.T) {
 		t.Fatalf("connect: %v", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("analyst status = %d, want 403", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("analyst status = %d, want 200", resp.StatusCode)
 	}
 }
 

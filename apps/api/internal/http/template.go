@@ -24,12 +24,13 @@ func NewTemplateHandler(templates *service.TemplateService) *TemplateHandler {
 	return &TemplateHandler{templates: templates}
 }
 
-// Register mounts the template routes into an authed group.
+// Register mounts the template routes into an authed group. Reads are open to
+// any read role; editing the comment pool is an `act` (P5-04).
 func (h *TemplateHandler) Register(g *echo.Group) {
-	g.POST("/templates", h.create)
+	g.POST("/templates", h.create, RequirePermission(domain.PermAct))
 	g.GET("/templates", h.list)
-	g.PUT("/templates/:templateId", h.update)
-	g.DELETE("/templates/:templateId", h.remove)
+	g.PUT("/templates/:templateId", h.update, RequirePermission(domain.PermAct))
+	g.DELETE("/templates/:templateId", h.remove, RequirePermission(domain.PermAct))
 }
 
 // create adds one variant to the pool.

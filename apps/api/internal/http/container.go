@@ -25,12 +25,12 @@ func NewContainerHandler(containers *service.ContainerService) *ContainerHandler
 	return &ContainerHandler{containers: containers}
 }
 
-// Register mounts the container routes. The group must already carry auth +
-// RequirePermission(PermAct); this only adds the handlers.
+// Register mounts the container routes. The group carries auth + the `read`
+// floor; mutating routes add the stricter `act` gate (P5-04).
 func (h *ContainerHandler) Register(g *echo.Group) {
-	g.POST("/containers", h.create)
+	g.POST("/containers", h.create, RequirePermission(domain.PermAct))
 	g.GET("/containers", h.list)
-	g.DELETE("/containers/:containerId", h.delete)
+	g.DELETE("/containers/:containerId", h.delete, RequirePermission(domain.PermAct))
 }
 
 // create inserts a MANUAL container in the RUNNING desired state.

@@ -13,6 +13,7 @@ import (
 
 	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
 	"github.com/ahdirmai/jg-smm/apps/api/internal/http/oapigen"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/port"
 	"github.com/ahdirmai/jg-smm/apps/api/internal/service"
 )
 
@@ -28,13 +29,21 @@ type (
 	oapigenAnalyticsIngestRun  = oapigen.AnalyticsIngestRun
 )
 
-// newAnalyticsEcho mounts just the analytics routes with no auth middleware so
-// the handler contract can be tested directly (RBAC is covered by the group).
+// newAnalyticsEcho mounts just the analytics routes with the claims an
+// authenticated operator would carry, so the handler contract can be tested
+// directly. RBAC itself is covered by the group tests (TestContainerRBAC);
+// mutating routes still pass through the real RequirePermission(PermAct)
+// middleware, so this does not silently bypass it.
 func newAnalyticsEcho(h *AnalyticsHandler) *echo.Echo {
 	e := echo.New()
 	e.HideBanner = true
 	e.HidePort = true
-	g := e.Group("/api")
+	g := e.Group("/api", func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			c.Set(ctxKeyClaims, port.Claims{UserID: "u1", Role: domain.RoleOperator})
+			return next(c)
+		}
+	})
 	h.Register(g)
 	return e
 }

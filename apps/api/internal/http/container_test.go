@@ -310,7 +310,7 @@ func TestContainerDelete(t *testing.T) {
 // TestContainerRBAC proves the act permission gates the container API: an
 // ANALYST (read-only) cannot create containers, an OPERATOR can.
 func TestContainerRBAC(t *testing.T) {
-	t.Run("analyst denied", func(t *testing.T) {
+	t.Run("analyst denied writes", func(t *testing.T) {
 		srv := newContainerTestServer(t, domain.RoleAnalyst)
 		defer srv.Close()
 		cookies := loginCookieJar(t, srv.URL)
@@ -322,6 +322,54 @@ func TestContainerRBAC(t *testing.T) {
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusForbidden {
 			t.Fatalf("analyst status = %d, want 403", resp.StatusCode)
+		}
+	})
+
+	// P5-04: the /api group used to require `act`, which locked STRATEGIST and
+	// ANALYST out of the read endpoints too. The group floor is now `read`, so
+	// a read-only role can list containers — it just cannot create or delete.
+	// An empty list is still a 200, which is exactly the point: the old code
+	// returned 403 here.
+	t.Run("analyst allowed reads", func(t *testing.T) {
+		srv := newContainerTestServer(t, domain.RoleAnalyst)
+		defer srv.Close()
+		cookies := loginCookieJar(t, srv.URL)
+
+		resp, err := doWithCookies(http.MethodGet, srv.URL, "/api/containers", cookies, nil)
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("analyst read status = %d, want 200", resp.StatusCode)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		if !strings.Contains(string(body), "containers") {
+			t.Fatalf("analyst read body = %s, want a container list", body)
+		}
+	})
+
+	t.Run("strategist allowed reads, denied writes", func(t *testing.T) {
+		srv := newContainerTestServer(t, domain.RoleStrategist)
+		defer srv.Close()
+		cookies := loginCookieJar(t, srv.URL)
+
+		list, err := doWithCookies(http.MethodGet, srv.URL, "/api/containers", cookies, nil)
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		list.Body.Close()
+		if list.StatusCode != http.StatusOK {
+			t.Fatalf("strategist read status = %d, want 200", list.StatusCode)
+		}
+
+		del, err := doWithCookies(http.MethodDelete, srv.URL, "/api/containers/nope", cookies, nil)
+		if err != nil {
+			t.Fatalf("delete: %v", err)
+		}
+		del.Body.Close()
+		if del.StatusCode != http.StatusForbidden {
+			t.Fatalf("strategist delete status = %d, want 403", del.StatusCode)
 		}
 	})
 

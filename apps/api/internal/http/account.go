@@ -25,13 +25,14 @@ func NewAccountHandler(accounts *service.AccountService) *AccountHandler {
 	return &AccountHandler{accounts: accounts}
 }
 
-// Register mounts the account routes into an authed group.
+// Register mounts the account routes into an authed group. The group carries
+// the `read` floor; mutating routes add the stricter `act` gate (P5-04).
 func (h *AccountHandler) Register(g *echo.Group) {
-	g.POST("/accounts", h.create)
+	g.POST("/accounts", h.create, RequirePermission(domain.PermAct))
 	g.GET("/accounts", h.list)
-	g.POST("/accounts/import", h.importRows)
-	g.POST("/accounts/:accountId", h.setStatus)
-	g.DELETE("/accounts/:accountId", h.remove)
+	g.POST("/accounts/import", h.importRows, RequirePermission(domain.PermAct))
+	g.POST("/accounts/:accountId", h.setStatus, RequirePermission(domain.PermAct))
+	g.DELETE("/accounts/:accountId", h.remove, RequirePermission(domain.PermAct))
 }
 
 // create stores an account and packs it into a container.

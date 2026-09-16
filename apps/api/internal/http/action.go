@@ -26,9 +26,10 @@ func NewActionHandler(actions *service.ActionService) *ActionHandler {
 	return &ActionHandler{actions: actions}
 }
 
-// Register mounts the action routes into an authed group.
+// Register mounts the action routes into an authed group. The group carries
+// the `read` floor; enqueueing is an `act` (P5-04).
 func (h *ActionHandler) Register(g *echo.Group) {
-	g.POST("/actions", h.enqueue)
+	g.POST("/actions", h.enqueue, RequirePermission(domain.PermAct))
 	g.GET("/actions", h.list)
 }
 

@@ -64,10 +64,13 @@ func NewRouter(deps Dependencies) *echo.Echo {
 			return c.JSON(200, map[string]string{"status": "ok"})
 		})
 
-		// Everything under /api needs an authenticated user with the `act`
-		// permission (OPERATOR+). Containers and accounts share this tier;
-		// SSE is the same channel (ADR 0010).
-		api := e.Group("/api", deps.Auth.requireAuth(), RequirePermission(domain.PermAct))
+		// Everything under /api needs an authenticated user with at least the
+		// `read` permission (OPERATOR/ANALYST/STRATEGIST/OWNER). Mutating routes
+		// add a stricter `act`/`export` gate per handler — a role that can read
+		// the dashboard must never be able to queue actions or delete a worker.
+		// P5-04: the group previously required `act`, which locked
+		// STRATEGIST/ANALYST out of every read endpoint with a 403.
+		api := e.Group("/api", deps.Auth.requireAuth(), RequirePermission(domain.PermRead))
 		if deps.Containers != nil {
 			deps.Containers.Register(api)
 		}
