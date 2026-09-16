@@ -9,7 +9,10 @@
     "start": "next start -p 3000",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "clean": "rm -rf .next .turbo"
+    "storybook": "storybook dev -p 6006",
+    "build-storybook": "storybook build",
+    "storybook:test": "test-storybook",
+    "clean": "rm -rf .next .turbo storybook-static"
   },
   "dependencies": {
     "@radix-ui/react-slot": "1.1.1",
@@ -27,6 +30,11 @@
   },
   "devDependencies": {
     "@smm/tsconfig": "workspace:*",
+    "@storybook/addon-a11y": "9.1.20",
+    "@storybook/nextjs": "9.1.20",
+    "@storybook/test-runner": "0.23.0",
+    "axe-playwright": "2.2.2",
+    "storybook": "9.1.20",
     "@tailwindcss/postcss": "4.1.14",
     "@types/node": "22.9.0",
     "@types/react": "19.0.0",
