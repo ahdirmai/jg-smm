@@ -97,6 +97,9 @@ export default function AccountsPage() {
   const [platform, setPlatform] = useState<string>('all');
   const [status, setStatusFilter] = useState<string>('all');
   const [busy, setBusy] = useState<string | null>(null);
+  // P6 parity: bulk select over the filtered set. Ops pause/resume/remove
+  // many accounts at once; each call hits the real per-id endpoints.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const filtered = useMemo(() => {
     return accounts.filter((a) => {
@@ -105,6 +108,36 @@ export default function AccountsPage() {
       return true;
     });
   }, [accounts, platform, status]);
+
+  const visibleIds = useMemo(() => new Set(filtered.map((a) => a.id)), [filtered]);
+  // Drop selections that the current filter hid, so the bulk bar never
+  // counts rows the operator cannot see.
+  const effective = useMemo(
+    () => [...selected].filter((id) => visibleIds.has(id)),
+    [selected, visibleIds],
+  );
+  const allSelected = effective.length > 0 && effective.length === filtered.length;
+
+  const toggleAll = () => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allSelected) visibleIds.forEach((id) => next.delete(id));
+      else visibleIds.forEach((id) => next.add(id));
+      return next;
+    });
+  };
+
+  const onBulk = async (fn: (id: string) => Promise<void>) => {
+    setBusy('__bulk__');
+    try {
+      for (const id of effective) await fn(id);
+      setSelected(new Set());
+    } catch (err) {
+      console.error('bulk account op failed', err);
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const onAct = async (id: string, fn: (id: string) => Promise<void>) => {
     setBusy(id);
@@ -179,6 +212,48 @@ export default function AccountsPage() {
             </Select>
           </section>
 
+          {effective.length > 0 ? (
+            <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 p-3">
+              <span className="text-sm font-medium">{effective.length} selected</span>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={busy === '__bulk__' || !canAct}
+                onClick={() => void onBulk((id) => setStatus(id, 'PAUSED'))}
+              >
+                <Pause className="size-3.5" />
+                Pause
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={busy === '__bulk__' || !canAct}
+                onClick={() => void onBulk((id) => setStatus(id, 'ACTIVE'))}
+              >
+                <Play className="size-3.5" />
+                Resume
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-destructive"
+                disabled={busy === '__bulk__' || !canAct}
+                onClick={() => void onBulk(remove)}
+              >
+                <Trash2 className="size-3.5" />
+                Remove
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={busy === '__bulk__'}
+                onClick={() => setSelected(new Set())}
+              >
+                Clear
+              </Button>
+            </div>
+          ) : null}
+
           {error ? (
             <div className="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
               <AlertCircle className="size-4" />
@@ -190,6 +265,16 @@ export default function AccountsPage() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-10">
+                    <input
+                      type="checkbox"
+                      className="size-4 rounded border-input"
+                      aria-label="Select all visible accounts"
+                      checked={allSelected}
+                      onChange={toggleAll}
+                      disabled={!canAct || filtered.length === 0}
+                    />
+                  </TableHead>
                   <TableHead>Account</TableHead>
                   <TableHead>Platform</TableHead>
                   <TableHead>Container</TableHead>
@@ -201,13 +286,30 @@ export default function AccountsPage() {
               <TableBody>
                 {filtered.length === 0 && !loading ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
+                    <TableCell colSpan={7} className="py-10 text-center text-muted-foreground">
                       No accounts yet. Add one to provision a container.
                     </TableCell>
                   </TableRow>
                 ) : (
                   filtered.map((a) => (
                     <TableRow key={a.id}>
+                      <TableCell>
+                        <input
+                          type="checkbox"
+                          className="size-4 rounded border-input"
+                          aria-label={`Select @${a.username}`}
+                          checked={selected.has(a.id)}
+                          onChange={() =>
+                            setSelected((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(a.id)) next.delete(a.id);
+                              else next.add(a.id);
+                              return next;
+                            })
+                          }
+                          disabled={!canAct}
+                        />
+                      </TableCell>
                       <TableCell>
                         <div className="font-medium">@{a.username}</div>
                         {a.handle ? (

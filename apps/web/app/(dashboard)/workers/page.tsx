@@ -161,6 +161,28 @@ export default function WorkersPage() {
 
       <LiveTicker ticker={ticker} />
 
+      <section className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+        {(
+          [
+            ['Containers', containers.length],
+            ['Ready', containers.filter((c) => c.status === 'READY' || c.status === 'IDLE').length],
+            ['Busy', containers.filter((c) => c.status === 'BUSY').length],
+            [
+              'Error',
+              containers.filter((c) => ['ERROR', 'DEAD', 'QUARANTINED'].includes(c.status)).length,
+            ],
+            ['Accounts enrolled', containers.reduce((n, c) => n + (c.accounts?.length ?? 0), 0)],
+          ] as [string, number][]
+        ).map(([label, value]) => (
+          <Card key={label}>
+            <CardContent className="space-y-1 p-4">
+              <span className="text-xs uppercase tracking-wide text-muted-foreground">{label}</span>
+              <div className="text-2xl font-semibold tracking-tight tabular-nums">{value}</div>
+            </CardContent>
+          </Card>
+        ))}
+      </section>
+
       <section className="flex flex-wrap items-center gap-2">
         <Select value={city} onValueChange={setCity}>
           <SelectTrigger className="w-48">
