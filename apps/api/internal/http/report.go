@@ -2,6 +2,7 @@ package http
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
@@ -119,7 +120,11 @@ func (h *ReportHandler) reportExport(c echo.Context) error {
 	if params.Format != nil {
 		format = service.ExportFormat(*params.Format)
 	}
-	f := filterFrom(params.From, params.To, params.Platform, params.AccountId, &metric)
+	// Validate before touching the response: a bad kind/format must not commit
+	// a text/csv Content-Type onto the JSON error body the errorHandler writes.
+	if !kind.Valid() {
+		return mapReportErr(fmt.Errorf("%w: unknown report kind", domain.ErrValidation))
+	}
 
 	switch format {
 	case service.ExportCSV:
@@ -131,8 +136,10 @@ func (h *ReportHandler) reportExport(c echo.Context) error {
 		c.Response().Header().Set(echo.HeaderContentDisposition,
 			"attachment; filename=report-"+string(kind)+".json")
 	default:
-		return echo.NewHTTPError(http.StatusBadRequest, "unknown format")
+		return mapReportErr(fmt.Errorf("%w: unknown format", domain.ErrValidation))
 	}
+
+	f := filterFrom(params.From, params.To, params.Platform, params.AccountId, &metric)
 
 	// Streaming: the CSV/JSON writers flush straight into the response, so a
 	// 90-day window never materialises as one buffer in memory.

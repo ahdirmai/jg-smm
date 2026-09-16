@@ -37,6 +37,10 @@ func NewRouter(deps Dependencies) *echo.Echo {
 	e.HideBanner = true
 	e.HidePort = true
 
+	// Generated query-param structs carry `form` tags, so query binding needs
+	// the shim above rather than Echo's `query`-tag DefaultBinder.
+	e.Binder = formQueryBinder{}
+
 	e.HTTPErrorHandler = errorHandler
 	e.Use(requestLogger(), recoverer())
 
