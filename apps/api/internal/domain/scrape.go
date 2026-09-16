@@ -22,12 +22,14 @@ import (
 type JobType string
 
 const (
-	JobTypeScrapeLike     JobType = "scrape_like"
-	JobTypeScrapeComment  JobType = "scrape_comment"
-	JobTypeScrapeMetric   JobType = "scrape_metric"
-	JobTypeSessionRefresh JobType = "session_refresh"
-	JobTypeActionLike     JobType = "action_like"
-	JobTypeActionComment  JobType = "action_comment"
+	JobTypeScrapeLike         JobType = "scrape_like"
+	JobTypeScrapeComment      JobType = "scrape_comment"
+	JobTypeScrapeMetric       JobType = "scrape_metric"
+	JobTypeSessionRefresh     JobType = "session_refresh"
+	JobTypeActionLike         JobType = "action_like"
+	JobTypeActionComment      JobType = "action_comment"
+	JobTypeActionReport       JobType = "action_report"
+	JobTypeActionReplyComment JobType = "action_reply_comment"
 )
 
 // AllJobTypes lists every job type in a stable order.
@@ -38,6 +40,8 @@ var AllJobTypes = []JobType{
 	JobTypeSessionRefresh,
 	JobTypeActionLike,
 	JobTypeActionComment,
+	JobTypeActionReport,
+	JobTypeActionReplyComment,
 }
 
 // Valid reports whether t is a known job type.

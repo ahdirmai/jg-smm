@@ -1665,7 +1665,7 @@ components:
           $ref: '#/components/schemas/Platform'
         actionType:
           type: string
-          enum: [action_like, action_comment]
+          enum: [action_like, action_comment, action_report, action_reply_comment]
         total:
           type: integer
         succeeded:
@@ -1956,7 +1956,7 @@ components:
           description: Permalink of the post to act on. SSRF-guarded server-side.
         actionType:
           type: string
-          enum: [action_like, action_comment]
+          enum: [action_like, action_comment, action_report, action_reply_comment]
           description: The queue JobType; a like needs no text.
 
     ActionJob:
@@ -1968,7 +1968,7 @@ components:
           type: string
         actionType:
           type: string
-          enum: [action_like, action_comment]
+          enum: [action_like, action_comment, action_report, action_reply_comment]
         accountId:
           type: string
         targetId:

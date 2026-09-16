@@ -123,7 +123,9 @@ export default function ActionsPage() {
   const win = virtual.slice(rows.length);
   const [selected, setSelected] = useState<ActionJob | null>(null);
 
-  const submit = async (type: 'action_like' | 'action_comment') => {
+  const submit = async (
+    type: 'action_like' | 'action_comment' | 'action_report' | 'action_reply_comment',
+  ) => {
     setFormError(null);
 
     if (!accountId) {
@@ -229,18 +231,28 @@ export default function ActionsPage() {
               Like
             </Button>
 
-            {/* The queue only knows like + comment; flag/reply have no job type
-                yet. Shown but inert rather than faked (P6-04: no fake data). */}
-            <Button type="button" variant="outline" disabled title="Not in the MVP queue">
+            {/* The queue now knows like, comment, report and reply — each maps
+                to a real job type the worker dispatches on. */}
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => void submit('action_report')}
+              disabled={busy || !canAct}
+            >
               <Flag />
               Report post
             </Button>
-            <Button type="button" variant="outline" disabled title="Not in the MVP queue">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => void submit('action_reply_comment')}
+              disabled={busy || !canAct}
+            >
               <Reply />
               Reply comment
             </Button>
             <span className="text-xs text-muted-foreground">
-              Report / reply are not in the MVP queue.
+              Comment text is composed from templates — never typed here.
             </span>
           </div>
 
@@ -336,9 +348,7 @@ export default function ActionsPage() {
                         style={{ height: ROW_HEIGHT }}
                       >
                         <Badge variant={statusTone(row.job.status)}>{row.job.status}</Badge>
-                        <span className="w-20 text-sm">
-                          {row.job.actionType === 'action_comment' ? 'Comment' : 'Like'}
-                        </span>
+                        <span className="w-20 text-sm">{actionLabel(row.job.actionType)}</span>
                         <span className="max-w-[200px] flex-1 truncate font-mono text-xs text-muted-foreground">
                           {row.job.targetUrl ?? row.job.targetId}
                         </span>
@@ -381,7 +391,7 @@ export default function ActionsPage() {
         <DialogContent className="sm:max-w-[520px]">
           <DialogHeader>
             <DialogTitle>
-              {selected?.actionType === 'action_comment' ? 'Comment attempt' : 'Like attempt'}
+              {selected ? `${actionLabel(selected.actionType)} attempt` : ''}
             </DialogTitle>
             <DialogDescription>
               {selected
@@ -456,6 +466,20 @@ function Stepper({ reached, failed }: { reached: number; failed: boolean }) {
       })}
     </div>
   );
+}
+
+/** Human label for a queue job type. */
+function actionLabel(t: string): string {
+  switch (t) {
+    case 'action_comment':
+      return 'Comment';
+    case 'action_report':
+      return 'Report';
+    case 'action_reply_comment':
+      return 'Reply';
+    default:
+      return 'Like';
+  }
 }
 
 /** Show the @handle when the account is already loaded; fall back to the id. */

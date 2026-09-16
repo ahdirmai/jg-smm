@@ -41,3 +41,7 @@ vendor/
 # --- Python (docs/ticket generators) ---
 __pycache__/
 *.pyc
+
+# accidental archives
+docs.zip
+*.zip

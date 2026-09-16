@@ -1032,7 +1032,7 @@ export interface components {
             username: string;
             platform: components["schemas"]["Platform"];
             /** @enum {string} */
-            actionType: "action_like" | "action_comment";
+            actionType: "action_like" | "action_comment" | "action_report" | "action_reply_comment";
             total: number;
             succeeded: number;
             failed: number;
@@ -1176,13 +1176,13 @@ export interface components {
              * @description The queue JobType; a like needs no text.
              * @enum {string}
              */
-            actionType: "action_like" | "action_comment";
+            actionType: "action_like" | "action_comment" | "action_report" | "action_reply_comment";
         };
         /** @description One enqueued action and its live status. */
         ActionJob: {
             id: string;
             /** @enum {string} */
-            actionType: "action_like" | "action_comment";
+            actionType: "action_like" | "action_comment" | "action_report" | "action_reply_comment";
             accountId: string;
             targetId: string;
             /** @description Resolved at dispatch from the target; null until then. */

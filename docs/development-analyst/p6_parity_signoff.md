@@ -10,27 +10,27 @@
 All 19 prototype screens have a built route. `index.html` is the prototype's own static
 launcher; the app sidebar replaces it, so it has no route by design.
 
-| Prototype | Built route | Status |
-| --- | --- | --- |
-| `index.html` (launcher) | — | Intentionally none (sidebar covers navigation) |
-| `dashboard.html` | `/` | PARTIAL — accepted |
-| `workers.html` | `/workers` | PARTIAL — accepted |
-| `accounts.html` | `/accounts` | PARTIAL — accepted |
-| `add-account.html` | `/accounts/new` | PARTIAL — accepted |
-| `bulk-import.html` | `/accounts/import` | PARTIAL — accepted |
-| `actions.html` | `/actions` | PARTIAL — accepted |
-| `templates.html` | `/templates` | PARTIAL — accepted |
-| `monitoring.html` | `/monitoring` | PARTIAL — accepted |
-| `analytics-instagram.html` | `/monitoring/instagram` | PARTIAL — accepted |
-| `analytics-threads.html` | `/monitoring/threads` | PARTIAL — accepted |
-| `analytics-facebook.html` | `/monitoring/facebook` | PARTIAL — accepted |
-| `analytics-linkedin.html` | `/monitoring/linkedin` | PARTIAL — accepted |
-| `analytics-x.html` | `/monitoring/x` | PARTIAL — accepted |
-| `analytics-youtube.html` | `/monitoring/youtube` | PARTIAL — accepted |
-| `analytics-tiktok.html` | `/monitoring/tiktok` | PARTIAL — accepted |
-| `audit.html` | `/audit` | PARTIAL — accepted |
-| `settings.html` | `/settings` | PARTIAL — accepted |
-| `login.html` | `/login` | PARITY |
+| Prototype                  | Built route             | Status                                         |
+| -------------------------- | ----------------------- | ---------------------------------------------- |
+| `index.html` (launcher)    | —                       | Intentionally none (sidebar covers navigation) |
+| `dashboard.html`           | `/`                     | PARTIAL — accepted                             |
+| `workers.html`             | `/workers`              | PARTIAL — accepted                             |
+| `accounts.html`            | `/accounts`             | PARTIAL — accepted                             |
+| `add-account.html`         | `/accounts/new`         | PARTIAL — accepted                             |
+| `bulk-import.html`         | `/accounts/import`      | PARTIAL — accepted                             |
+| `actions.html`             | `/actions`              | PARTIAL — accepted                             |
+| `templates.html`           | `/templates`            | PARTIAL — accepted                             |
+| `monitoring.html`          | `/monitoring`           | PARTIAL — accepted                             |
+| `analytics-instagram.html` | `/monitoring/instagram` | PARTIAL — accepted                             |
+| `analytics-threads.html`   | `/monitoring/threads`   | PARTIAL — accepted                             |
+| `analytics-facebook.html`  | `/monitoring/facebook`  | PARTIAL — accepted                             |
+| `analytics-linkedin.html`  | `/monitoring/linkedin`  | PARTIAL — accepted                             |
+| `analytics-x.html`         | `/monitoring/x`         | PARTIAL — accepted                             |
+| `analytics-youtube.html`   | `/monitoring/youtube`   | PARTIAL — accepted                             |
+| `analytics-tiktok.html`    | `/monitoring/tiktok`    | PARTIAL — accepted                             |
+| `audit.html`               | `/audit`                | PARTIAL — accepted                             |
+| `settings.html`            | `/settings`             | PARTIAL — accepted                             |
+| `login.html`               | `/login`                | PARITY                                         |
 
 Every page is light + dark via the muted palette in `globals.css` (no neon), matching
 `docs/prototype/styles.css`.
@@ -48,23 +48,24 @@ silent: the UI says what it does and does not do.
    rate-limit, or danger-op endpoints exist. Those four tabs render an explicit "Not wired
    in the MVP" panel. **Appearance is wired for real** through `next-themes`
    (light/dark/system). Density is shown inert, single density in the MVP.
-2. **Actions: Report post / Reply comment.** The queue's `ActionType` enum is
-   `action_like | action_comment` only. The buttons render disabled with the reason shown
-   beside them, rather than enqueueing a job that cannot exist.
-3. **Analytics: Top posts rows.** `PlatformAnalytics` carries KPIs + trend + freshness, no
+2. **Analytics: Top posts rows.** `PlatformAnalytics` carries KPIs + trend + freshness, no
    per-post data. The table matches the prototype's structure and renders the prototype's
    own empty copy: "Not yet enabled in the MVP — layout shown for review." The Filter
    button is inert for the same reason.
-4. **Audit: Actor / IP columns and actor/action/date filters.** There is no audit-log
+3. **Audit: Actor / IP columns and actor/action/date filters.** There is no audit-log
    endpoint; the page is an actions pivot (`reportActions`). Actor and IP are simply not in
    that payload. The code documents this as a stopgap.
-5. **Add-account: live-login side panel, 2FA/OTP branch, failure branch.** Account creation
+4. **Add-account: live-login side panel, 2FA/OTP branch, failure branch.** Account creation
    is a plain 3-step wizard; login is resolved asynchronously by the worker, not inline
    over SSE, so the step list and OTP branch have no source stream.
-6. **Bulk import: progress card and challenges queue.** `importAccounts` accepts
+5. **Bulk import: progress card and challenges queue.** `importAccounts` accepts
    `platform,username,password` rows and returns a result list; there is no enrollment
    progress stream and no challenge queue. Validation output is the flat result list.
-7. **Add-account / bulk-import: proxy-group field.** Not a field the API accepts.
+6. **Add-account / bulk-import: proxy-group field.** Not a field the API accepts.
+7. **Actions: Report post / Reply comment — RESOLVED.** The `job_type` enum now carries
+   `ACTION_REPORT` and `ACTION_REPLY_COMMENT` (migrations 000008/000009), the service
+   validates them through `IsAction()`, and both enqueue for real (verified 201). The
+   buttons on `/actions` are live. Kept here as history; see the build commit.
 
 ### Real feature replaces the prototype's demo version (build is the source of truth)
 

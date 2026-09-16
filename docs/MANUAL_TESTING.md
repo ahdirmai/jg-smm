@@ -123,9 +123,8 @@ The fleet starts empty — this section is where the first real data appears.
 
 - [ ] `/actions` "Action to target" card: pick an account, paste target URL(s),
       run **Like** and **Comment**.
-- [ ] **Report post / Reply comment render disabled** with the reason shown —
-      the queue has no job type for them. This is intentional, not a bug
-      (see `development-analyst/p6_parity_signoff.md`).
+- [ ] **Report post / Reply comment also enqueue** (job types `action_report`,
+      `action_reply_comment`). They were inert in P6; the enum now carries them.
 - [ ] Job transitions queued → running → done; the actions table shows per-attempt
       status, the **pipeline stepper** fills with progress, and clicking a row
       opens the detail dialog.

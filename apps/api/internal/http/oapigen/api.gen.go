@@ -44,20 +44,26 @@ const (
 
 // Defines values for ActionItemActionType.
 const (
-	ActionItemActionTypeActionComment ActionItemActionType = "action_comment"
-	ActionItemActionTypeActionLike    ActionItemActionType = "action_like"
+	ActionItemActionTypeActionComment      ActionItemActionType = "action_comment"
+	ActionItemActionTypeActionLike         ActionItemActionType = "action_like"
+	ActionItemActionTypeActionReplyComment ActionItemActionType = "action_reply_comment"
+	ActionItemActionTypeActionReport       ActionItemActionType = "action_report"
 )
 
 // Defines values for ActionJobActionType.
 const (
-	ActionJobActionTypeActionComment ActionJobActionType = "action_comment"
-	ActionJobActionTypeActionLike    ActionJobActionType = "action_like"
+	ActionJobActionTypeActionComment      ActionJobActionType = "action_comment"
+	ActionJobActionTypeActionLike         ActionJobActionType = "action_like"
+	ActionJobActionTypeActionReplyComment ActionJobActionType = "action_reply_comment"
+	ActionJobActionTypeActionReport       ActionJobActionType = "action_report"
 )
 
 // Defines values for ActionReportRowActionType.
 const (
-	ActionComment ActionReportRowActionType = "action_comment"
-	ActionLike    ActionReportRowActionType = "action_like"
+	ActionReportRowActionTypeActionComment      ActionReportRowActionType = "action_comment"
+	ActionReportRowActionTypeActionLike         ActionReportRowActionType = "action_like"
+	ActionReportRowActionTypeActionReplyComment ActionReportRowActionType = "action_reply_comment"
+	ActionReportRowActionTypeActionReport       ActionReportRowActionType = "action_report"
 )
 
 // Defines values for AttemptStatus.

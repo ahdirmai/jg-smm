@@ -188,7 +188,7 @@ func (s *ActionService) List(ctx context.Context, status *domain.JobStatus, limi
 // action. The enum is the contract the worker dispatches on.
 func validateActionType(t domain.JobType) error {
 	if !t.IsAction() {
-		return fmt.Errorf("%w: action type must be action_like or action_comment, got %q", domain.ErrValidation, t)
+		return fmt.Errorf("%w: action type is not a known action type, got %q", domain.ErrValidation, t)
 	}
 	return nil
 }

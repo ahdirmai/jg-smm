@@ -3,12 +3,26 @@
 import { useState } from 'react';
 import { Loader2, ScrollText } from 'lucide-react';
 
-import { Badge, Button, Card, CardContent, Input, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@smm/ui';
+import {
+  Badge,
+  Button,
+  Card,
+  CardContent,
+  Input,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@smm/ui';
 import { api, type ActionReportRow } from '@/lib/api';
 
 const ACTION_BADGE: Record<ActionReportRow['actionType'], 'info' | 'success'> = {
   action_like: 'info',
   action_comment: 'success',
+  action_report: 'info',
+  action_reply_comment: 'success',
 };
 
 /**
