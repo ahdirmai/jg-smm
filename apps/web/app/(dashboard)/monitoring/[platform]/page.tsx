@@ -13,8 +13,14 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
 } from '@smm/ui';
-import { RefreshCw } from 'lucide-react';
+import { Filter, RefreshCw } from 'lucide-react';
 import Link from 'next/link';
 import { use, useMemo, useState } from 'react';
 
@@ -287,6 +293,47 @@ export default function PlatformAnalyticsPage({
               ))}
             </ul>
           )}
+        </CardContent>
+      </Card>
+
+      {/* Top posts. The prototype ships this table with its own "not yet
+          enabled" empty state; the ingest API exposes KPIs + trend only, so
+          per-post rows have no source yet. Structure matches the prototype,
+          rows are never fabricated. */}
+      <Card>
+        <CardHeader className="flex-row items-center justify-between space-y-0">
+          <div>
+            <CardTitle>Top posts</CardTitle>
+            <CardDescription>{label} · last 30 days</CardDescription>
+          </div>
+          <Button variant="outline" size="sm" disabled title="Filter needs a per-post endpoint">
+            <Filter className="size-3.5" />
+            Filter
+          </Button>
+        </CardHeader>
+        <CardContent>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Post</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Date</TableHead>
+                  <TableHead className="text-right">Metrics</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                <TableRow>
+                  <TableCell
+                    colSpan={4}
+                    className="py-10 text-center text-xs text-muted-foreground"
+                  >
+                    Not yet enabled in the MVP — layout shown for review.
+                  </TableCell>
+                </TableRow>
+              </TableBody>
+            </Table>
+          </div>
         </CardContent>
       </Card>
     </div>
