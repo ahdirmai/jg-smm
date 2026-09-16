@@ -132,7 +132,7 @@ func (f *fakeActionStore) LatestActionLogsByJobs(_ context.Context, jobIDs []str
 // backoff so the reschedule math is readable in assertions. fixedClock is
 // shared with the auth tests.
 func newRetryTestService(store *fakeActionStore) *JobService {
-	svc := NewJobService(nil, nil, nil, store, fixedClock{t: time.Unix(1_000_000, 0).UTC()}, nil, nil)
+	svc := NewJobService(nil, nil, nil, store, fixedClock{t: time.Unix(1_000_000, 0).UTC()}, nil, nil, nil)
 	svc.retry = RetryPolicy{MaxAttempts: 3, Backoff: 10 * time.Second}
 	return svc
 }
@@ -404,7 +404,7 @@ func TestRecordAttemptRunningIsNotTerminal(t *testing.T) {
 // TestRecordAttemptStoreUnavailable: no store wired -> the honest
 // ErrUnavailable, not a panic, so a partial deployment degrades cleanly.
 func TestRecordAttemptStoreUnavailable(t *testing.T) {
-	svc := NewJobService(nil, nil, nil, nil, nil, nil, nil)
+	svc := NewJobService(nil, nil, nil, nil, nil, nil, nil, nil)
 	if err := svc.RecordAttempt(context.Background(), AttemptRecord{
 		AttemptID: "job-z:1",
 		Status:    domain.AttemptSuccess,
@@ -431,7 +431,7 @@ func TestRecordAttemptInvalidAttemptID(t *testing.T) {
 // panic; the caller turns it into a 5xx the worker can retry.
 func TestRecordAttemptNeverThrows(t *testing.T) {
 	store := &erroringActionStore{fakeActionStore: newFakeActionStore()}
-	svc := NewJobService(nil, nil, nil, store, fixedClock{t: time.Unix(1_000_000, 0).UTC()}, nil, nil)
+	svc := NewJobService(nil, nil, nil, store, fixedClock{t: time.Unix(1_000_000, 0).UTC()}, nil, nil, nil)
 
 	if err := svc.RecordAttempt(context.Background(), AttemptRecord{
 		AttemptID: "job-c:1",

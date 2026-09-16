@@ -89,6 +89,12 @@ type Config struct {
 	// ApifyActorPrefix selects the actor id per platform, e.g.
 	// "~smm/instagram-scraper". The concrete ids live in PLATFORM_MATRIX.
 	ApifyActorPrefix string
+	// ApifyBudgetUSD is the monthly Apify spend ceiling (P5-08). 0 publishes no
+	// ceiling, which disables the budget alert rather than making it noisy.
+	ApifyBudgetUSD float64
+	// ProxyBudgetGB is the monthly residential-proxy egress ceiling (P5-08).
+	// 0 publishes no ceiling, same semantics.
+	ProxyBudgetGB float64
 
 	// AnalyticsIngestIntervalSeconds runs the official-account ingest cron
 	// (P2-12). 0 disables it.
@@ -149,6 +155,8 @@ func Load() (Config, error) {
 		ApifyBaseURL:     env("APIFY_BASE_URL", "https://api.apify.com/v2"),
 		ApifyToken:       os.Getenv("APIFY_TOKEN"),
 		ApifyActorPrefix: env("APIFY_ACTOR_PREFIX", "~smm"),
+		ApifyBudgetUSD:   envFloat("APIFY_BUDGET_USD", 0),
+		ProxyBudgetGB:    envFloat("PROXY_BUDGET_GB", 0),
 
 		AnalyticsIngestIntervalSeconds: envInt("ANALYTICS_INGEST_INTERVAL_SECONDS", 0),
 		AlertIntervalSeconds:           envInt("ALERT_INTERVAL_SECONDS", 0),
@@ -231,6 +239,17 @@ func envBool(key string, def bool) bool {
 	if v := os.Getenv(key); v != "" {
 		if b, err := strconv.ParseBool(v); err == nil {
 			return b
+		}
+	}
+	return def
+}
+
+// envFloat parses a float env var. Used for budget ceilings, which are dollars
+// and gigabytes, not counts.
+func envFloat(key string, def float64) float64 {
+	if v := os.Getenv(key); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f
 		}
 	}
 	return def

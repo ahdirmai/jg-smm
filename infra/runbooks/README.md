@@ -29,6 +29,22 @@ escalate when the first pass is inconclusive instead of improvising.
 | [api-readiness-degraded.md](api-readiness-degraded.md) | SEV2 | `/readyz` reports `degraded` — a check is down |
 | [worker-crashloop.md](worker-crashloop.md)             | SEV2 | heartbeat budget exhausted / container looping |
 | [worker-auth-failure.md](worker-auth-failure.md)       | SEV2 | login outcome `rejected` or `failed`           |
+| [quarantine-wave.md](quarantine-wave.md)               | SEV1 | > 5 accounts auto-quarantined in 1h            |
+
+### Fleet signals (Prometheus)
+
+| Runbook                                                  | Sev  | Fires when                      |
+| -------------------------------------------------------- | ---- | ------------------------------- |
+| [action-success-rate-low.md](action-success-rate-low.md) | SEV2 | success rate < 85% over 10m     |
+| [fleet-health-low.md](fleet-health-low.md)               | SEV2 | avg account health < 50 for 15m |
+| [queue-depth-high.md](queue-depth-high.md)               | SEV2 | avg queue depth > 50 for 15m    |
+
+### Cost (P5-08)
+
+| Runbook                                              | Sev  | Fires when                              |
+| ---------------------------------------------------- | ---- | --------------------------------------- |
+| [apify-budget-exceeded.md](apify-budget-exceeded.md) | SEV2 | Apify spend > 90% of `APIFY_BUDGET_USD` |
+| [proxy-budget-exceeded.md](proxy-budget-exceeded.md) | SEV2 | proxy egress > 90% of `PROXY_BUDGET_GB` |
 
 ### Control plane
 

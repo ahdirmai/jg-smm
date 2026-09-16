@@ -51,7 +51,7 @@ func TestClassifyAttempt(t *testing.T) {
 // the classification is the P3-12 contract and must hold now so P3-11 stores a
 // real class instead of backfilling one.
 func TestRecordAttemptClassifies(t *testing.T) {
-	svc := NewJobService(nil, nil, nil, nil, nil, nil, nil)
+	svc := NewJobService(nil, nil, nil, nil, nil, nil, nil, nil)
 	ctx := t.Context()
 
 	// A banned-account failure: the callback must be accepted and classified,
@@ -89,7 +89,7 @@ func (c *captureStream) Publish(_ context.Context, kind string, payload []byte) 
 func TestRecordAttemptPublishesActionFrame(t *testing.T) {
 	store := newFakeActionStore()
 	stream := &captureStream{}
-	svc := NewJobService(nil, nil, nil, store, fixedClock{t: time.Unix(1_000_000, 0).UTC()}, stream, nil)
+	svc := NewJobService(nil, nil, nil, store, fixedClock{t: time.Unix(1_000_000, 0).UTC()}, stream, nil, nil)
 
 	err := svc.RecordAttempt(context.Background(), AttemptRecord{
 		AttemptID:    "job-1:1",

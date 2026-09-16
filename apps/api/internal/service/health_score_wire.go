@@ -67,7 +67,34 @@ func (s *JobService) applyHealth(ctx context.Context, jobID string, r AttemptRec
 	case domain.AccountQuarantined:
 		s.logger.Warn("account auto-quarantined", "accountId", acc.ID, "score", acc.HealthScore, "errorClass", string(r.ErrorClass))
 	}
+	s.observeOutcome(acc, r)
 	s.publishAccountHealth(ctx, acc)
+}
+
+// observeOutcome records the verdict as Prometheus metrics (P5-03): one counter
+// per attempt outcome and the account's new health as a gauge. Gauges are set,
+// not added, so a reconcile loop re-publishing the same fleet is idempotent.
+// A nil registry (tests, or a boot without metrics) is fine: the write already
+// landed, the scrape just will not show it.
+func (s *JobService) observeOutcome(acc domain.Account, r AttemptRecord) {
+	if s.metrics == nil {
+		return
+	}
+	s.metrics.Actions.WithLabelValues(
+		acc.ID,
+		string(acc.Platform),
+		derefStrPtr(r.ActionType),
+		string(r.Status),
+		string(r.ErrorClass),
+	).Inc()
+	if r.DurationMs > 0 {
+		s.metrics.ActionDuration.WithLabelValues(
+			string(acc.Platform),
+			derefStrPtr(r.ActionType),
+			string(r.Status),
+		).Observe(float64(r.DurationMs) / 1000)
+	}
+	s.metrics.WorkerHealth.WithLabelValues(acc.ID, string(acc.Platform)).Set(float64(acc.HealthScore))
 }
 
 // publishAccountHealth fans the new health state to dashboards. Reuses the

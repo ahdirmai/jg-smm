@@ -27,6 +27,7 @@ type Dependencies struct {
 	Templates   *TemplateHandler
 	Reports     *ReportHandler
 	Stream      *StreamHandler
+	Metrics     *MetricsHandler
 }
 
 // NewRouter builds the Echo instance with middleware and routes. It does not
@@ -40,6 +41,12 @@ func NewRouter(deps Dependencies) *echo.Echo {
 	e.Use(requestLogger(), recoverer())
 
 	deps.Health.Register(e)
+
+	// /metrics is a root route, not an /api one: the RBAC layer never sees a
+	// scrape, and the alerts keep working when a token expires.
+	if deps.Metrics != nil {
+		deps.Metrics.Register(e)
+	}
 
 	// Root placeholder so the container has a stable liveness target too.
 	e.GET("/", func(c echo.Context) error {

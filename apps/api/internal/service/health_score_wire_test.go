@@ -2,9 +2,13 @@ package service
 
 import (
 	"context"
+	"strings"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/domain"
+	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/obs"
 )
 
 // healthActionStore embeds the retry-test fake and only overrides the lookup the
@@ -38,6 +42,7 @@ func TestApplyHealth_QuarantinesFailingAccount(t *testing.T) {
 			fakeActionStore: newFakeActionStore(),
 			job:             domain.ActionJob{ID: "job-1", AccountID: "h1", Status: domain.JobStatusRunning},
 		},
+		nil,
 		nil,
 		nil,
 		nil,
@@ -91,6 +96,7 @@ func TestApplyHealth_BannedIsTerminal(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		nil,
 	)
 
 	svc.applyHealth(context.Background(), "job-2", AttemptRecord{
@@ -132,6 +138,7 @@ func TestApplyHealth_SuccessRecovers(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		nil,
 	)
 
 	ok := AttemptRecord{AttemptID: "job-3#1", Status: domain.AttemptSuccess}
@@ -140,6 +147,52 @@ func TestApplyHealth_SuccessRecovers(t *testing.T) {
 	got, _ := accounts.GetByID(context.Background(), "h3")
 	if got.HealthScore != 30 {
 		t.Errorf("score = %d, want 30 (25 + 5 recovery)", got.HealthScore)
+	}
+}
+
+// TestApplyHealth_RecordsMetrics proves the verdict reaches Prometheus: a
+// scrape is the only way on-call sees the fleet, so the counter must fire on
+// the same path that quarantines the account, not a second one someone wires
+// later.
+func TestApplyHealth_RecordsMetrics(t *testing.T) {
+	accounts := newFakeAccountStore()
+	acc := accountFixture("m1", domain.PlatformInstagram)
+	acc.HealthScore = 100
+	accounts.seed(acc)
+
+	m := obs.NewMetrics()
+	svc := NewJobService(
+		newFakeWorkerStore(),
+		accounts,
+		nil,
+		&healthActionStore{
+			fakeActionStore: newFakeActionStore(),
+			job:             domain.ActionJob{ID: "job-m", AccountID: "m1", Status: domain.JobStatusRunning},
+		},
+		nil,
+		nil,
+		m,
+		nil,
+	)
+
+	svc.applyHealth(context.Background(), "job-m", AttemptRecord{
+		AttemptID:  "job-m#1",
+		Status:     domain.AttemptFailed,
+		ErrorClass: domain.ErrorClassTransient,
+		ActionType: ptrString("COMMENT"),
+		DurationMs: 2500,
+	})
+
+	// The counter must exist and be 1; the gauge must read the post-verdict score.
+	if err := testutil.GatherAndCompare(m.Registry(), strings.NewReader(`
+# HELP smm_action_total Actions attempted, by account, platform, type and outcome. The success rate is the primary fleet health signal.
+# TYPE smm_action_total counter
+smm_action_total{account_id="m1",action_type="COMMENT",error_class="TRANSIENT",platform="instagram",status="FAILED"} 1
+# HELP smm_worker_health_score Account health score 0-100 (P5-02). Below 30 the account is quarantined; a fleet-wide slide means the platform is throttling us, not the accounts.
+# TYPE smm_worker_health_score gauge
+smm_worker_health_score{account_id="m1",platform="instagram"} 90
+`), "smm_action_total", "smm_worker_health_score"); err != nil {
+		t.Fatalf("metrics mismatch: %v", err)
 	}
 }
 
@@ -156,6 +209,7 @@ func TestApplyHealth_NoopWithoutAccount(t *testing.T) {
 			fakeActionStore: newFakeActionStore(),
 			job:             domain.ActionJob{ID: "job-4"}, // no AccountID
 		},
+		nil,
 		nil,
 		nil,
 		nil,

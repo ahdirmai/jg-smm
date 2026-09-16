@@ -1,0 +1,77 @@
+# Alert rules (P5-03). Every rule here has a matching runbook under
+# infra/runbooks/ and a severity in docs/SEVERITY.md; an alert without a runbook
+# is noise that pages someone for nothing.
+groups:
+  - name: smm-fleet
+    rules:
+      # The fleet's success rate is the primary health signal. A slide over 10m
+      # means actions are failing systematically, not one bad target.
+      - alert: ActionSuccessRateLow
+        expr: |
+          sum(rate(smm_action_total{status="SUCCESS"}[10m]))
+          /
+          clamp_min(sum(rate(smm_action_total[10m])), 1) < 0.85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Action success rate below 85% for 10m'
+          runbook: infra/runbooks/action-success-rate-low.md
+
+      # Health falling fleet-wide is the platform throttling us, not individual
+      # accounts; per-account falls are caught by the quarantine counter below.
+      - alert: FleetHealthScoreLow
+        expr: avg(smm_worker_health_score) < 50
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Average account health below 50'
+          runbook: infra/runbooks/fleet-health-low.md
+
+      # A quarantined account is out of the pool by design; a rising count that
+      # does not fall is a ban wave and needs a human now.
+      - alert: QuarantinedAccountsRising
+        expr: increase(smm_accounts_total{status="quarantined"}[1h]) > 5
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'More than 5 accounts quarantined in the last hour'
+          runbook: infra/runbooks/quarantine-wave.md
+
+      # Depth that only falls when actions fail is a ban-risk signal: the queue
+      # is backing up because the account cannot post.
+      - alert: QueueDepthBackingUp
+        expr: avg_over_time(smm_queue_depth[15m]) > 50
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Action queue depth above 50 for 15m'
+          runbook: infra/runbooks/queue-depth-high.md
+
+  - name: smm-cost
+    rules:
+      # P5-08: budget alerts fire at 90% of the monthly ceiling. A counter is
+      # the only accurate cumulative spend; a gauge would reset on restart and
+      # silently hide a burst.
+      - alert: ApifyBudgetNearCeiling
+        expr: |
+          sum(increase(smm_apify_run_cost_usd_total[30d])) > 0.9 * on() (smm_budget_ceiling{budget="apify"})
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Apify spend above 90% of the monthly budget'
+          runbook: infra/runbooks/apify-budget-exceeded.md
+
+      - alert: ProxyBudgetNearCeiling
+        expr: |
+          sum(increase(smm_proxy_bytes_used_total[30d])) > 0.9 * on() (smm_budget_ceiling{budget="proxy"})
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Proxy egress above 90% of the monthly budget'
+          runbook: infra/runbooks/proxy-budget-exceeded.md

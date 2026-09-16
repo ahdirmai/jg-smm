@@ -46,12 +46,25 @@ func main() {
 	}
 	logger := obs.NewLogger(cfg.LogLevel)
 	slog.SetDefault(logger)
+	metrics := obs.NewMetrics()
+	// Publish the monthly ceilings once at boot (P5-08): the budget alert
+	// divides this instead of a constant in the rule file. A 0 budget publishes
+	// no gauge, which disables the alert rather than making it fire on nothing.
+	if cfg.ApifyBudgetUSD > 0 {
+		metrics.BudgetCeiling.WithLabelValues("apify").Set(cfg.ApifyBudgetUSD)
+	}
+	if cfg.ProxyBudgetGB > 0 {
+		metrics.BudgetCeiling.WithLabelValues("proxy").Set(cfg.ProxyBudgetGB * 1024 * 1024 * 1024)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	checkers := map[string]port.HealthChecker{}
-	deps := apihttp.Dependencies{Health: apihttp.NewHealthHandler(service.NewHealthService(checkers))}
+	deps := apihttp.Dependencies{
+		Health:  apihttp.NewHealthHandler(service.NewHealthService(checkers)),
+		Metrics: apihttp.NewMetricsHandler(),
+	}
 
 	// Database is optional at boot: if DATABASE_URL is unset the API still serves
 	// (useful when migrations run separately). Failing to connect is fatal.
@@ -102,7 +115,7 @@ func main() {
 		accountRepo := repository.NewAccountRepo(pg.Queries())
 		logRepo := repository.NewProvisionLogRepo(pg.Queries())
 		actionRepo := repository.NewActionRepo(pg.Queries())
-		jobSvc := service.NewJobService(workerRepo, accountRepo, logRepo, actionRepo, adapter.SystemClock{}, hub, logger)
+		jobSvc := service.NewJobService(workerRepo, accountRepo, logRepo, actionRepo, adapter.SystemClock{}, hub, metrics, logger)
 		deps.Internal = apihttp.NewInternalHandler(jobSvc)
 
 		// Bin-packing: accounts land in the first container with a free platform

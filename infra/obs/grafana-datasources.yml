@@ -1,0 +1,20 @@
+# Grafana datasource provisioning (P5-03). Prometheus is the metrics source,
+# Loki is the structured-log source; both are queried from one dashboard so a
+# metric spike and its log line sit on the same screen.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      timeInterval: '15s'
+
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    jsonData:
+      maxLines: 1000

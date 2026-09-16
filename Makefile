@@ -31,6 +31,9 @@ help: ## Show available targets
 up: env ## Bring the whole stack up (idempotent), with $(WORKERS) worker replicas
 	$(COMPOSE) up -d --scale worker=$(WORKERS)
 
+up-obs: env ## Bring the app stack up plus the observability tier (Prometheus/Grafana/Loki/Alertmanager)
+	COMPOSE_PROFILES=obs $(COMPOSE) up -d --scale worker=$(WORKERS)
+
 env: ## Create .env from infra/docker/.env.example if missing
 	@if [ ! -f .env ]; then cp infra/docker/.env.example .env; echo "created .env from example"; fi
 

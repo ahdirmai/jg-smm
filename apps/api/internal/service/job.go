@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/domain"
+	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/obs"
 	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/port"
 )
 
@@ -30,7 +31,11 @@ type JobService struct {
 	// stream fans action verdicts to dashboards (P4-03). Optional: a nil
 	// publisher means the callback still persists, the dashboard just polls.
 	stream port.StreamPublisher
-	logger *slog.Logger
+	// metrics is the Prometheus instrument set (P5-03). Optional for the same
+	// reason: a nil registry means the callback still lands, the scrape just
+	// does not see the verdict.
+	metrics *obs.Metrics
+	logger  *slog.Logger
 }
 
 // RetryPolicy is the action retry budget (P3-11): a retryable failure gets at
@@ -49,7 +54,7 @@ var DefaultRetryPolicy = RetryPolicy{MaxAttempts: 3, Backoff: 30 * time.Second}
 // NewJobService wires the service. workers/accounts/logs/actions may be nil
 // during earlier phases; the affected endpoints then report the store as
 // unavailable rather than panicking.
-func NewJobService(workers port.WorkerStore, accounts port.AccountStore, logs port.ProvisionLogStore, actions port.ActionStore, clock port.Clock, stream port.StreamPublisher, logger *slog.Logger) *JobService {
+func NewJobService(workers port.WorkerStore, accounts port.AccountStore, logs port.ProvisionLogStore, actions port.ActionStore, clock port.Clock, stream port.StreamPublisher, metrics *obs.Metrics, logger *slog.Logger) *JobService {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -64,6 +69,7 @@ func NewJobService(workers port.WorkerStore, accounts port.AccountStore, logs po
 		retry:    DefaultRetryPolicy,
 		clock:    clock,
 		stream:   stream,
+		metrics:  metrics,
 		logger:   logger,
 	}
 }

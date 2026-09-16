@@ -122,6 +122,10 @@ services:
       CREDENTIAL_KEY: ${CREDENTIAL_KEY:-v0k2nMVGJAq5Ta69vg36gcxNB4wiClCeOFMC6WBemH8=}
       SECURE_COOKIES: ${SECURE_COOKIES:-false}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # P5-08 cost ceilings. 0 publishes no gauge and disables the budget alert;
+      # set them in production so the 90% alert has a real number to divide.
+      APIFY_BUDGET_USD: ${APIFY_BUDGET_USD:-0}
+      PROXY_BUDGET_GB: ${PROXY_BUDGET_GB:-0}
     ports:
       - '${API_PORT:-24080}:8080'
     healthcheck:
@@ -175,9 +179,64 @@ services:
     ports:
       - '${WEB_PORT:-24081}:3000'
 
+  # P5-03 observability stack. Off unless OBS_ENABLED=1: the app runs without
+  # it, and a local `make up` on a 16 GB machine should not spend half its RAM
+  # on dashboards it is not looking at.
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    profiles: ['obs']
+    volumes:
+      - ./infra/obs/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/obs/alerts.yml:/etc/prometheus/rules/alerts.yml:ro
+      - ./infra/obs/alertmanager.yml:/etc/prometheus/alertmanager.yml:ro
+      - prometheusdata:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=15d'
+    ports:
+      - '${PROMETHEUS_PORT:-24090}:9090'
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    profiles: ['obs']
+    volumes:
+      - ./infra/obs/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanagerdata:/alertmanager
+    ports:
+      - '${ALERTMANAGER_PORT:-24093}:9093'
+
+  loki:
+    image: grafana/loki:3.2.1
+    profiles: ['obs']
+    command: ['-config.file=/etc/loki/local-config.yaml']
+    volumes:
+      - lokidata:/loki
+    ports:
+      - '${LOKI_PORT:-24310}:3100'
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    profiles: ['obs']
+    depends_on:
+      - prometheus
+    volumes:
+      - ./infra/obs/grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - grafanadata:/var/lib/grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+    ports:
+      - '${GRAFANA_PORT:-24030}:3000'
+
 volumes:
   pgdata:
   redisdata:
   miniodata:
   sessions:
   screenshots:
+  prometheusdata:
+  alertmanagerdata:
+  lokidata:
+  grafanadata:
