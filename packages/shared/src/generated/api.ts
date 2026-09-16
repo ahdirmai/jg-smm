@@ -640,6 +640,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the audit trail
+         * @description Returns who did what, when: one row per state-changing call
+         *     (account/container/template/user create/update/delete, action
+         *     enqueue), newest first, with the actor's email resolved and the
+         *     request IP. Filters are all optional. Requires the `read` permission.
+         *
+         */
+        get: operations["listAudit"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List team members
+         * @description Returns every user in the single-team MVP with their role. Requires
+         *     the `read` permission.
+         *
+         */
+        get: operations["listUsers"];
+        put?: never;
+        /**
+         * Create / invite a team member
+         * @description Adds a user with a provisional password the operator shares out of
+         *     band (the MVP has no email transport wired for invites). The password
+         *     is argon2id-hashed; it is never returned. Requires `admin` (OWNER).
+         *
+         */
+        post: operations["createUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/{userId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The user ID. */
+                userId: components["parameters"]["UserId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Update a team member
+         * @description Changes a member's role and/or name. Changing a role revokes that
+         *     user's refresh sessions so the new role applies immediately. Requires
+         *     `admin` (OWNER).
+         *
+         */
+        put: operations["updateUser"];
+        post?: never;
+        /**
+         * Remove a team member
+         * @description Deletes the user. The last OWNER cannot be removed (the team must keep
+         *     an admin), and an account cannot delete itself. Requires `admin`.
+         *
+         */
+        delete: operations["deleteUser"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/stream": {
         parameters: {
             query?: never;
@@ -1108,6 +1193,50 @@ export interface components {
             maxConcurrency: number;
             dailyBudgetMb: number;
         };
+        CreateUserRequest: {
+            /** Format: email */
+            email: string;
+            name: string;
+            role: components["schemas"]["Role"];
+            /**
+             * Format: password
+             * @description Write-only; argon2id-hashed, never returned.
+             */
+            password: string;
+        };
+        UpdateUserRequest: {
+            name?: string;
+            role?: components["schemas"]["Role"];
+        };
+        UserList: {
+            users: components["schemas"]["User"][];
+        };
+        /** @description One immutable audit-trail entry. */
+        AuditLog: {
+            id: string;
+            /** @description Empty for system-initiated rows. */
+            actorId?: string;
+            /** @description The user's email, or `system`. */
+            actor?: string;
+            /** @description e.g. `account.create`. */
+            action: string;
+            /** @description e.g. `account`, `worker`, `template`. */
+            entity: string;
+            entityId: string;
+            /** @description `ok`, or the failure reason. */
+            result: string;
+            /** @description The request IP; empty when unknown. */
+            ip?: string;
+            /** Format: date-time */
+            ts: string;
+        };
+        AuditLogList: {
+            rows: components["schemas"]["AuditLog"][];
+            /** @description Entries matching the same filter, for pagination. */
+            total: number;
+            limit: number;
+            offset: number;
+        };
         SetAccountStatusRequest: {
             /** @enum {string} */
             status: "ACTIVE" | "PAUSED";
@@ -1262,6 +1391,8 @@ export interface components {
         TemplateId: string;
         /** @description The proxy group ID. */
         ProxyGroupId: string;
+        /** @description The user ID. */
+        UserId: string;
         /** @description The official (monitored) account ID. */
         OfficialAccountId: string;
     };
@@ -2147,6 +2278,150 @@ export interface operations {
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
+        };
+    };
+    listAudit: {
+        parameters: {
+            query?: {
+                /** @description Filter to one user's actions. */
+                actorId?: string;
+                /** @description e.g. `account.create`. */
+                action?: string;
+                /** @description e.g. `account`, `worker`, `template`. */
+                entity?: string;
+                /** @description Inclusive lower bound on the entry time. */
+                from?: string;
+                /** @description Exclusive upper bound on the entry time. */
+                to?: string;
+                /** @description Page size. */
+                limit?: number;
+                /** @description Page offset. */
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Audit entries. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditLogList"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    listUsers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Users. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserList"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    createUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateUserRequest"];
+            };
+        };
+        responses: {
+            /** @description User created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["User"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+        };
+    };
+    updateUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The user ID. */
+                userId: components["parameters"]["UserId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateUserRequest"];
+            };
+        };
+        responses: {
+            /** @description User updated. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["User"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    deleteUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The user ID. */
+                userId: components["parameters"]["UserId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
         };
     };
     streamEvents: {

@@ -26,6 +26,8 @@ type Dependencies struct {
 	Actions     *ActionHandler
 	Templates   *TemplateHandler
 	Reports     *ReportHandler
+	Users       *UserHandler
+	Audit       *AuditHandler
 	Stream      *StreamHandler
 	Metrics     *MetricsHandler
 }
@@ -75,6 +77,11 @@ func NewRouter(deps Dependencies) *echo.Echo {
 		// P5-04: the group previously required `act`, which locked
 		// STRATEGIST/ANALYST out of every read endpoint with a 403.
 		api := e.Group("/api", deps.Auth.requireAuth(), RequirePermission(domain.PermRead))
+		// Record who changed what. Mounted inside the group so every mutation
+		// carries a verified actor; reads and auth routes are not audited.
+		if deps.Audit != nil {
+			api.Use(auditMiddleware(deps.Audit.Audit()))
+		}
 		if deps.Containers != nil {
 			deps.Containers.Register(api)
 		}
@@ -98,6 +105,12 @@ func NewRouter(deps Dependencies) *echo.Echo {
 		}
 		if deps.Reports != nil {
 			deps.Reports.Register(api)
+		}
+		if deps.Users != nil {
+			deps.Users.Register(api)
+		}
+		if deps.Audit != nil {
+			deps.Audit.Register(api)
 		}
 	}
 

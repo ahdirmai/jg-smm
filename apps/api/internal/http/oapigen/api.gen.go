@@ -405,6 +405,40 @@ type AnalyticsReport struct {
 // AttemptStatus defines model for AttemptStatus.
 type AttemptStatus string
 
+// AuditLog One immutable audit-trail entry.
+type AuditLog struct {
+	// Action e.g. `account.create`.
+	Action string `json:"action"`
+
+	// Actor The user's email, or `system`.
+	Actor *string `json:"actor,omitempty"`
+
+	// ActorId Empty for system-initiated rows.
+	ActorId *string `json:"actorId,omitempty"`
+
+	// Entity e.g. `account`, `worker`, `template`.
+	Entity   string `json:"entity"`
+	EntityId string `json:"entityId"`
+	Id       string `json:"id"`
+
+	// Ip The request IP; empty when unknown.
+	Ip *string `json:"ip,omitempty"`
+
+	// Result `ok`, or the failure reason.
+	Result string    `json:"result"`
+	Ts     time.Time `json:"ts"`
+}
+
+// AuditLogList defines model for AuditLogList.
+type AuditLogList struct {
+	Limit  int        `json:"limit"`
+	Offset int        `json:"offset"`
+	Rows   []AuditLog `json:"rows"`
+
+	// Total Entries matching the same filter, for pagination.
+	Total int `json:"total"`
+}
+
 // AuthStatus defines model for AuthStatus.
 type AuthStatus string
 
@@ -557,6 +591,16 @@ type CreateTemplateRequest struct {
 
 	// Weight Relative pick probability (weight 3 is 3x weight 1).
 	Weight int `json:"weight"`
+}
+
+// CreateUserRequest defines model for CreateUserRequest.
+type CreateUserRequest struct {
+	Email openapi_types.Email `json:"email"`
+	Name  string              `json:"name"`
+
+	// Password Write-only; argon2id-hashed, never returned.
+	Password string `json:"password"`
+	Role     Role   `json:"role"`
 }
 
 // EnqueueActionsRequest A batch of intents. Comment text is deliberately absent: it is composed
@@ -793,12 +837,23 @@ type TrendPoint struct {
 	Value  int64     `json:"value"`
 }
 
+// UpdateUserRequest defines model for UpdateUserRequest.
+type UpdateUserRequest struct {
+	Name *string `json:"name,omitempty"`
+	Role *Role   `json:"role,omitempty"`
+}
+
 // User defines model for User.
 type User struct {
 	Email openapi_types.Email `json:"email"`
 	Id    string              `json:"id"`
 	Name  string              `json:"name"`
 	Role  Role                `json:"role"`
+}
+
+// UserList defines model for UserList.
+type UserList struct {
+	Users []User `json:"users"`
 }
 
 // WorkerGeolocation defines model for WorkerGeolocation.
@@ -825,6 +880,9 @@ type ProxyGroupId = string
 // TemplateId defines model for TemplateId.
 type TemplateId = string
 
+// UserId defines model for UserId.
+type UserId = string
+
 // Error defines model for Error.
 type Error = ErrorBody
 
@@ -843,6 +901,30 @@ type AnalyticsOverviewParams struct {
 type AnalyticsByPlatformParams struct {
 	Metric     *string `form:"metric,omitempty" json:"metric,omitempty"`
 	WindowDays *int    `form:"windowDays,omitempty" json:"windowDays,omitempty"`
+}
+
+// ListAuditParams defines parameters for ListAudit.
+type ListAuditParams struct {
+	// ActorId Filter to one user's actions.
+	ActorId *string `form:"actorId,omitempty" json:"actorId,omitempty"`
+
+	// Action e.g. `account.create`.
+	Action *string `form:"action,omitempty" json:"action,omitempty"`
+
+	// Entity e.g. `account`, `worker`, `template`.
+	Entity *string `form:"entity,omitempty" json:"entity,omitempty"`
+
+	// From Inclusive lower bound on the entry time.
+	From *time.Time `form:"from,omitempty" json:"from,omitempty"`
+
+	// To Exclusive upper bound on the entry time.
+	To *time.Time `form:"to,omitempty" json:"to,omitempty"`
+
+	// Limit Page size.
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Offset Page offset.
+	Offset *int `form:"offset,omitempty" json:"offset,omitempty"`
 }
 
 // ListOfficialAccountsParams defines parameters for ListOfficialAccounts.
@@ -925,6 +1007,12 @@ type CreateTemplateJSONRequestBody = CreateTemplateRequest
 
 // UpdateTemplateJSONRequestBody defines body for UpdateTemplate for application/json ContentType.
 type UpdateTemplateJSONRequestBody = CreateTemplateRequest
+
+// CreateUserJSONRequestBody defines body for CreateUser for application/json ContentType.
+type CreateUserJSONRequestBody = CreateUserRequest
+
+// UpdateUserJSONRequestBody defines body for UpdateUser for application/json ContentType.
+type UpdateUserJSONRequestBody = UpdateUserRequest
 
 // PostAccountCallbackJSONRequestBody defines body for PostAccountCallback for application/json ContentType.
 type PostAccountCallbackJSONRequestBody = AccountCallback

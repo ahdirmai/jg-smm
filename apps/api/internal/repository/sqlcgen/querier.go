@@ -51,8 +51,11 @@ type Querier interface {
 	CompleteActionJob(ctx context.Context, arg CompleteActionJobParams) (ActionJob, error)
 	CompleteScrapeJob(ctx context.Context, arg CompleteScrapeJobParams) (ScrapeJob, error)
 	CountAccountsByWorker(ctx context.Context, workerID pgtype.UUID) (int64, error)
+	CountAuditLogsFiltered(ctx context.Context, arg CountAuditLogsFilteredParams) (int64, error)
 	CountCommentsByPost(ctx context.Context, postID pgtype.UUID) (int64, error)
 	CountOfficialAccountsByPlatform(ctx context.Context, platform Platform) (int64, error)
+	CountOwnersExcept(ctx context.Context, id pgtype.UUID) (int64, error)
+	CountUsers(ctx context.Context) (int64, error)
 	CreateAccount(ctx context.Context, arg CreateAccountParams) (CreateAccountRow, error)
 	// ActionJob + ActionLog (P3-01): the action engine's bookkeeping.
 	//
@@ -93,6 +96,7 @@ type Querier interface {
 	DeleteCommentTemplate(ctx context.Context, id pgtype.UUID) error
 	DeleteExpiredAuthSessions(ctx context.Context) (int64, error)
 	DeleteProxyGroup(ctx context.Context, id pgtype.UUID) error
+	DeleteUser(ctx context.Context, id pgtype.UUID) error
 	DeleteWorker(ctx context.Context, id pgtype.UUID) error
 	// Account (executor identity) queries. password_enc is WRITE-ONLY: no query
 	// here ever selects it. UNIQUE(platform, username) + UNIQUE(worker_id, platform).
@@ -138,7 +142,14 @@ type Querier interface {
 	// generation guards idempotent reconcile (pod label smm.generation).
 	GetWorkerByID(ctx context.Context, id pgtype.UUID) (Worker, error)
 	GetWorkerByName(ctx context.Context, name string) (Worker, error)
-	InsertAuditLog(ctx context.Context, arg InsertAuditLogParams) (AuditLog, error)
+	// Audit trail queries (P6-10). The read path joins app_user so the dashboard
+	// gets a human-readable actor (email + name) without a second round trip; the
+	// actor is NULL for system-initiated rows, hence the LEFT JOIN.
+	//
+	// Optional filters follow the report.sql convention: an unset bound is passed
+	// as an empty value, so each clause also treats '' as "no filter" (the
+	// `::type IS NULL` arm stays for a real NULL if a caller ever sends one).
+	InsertAuditLog(ctx context.Context, arg InsertAuditLogParams) (InsertAuditLogRow, error)
 	InsertHeartbeat(ctx context.Context, arg InsertHeartbeatParams) error
 	// The newest attempt of each of a set of jobs in one round trip (P3-13): the
 	// queue view shows live status (job) plus the verdict that explains it (log),
@@ -164,7 +175,7 @@ type Querier interface {
 	ListAnalyticsMentionsByAccount(ctx context.Context, arg ListAnalyticsMentionsByAccountParams) ([]AnalyticsMention, error)
 	ListAnalyticsMentionsByPlatform(ctx context.Context, arg ListAnalyticsMentionsByPlatformParams) ([]AnalyticsMention, error)
 	ListAnalyticsSnapshotsByAccount(ctx context.Context, arg ListAnalyticsSnapshotsByAccountParams) ([]AnalyticsSnapshot, error)
-	ListAuditLogs(ctx context.Context, limit int32) ([]AuditLog, error)
+	ListAuditLogsFiltered(ctx context.Context, arg ListAuditLogsFilteredParams) ([]ListAuditLogsFilteredRow, error)
 	// The pool view for one platform. include_inactive is the dashboard's
 	// "show paused variants" toggle; the pool a pick draws from is always active-only
 	// (see PickForTarget).
@@ -222,6 +233,7 @@ type Querier interface {
 	UpdateCommentTemplate(ctx context.Context, arg UpdateCommentTemplateParams) (CommentTemplate, error)
 	UpdateOfficialAccount(ctx context.Context, arg UpdateOfficialAccountParams) (OfficialAccount, error)
 	UpdateProxyGroup(ctx context.Context, arg UpdateProxyGroupParams) (ProxyGroup, error)
+	UpdateUser(ctx context.Context, arg UpdateUserParams) (UpdateUserRow, error)
 	UpdateWorker(ctx context.Context, arg UpdateWorkerParams) (Worker, error)
 	// The upsert heart of the callback path. A worker first reports RUNNING (no
 	// screenshot yet, no verdict) and later the terminal verdict on the SAME row:

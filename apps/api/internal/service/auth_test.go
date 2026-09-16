@@ -35,6 +35,45 @@ func (f *fakeUsers) Create(_ context.Context, email, name, hash string, role dom
 	return u, nil
 }
 
+func (f *fakeUsers) List(_ context.Context, _, _ int) ([]port.User, error) {
+	out := make([]port.User, 0, len(f.byEmail))
+	for _, u := range f.byEmail {
+		out = append(out, u)
+	}
+	return out, nil
+}
+
+func (f *fakeUsers) Update(_ context.Context, id, name string, role domain.Role) (port.User, error) {
+	for email, u := range f.byEmail {
+		if u.ID == id {
+			u.Name, u.Role = name, role
+			f.byEmail[email] = u
+			return u, nil
+		}
+	}
+	return port.User{}, domain.ErrNotFound
+}
+
+func (f *fakeUsers) Delete(_ context.Context, id string) error {
+	for email, u := range f.byEmail {
+		if u.ID == id {
+			delete(f.byEmail, email)
+			return nil
+		}
+	}
+	return domain.ErrNotFound
+}
+
+func (f *fakeUsers) CountOwnersExcept(_ context.Context, id string) (int64, error) {
+	var n int64
+	for _, u := range f.byEmail {
+		if u.Role == domain.RoleOwner && u.ID != id {
+			n++
+		}
+	}
+	return n, nil
+}
+
 type fakeSessions struct {
 	active  map[string]port.AuthSession
 	revoked []string

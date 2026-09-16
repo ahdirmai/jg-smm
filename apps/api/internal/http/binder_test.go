@@ -95,3 +95,54 @@ func TestFormQueryBinderRejectsBadValue(t *testing.T) {
 		t.Fatalf("expected an error for an invalid date, got none (From=%v)", p.From)
 	}
 }
+
+// A numeric query param must bind into an int field: the binder marshals the
+// query value to JSON before unmarshalling into the struct, so a raw "10"
+// string would be rejected by json.Unmarshal into an *int (audit pagination
+// returned 400 until this coercion existed).
+func TestFormQueryBinderCoercesNumericParams(t *testing.T) {
+	type params struct {
+		Limit  *int   `form:"limit,omitempty" json:"limit,omitempty"`
+		Offset *int   `form:"offset,omitempty" json:"offset,omitempty"`
+		Name   string `form:"name,omitempty" json:"name,omitempty"`
+	}
+
+	e := echo.New()
+	e.Binder = formQueryBinder{}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/r?limit=25&offset=5&name=audit", nil)
+	c := e.NewContext(req, rec)
+
+	var p params
+	if err := c.Bind(&p); err != nil {
+		t.Fatalf("bind: %v", err)
+	}
+	if p.Limit == nil || *p.Limit != 25 {
+		t.Errorf("Limit = %v, want 25", p.Limit)
+	}
+	if p.Offset == nil || *p.Offset != 5 {
+		t.Errorf("Offset = %v, want 5", p.Offset)
+	}
+	if p.Name != "audit" {
+		t.Errorf("Name = %q, want audit", p.Name)
+	}
+}
+
+// A non-numeric value for an int field must not silently bind as 0; the bind
+// should fail loudly so a bad query is a 400, not a wrong default.
+func TestFormQueryBinderRejectsBadNumericParam(t *testing.T) {
+	type params struct {
+		Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+	}
+
+	e := echo.New()
+	e.Binder = formQueryBinder{}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/r?limit=abc", nil)
+	c := e.NewContext(req, rec)
+
+	var p params
+	if err := c.Bind(&p); err == nil {
+		t.Fatalf("expected bind error for limit=abc, got nil (Limit=%v)", p.Limit)
+	}
+}

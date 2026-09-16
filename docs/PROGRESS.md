@@ -251,10 +251,12 @@ recorded in `development-analyst/p6_parity_signoff.md`.
   real cookie session, `next` redirect).
 - **New pages**: login, add-account wizard (`/accounts/new`), bulk import
   (`/accounts/import`), audit, settings (tab nav; Appearance wired via
-  next-themes, the other four explicit "not wired").
-- **Actions**: "Action to target" card; like/comment enqueue for real,
-  report/reply inert (no job type for them); 4-dot pipeline stepper driven by
-  the real `JobStatus`; queue stays SSE-driven and windowed.
+  next-themes, Team wired to the users endpoint, the other three explicit
+  "not wired").
+- **Actions**: "Action to target" card; like/comment/report/reply-comment all
+  enqueue for real (report + reply-comment job types added to `job_type`);
+  4-dot pipeline stepper driven by the real `JobStatus`; queue stays SSE-driven
+  and windowed.
 - **Workers**: KPI strip + grouping by city with anchor coordinates + city
   filter; container cards show their frozen lat/lng.
 - **Accounts**: bulk select with pause/resume/remove over the filtered set.
@@ -263,3 +265,35 @@ recorded in `development-analyst/p6_parity_signoff.md`.
 - **Verification**: `make ci` green; all 19 routes return 200 against the
   rebuilt web image; API smoke (login, container create/delete with ISO
   alpha-2 region + seeded city).
+
+---
+
+## P6b — Backend parity for the inert dashboard controls
+
+The P6 build shipped honest "not wired" states wherever an API endpoint did not
+exist. This phase built the two endpoints the product pages actually needed, so
+the controls are now live instead of inert. Both were verified end-to-end
+against the rebuilt `api` + `web` images; `make ci` green.
+
+- **Action job types (report + reply-comment)**: `job_type` gained
+  `ACTION_REPORT` and `ACTION_REPLY_COMMENT` (migrations 000008/000009 — split
+  because Postgres forbids *using* a new enum value inside the same transaction
+  that added it). The Actions page Report / Reply buttons now enqueue real
+  jobs; they returned 400 before.
+- **Audit trail (P6-10, done)**: `GET /api/audit` returns Time / Actor / Action
+  / Target / Result / IP with actor + action + date filters and pagination.
+  Writes happen in one Echo middleware on the `/api` group — every
+  state-changing call (present or future) is recorded with the verified actor,
+  the request IP, and the outcome, including rejected attempts. Request bodies
+  are deliberately not captured: they carry secrets (account passwords, proxy
+  pool keys). Migration 000010 adds `ip inet` + `result text`.
+- **Team CRUD (P6-11, done)**: `GET/POST /api/users`, `PUT/DELETE
+  /api/users/{id}`. Passwords are argon2id-hashed (never returned); writes are
+  OWNER-gated. Guards: the last OWNER cannot be demoted or removed, and an
+  actor cannot remove their own account. A role change revokes that user's
+  refresh sessions so the new role applies immediately.
+- **Query-param binding fix**: the `formQueryBinder` marshals query values to
+  JSON before unmarshalling into the generated structs, so a numeric param like
+  `limit=10` was emitted as the JSON string `"10"` and rejected by `*int`
+  (audit pagination returned 400). Values are now coerced to the target field's
+  type first. Covered by unit tests for both the pass and reject paths.

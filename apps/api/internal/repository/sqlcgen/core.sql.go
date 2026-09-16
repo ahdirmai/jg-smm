@@ -11,6 +11,28 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countOwnersExcept = `-- name: CountOwnersExcept :one
+SELECT count(*) FROM app_user WHERE role = 'OWNER' AND id <> $1
+`
+
+func (q *Queries) CountOwnersExcept(ctx context.Context, id pgtype.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countOwnersExcept, id)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countUsers = `-- name: CountUsers :one
+SELECT count(*) FROM app_user
+`
+
+func (q *Queries) CountUsers(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countUsers)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createUser = `-- name: CreateUser :one
 INSERT INTO app_user (email, name, password_hash, role)
 VALUES (lower($1), $2, $3, $4)
@@ -50,6 +72,15 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (CreateU
 	return i, err
 }
 
+const deleteUser = `-- name: DeleteUser :exec
+DELETE FROM app_user WHERE id = $1
+`
+
+func (q *Queries) DeleteUser(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteUser, id)
+	return err
+}
+
 const getTeamConfig = `-- name: GetTeamConfig :one
 
 SELECT id, name, created_at
@@ -84,76 +115,6 @@ func (q *Queries) GetUserByEmail(ctx context.Context, lower string) (AppUser, er
 		&i.CreatedAt,
 	)
 	return i, err
-}
-
-const insertAuditLog = `-- name: InsertAuditLog :one
-INSERT INTO audit_log (actor_id, action, entity, entity_id, diff)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, actor_id, action, entity, entity_id, diff, ts
-`
-
-type InsertAuditLogParams struct {
-	ActorID  pgtype.UUID `json:"actor_id"`
-	Action   string      `json:"action"`
-	Entity   string      `json:"entity"`
-	EntityID string      `json:"entity_id"`
-	Diff     []byte      `json:"diff"`
-}
-
-func (q *Queries) InsertAuditLog(ctx context.Context, arg InsertAuditLogParams) (AuditLog, error) {
-	row := q.db.QueryRow(ctx, insertAuditLog,
-		arg.ActorID,
-		arg.Action,
-		arg.Entity,
-		arg.EntityID,
-		arg.Diff,
-	)
-	var i AuditLog
-	err := row.Scan(
-		&i.ID,
-		&i.ActorID,
-		&i.Action,
-		&i.Entity,
-		&i.EntityID,
-		&i.Diff,
-		&i.Ts,
-	)
-	return i, err
-}
-
-const listAuditLogs = `-- name: ListAuditLogs :many
-SELECT id, actor_id, action, entity, entity_id, diff, ts
-FROM audit_log
-ORDER BY ts DESC
-LIMIT $1
-`
-
-func (q *Queries) ListAuditLogs(ctx context.Context, limit int32) ([]AuditLog, error) {
-	rows, err := q.db.Query(ctx, listAuditLogs, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []AuditLog{}
-	for rows.Next() {
-		var i AuditLog
-		if err := rows.Scan(
-			&i.ID,
-			&i.ActorID,
-			&i.Action,
-			&i.Entity,
-			&i.EntityID,
-			&i.Diff,
-			&i.Ts,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const listUsers = `-- name: ListUsers :many
@@ -200,6 +161,40 @@ func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]ListUse
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateUser = `-- name: UpdateUser :one
+UPDATE app_user
+SET name = $2, role = $3
+WHERE id = $1
+RETURNING id, email, name, role, created_at
+`
+
+type UpdateUserParams struct {
+	ID   pgtype.UUID `json:"id"`
+	Name string      `json:"name"`
+	Role Role        `json:"role"`
+}
+
+type UpdateUserRow struct {
+	ID        pgtype.UUID        `json:"id"`
+	Email     string             `json:"email"`
+	Name      string             `json:"name"`
+	Role      Role               `json:"role"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) (UpdateUserRow, error) {
+	row := q.db.QueryRow(ctx, updateUser, arg.ID, arg.Name, arg.Role)
+	var i UpdateUserRow
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Name,
+		&i.Role,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const upsertTeamConfig = `-- name: UpsertTeamConfig :one

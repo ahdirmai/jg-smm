@@ -434,15 +434,18 @@ model Report {
 
 model AuditLog {
   id        String   @id @default(cuid())
-  actorId   String
+  actorId   String?  // NULL for system-initiated rows (scheduler/reconciler)
   user      User?    @relation(fields: [actorId], references: [id])
-  action    String
-  entity    String
+  action    String   // e.g. account.create
+  entity    String   // e.g. account
   entityId  String
-  diff      Json?
+  diff      Json?    // never the request body — it carries secrets
+  ip        String?  // request IP; empty for system rows
+  result    String   @default("ok") // or the failure reason
   ts        DateTime @default(now())
   @@index([ts])
   @@index([actorId, ts])
+  @@index([entity, entityId, ts])
 }
 
 model ActionLog {

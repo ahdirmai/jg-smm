@@ -99,6 +99,23 @@ func main() {
 		authSvc := service.NewAuthService(authRepo, authRepo, issuer, adapter.SystemClock{})
 		deps.Auth = apihttp.NewAuthHandler(authSvc, cfg.SecureCookies)
 
+		// Audit trail (P6-10): records who changed what, and serves the
+		// dashboard audit page. Mounted as middleware on the /api group so
+		// one place covers every mutation, present and future.
+		auditSvc := service.NewAuditService(repository.NewAuditRepo(pg.Queries()), service.AuditConfig{
+			Clock:  adapter.SystemClock{},
+			Logger: logger,
+		})
+		deps.Audit = apihttp.NewAuditHandler(auditSvc)
+
+		// Team CRUD (P6-11): the single-team MVP roster. OWNER-administered;
+		// the handler gates writes with the `admin` permission.
+		userSvc := service.NewUserService(authRepo, authRepo, service.UserConfig{
+			Clock:  adapter.SystemClock{},
+			Logger: logger,
+		})
+		deps.Users = apihttp.NewUserHandler(userSvc)
+
 		// Credential encryption (P1-07): accounts cannot be stored without it.
 		sealer, err := crypto.NewAESGCMFromBase64(cfg.CredentialKeyBase64)
 		if err != nil {

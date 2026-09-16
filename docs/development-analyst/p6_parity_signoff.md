@@ -28,8 +28,8 @@ launcher; the app sidebar replaces it, so it has no route by design.
 | `analytics-x.html`         | `/monitoring/x`         | PARTIAL — accepted                             |
 | `analytics-youtube.html`   | `/monitoring/youtube`   | PARTIAL — accepted                             |
 | `analytics-tiktok.html`    | `/monitoring/tiktok`    | PARTIAL — accepted                             |
-| `audit.html`               | `/audit`                | PARTIAL — accepted                             |
-| `settings.html`            | `/settings`             | PARTIAL — accepted                             |
+| `audit.html`               | `/audit`                | PARITY — audit-log endpoint wired              |
+| `settings.html`            | `/settings`             | PARITY — Team tab wired (OWNER)                |
 | `login.html`               | `/login`                | PARITY                                         |
 
 Every page is light + dark via the muted palette in `globals.css` (no neon), matching
@@ -44,17 +44,22 @@ silent: the UI says what it does and does not do.
 
 ### Deliberate (no API endpoint — honest empty state, no fake data)
 
-1. **Settings: Team / Proxy groups / Limits / Danger zone.** No users, proxy-group,
-   rate-limit, or danger-op endpoints exist. Those four tabs render an explicit "Not wired
-   in the MVP" panel. **Appearance is wired for real** through `next-themes`
-   (light/dark/system). Density is shown inert, single density in the MVP.
+1. **Settings: Proxy groups / Limits / Danger zone.** No proxy-group-assignment,
+   rate-limit, or danger-op endpoints exist. Those three tabs render an explicit "Not
+   wired in the MVP" panel. **Team is wired for real** (P6-11): roster, invite, role
+   change, remove — OWNER-gated, with the last-owner and self-removal guards. **Appearance
+   is wired for real** through `next-themes` (light/dark/system). Density is shown inert,
+   single density in the MVP.
 2. **Analytics: Top posts rows.** `PlatformAnalytics` carries KPIs + trend + freshness, no
    per-post data. The table matches the prototype's structure and renders the prototype's
    own empty copy: "Not yet enabled in the MVP — layout shown for review." The Filter
    button is inert for the same reason.
-3. **Audit: Actor / IP columns and actor/action/date filters.** There is no audit-log
-   endpoint; the page is an actions pivot (`reportActions`). Actor and IP are simply not in
-   that payload. The code documents this as a stopgap.
+3. **RESOLVED — Audit trail.** The audit-log endpoint now exists (`GET /api/audit`) and the
+   page renders Time / Actor / Action / Target / Result / IP with actor + action filters
+   and pagination. The trail is written by middleware on every state-changing `/api` call,
+   so successes and rejections are both recorded. Actor resolves to the user's email,
+   or `system` for background work. Request bodies are deliberately not captured — they
+   carry secrets (account passwords, proxy pool keys).
 4. **Add-account: live-login side panel, 2FA/OTP branch, failure branch.** Account creation
    is a plain 3-step wizard; login is resolved asynchronously by the worker, not inline
    over SSE, so the step list and OTP branch have no source stream.

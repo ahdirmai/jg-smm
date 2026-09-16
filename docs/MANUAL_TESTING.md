@@ -169,12 +169,28 @@ accounts; they never appear in worker analytics.
 
 ## 10b. Audit, Settings, Login (P6)
 
-- [ ] `/audit` renders the actions pivot (Day/Account/Platform/Action/Totals).
-      The free-text filter narrows rows; Load + Refresh work. Actor/IP columns
-      are absent by design — no audit-log endpoint yet.
+- [ ] `/audit` renders the server audit trail (Time / Actor / Action / Target /
+      Result / IP), newest first. Actor resolves to the user's email, or
+      `system` for background work.
+- [ ] **Actor filter** (dropdown of team members) and **Action filter**
+      (distinct actions in the loaded page) narrow the query server-side; the
+      free-text filter narrows the loaded rows client-side.
+- [ ] **Pagination**: Prev/Next page through `limit=25` pages and the
+      "Showing N of M entries" counter matches `total`.
+- [ ] **Audit is written by middleware**, not a per-service call: perform any
+      mutation (create a container, add an account, queue an action, create a
+      user) and a row appears with `result: ok`. A rejected mutation is also
+      recorded, with the failure reason in `result`.
 - [ ] `/settings` tab nav switches between Team / Proxy groups / Limits /
       Appearance / Danger zone.
-- [ ] Team, Proxy groups, Limits, Danger zone each show an explicit
+- [ ] **Team** (signed in as OWNER): the roster loads; Invite member opens a
+      dialog that creates a user (email + name + provisional password + role);
+      the role dropdown + Save changes a role; Remove deletes a member. A
+      non-OWNER sees the roster read-only with an "Owner-only" badge.
+- [ ] **Team guards**: demoting or removing the last OWNER is refused (409),
+      and removing your own account is refused (409). A role change revokes
+      that user's refresh sessions.
+- [ ] Proxy groups, Limits, Danger zone each show an explicit
       "Not wired in the MVP" panel — no button here performs a fake call.
 - [ ] **Appearance → theme** actually changes the theme and persists.
 - [ ] `/login` renders immediately (visible fallback), hydrates the form, and

@@ -37,6 +37,41 @@ func (u *memUsers) Create(_ context.Context, email, name, hash string, role doma
 	u.m[email] = x
 	return x, nil
 }
+func (u *memUsers) List(_ context.Context, _, _ int) ([]port.User, error) {
+	out := make([]port.User, 0, len(u.m))
+	for _, x := range u.m {
+		out = append(out, x)
+	}
+	return out, nil
+}
+func (u *memUsers) Update(_ context.Context, id, name string, role domain.Role) (port.User, error) {
+	for email, x := range u.m {
+		if x.ID == id {
+			x.Name, x.Role = name, role
+			u.m[email] = x
+			return x, nil
+		}
+	}
+	return port.User{}, domain.ErrNotFound
+}
+func (u *memUsers) Delete(_ context.Context, id string) error {
+	for email, x := range u.m {
+		if x.ID == id {
+			delete(u.m, email)
+			return nil
+		}
+	}
+	return domain.ErrNotFound
+}
+func (u *memUsers) CountOwnersExcept(_ context.Context, id string) (int64, error) {
+	var n int64
+	for _, x := range u.m {
+		if x.Role == domain.RoleOwner && x.ID != id {
+			n++
+		}
+	}
+	return n, nil
+}
 
 type memSessions struct{ active map[string]port.User }
 

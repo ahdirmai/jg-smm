@@ -22,6 +22,15 @@ type UserStore interface {
 	GetByEmail(ctx context.Context, email string) (User, error)
 	GetByID(ctx context.Context, id string) (User, error)
 	Create(ctx context.Context, email, name, passwordHash string, role domain.Role) (User, error)
+	// List returns a page of users, newest first.
+	List(ctx context.Context, limit, offset int) ([]User, error)
+	// Update changes name and/or role.
+	Update(ctx context.Context, id, name string, role domain.Role) (User, error)
+	// Delete removes a user.
+	Delete(ctx context.Context, id string) error
+	// CountOwnersExcept counts OWNER-role users other than the given one; used
+	// to keep the last admin from being removed or demoted.
+	CountOwnersExcept(ctx context.Context, id string) (int64, error)
 }
 
 // AuthSession is a persisted refresh token. Plaintext tokens are never stored.

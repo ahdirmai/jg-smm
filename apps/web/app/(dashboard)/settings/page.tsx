@@ -17,6 +17,7 @@ import { useTheme } from 'next-themes';
 import { Badge, Button, Card, CardContent } from '@smm/ui';
 import { useSession } from '@/lib/auth/session-context';
 import { ROLES, ROLE_LABEL } from '@/lib/auth/permissions';
+import { TeamPanel } from './team-panel';
 
 const ROLE_PERMISSIONS: Record<string, string[]> = {
   OWNER: ['read', 'act', 'export', 'admin'],
@@ -131,12 +132,7 @@ export default function SettingsPage() {
         </nav>
 
         {tab === 'team' ? (
-          <NotWired
-            icon={Users}
-            title="Team"
-            what="Creating users, inviting members, and changing roles need a users endpoint on the API."
-            roles
-          />
+          <TeamPanel admin={session.status === 'authenticated' && session.role === 'OWNER'} />
         ) : null}
 
         {tab === 'proxy' ? (

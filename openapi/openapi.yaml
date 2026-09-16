@@ -984,6 +984,183 @@ paths:
         '404':
           $ref: '#/components/responses/Error'
 
+  /api/audit:
+    get:
+      tags: [audit]
+      summary: List the audit trail
+      description: |
+        Returns who did what, when: one row per state-changing call
+        (account/container/template/user create/update/delete, action
+        enqueue), newest first, with the actor's email resolved and the
+        request IP. Filters are all optional. Requires the `read` permission.
+      operationId: listAudit
+      security:
+        - accessCookie: []
+      parameters:
+        - name: actorId
+          in: query
+          schema:
+            type: string
+          description: Filter to one user's actions.
+        - name: action
+          in: query
+          schema:
+            type: string
+          description: e.g. `account.create`.
+        - name: entity
+          in: query
+          schema:
+            type: string
+          description: e.g. `account`, `worker`, `template`.
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Inclusive lower bound on the entry time.
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Exclusive upper bound on the entry time.
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+          description: Page size.
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+          description: Page offset.
+      responses:
+        '200':
+          description: Audit entries.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditLogList'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+
+  /api/users:
+    get:
+      tags: [users]
+      summary: List team members
+      description: |
+        Returns every user in the single-team MVP with their role. Requires
+        the `read` permission.
+      operationId: listUsers
+      security:
+        - accessCookie: []
+      responses:
+        '200':
+          description: Users.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserList'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+    post:
+      tags: [users]
+      summary: Create / invite a team member
+      description: |
+        Adds a user with a provisional password the operator shares out of
+        band (the MVP has no email transport wired for invites). The password
+        is argon2id-hashed; it is never returned. Requires `admin` (OWNER).
+      operationId: createUser
+      security:
+        - accessCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+      responses:
+        '201':
+          description: User created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+
+  /api/users/{userId}:
+    parameters:
+      - $ref: '#/components/parameters/UserId'
+    put:
+      tags: [users]
+      summary: Update a team member
+      description: |
+        Changes a member's role and/or name. Changing a role revokes that
+        user's refresh sessions so the new role applies immediately. Requires
+        `admin` (OWNER).
+      operationId: updateUser
+      security:
+        - accessCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserRequest'
+      responses:
+        '200':
+          description: User updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+    delete:
+      tags: [users]
+      summary: Remove a team member
+      description: |
+        Deletes the user. The last OWNER cannot be removed (the team must keep
+        an admin), and an account cannot delete itself. Requires `admin`.
+      operationId: deleteUser
+      security:
+        - accessCookie: []
+      responses:
+        '204':
+          description: Deleted.
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+
   /api/stream:
     get:
       tags: [stream]
@@ -1141,6 +1318,14 @@ components:
       schema:
         type: string
       description: The proxy group ID.
+
+    UserId:
+      name: userId
+      in: path
+      required: true
+      schema:
+        type: string
+      description: The user ID.
 
     OfficialAccountId:
       name: officialAccountId
@@ -1829,6 +2014,86 @@ components:
         dailyBudgetMb:
           type: integer
           minimum: 1
+
+    CreateUserRequest:
+      type: object
+      required: [email, name, role, password]
+      properties:
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        role:
+          $ref: '#/components/schemas/Role'
+        password:
+          type: string
+          format: password
+          description: Write-only; argon2id-hashed, never returned.
+
+    UpdateUserRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        role:
+          $ref: '#/components/schemas/Role'
+
+    UserList:
+      type: object
+      required: [users]
+      properties:
+        users:
+          type: array
+          items:
+            $ref: '#/components/schemas/User'
+
+    AuditLog:
+      type: object
+      description: One immutable audit-trail entry.
+      required: [id, action, entity, entityId, result, ts]
+      properties:
+        id:
+          type: string
+        actorId:
+          type: string
+          description: Empty for system-initiated rows.
+        actor:
+          type: string
+          description: The user's email, or `system`.
+        action:
+          type: string
+          description: e.g. `account.create`.
+        entity:
+          type: string
+          description: e.g. `account`, `worker`, `template`.
+        entityId:
+          type: string
+        result:
+          type: string
+          description: '`ok`, or the failure reason.'
+        ip:
+          type: string
+          description: The request IP; empty when unknown.
+        ts:
+          type: string
+          format: date-time
+
+    AuditLogList:
+      type: object
+      required: [rows, total, limit, offset]
+      properties:
+        rows:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditLog'
+        total:
+          type: integer
+          description: Entries matching the same filter, for pagination.
+        limit:
+          type: integer
+        offset:
+          type: integer
 
     SetAccountStatusRequest:
       type: object

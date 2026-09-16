@@ -369,12 +369,14 @@ func (ns NullJobStatus) Value() (driver.Value, error) {
 type JobType string
 
 const (
-	JobTypeSCRAPELIKE     JobType = "SCRAPE_LIKE"
-	JobTypeSCRAPECOMMENT  JobType = "SCRAPE_COMMENT"
-	JobTypeSCRAPEMETRIC   JobType = "SCRAPE_METRIC"
-	JobTypeSESSIONREFRESH JobType = "SESSION_REFRESH"
-	JobTypeACTIONLIKE     JobType = "ACTION_LIKE"
-	JobTypeACTIONCOMMENT  JobType = "ACTION_COMMENT"
+	JobTypeSCRAPELIKE         JobType = "SCRAPE_LIKE"
+	JobTypeSCRAPECOMMENT      JobType = "SCRAPE_COMMENT"
+	JobTypeSCRAPEMETRIC       JobType = "SCRAPE_METRIC"
+	JobTypeSESSIONREFRESH     JobType = "SESSION_REFRESH"
+	JobTypeACTIONLIKE         JobType = "ACTION_LIKE"
+	JobTypeACTIONCOMMENT      JobType = "ACTION_COMMENT"
+	JobTypeACTIONREPORT       JobType = "ACTION_REPORT"
+	JobTypeACTIONREPLYCOMMENT JobType = "ACTION_REPLY_COMMENT"
 )
 
 func (e *JobType) Scan(src interface{}) error {
@@ -843,6 +845,8 @@ type AuditLog struct {
 	EntityID string             `json:"entity_id"`
 	Diff     []byte             `json:"diff"`
 	Ts       pgtype.Timestamptz `json:"ts"`
+	Ip       *netip.Addr        `json:"ip"`
+	Result   string             `json:"result"`
 }
 
 type AuthSession struct {

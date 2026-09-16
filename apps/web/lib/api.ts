@@ -31,6 +31,13 @@ export type TargetReport = ApiSchemas['TargetReport'];
 export type TargetReportRow = ApiSchemas['TargetReportRow'];
 export type AnalyticsReport = ApiSchemas['AnalyticsReport'];
 export type TrendPoint = ApiSchemas['TrendPoint'];
+export type AuditLog = ApiSchemas['AuditLog'];
+export type AuditLogList = ApiSchemas['AuditLogList'];
+export type User = ApiSchemas['User'];
+export type UserList = ApiSchemas['UserList'];
+export type CreateUserRequest = ApiSchemas['CreateUserRequest'];
+export type UpdateUserRequest = ApiSchemas['UpdateUserRequest'];
+export type Role = ApiSchemas['Role'];
 
 export type ReportQuery = {
   kind?: 'actions' | 'targets' | 'analytics';
@@ -41,6 +48,26 @@ export type ReportQuery = {
   accountId?: string;
   metric?: string;
 };
+
+export type AuditQuery = {
+  actorId?: string;
+  action?: string;
+  entity?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+  offset?: number;
+};
+
+function auditQuery(params: AuditQuery): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === '') continue;
+    search.set(key, String(value));
+  }
+  const qs = search.toString();
+  return qs ? `?${qs}` : '';
+}
 
 function reportQuery(params: ReportQuery): string {
   const search = new URLSearchParams();
@@ -167,4 +194,17 @@ export const api = {
       signal ? { signal } : undefined,
     ),
   reportExportURL: (params: ReportQuery) => `${API_URL}/api/reports/export${reportQuery(params)}`,
+
+  // Audit trail (P6-10). Who did what, when — read-only, filtered.
+  listAudit: (params: AuditQuery, signal?: AbortSignal) =>
+    request<AuditLogList>(`/api/audit${auditQuery(params)}`, signal ? { signal } : undefined),
+
+  // Team (P6-11). Single-team MVP roster; writes are OWNER-only.
+  listUsers: (signal?: AbortSignal) =>
+    request<UserList>('/api/users', signal ? { signal } : undefined),
+  createUser: (body: CreateUserRequest) =>
+    request<User>('/api/users', { method: 'POST', body: JSON.stringify(body) }),
+  updateUser: (id: string, body: UpdateUserRequest) =>
+    request<User>(`/api/users/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+  removeUser: (id: string) => request<void>(`/api/users/${id}`, { method: 'DELETE' }),
 };

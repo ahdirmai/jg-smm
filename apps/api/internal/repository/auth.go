@@ -75,6 +75,66 @@ func (r *AuthRepo) Create(ctx context.Context, email, name, passwordHash string,
 	}, nil
 }
 
+// List returns a page of users, newest first. Password hashes are never loaded.
+func (r *AuthRepo) List(ctx context.Context, limit, offset int) ([]port.User, error) {
+	l, o := pageBounds(limit, offset)
+	rows, err := r.q.ListUsers(ctx, sqlcgen.ListUsersParams{Limit: l, Offset: o})
+	if err != nil {
+		return nil, fmt.Errorf("repository.auth.List: %w", err)
+	}
+	out := make([]port.User, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, port.User{
+			ID:        uuidString(row.ID),
+			Email:     row.Email,
+			Name:      row.Name,
+			Role:      domain.Role(row.Role),
+			CreatedAt: row.CreatedAt.Time,
+		})
+	}
+	return out, nil
+}
+
+// Update changes a user's name and role. A missing user is ErrNotFound.
+func (r *AuthRepo) Update(ctx context.Context, id, name string, role domain.Role) (port.User, error) {
+	row, err := r.q.UpdateUser(ctx, sqlcgen.UpdateUserParams{
+		ID:   uuidValue(id),
+		Name: name,
+		Role: sqlcgen.Role(role),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return port.User{}, domain.ErrNotFound
+	}
+	if err != nil {
+		return port.User{}, fmt.Errorf("repository.auth.Update: %w", err)
+	}
+	return port.User{
+		ID:        uuidString(row.ID),
+		Email:     row.Email,
+		Name:      row.Name,
+		Role:      domain.Role(row.Role),
+		CreatedAt: row.CreatedAt.Time,
+	}, nil
+}
+
+// Delete removes a user. Sessions cascade (ON DELETE CASCADE), so every
+// refresh token dies with the account.
+func (r *AuthRepo) Delete(ctx context.Context, id string) error {
+	if err := r.q.DeleteUser(ctx, uuidValue(id)); err != nil {
+		return fmt.Errorf("repository.auth.Delete: %w", err)
+	}
+	return nil
+}
+
+// CountOwnersExcept counts OWNER-role users other than the given id.
+func (r *AuthRepo) CountOwnersExcept(ctx context.Context, id string) (int64, error) {
+	count, err := r.q.CountOwnersExcept(ctx, uuidValue(id))
+	if err != nil {
+		return 0, fmt.Errorf("repository.auth.CountOwnersExcept: %w", err)
+	}
+	return count, nil
+}
+
 // CreateSession stores a new refresh-token session.
 func (r *AuthRepo) CreateSession(ctx context.Context, userID string, tokenHash []byte, userAgent, ip string, expiresAt time.Time) (port.AuthSession, error) {
 	row, err := r.q.CreateAuthSession(ctx, sqlcgen.CreateAuthSessionParams{

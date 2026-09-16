@@ -28,13 +28,20 @@ FROM app_user
 ORDER BY created_at DESC
 LIMIT $1 OFFSET $2;
 
--- name: InsertAuditLog :one
-INSERT INTO audit_log (actor_id, action, entity, entity_id, diff)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, actor_id, action, entity, entity_id, diff, ts;
+-- name: CountUsers :one
+SELECT count(*) FROM app_user;
 
--- name: ListAuditLogs :many
-SELECT id, actor_id, action, entity, entity_id, diff, ts
-FROM audit_log
-ORDER BY ts DESC
-LIMIT $1;
+-- name: UpdateUser :one
+UPDATE app_user
+SET name = $2, role = $3
+WHERE id = $1
+RETURNING id, email, name, role, created_at;
+
+-- name: DeleteUser :exec
+DELETE FROM app_user WHERE id = $1;
+
+-- name: CountOwnersExcept :one
+SELECT count(*) FROM app_user WHERE role = 'OWNER' AND id <> $1;
+
+-- Audit queries live in audit.sql (they carry the ip/result columns added in
+-- migration 000010 and join app_user for the actor's display name).
