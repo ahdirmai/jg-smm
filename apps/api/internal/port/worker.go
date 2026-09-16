@@ -3,7 +3,7 @@ package port
 import (
 	"context"
 
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/domain"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
 )
 
 // K8sClient is the provisioner's view of the container platform. The concrete

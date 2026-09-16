@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/domain"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
 )
 
 // memProxyStore is the minimal port.ProxyGroupStore for service tests.

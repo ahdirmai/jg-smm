@@ -7,9 +7,9 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/oapi-codegen/nullable"
 
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/domain"
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/http/oapigen"
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/service"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/http/oapigen"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/service"
 )
 
 // ContainerHandler is the operator-facing container API (P1-19). It creates

@@ -3,7 +3,7 @@ package service
 import (
 	"context"
 
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/port"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/port"
 )
 
 // HealthStatus is the result of a readiness probe.

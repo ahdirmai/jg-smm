@@ -17,8 +17,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/domain"
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/port"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/port"
 )
 
 // Runner runs Apify actors over HTTP. It is safe to call concurrently: every

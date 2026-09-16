@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/domain"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
 )
 
 // fakeReportQuery backs the report service: rows are exactly what the repo

@@ -7,9 +7,9 @@ import (
 	"github.com/labstack/echo/v4"
 	openapiTypes "github.com/oapi-codegen/runtime/types"
 
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/domain"
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/http/oapigen"
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/service"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/http/oapigen"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/service"
 )
 
 // ReportHandler mounts the report builder + export (P4-04 / P4-05). Reads need

@@ -3,7 +3,7 @@ package port
 import (
 	"context"
 
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/domain"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
 )
 
 // TemplateStore (P3-02) covers the comment pool: CRUD over the templates, plus

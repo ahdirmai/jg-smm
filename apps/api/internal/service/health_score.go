@@ -3,7 +3,7 @@ package service
 import (
 	"time"
 
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/domain"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
 )
 
 // HealthScorePolicy is the P5-02 account health model. Health is a 0-100

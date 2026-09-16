@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/port"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/port"
 )
 
 // Hub is the in-process SSE fan-out. Each connected dashboard holds one

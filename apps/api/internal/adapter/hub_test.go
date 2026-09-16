@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/port"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/port"
 )
 
 func TestHubFanoutToAllSubscribers(t *testing.T) {

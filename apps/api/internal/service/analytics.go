@@ -8,8 +8,8 @@ import (
 
 	"log/slog"
 
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/domain"
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/port"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/port"
 )
 
 // AnalyticsService (P2-13 / P2-14) is the operator-facing analytics API surface:

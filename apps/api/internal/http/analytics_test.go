@@ -11,9 +11,9 @@ import (
 
 	"github.com/labstack/echo/v4"
 
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/domain"
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/http/oapigen"
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/service"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/http/oapigen"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/service"
 )
 
 // The handler tests use the service package's in-memory analytics store so the

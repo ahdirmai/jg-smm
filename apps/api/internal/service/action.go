@@ -7,8 +7,8 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/domain"
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/port"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/port"
 )
 
 // MaxActionBatch is the enqueue cap (P3-13 "queue 50"): one request may carry

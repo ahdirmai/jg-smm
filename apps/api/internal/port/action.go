@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/domain"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
 )
 
 // ActionStore (P3-01) covers the action engine tables: ActionJob (the queue)

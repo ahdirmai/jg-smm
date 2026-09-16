@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/domain"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
 )
 
 // aggregatorFor wires the aggregator against the in-memory fake with a fixed

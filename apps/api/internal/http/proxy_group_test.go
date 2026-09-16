@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/adapter"
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/domain"
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/port"
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/service"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/adapter"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/port"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/service"
 )
 
 func newProxyGroupTestServer(t *testing.T, role domain.Role) (*httptest.Server, *service.ProxyGroupService) {

@@ -12,7 +12,7 @@ import (
 	"testing"
 )
 
-const modulePrefix = "github.com/ahdirmai/jg-smm-automation/apps/api/internal/"
+const modulePrefix = "github.com/ahdirmai/jg-smm/apps/api/internal/"
 
 // TestLayerDependencies enforces that inner layers do not import outer ones.
 func TestLayerDependencies(t *testing.T) {

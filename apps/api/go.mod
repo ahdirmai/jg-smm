@@ -1,4 +1,4 @@
-module github.com/ahdirmai/jg-smm-automation/apps/api
+module github.com/ahdirmai/jg-smm/apps/api
 
 go 1.26.0
 

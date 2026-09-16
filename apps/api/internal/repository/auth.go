@@ -9,9 +9,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/domain"
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/port"
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/repository/sqlcgen"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/port"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/repository/sqlcgen"
 )
 
 // AuthRepo persists users and refresh-token sessions.

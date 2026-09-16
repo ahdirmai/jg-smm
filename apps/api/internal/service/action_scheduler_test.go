@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/domain"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
 )
 
 // P3 action scheduler tests. The scheduler is policy: which jobs survive the

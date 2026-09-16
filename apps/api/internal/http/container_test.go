@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/adapter"
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/domain"
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/port"
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/service"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/adapter"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/port"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/service"
 )
 
 // containerFakes is a port.WorkerStore + AccountStore pair for container tests.

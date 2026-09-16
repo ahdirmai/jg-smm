@@ -7,7 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/repository/sqlcgen"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/repository/sqlcgen"
 )
 
 // Postgres wraps a pgx pool with the bits the API needs at P0-03 (health probe

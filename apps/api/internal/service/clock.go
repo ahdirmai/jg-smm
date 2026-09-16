@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/port"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/port"
 )
 
 // systemClock implements port.Clock with the real system time. Tests inject a

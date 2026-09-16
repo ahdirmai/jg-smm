@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/domain"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
 )
 
 func alertEngineFor(t *testing.T) (*AlertEngine, *fakeScrapeStore, *fakeAnalyticsStore) {

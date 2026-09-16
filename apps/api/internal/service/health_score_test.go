@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/domain"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
 )
 
 func TestHealthScorePolicy_ApplyVerdict(t *testing.T) {

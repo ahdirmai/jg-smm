@@ -7,7 +7,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/adapter"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/adapter"
 )
 
 // keepaliveInterval bounds how often a comment frame is written so proxies do

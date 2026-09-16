@@ -7,9 +7,9 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/domain"
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/port"
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/repository/sqlcgen"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/port"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/repository/sqlcgen"
 )
 
 // TemplateRepo implements port.TemplateStore over the sqlc query handle. It

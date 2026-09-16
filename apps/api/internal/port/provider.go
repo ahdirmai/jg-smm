@@ -3,7 +3,7 @@ package port
 import (
 	"context"
 
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/domain"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
 )
 
 // P2 provider-side ports. Both Apify (scrape) and the analytics provider are

@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"math/rand"
 
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/domain"
-	"github.com/ahdirmai/jg-smm-automation/apps/api/internal/port"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/port"
 )
 
 // TemplateService (P3-02) is the comment engine: it picks one variant from the
