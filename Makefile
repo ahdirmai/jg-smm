@@ -23,7 +23,7 @@ SQLC_RUN = docker run --rm -v "$(PWD)/apps/api":/src -w /src sqlc/sqlc:$(SQLC_VE
 # Code generation from the OpenAPI SSOT (openapi/openapi.yaml).
 OAPI_CODEGEN_VERSION ?= v2.4.1
 
-.PHONY: help up env down logs ps bootstrap hooks lint typecheck test build ci fmt-check migrate migrate-down migrate-create migrate-status sqlc sqlc-check seed generate generate-go generate-ts
+.PHONY: help up env down logs ps bootstrap hooks lint typecheck test build ci fmt-check migrate migrate-down migrate-create migrate-status sqlc sqlc-check seed generate generate-go generate-ts backup restore drill
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -109,3 +109,12 @@ generate-go: ## Generate Go types from openapi/openapi.yaml
 
 generate-ts: ## Generate FE types into packages/shared
 	pnpm --filter @smm/shared generate:api
+
+backup: ## Back up Postgres + WAL, MinIO and worker sessions to infra/backup/backups
+	bash infra/backup/backup.sh
+
+restore: ## Restore from a backup (B=name or timestamp; default: latest). DROPS the live DB
+	bash infra/backup/restore.sh "$(or $(B),latest)"
+
+drill: ## DR drill: backup, wipe all app volumes, restore, verify. DESTROYS DATA
+	bash infra/backup/drill.sh
