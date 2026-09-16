@@ -22,7 +22,7 @@ import {
   SelectValue,
   Textarea,
 } from '@smm/ui';
-import { AlertCircle, Loader2, Send } from 'lucide-react';
+import { AlertCircle, Flag, Heart, Loader2, MessageSquare, Reply } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
 import { useAccounts } from '@/lib/hooks/use-accounts';
@@ -39,6 +39,10 @@ const MAX_BATCH = 50;
 // stays fixed-height (see useVirtualRowWindow).
 const ROW_HEIGHT = 44;
 
+// Pipeline the worker actually runs (ADR: publish → dispatch → verify). The
+// stepper below maps a real JobStatus onto it; no stage is invented for show.
+const PIPELINE = ['Queued', 'Dispatched', 'Running', 'Verifying'] as const;
+
 function statusTone(status: JobStatus): 'success' | 'outline' | 'secondary' | 'destructive' {
   switch (status) {
     case 'SUCCESS':
@@ -52,6 +56,21 @@ function statusTone(status: JobStatus): 'success' | 'outline' | 'secondary' | 'd
   }
 }
 
+/** How many pipeline stages a real status has cleared. */
+function stageReached(status: JobStatus): number {
+  switch (status) {
+    case 'PENDING':
+      return 1;
+    case 'RUNNING':
+      return 3;
+    case 'SUCCESS':
+    case 'FAILED':
+      return 4;
+    default:
+      return 1;
+  }
+}
+
 export default function ActionsPage() {
   const { accounts } = useAccounts();
   const { actions, loading, error, enqueue } = useActions();
@@ -60,8 +79,6 @@ export default function ActionsPage() {
   const canAct = can(role, 'act');
 
   const [accountId, setAccountId] = useState<string>('');
-  const [actionType, setActionType] = useState<'action_like' | 'action_comment'>('action_like');
-  // One permalink per line; a paste of N URLs is the common operator flow.
   const [urls, setUrls] = useState<string>('');
   const [status, setStatusFilter] = useState<string>('all');
   const [busy, setBusy] = useState(false);
@@ -106,8 +123,7 @@ export default function ActionsPage() {
   const win = virtual.slice(rows.length);
   const [selected, setSelected] = useState<ActionJob | null>(null);
 
-  const onEnqueue = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const submit = async (type: 'action_like' | 'action_comment') => {
     setFormError(null);
 
     if (!accountId) {
@@ -127,7 +143,11 @@ export default function ActionsPage() {
       return;
     }
 
-    const items: ActionItem[] = list.map((targetUrl) => ({ accountId, targetUrl, actionType }));
+    const items: ActionItem[] = list.map((targetUrl) => ({
+      accountId,
+      targetUrl,
+      actionType: type,
+    }));
 
     setBusy(true);
     try {
@@ -141,96 +161,122 @@ export default function ActionsPage() {
   };
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
-      <header className="space-y-1">
-        <h1 className="text-3xl font-semibold tracking-tight">Actions</h1>
-        <p className="text-sm text-muted-foreground">
-          Enqueue likes and comments. Comment text is composed from templates and screened before
-          dispatch — never typed here.
-        </p>
-      </header>
-
+    <div className="mx-auto max-w-6xl space-y-4">
+      {/* Action to target: pick account + target, then trigger the worker. */}
       <Card>
-        <CardHeader>
-          <CardTitle>Enqueue</CardTitle>
-          <CardDescription>One URL per line, up to {MAX_BATCH} per batch.</CardDescription>
+        <CardHeader className="flex-row items-center justify-between space-y-0">
+          <div>
+            <CardTitle>Action to target</CardTitle>
+            <CardDescription>
+              Executed by the owning worker via Playwright · sequential (1 action/container).
+            </CardDescription>
+          </div>
+          <Badge variant="info">Live queue</Badge>
         </CardHeader>
-        <CardContent>
-          <form onSubmit={onEnqueue} className="space-y-4">
-            <fieldset disabled={!canAct} className="space-y-4" aria-label="Enqueue actions">
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="account">Account</Label>
-                  <Select value={accountId} onValueChange={setAccountId}>
-                    <SelectTrigger id="account">
-                      <SelectValue placeholder="Select an account" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {usable.map((a) => (
-                        <SelectItem key={a.id} value={a.id}>
-                          @{a.username} · {PLATFORM_LABEL[a.platform] ?? a.platform}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="type">Action</Label>
-                  <Select
-                    value={actionType}
-                    onValueChange={(v) => setActionType(v as 'action_like' | 'action_comment')}
-                  >
-                    <SelectTrigger id="type">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="action_like">Like</SelectItem>
-                      <SelectItem value="action_comment">Comment</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="urls">Target URLs</Label>
-                <Textarea
-                  id="urls"
-                  value={urls}
-                  onChange={(e) => setUrls(e.target.value)}
-                  placeholder={'https://www.instagram.com/p/…\nhttps://www.threads.net/p/…'}
-                  rows={5}
-                  className="font-mono text-xs"
-                  disabled={busy || !canAct}
-                />
-              </div>
-            </fieldset>
-
-            {formError ? (
-              <div className="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
-                <AlertCircle className="size-4" />
-                {formError}
-              </div>
-            ) : null}
-
-            <div className="flex items-center gap-3">
-              <Button type="submit" disabled={busy || !canAct}>
-                {busy ? <Loader2 className="animate-spin" /> : <Send />}
-                Enqueue
-              </Button>
-              {inFlight > 0 ? (
-                <span className="text-sm text-muted-foreground">{inFlight} in flight</span>
-              ) : null}
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-[200px_1fr]">
+            <div className="space-y-2">
+              <Label htmlFor="account">Account (worker)</Label>
+              <Select value={accountId} onValueChange={setAccountId}>
+                <SelectTrigger id="account">
+                  <SelectValue placeholder="Select an account" />
+                </SelectTrigger>
+                <SelectContent>
+                  {usable.map((a) => (
+                    <SelectItem key={a.id} value={a.id}>
+                      @{a.username} · {PLATFORM_LABEL[a.platform] ?? a.platform}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
-          </form>
+            <div className="space-y-2">
+              <Label htmlFor="urls">Target URL</Label>
+              <Textarea
+                id="urls"
+                value={urls}
+                onChange={(e) => setUrls(e.target.value)}
+                placeholder={
+                  'https://instagram.com/p/Cx1a2b3c\n—one URL per line, up to 50 per batch'
+                }
+                rows={2}
+                className="font-mono text-xs"
+                disabled={busy || !canAct}
+              />
+              <p className="text-xs text-muted-foreground">
+                Validated by BE before publish (SSRF guard). One URL per line, up to {MAX_BATCH} per
+                batch.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              onClick={() => void submit('action_comment')}
+              disabled={busy || !canAct}
+            >
+              {busy ? <Loader2 className="animate-spin" /> : <MessageSquare />}
+              Comment
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => void submit('action_like')}
+              disabled={busy || !canAct}
+            >
+              <Heart />
+              Like
+            </Button>
+
+            {/* The queue only knows like + comment; flag/reply have no job type
+                yet. Shown but inert rather than faked (P6-04: no fake data). */}
+            <Button type="button" variant="outline" disabled title="Not in the MVP queue">
+              <Flag />
+              Report post
+            </Button>
+            <Button type="button" variant="outline" disabled title="Not in the MVP queue">
+              <Reply />
+              Reply comment
+            </Button>
+            <span className="text-xs text-muted-foreground">
+              Report / reply are not in the MVP queue.
+            </span>
+          </div>
+
+          <p className="text-xs text-muted-foreground">
+            Comment text is composed from templates and screened before dispatch — never typed here.
+          </p>
+
+          {formError ? (
+            <div className="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+              <AlertCircle className="size-4" />
+              {formError}
+            </div>
+          ) : null}
+
+          {inFlight > 0 ? (
+            <p className="text-sm text-muted-foreground">{inFlight} in flight</p>
+          ) : null}
         </CardContent>
       </Card>
 
       <Card>
-        <CardHeader>
-          <CardTitle>Queue</CardTitle>
-          <CardDescription>
-            {loading ? 'Loading…' : `${filtered.length} of ${actions.length} shown`}
-          </CardDescription>
+        <CardHeader className="flex-row items-center justify-between space-y-0">
+          <div>
+            <CardTitle>Job queue</CardTitle>
+            <CardDescription>
+              {loading
+                ? 'Loading…'
+                : `${filtered.length} of ${actions.length} shown · latest actions advance automatically`}
+            </CardDescription>
+          </div>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            {inFlight > 0 ? (
+              <span className="size-2 animate-pulse rounded-full bg-primary" />
+            ) : null}
+            {inFlight} in flight
+          </div>
         </CardHeader>
         <CardContent className="space-y-4">
           <section className="flex items-center gap-2">
@@ -293,10 +339,14 @@ export default function ActionsPage() {
                         <span className="w-20 text-sm">
                           {row.job.actionType === 'action_comment' ? 'Comment' : 'Like'}
                         </span>
-                        <span className="max-w-[260px] flex-1 truncate font-mono text-xs text-muted-foreground">
+                        <span className="max-w-[200px] flex-1 truncate font-mono text-xs text-muted-foreground">
                           {row.job.targetUrl ?? row.job.targetId}
                         </span>
-                        <span className="max-w-[240px] flex-1 truncate text-xs">
+                        <Stepper
+                          reached={stageReached(row.job.status)}
+                          failed={row.job.status === 'FAILED'}
+                        />
+                        <span className="max-w-[200px] flex-1 truncate text-xs">
                           {row.job.renderedText ? (
                             <span className="text-foreground">{row.job.renderedText}</span>
                           ) : row.job.error ? (
@@ -320,6 +370,12 @@ export default function ActionsPage() {
           )}
         </CardContent>
       </Card>
+
+      <p className="text-xs text-muted-foreground">
+        Pipeline: <span className="font-mono">{[...PIPELINE, 'Success | Failed'].join(' → ')}</span>
+        . Failure branches mirror the real worker: cooldown gate and verification failure are
+        reported, never silent.
+      </p>
 
       <Dialog open={!!selected} onOpenChange={(o) => !o && setSelected(null)}>
         <DialogContent className="sm:max-w-[520px]">
@@ -370,6 +426,34 @@ export default function ActionsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+/** 4-dot pipeline; filled by how far the real status has progressed. */
+function Stepper({ reached, failed }: { reached: number; failed: boolean }) {
+  return (
+    <div className="flex items-center gap-1" aria-hidden>
+      {PIPELINE.map((_, i) => {
+        const idx = i + 1;
+        const done = idx < reached;
+        const active = idx === reached && !failed;
+        return (
+          <span
+            key={idx}
+            className={[
+              'size-1.5 rounded-full',
+              done
+                ? failed
+                  ? 'bg-destructive'
+                  : 'bg-primary'
+                : active
+                  ? 'animate-pulse bg-primary'
+                  : 'bg-muted-foreground/30',
+            ].join(' ')}
+          />
+        );
+      })}
     </div>
   );
 }
