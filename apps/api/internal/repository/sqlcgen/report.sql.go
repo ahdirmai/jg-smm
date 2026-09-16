@@ -26,7 +26,7 @@ FROM action_job AS aj
 JOIN account AS a ON a.id = aj.account_id
 WHERE ($1::date IS NULL OR aj.scheduled_at >= $1)
   AND ($2::date IS NULL OR aj.scheduled_at < ($2::date + interval '1 day'))
-  AND ($3::text IS NULL OR a.platform = $3)
+  AND ($3::text IS NULL OR a.platform::text = $3)
   AND ($4::uuid IS NULL OR aj.account_id = $4)
 GROUP BY day, aj.account_id, a.username, a.platform, aj.type
 ORDER BY day, a.username, aj.type
@@ -103,7 +103,7 @@ FROM action_job AS aj
 JOIN target AS t ON t.id = aj.target_id
 WHERE ($1::date IS NULL OR aj.scheduled_at >= $1)
   AND ($2::date IS NULL OR aj.scheduled_at < ($2::date + interval '1 day'))
-  AND ($3::text IS NULL OR t.platform = $3)
+  AND ($3::text IS NULL OR t.platform::text = $3)
 GROUP BY t.id, t.url, t.platform
 ORDER BY total DESC
 LIMIT 200
