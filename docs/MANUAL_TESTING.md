@@ -53,8 +53,17 @@ every `/api` route; `/healthz`, `/readyz`, and `/metrics` stay public.
 ## 4. Dashboard & Layout
 
 - [ ] `/` renders the overview (analytics summary cards + empty-state copy).
-- [ ] Sidebar nav shows: Workers, Accounts, Actions, Templates, Monitoring, Reports.
+- [ ] With **zero containers**, `/` shows the "Getting started" card instead of
+      an empty grid (containers are empty by design until a user creates one).
+- [ ] Sidebar nav shows the full tree: Dashboard, Workers, Accounts, Actions,
+      Templates, **Monitoring** (expandable: Overview + 7 platforms), Reports,
+      Audit, Settings.
+- [ ] The **Monitoring group expands** and each of the 7 platforms links to its
+      own analytics page.
+- [ ] The page title + subtitle in the h-14 header match the route (no manual
+      in-page `h1` duplicating it).
 - [ ] **Theme toggle** present; switching light → dark persists across a reload.
+- [ ] `/settings` → Appearance tab → light/dark/system all apply and persist.
 - [ ] Layout width/spacing consistent on every page (same shell, same gutter).
 - [ ] No console errors on any page (open devtools network tab).
 
@@ -63,12 +72,18 @@ every `/api` route; `/healthz`, `/readyz`, and `/metrics` stay public.
 The fleet starts empty — this section is where the first real data appears.
 
 - [ ] `/workers` shows the empty state with a **Create** button (0 containers).
+- [ ] The **KPI strip** shows Containers/Ready/Busy/Error/Accounts enrolled
+      (all zero on an empty fleet).
 - [ ] Create a worker from the UI. In static mode (`PROVISIONER_MODE=static`)
       this **records the row + audit log only** — it does not start a container.
       Pick a city from the **location dropdown** (all Indonesia) and create.
+      The API rejects a region that is not ISO alpha-2 (use `ID`) and a location
+      that is not a seeded city name (use e.g. `Jakarta`).
 - [ ] The new row carries the city + a frozen coordinate:
       `GET /api/containers/<id>` shows `location`, `latitude`, `longitude`.
       The point must sit inside the city's radius, not at (0,0).
+- [ ] With ≥2 cities present, containers are **grouped under a city heading**
+      with the anchor coordinates; the **city filter** narrows the grid.
 - [ ] **Scale the container up manually** (static provisioner, by design — there
       are zero worker containers until a user adds one):
       `docker compose up -d --scale worker=1`, then refresh; the row picks up a
@@ -85,10 +100,14 @@ The fleet starts empty — this section is where the first real data appears.
 
 ## 6. Accounts
 
-- [ ] `/accounts` empty state + **Add account** form (platform select + credentials).
+- [ ] `/accounts` empty state + **Add account** button → `/accounts/new` wizard
+      (Platform → Credentials → Review).
+- [ ] `/accounts/import` paste-CSV import → rows created; bad rows reported.
 - [ ] Add one account per platform (Threads, Facebook, Instagram, LinkedIn, X,
-      YouTube, TikTok) → rows appear with the right platform icon.
-- [ ] **Bulk import** (CSV) → rows created; bad rows are reported per-line.
+      YouTube, TikTok) → rows appear with the right platform label.
+- [ ] **Bulk select**: checkbox column + "select all"; the bulk bar offers
+      Pause / Resume / Remove over the filtered set. Apply a platform filter →
+      selections outside the filter are dropped from the count.
 - [ ] Credentials are stored encrypted, not plaintext (check `accounts.cred` blob
       in postgres — must be ciphertext, not the raw password).
 - [ ] One credential set per platform per worker (1 worker = N platforms, 1 account
@@ -102,14 +121,18 @@ The fleet starts empty — this section is where the first real data appears.
 
 ## 8. Actions (queue + batch)
 
-- [ ] `/actions` → queue a **like** and a **comment** against a target URL.
-- [ ] Targeted-comment/like actions on a **target comment** also queue.
+- [ ] `/actions` "Action to target" card: pick an account, paste target URL(s),
+      run **Like** and **Comment**.
+- [ ] **Report post / Reply comment render disabled** with the reason shown —
+      the queue has no job type for them. This is intentional, not a bug
+      (see `docs/development-analyst/p6_parity_signoff.md`).
 - [ ] Job transitions queued → running → done; the actions table shows per-attempt
-      status and a screenshot when the worker attaches one.
+      status, the **pipeline stepper** fills with progress, and clicking a row
+      opens the detail dialog.
 - [ ] Batch sequential execution: several actions on one worker run one after
       another, not concurrently (check `action_logs` ordering).
-- [ ] Report-on-target action is available and records a `report` action type.
 - [ ] Invalid target URL → 400 validation, nothing queued.
+- [ ] A batch larger than 50 URLs is rejected client-side with a message.
 
 ## 9. Reports
 
@@ -134,10 +157,31 @@ things most likely to silently regress — cover them all.
 Official accounts are the _monitored_ brand accounts — distinct from worker
 accounts; they never appear in worker analytics.
 
-- [ ] `/monitoring` lists added official accounts across platforms.
-- [ ] `/monitoring/[platform]` renders a per-platform analytics page.
+- [ ] `/monitoring` lists added official accounts across platforms with a
+      freshness badge and **Sync now**.
+- [ ] `/monitoring/[platform]` renders that platform's own metric vocabulary
+      (e.g. Instagram: saves + reels views; YouTube: watch time + CTR).
+- [ ] The account filter narrows the KPI strip; the trend chart loads.
+- [ ] The audience panel is tagged `sample` — it is not live data.
+- [ ] **Top posts** table renders its explicit "Not yet enabled in the MVP"
+      empty state (the ingest exposes KPIs + trend only). No fabricated rows.
 - [ ] Reach/views metrics update after an analytics run (third-party provider).
 - [ ] Adding an official account does not create a worker container.
+
+## 10b. Audit, Settings, Login (P6)
+
+- [ ] `/audit` renders the actions pivot (Day/Account/Platform/Action/Totals).
+      The free-text filter narrows rows; Load + Refresh work. Actor/IP columns
+      are absent by design — no audit-log endpoint yet.
+- [ ] `/settings` tab nav switches between Team / Proxy groups / Limits /
+      Appearance / Danger zone.
+- [ ] Team, Proxy groups, Limits, Danger zone each show an explicit
+      "Not wired in the MVP" panel — no button here performs a fake call.
+- [ ] **Appearance → theme** actually changes the theme and persists.
+- [ ] `/login` renders immediately (visible fallback), hydrates the form, and
+      signing in with `owner@smm.local` / `changeme-changeme` redirects to `/`.
+- [ ] **Expired session**: clear the cookie → a protected route redirects to
+      `/login?next=…` and `next` is honored after sign-in.
 
 ## 11. Observability & Infra
 

@@ -236,3 +236,30 @@
   worker action path.
 
 ---
+
+## P6 — Prototype parity (built)
+
+Dashboard productization against the approved prototype. All 19 prototype
+screens now have a built route; every remaining delta is an accepted deviation
+recorded in `docs/development-analyst/p6_parity_signoff.md`.
+
+- **Theme + shell**: muted palette in both themes (no neon); sidebar nav tree
+  with an expandable Monitoring group (overview + 7 platforms); h-14 header
+  with route-driven title/subtitle; segmented Light/Dark switch.
+- **Routes restructured** under `app/(dashboard)/` so the shell is owned by a
+  route-group layout; `/login` stays standalone (visible Suspense fallback,
+  real cookie session, `next` redirect).
+- **New pages**: login, add-account wizard (`/accounts/new`), bulk import
+  (`/accounts/import`), audit, settings (tab nav; Appearance wired via
+  next-themes, the other four explicit "not wired").
+- **Actions**: "Action to target" card; like/comment enqueue for real,
+  report/reply inert (no job type for them); 4-dot pipeline stepper driven by
+  the real `JobStatus`; queue stays SSE-driven and windowed.
+- **Workers**: KPI strip + grouping by city with anchor coordinates + city
+  filter; container cards show their frozen lat/lng.
+- **Accounts**: bulk select with pause/resume/remove over the filtered set.
+- **Analytics**: per-platform metric vocabulary; Top posts table ships the
+  prototype's own "not yet enabled" empty state (no fabricated rows).
+- **Verification**: `make ci` green; all 19 routes return 200 against the
+  rebuilt web image; API smoke (login, container create/delete with ISO
+  alpha-2 region + seeded city).

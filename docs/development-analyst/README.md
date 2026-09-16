@@ -23,7 +23,9 @@
 5. Output one row per gap → one **P6 ticket**. A gap with no user value is
    dropped with a recorded reason (YAGNI), not silently skipped.
 
-The audit was run against commit `ef2a02e` (post geolocation fix).
+The audit was run against commit `ef2a02e` (post geolocation fix) and re-run after the
+P6 build (commit `24026db`). The table in §2 is the **post-build** state; the pre-build
+baseline is preserved in `git history` of this file.
 
 ---
 
@@ -32,28 +34,32 @@ The audit was run against commit `ef2a02e` (post geolocation fix).
 Legend: `OK` = built and faithful · `PARTIAL` = route exists but drifts ·
 `MISSING` = no route · `DEAD` = route exists, backend does not back it.
 
-| Prototype page             | Built route             | Status  | Variance (what differs from the approved prototype)                                                                                          |
-| -------------------------- | ----------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `dashboard.html`           | `/` (`app/page.tsx`)    | PARTIAL | Exists but is not the prototype's dashboard grid/cards; nav group structure differs.                                                         |
-| `login.html`               | —                       | MISSING | No `/login` page. Auth runs through the shell only; a hard refresh on an expired session has no branded login screen.                        |
-| `workers.html`             | `/workers`              | PARTIAL | Route + create form exist. City dropdown added (geolocation). **Drift**: prototype groups workers by region/location; built page lists flat. |
-| `accounts.html`            | `/accounts`             | PARTIAL | List exists. Prototype's per-platform status chips + session-health column not present.                                                      |
-| `add-account.html`         | —                       | MISSING | No route. Create-account wizard (platform → credentials → worker assignment) absent.                                                         |
-| `bulk-import.html`         | —                       | MISSING | No route. CSV/paste bulk import of accounts absent.                                                                                          |
-| `actions.html`             | `/actions`              | PARTIAL | Queue + batch controls exist. Prototype's target-picker (post URL → preview → action matrix) not present.                                    |
-| `templates.html`           | `/templates`            | OK-ish  | CRUD present. Minor: prototype's per-platform template tag + live preview pane absent.                                                       |
-| `monitoring.html`          | `/monitoring`           | PARTIAL | Overview exists. Prototype's official-account selector + reach summary cards absent.                                                         |
-| `analytics-instagram.html` | `/monitoring/instagram` | PARTIAL | Platform route exists via `[platform]`. Content is generic, not the IG-specific analytics layout from the prototype.                         |
-| `analytics-threads.html`   | `/monitoring/threads`   | PARTIAL | Same generic layout.                                                                                                                         |
-| `analytics-facebook.html`  | `/monitoring/facebook`  | PARTIAL | Same generic layout.                                                                                                                         |
-| `analytics-linkedin.html`  | `/monitoring/linkedin`  | PARTIAL | Same generic layout.                                                                                                                         |
-| `analytics-x.html`         | `/monitoring/x`         | PARTIAL | Same generic layout.                                                                                                                         |
-| `analytics-youtube.html`   | `/monitoring/youtube`   | PARTIAL | Same generic layout.                                                                                                                         |
-| `analytics-tiktok.html`    | `/monitoring/tiktok`    | PARTIAL | Same generic layout.                                                                                                                         |
-| `audit.html`               | —                       | MISSING | No `/audit` route. RBAC audit-log table (already backed by `AuditLog` + `/reports`?) is not exposed as its own page.                         |
-| `settings.html`            | —                       | MISSING | No `/settings`. Team/role management + system config absent from UI.                                                                         |
+| Prototype page             | Built route             | Status  | Variance (what differs from the approved prototype)                                                                                           |
+| -------------------------- | ----------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `index.html` (launcher)    | —                       | N/A     | The prototype's own static launcher; the app sidebar replaces it. No route by design.                                                         |
+| `dashboard.html`           | `/`                     | PARTIAL | Grid, KPI strip, trend, automation summary present. Adds an empty-fleet "Getting started" card. Top posts renders empty until ingest lands.   |
+| `login.html`               | `/login`                | OK      | Real cookie session, `next` redirect, theme toggle, visible Suspense fallback. Dropped "Forgot?" (no reset flow).                             |
+| `workers.html`             | `/workers`              | PARTIAL | City grouping + anchor coordinates + KPI strip added. Prototype's create **dialog** fields (proxy group, max accounts) have no API.           |
+| `accounts.html`            | `/accounts`             | PARTIAL | Bulk select + pause/resume/remove added. Region/Proxy/Last-action columns and pagination absent (payload has no proxy).                       |
+| `add-account.html`         | `/accounts/new`         | PARTIAL | 3-step wizard. Prototype's live-login SSE panel, 2FA/OTP and failure branches have no source stream — login resolves async in the worker.     |
+| `bulk-import.html`         | `/accounts/import`      | PARTIAL | Paste-CSV (prototype's drop zone). Progress card + challenges queue absent — `importAccounts` returns a flat result list.                     |
+| `actions.html`             | `/actions`              | PARTIAL | "Action to target" card + real SSE queue (windowed, per-account groups, pipeline stepper). Report/Reply inert: no job type for them.          |
+| `templates.html`           | `/templates`            | PARTIAL | CRUD present. Prototype's variants, preview pane, and live ban-word detector absent (a record is one variant).                                |
+| `monitoring.html`          | `/monitoring`           | PARTIAL | Official-accounts roster + freshness + Sync now. Prototype's reach/mentions KPIs and metric-snapshot table need an ingest the API lacks.      |
+| `analytics-instagram.html` | `/monitoring/instagram` | PARTIAL | IG-specific KPI vocabulary, trend, account filter, audience panel, Top posts (empty state). Prototype's compare/export/region filters absent. |
+| `analytics-threads.html`   | `/monitoring/threads`   | PARTIAL | Same as Instagram, Threads metric vocabulary.                                                                                                 |
+| `analytics-facebook.html`  | `/monitoring/facebook`  | PARTIAL | Same, Facebook vocabulary.                                                                                                                    |
+| `analytics-linkedin.html`  | `/monitoring/linkedin`  | PARTIAL | Same, LinkedIn vocabulary.                                                                                                                    |
+| `analytics-x.html`         | `/monitoring/x`         | PARTIAL | Same, X vocabulary.                                                                                                                           |
+| `analytics-youtube.html`   | `/monitoring/youtube`   | PARTIAL | Same, YouTube vocabulary.                                                                                                                     |
+| `analytics-tiktok.html`    | `/monitoring/tiktok`    | PARTIAL | Same, TikTok vocabulary.                                                                                                                      |
+| `audit.html`               | `/audit`                | PARTIAL | Actions pivot (`reportActions`). Prototype's Actor/IP columns and actor/action/date filters absent — no audit-log endpoint.                   |
+| `settings.html`            | `/settings`             | PARTIAL | Session + permission matrix + tab nav (prototype's 5 tabs). Appearance real (next-themes); other 4 tabs explicit "not wired".                 |
 
-**Summary: 19 prototype screens → 7 built routes. 5 MISSING pages, 0 DEAD, 12 PARTIAL.**
+**Summary post-build: 19 prototype screens → 19 built routes. 0 MISSING, 0 DEAD, 18 PARTIAL + 1 OK.**
+Every remaining PARTIAL is an **accepted deviation** recorded in `p6_parity_signoff.md` —
+in each case the missing piece has no API endpoint, so the control renders an explicit
+state instead of faking a call.
 
 ### 2.1 What is _not_ a gap (checked, deliberately not ticketed)
 
@@ -103,14 +109,15 @@ page inherits them. Then missing pages, then per-platform analytics, last.
 
 **Exit criteria:**
 
-1. All 19 prototype screens have a built route reachable from the nav.
-2. Light + dark both ship; no neon; no theme flicker on first paint.
-3. Every action control runs a visible dummy process with a clear
-   "dummy / dry-run" badge.
-4. `docs/prototype/` and `apps/web` reviewable side-by-side with no unexplained
-   visual delta; every remaining delta is recorded as an accepted deviation in
-   `P6-12`.
-5. `make ci` green; every new route has a rendering smoke check.
+1. ✅ All 19 prototype screens have a built route reachable from the nav.
+2. ✅ Light + dark both ship; no neon; no theme flicker on first paint.
+3. ✅/⚠️ Every action control is wired to a **real** process rather than a
+   dummy: the queue exists and the worker runs. Controls with no backing job
+   type (Report post / Reply comment) are inert with the reason shown — a
+   deliberate choice over a fake dry-run badge. See `p6_parity_signoff.md`.
+4. ✅ Remaining deltas recorded as accepted deviations in `p6_parity_signoff.md`.
+5. ✅ `make ci` green (typecheck + lint + build + Go tests); every new route
+   has a rendering smoke check (all return 200).
 
 ---
 
@@ -133,6 +140,10 @@ page inherits them. Then missing pages, then per-platform analytics, last.
 
 Detail files: `docs/tickets/p6_*.md` (one per ticket, same shape as existing
 `pN_*.md`). Index: `../tickets/README.md`.
+
+**Build status:** P6-01 … P6-11 implemented and committed; P6-12 is
+`p6_parity_signoff.md` in this folder. Open questions in §6 remain open — they
+block the follow-up ingestion/team tickets, not P6.
 
 ---
 
