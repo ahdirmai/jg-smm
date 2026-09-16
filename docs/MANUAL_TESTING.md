@@ -9,11 +9,11 @@ correct first screen, not a seeding failure.
 
 ## 1. Prerequisites
 
-| Requirement | Check |
-|---|---|
-| Colima / Docker running | `docker ps` lists 5 `smm-*` containers, all `healthy` |
-| Repo env loaded | `.env` present at repo root (ports + seed admin) |
-| Ports free | 24080 api, 24081 web, 24901 MinIO console, 24543 postgres, 24637 redis |
+| Requirement             | Check                                                                  |
+| ----------------------- | ---------------------------------------------------------------------- |
+| Colima / Docker running | `docker ps` lists 5 `smm-*` containers, all `healthy`                  |
+| Repo env loaded         | `.env` present at repo root (ports + seed admin)                       |
+| Ports free              | 24080 api, 24081 web, 24901 MinIO console, 24543 postgres, 24637 redis |
 
 Bring the stack up from the repo root:
 
@@ -25,13 +25,13 @@ curl -sf http://localhost:24081/          # 200
 
 ## 2. Access
 
-| Service | URL | Credentials |
-|---|---|---|
-| Web dashboard | http://localhost:24081 | owner@smm.local / changeme-changeme |
-| API | http://localhost:24080 | same, cookie session |
-| API docs (OpenAPI) | `openapi/openapi.yaml` | — |
-| MinIO console | http://localhost:24901 | see `.env` `MINIO_*` |
-| Postgres | localhost:24543 | see `.env` `POSTGRES_*` |
+| Service            | URL                    | Credentials                         |
+| ------------------ | ---------------------- | ----------------------------------- |
+| Web dashboard      | http://localhost:24081 | owner@smm.local / changeme-changeme |
+| API                | http://localhost:24080 | same, cookie session                |
+| API docs (OpenAPI) | `openapi/openapi.yaml` | —                                   |
+| MinIO console      | http://localhost:24901 | see `.env` `MINIO_*`                |
+| Postgres           | localhost:24543        | see `.env` `POSTGRES_*`             |
 
 The seeded user is **OWNER** — the superset role (F1.4). Login is required for
 every `/api` route; `/healthz`, `/readyz`, and `/metrics` stay public.
@@ -63,9 +63,21 @@ every `/api` route; `/healthz`, `/readyz`, and `/metrics` stay public.
 The fleet starts empty — this section is where the first real data appears.
 
 - [ ] `/workers` shows the empty state with a **Create** button (0 containers).
-- [ ] Create a worker from the UI → row appears, status transitions to running.
-- [ ] `docker ps` shows the new worker container.
+- [ ] Create a worker from the UI. In static mode (`PROVISIONER_MODE=static`)
+      this **records the row + audit log only** — it does not start a container.
+      Pick a city from the **location dropdown** (all Indonesia) and create.
+- [ ] The new row carries the city + a frozen coordinate:
+      `GET /api/containers/<id>` shows `location`, `latitude`, `longitude`.
+      The point must sit inside the city's radius, not at (0,0).
+- [ ] **Scale the container up manually** (static provisioner, by design — there
+      are zero worker containers until a user adds one):
+      `docker compose up -d --scale worker=1`, then refresh; the row picks up a
+      heartbeat and status transitions to running.
+- [ ] `docker ps` shows the worker container.
 - [ ] Worker heartbeat reaches the API: `GET /api/containers/<id>` → 200.
+- [ ] **Geolocation is applied**: `GET /internal/worker/<id>/geolocation` → 200
+      with the same frozen coordinate as the row (the worker spoofs this fixed
+      GPS via Playwright before every job).
 - [ ] **Live browser (P4-08)**: open the worker's noVNC modal → screen connects
       (needs `WORKER_NOVNC_URL`/`WORKER_NOVNC_BASE_URL` in `.env`; skip if unset
       and note it).
@@ -119,7 +131,7 @@ things most likely to silently regress — cover them all.
 
 ## 10. Monitoring (official accounts)
 
-Official accounts are the *monitored* brand accounts — distinct from worker
+Official accounts are the _monitored_ brand accounts — distinct from worker
 accounts; they never appear in worker analytics.
 
 - [ ] `/monitoring` lists added official accounts across platforms.
@@ -153,3 +165,18 @@ because both fail silently:
    tag while oapi-codegen emits `form` tags, so every GET filter bound to its
    zero value. `/reports/export` 400'd on the empty `kind`; the actions/targets
    filters were ignored outright. Fixed by `formQueryBinder` in `internal/http`.
+3. **Container create 500 (fixed)** — the `CreateWorker` INSERT listed `id` as a
+   column while the service passed an empty ID → NULL → NOT NULL violation.
+   Fixed by letting the DB assign ids (`gen_random_uuid()`). A lowercase region
+   is now a 400, since the DB CHECK is `^[A-Z]{2}$`.
+4. **Worker geolocation silently dropped (fixed)** — `CreateWorker` had the
+   `location/latitude/longitude` columns in `RETURNING` but **not in the
+   INSERT**, so every row got NULL geo and `/internal/worker/{id}/geolocation`
+   404'd. If a created container ever lacks coordinates again, check that INSERT
+   and RETURNING stay in sync after regenerating sqlc.
+5. **Web bundle hardcoded `:8080` (fixed)** — `NEXT_PUBLIC_API_URL` is inlined at
+   **build time**, so a runtime env cannot fix it. Every `/api/auth/me` call
+   from the browser hit `ERR_CONNECTION_REFUSED`. The Dockerfile now takes it as
+   a build ARG (default `:24080`) and compose passes it under `build.args`. If
+   the API port changes, rebuild the web image — restarting the container alone
+   does nothing.

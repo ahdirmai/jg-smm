@@ -211,6 +211,36 @@
 
 ---
 
+## P6 — Prototype Parity (1–2 minggu)
+
+**Goal:** dashboard terbangun tidak terbedakan dari prototype yang sudah di-approve — setiap layar ada, light+dark jalan, dan setiap kontrol action punya dummy process yang terlihat.
+
+**Why:** audit (`development-analyst/README.md`) menemukan 19 layar prototype vs 7 route terbangun. Fitur bisa saja bekerja, tapi operator tidak bisa memakainya dengan nyaman selama UI-nya drift dari yang sudah disetujui.
+
+**Scope**
+
+- Theme system: token shadcn untuk light + dark, hapus warna neon, no flicker (seed sebelum first paint).
+- Shell parity: kontrak layout `header (h-14) → main (p-6) → #page (space-y-4)` di semua halaman; nav tree lengkap (Monitoring group + 7 platform + Settings + Audit).
+- Halaman MISSING: `/login`, `/accounts/new` (wizard), `/accounts/import` (bulk), `/audit`, `/settings`.
+- Actions page: target picker (post URL → preview → matriks action).
+- Dummy process untuk setiap kontrol action, dengan badge `dummy`/`dry-run` yang jelas.
+- Workers page: grouping by city + tampil koordinat anchor (geolocation).
+- 7 halaman analitik per-platform (read-only, akun official, sumber 3rd-party).
+- Parity sign-off: daftar deviasi yang disetujui tertulis.
+
+**Exit Criteria**
+
+- [ ] Semua 19 layar prototype punya route reachable dari nav.
+- [ ] Light + dark render bersih di semua halaman; no theme flicker.
+- [ ] Setiap kontrol action menjalankan dummy process dengan badge eksplisit.
+- [ ] Tidak ada delta visual yang tidak terjelaskan — semua tercatat di accepted-deviation list.
+- [ ] `make ci` hijau; setiap route baru punya render smoke check.
+
+**Dependency:** P4 (dashboard base) + fitur geolocation worker (P1-19 lanjutan).
+**Risiko:** scope creep ke backend. Mitigasi: P6 **UI + wiring saja** — API yang belum ada → empty state eksplisit, bukan data palsu, dan tiket baru di luar P6.
+
+---
+
 ## Critical Path & Milestone
 
 ```mermaid
@@ -228,6 +258,8 @@ gantt
     P4 Dashboard Productization    :p4, after p3, 14d
     section Hardening
     P5 Hardening Scale GA          :p5, after p4, 14d
+    section Parity
+    P6 Prototype Parity            :p6, after p5,  7d
 ```
 
 | Milestone | Phase | Arti                               |
@@ -238,6 +270,7 @@ gantt
 | M4        | P3    | Action tereksekusi & terverifikasi |
 | M5        | P4    | Operator skala 100 akun via UI     |
 | M6        | P5    | GA — stabil, aman, terobservasi    |
+| M7        | P6    | UI setara prototype (light+dark)   |
 
 ## Definition of Done (per phase)
 

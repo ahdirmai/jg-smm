@@ -135,13 +135,36 @@
 | P5-03 | Observability lengkap     | Prometheus metric + Grafana + Loki + alert Slack                        | Semua metric ter-export; alert teruji           | M   | P0-10        | P0  |
 | P5-04 | Security review           | RBAC minimal, secret rotation, gitleaks, Trivy, govulncheck             | Sign-off; nol temuan high/critical              | M   | P0-10        | P0  |
 | P5-05 | Backup & restore          | Postgres WAL, MinIO, PVC session + DR drill                             | Restore < 30 menit (drill)                      | M   | P0-02        | P0  |
-| P5-06 | Runbook + severity matrix | `infra/runbooks/*` per alert + `SEVERITY.md` + on-call             | Semua alert punya runbook; MTTR < 5 menit       | M   | P5-03        | P0  |
+| P5-06 | Runbook + severity matrix | `infra/runbooks/*` per alert + `SEVERITY.md` + on-call                  | Semua alert punya runbook; MTTR < 5 menit       | M   | P5-03        | P0  |
 | P5-07 | Load test FE/BE           | Dashboard p95 <1.5 dtk; BE throughput                                   | Target terpenuhi; no memory leak                | M   | P4-03        | P1  |
 | P5-08 | Cost monitoring           | `proxy_bytes_used_total`, `apify_run_cost_usd_total` + alert 90% budget | Metric export; alert budget                     | S   | P5-03        | P1  |
 | P5-09 | Docs final sync           | PRD/ERD/SYSTEM_DESIGN/DESIGN_SYSTEM/DEVELOPMENT_RULE/ADR sync           | Review konsistensi lintas dokumen lolos         | M   | –            | P0  |
 | P5-10 | GA sign-off               | Uji 30 hari + acceptance v1.0                                           | 100+ akun stabil; nol ban; acceptance PRD lolos | L   | P5-01..P5-09 | P0  |
 
 **Exit P5:** 100+ akun stabil 30 hari, uptime ≥98%, action success ≥90%, nol ban, DR drill sukses, runbook lengkap → **GA**.
+
+---
+
+## P6 — Prototype Parity (Dashboard Productization II)
+
+> Turunan dari `development-analyst/README.md` (audit variance prototype vs build). **UI + wiring saja** — tidak bangun scraper/adapter/platform baru. Setiap halaman render empty state eksplisit bila API belum ada, jangan data palsu.
+
+| ID    | Judul                                  | Scope                                                                                                         | AC                                                                         | Est | Dep          | Pri |
+| ----- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | --- | ------------ | --- |
+| P6-01 | Theme system: light + dark, no neon    | Token shadcn untuk 2 tema; hapus warna neon; no theme flicker (seed sebelum paint)                            | Toggle tema di header; kedua tema rapi di semua halaman; no flicker        | M   | –            | P0  |
+| P6-02 | Shell parity: layout contract + nav    | Kontrak `header (h-14) → main (p-6) → #page (space-y-4)`; nav tree Monitoring + 7 platform + Settings + Audit | Konsistensi padding/rhythm lintas halaman; nav sesuai `prototype/shell.js` | M   | P6-01        | P0  |
+| P6-03 | Login page + session-expiry handling   | `/login` branded; redirect saat session kedaluwarsa                                                           | Halaman login ada; expired session → login, bukan error                    | S   | P6-02        | P0  |
+| P6-04 | Dummy action process + dry-run badge   | Semua kontrol action (like/comment/report) jalan sebagai dummy; badge `dummy` terlihat                        | Action klik → dummy flow terlihat hasilnya; badge jelas                    | M   | P6-02        | P0  |
+| P6-05 | Workers page: location grouping + geo  | Group/filter by city; tampilkan koordinat anchor; dropdown kota (sudah ada, rapikan)                          | Group by location; nilai geo tampil di kartu                               | S   | P6-02        | P1  |
+| P6-06 | Official-account analytics (read-only) | 7 halaman analitik per-platform sesuai prototype; read-only; sumber 3rd-party                                 | 7 route platform; empty state saat belum ada metrik                        | L   | P6-02        | P1  |
+| P6-07 | Add-account wizard                     | Platform → kredensial → pilih worker; sesuai `add-account.html`                                               | Wizard 3 langkah; akun terdaftar via API                                   | M   | P6-02        | P0  |
+| P6-08 | Bulk import accounts                   | Import CSV/paste banyak akun sekaligus; validasi per baris                                                    | Import multi-akun; error per baris jelas                                   | M   | P6-07        | P1  |
+| P6-09 | Actions page: target picker + preview  | Post URL → preview → matriks action (sesuai `actions.html`)                                                   | Picker + preview + matriks action tampil                                   | M   | P6-04        | P0  |
+| P6-10 | Audit log page                         | Tabel AuditLog dengan filter (aktor, aksi, waktu)                                                             | `/audit` ada; filter bekerja; RBAC gating sesuai role                      | S   | P6-02        | P1  |
+| P6-11 | Settings + team/role management        | Manajemen user + role (OWNER gate); config sistem                                                             | `/settings` ada; CRUD user; role change OWNER-only                         | M   | P6-02        | P1  |
+| P6-12 | Parity sign-off + accepted deviations  | Review side-by-side prototype vs build; catat deviasi yang disetujui                                          | Daftar deviasi tertulis; tidak ada delta yang tidak terjelaskan            | S   | P6-01..P6-11 | P0  |
+
+**Exit P6:** 19 layar prototype punya route; light+dark konsisten; setiap kontrol action punya dummy process; `make ci` hijau.
 
 ---
 
@@ -155,7 +178,8 @@
 | P3        | 14           | 4S 8M 2L                       |
 | P4        | 10           | 2S 7M 1L                       |
 | P5        | 10           | 2S 6M 2L                       |
-| **Total** | **80 tiket** | **≈ 14 minggu (2–3 engineer)** |
+| P6        | 12           | 4S 7M 1L                       |
+| **Total** | **92 tiket** | **≈ 16 minggu (2–3 engineer)** |
 
 ## Aturan Tiket
 

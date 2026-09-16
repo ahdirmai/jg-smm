@@ -55,6 +55,12 @@ PHASES = {
         "notes": "Health score + auto-quarantine. Observability: Prometheus/Grafana/Loki + alert Slack. DR drill. Security sign-off wajib sebelum GA.",
         "tests": "Load/soak test; chaos (matikan node); DR drill restore; acceptance PRD v1.0.",
     },
+    "P6": {
+        "name": "Prototype Parity (Dashboard Productization II)",
+        "context": "Audit `../development-analyst/README.md` menemukan 19 layar prototype vs 7 route terbangun: 5 halaman MISSING (login, add-account, bulk-import, audit, settings) dan 12 PARTIAL (termasuk layout + tema). P6 menutup gap: setiap layar prototype punya route yang konsisten, light+dark jalan, dan setiap kontrol action menjalankan dummy process yang terlihat.",
+        "notes": "UI + wiring saja — tidak bangun scraper/adapter/platform baru. Konsumsi API yang ada; jika API belum ada, halaman render empty state eksplisit, bukan data palsu. Analitik = akun official (read-only, sumber 3rd-party), worker tidak masuk analitik. Kontrak layout dari `docs/prototype/shell.js`: header (h-14) → main (p-6) → #page (space-y-4), tanpa mt-* manual.",
+        "tests": "Smoke render setiap route baru (light+dark, no console error); side-by-side review vs `docs/prototype/`; make ci hijau.",
+    },
 }
 
 # Optional per-ticket addendum, prepended above the phase notes.

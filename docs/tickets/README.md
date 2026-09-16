@@ -112,4 +112,21 @@ Satu file per tiket (generated dari `../TICKETS.md`). Jangan edit manual — jal
 | P5-09 | Docs final sync | P0 | M | [p5_09.md](p5_09.md) |
 | P5-10 | GA sign-off | P0 | L | [p5_10.md](p5_10.md) |
 
-**Total: 80 tiket.**
+## P6 — Prototype Parity (Dashboard Productization II)
+
+| ID | Judul | Pri | Est | File |
+|----|-------|-----|-----|------|
+| P6-01 | Theme system: light + dark, no neon | P0 | M | [p6_01.md](p6_01.md) |
+| P6-02 | Shell parity: layout contract + nav | P0 | M | [p6_02.md](p6_02.md) |
+| P6-03 | Login page + session-expiry handling | P0 | S | [p6_03.md](p6_03.md) |
+| P6-04 | Dummy action process + dry-run badge | P0 | M | [p6_04.md](p6_04.md) |
+| P6-05 | Workers page: location grouping + geo | P1 | S | [p6_05.md](p6_05.md) |
+| P6-06 | Official-account analytics (read-only) | P1 | L | [p6_06.md](p6_06.md) |
+| P6-07 | Add-account wizard | P0 | M | [p6_07.md](p6_07.md) |
+| P6-08 | Bulk import accounts | P1 | M | [p6_08.md](p6_08.md) |
+| P6-09 | Actions page: target picker + preview | P0 | M | [p6_09.md](p6_09.md) |
+| P6-10 | Audit log page | P1 | S | [p6_10.md](p6_10.md) |
+| P6-11 | Settings + team/role management | P1 | M | [p6_11.md](p6_11.md) |
+| P6-12 | Parity sign-off + accepted deviations | P0 | S | [p6_12.md](p6_12.md) |
+
+**Total: 92 tiket.**

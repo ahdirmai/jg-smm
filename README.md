@@ -17,6 +17,8 @@ docs/         spec set: PRD, ERD, system design, dev rules, tickets, ADRs,
               docs/MANUAL_TESTING.md — the pre-release run-through
 docs/adr/     architecture decision records
 docs/tickets/ one file per ticket (generated from docs/TICKETS.md)
+docs/development-analyst/ audit of built vs approved prototype; derives the P6
+             prototype-parity tickets
 ```
 
 ## Prerequisites (local build target: Mac M2 16 GB)
