@@ -63,8 +63,9 @@ func main() {
 
 	checkers := map[string]port.HealthChecker{}
 	deps := apihttp.Dependencies{
-		Health:  apihttp.NewHealthHandler(service.NewHealthService(checkers)),
-		Metrics: apihttp.NewMetricsHandler(),
+		Health:             apihttp.NewHealthHandler(service.NewHealthService(checkers)),
+		Metrics:            apihttp.NewMetricsHandler(),
+		CORSAllowedOrigins: cfg.CORSAllowedOrigins,
 	}
 
 	// Database is optional at boot: if DATABASE_URL is unset the API still serves

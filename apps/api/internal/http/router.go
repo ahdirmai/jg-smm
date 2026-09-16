@@ -1,9 +1,11 @@
 package http
 
 import (
+	"net/http"
 	"time"
 
 	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
 
 	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
 )
@@ -30,6 +32,12 @@ type Dependencies struct {
 	Audit       *AuditHandler
 	Stream      *StreamHandler
 	Metrics     *MetricsHandler
+
+	// CORSAllowedOrigins installs the CORS middleware when non-empty. The
+	// dashboard is served cross-origin from the API, so the browser's preflight
+	// OPTIONS must be answered before the /api auth gate or the whole dashboard
+	// dies with "Failed to fetch". Empty (tests) skips the middleware entirely.
+	CORSAllowedOrigins []string
 }
 
 // NewRouter builds the Echo instance with middleware and routes. It does not
@@ -45,6 +53,21 @@ func NewRouter(deps Dependencies) *echo.Echo {
 
 	e.HTTPErrorHandler = errorHandler
 	e.Use(requestLogger(), recoverer())
+
+	// The dashboard is served on a different origin than the API, so CORS must
+	// be answered at the root — ahead of the /api group's auth gate. Echo's CORS
+	// middleware short-circuits a preflight OPTIONS with 204 and the access-
+	// control headers, so requireAuth never sees it; without this the browser
+	// blocks the real request and the whole page fails with "Failed to fetch".
+	if len(deps.CORSAllowedOrigins) > 0 {
+		e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+			AllowOrigins:     deps.CORSAllowedOrigins,
+			AllowMethods:     []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodHead, http.MethodOptions},
+			AllowHeaders:     []string{"Content-Type", "Authorization", "X-Requested-With"},
+			AllowCredentials: true,  // auth is cookie-based; without this the browser drops the session
+			MaxAge:           86400, // cache preflight 24h to keep OPTIONS chatter off the hot path
+		}))
+	}
 
 	deps.Health.Register(e)
 

@@ -66,6 +66,12 @@ type Config struct {
 	// CredentialKeyBase64 is the AES-256 key (base64) for credential encryption
 	// at rest. Required when the DB is configured.
 	CredentialKeyBase64 string
+	// CORSAllowedOrigins is the exact list of web origins the browser may call
+	// the API from. The dashboard is served on a different port than the API, so
+	// every request is cross-origin and needs an explicit allow entry. Empty
+	// means "unset"; Load fills the local-dev default.
+	CORSAllowedOrigins []string
+
 	// SSEBuffer is the per-subscriber event queue. A slow dashboard that
 	// overflows it is disconnected (its EventSource reconnects) rather than
 	// blocking the API.
@@ -159,6 +165,10 @@ func Load() (Config, error) {
 		SecureCookies:          envBool("SECURE_COOKIES", false),
 		CredentialKeyBase64:    os.Getenv("CREDENTIAL_KEY"),
 		SSEBuffer:              envInt("SSE_BUFFER", 64),
+		// The dashboard runs on :24081 against the API on :24080, so the browser's
+		// origin is never the API's. Allow that one origin out of the box;
+		// any real deployment sets CORS_ALLOWED_ORIGINS explicitly.
+		CORSAllowedOrigins: splitList(env("CORS_ALLOWED_ORIGINS", "http://localhost:24081")),
 
 		ScrapeIntervalSeconds:  envInt("SCRAPE_INTERVAL_SECONDS", 0),
 		ScrapeJitterMinSeconds: envInt("SCRAPE_JITTER_MIN_SECONDS", 5),
