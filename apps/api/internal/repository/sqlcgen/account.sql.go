@@ -81,10 +81,10 @@ func (q *Queries) CountAccountsByWorker(ctx context.Context, workerID pgtype.UUI
 
 const createAccount = `-- name: CreateAccount :one
 INSERT INTO account (
-    id, platform, username, password_enc, auth_status, proxy_group_id,
+    platform, username, password_enc, auth_status, proxy_group_id,
     status, tags, worker_id
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9
+    $1, $2, $3, $4, $5, $6, $7, $8
 )
 RETURNING
     id, platform, username, auth_status, handle, last_verified_at,
@@ -93,7 +93,6 @@ RETURNING
 `
 
 type CreateAccountParams struct {
-	ID           pgtype.UUID   `json:"id"`
 	Platform     Platform      `json:"platform"`
 	Username     string        `json:"username"`
 	PasswordEnc  []byte        `json:"password_enc"`
@@ -124,7 +123,6 @@ type CreateAccountRow struct {
 
 func (q *Queries) CreateAccount(ctx context.Context, arg CreateAccountParams) (CreateAccountRow, error) {
 	row := q.db.QueryRow(ctx, createAccount,
-		arg.ID,
 		arg.Platform,
 		arg.Username,
 		arg.PasswordEnc,

@@ -74,7 +74,6 @@ func (r *AccountRepo) Create(ctx context.Context, a domain.Account) (domain.Acco
 		authStatus = domain.AuthAuthenticating
 	}
 	row, err := r.q.CreateAccount(ctx, sqlcgen.CreateAccountParams{
-		ID:           uuidValue(a.ID),
 		Platform:     platformEnum(a.Platform),
 		Username:     a.Username,
 		PasswordEnc:  a.PasswordEnc,

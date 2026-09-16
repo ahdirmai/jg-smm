@@ -20,10 +20,10 @@ LIMIT $1 OFFSET $2;
 
 -- name: CreateAccount :one
 INSERT INTO account (
-    id, platform, username, password_enc, auth_status, proxy_group_id,
+    platform, username, password_enc, auth_status, proxy_group_id,
     status, tags, worker_id
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9
+    $1, $2, $3, $4, $5, $6, $7, $8
 )
 RETURNING
     id, platform, username, auth_status, handle, last_verified_at,

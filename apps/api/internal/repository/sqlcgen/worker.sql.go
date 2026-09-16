@@ -13,17 +13,16 @@ import (
 
 const createWorker = `-- name: CreateWorker :one
 INSERT INTO worker (
-    id, name, container_id, control_channel, action_queue, session_pvc,
+    name, container_id, control_channel, action_queue, session_pvc,
     novnc_service, desired_state, source, region, status, generation,
     image_version
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
 )
 RETURNING id, name, container_id, control_channel, action_queue, session_pvc, novnc_service, desired_state, source, region, status, generation, observed_gen, provision_err, browser_status, current_job_id, last_heartbeat, last_action_at, last_error, queue_depth, restart_count, image_version, created_at
 `
 
 type CreateWorkerParams struct {
-	ID             pgtype.UUID  `json:"id"`
 	Name           string       `json:"name"`
 	ContainerID    *string      `json:"container_id"`
 	ControlChannel *string      `json:"control_channel"`
@@ -40,7 +39,6 @@ type CreateWorkerParams struct {
 
 func (q *Queries) CreateWorker(ctx context.Context, arg CreateWorkerParams) (Worker, error) {
 	row := q.db.QueryRow(ctx, createWorker,
-		arg.ID,
 		arg.Name,
 		arg.ContainerID,
 		arg.ControlChannel,

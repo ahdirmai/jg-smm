@@ -15,11 +15,11 @@ LIMIT $1 OFFSET $2;
 
 -- name: CreateWorker :one
 INSERT INTO worker (
-    id, name, container_id, control_channel, action_queue, session_pvc,
+    name, container_id, control_channel, action_queue, session_pvc,
     novnc_service, desired_state, source, region, status, generation,
     image_version
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
 )
 RETURNING *;
 

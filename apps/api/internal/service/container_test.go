@@ -49,6 +49,11 @@ func TestContainerCreateValidatesRegion(t *testing.T) {
 	if _, err := svc.Create(context.Background(), "c1", "IDN"); err == nil {
 		t.Fatal("want error for a 3-letter region")
 	}
+	// The DB check constraint is region ~ '^[A-Z]{2}$'; lowercase must be
+	// rejected here rather than surfacing as a driver error.
+	if _, err := svc.Create(context.Background(), "c1", "id"); err == nil {
+		t.Fatal("want error for a lowercase region")
+	}
 }
 
 func TestContainerCreateRejectsLongName(t *testing.T) {

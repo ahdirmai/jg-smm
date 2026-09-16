@@ -78,7 +78,6 @@ func (r *WorkerRepo) List(ctx context.Context, f port.WorkerFilter) ([]domain.Wo
 // Create inserts a worker. A duplicate name maps to domain.ErrConflict.
 func (r *WorkerRepo) Create(ctx context.Context, w domain.Worker) (domain.Worker, error) {
 	row, err := r.q.CreateWorker(ctx, sqlcgen.CreateWorkerParams{
-		ID:             uuidValue(w.ID),
 		Name:           w.Name,
 		ContainerID:    w.ContainerID,
 		ControlChannel: w.ControlChannel,

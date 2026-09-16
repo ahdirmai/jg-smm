@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
@@ -53,8 +54,10 @@ func (s *ContainerService) Create(ctx context.Context, name, region string) (dom
 	if region == "" {
 		return domain.Worker{}, fmt.Errorf("%w: region is required", domain.ErrValidation)
 	}
-	if len(region) != 2 {
-		return domain.Worker{}, fmt.Errorf("%w: region must be ISO 3166-1 alpha-2", domain.ErrValidation)
+	// The DB enforces region ~ '^[A-Z]{2}$' (worker_region_iso). Validate here so
+	// a lowercase or wrong-length region is a 400, not a leaked driver error.
+	if len(region) != 2 || region != strings.ToUpper(region) {
+		return domain.Worker{}, fmt.Errorf("%w: region must be ISO 3166-1 alpha-2 (two uppercase letters)", domain.ErrValidation)
 	}
 	if name == "" {
 		name = newWorkerName(s.clock)
