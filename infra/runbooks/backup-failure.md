@@ -103,7 +103,7 @@ make drill                 # full wipe + restore + verify (destroys data)
 ```
 
 > No successful backup in 24 h = treat it as SEV1. The RPO contract in
-> [docs/BACKUP.md](../../docs/BACKUP.md) is the reason this alert exists.
+> [../../docs/BACKUP.md](../../docs/BACKUP.md) is the reason this alert exists.
 
 ## Post-mortem prompt
 

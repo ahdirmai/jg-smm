@@ -1,9 +1,9 @@
 # Runbook index
 
 Every alert in MVP-1-SMM has a runbook here. Severity definitions, ack/resolve
-SLAs and the escalation ladder are in [`docs/SEVERITY.md`](../../docs/SEVERITY.md).
+SLAs and the escalation ladder are in [`../../docs/SEVERITY.md`](../../docs/SEVERITY.md).
 Backup strategy and the DR drill mechanics are in
-[`docs/BACKUP.md`](../../docs/BACKUP.md).
+[`../../docs/BACKUP.md`](../../docs/BACKUP.md).
 
 Each runbook follows the same shape: **ALERT / Severity / Symptoms / Impact /
 Likely causes / Diagnosis / Remediation / Verification / Post-mortem prompt**.
@@ -134,5 +134,5 @@ order:
 1. Copy an existing one in the same severity band; keep the section order.
 2. Every command must have been run at least once — a runbook with an
    unverified command is worse than no runbook.
-3. Link it from this index **and** from `docs/SEVERITY.md`'s mapping table.
-4. If the alert can destroy data, its remediation links to `docs/BACKUP.md`.
+3. Link it from this index **and** from `../../docs/SEVERITY.md`'s mapping table.
+4. If the alert can destroy data, its remediation links to `../../docs/BACKUP.md`.

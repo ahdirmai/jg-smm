@@ -1,25 +1,28 @@
 #!/usr/bin/env python3
 """
-Generate one markdown file per ticket into tickets/ from the SSOT (TICKETS.md).
+Generate one markdown file per ticket into docs/tickets/ from the SSOT
+(docs/TICKETS.md). Paths below are relative to that output directory, so a
+doc in docs/ is referenced as ../<name>.md.
 
 Usage:  python3 scripts/gen_tickets.py
-SSOT:   TICKETS.md  (markdown tables per phase)
-Output: tickets/<phase>_<n>.md + tickets/README.md (index)
+SSOT:   docs/TICKETS.md  (markdown tables per phase)
+Output: docs/tickets/<phase>_<n>.md + docs/tickets/README.md (index)
 """
 
 import os
 import re
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SSOT = os.path.join(ROOT, "TICKETS.md")
-OUT = os.path.join(ROOT, "tickets")
+DOCS = os.path.join(ROOT, "docs")
+SSOT = os.path.join(DOCS, "TICKETS.md")
+OUT = os.path.join(DOCS, "tickets")
 
 # Phase metadata: title, goal/context, technical notes, test-plan hints.
 PHASES = {
     "P0": {
         "name": "Foundation & Walking Skeleton",
         "context": "Fase fondasi: repo, tooling, container, DB, auth, dan kerangka end-to-end. Semua fase berikut bergantung pada ini. Walking skeleton mengunci kontrak (OpenAPI, migration, container) sejak awal.",
-        "notes": "Utamakan YAGNI — hanya bangun yang dipakai P1. Semua service: non-root, read-only rootfs, drop capabilities, HEALTHCHECK, resource request+limit. **Lingkungan build = lokal Mac M2 16 GB (docker-compose, ARM64, tanpa K8s)** — lihat `INFRA_ANALYST.md` §15.1/§15.2.",
+        "notes": "Utamakan YAGNI — hanya bangun yang dipakai P1. Semua service: non-root, read-only rootfs, drop capabilities, HEALTHCHECK, resource request+limit. **Lingkungan build = lokal Mac M2 16 GB (docker-compose, ARM64, tanpa K8s)** — lihat `../INFRA_ANALYST.md` §15.1/§15.2.",
         "tests": "Unit untuk logika murni; integration via testcontainers/envtest; CI wajib hijau (lint+test+build+Trivy).",
     },
     "P1": {
@@ -57,7 +60,7 @@ PHASES = {
 # Optional per-ticket addendum, prepended above the phase notes.
 TICKET_NOTES = {
     "P0-01": "Monorepo harus build di **arm64** (Apple Silicon). Sertakan `.nvmrc`/`go.work`/`.tool-versions` dan catat prasyarat toolchain (Node 22, Go 1.26, pnpm, colima) di `README.md` root.",
-    "P0-02": "Target utama **lokal Mac M2 16 GB**: orchestration = **docker-compose (bukan K8s)**. Set `PROVISIONER_MODE=static` (BE tak panggil K8s API), `ACTION_DRY_RUN=true` default, `ACTION_BATCH_PARALLELISM=2`. Pin image **arm64**: worker = `node:22-bookworm` + `playwright install --with-deps chromium` (**Chromium-only**, bukan base Playwright full); MinIO via `quay.io/minio/*` (Docker Hub minio sudah tidak ada). Host port pakai range **24xxx** (hindari bentrok project lain). Sediakan `--scale worker=3` (maks 3 di M2); `WORKER_ID` diturunkan dari hostname. **Runtime lokal = colima** (`colima start --cpu 4 --memory 8`). Lihat `SYSTEM_DESIGN.md` §Local Dev & `INFRA_ANALYST.md` §15.2.",
+    "P0-02": "Target utama **lokal Mac M2 16 GB**: orchestration = **docker-compose (bukan K8s)**. Set `PROVISIONER_MODE=static` (BE tak panggil K8s API), `ACTION_DRY_RUN=true` default, `ACTION_BATCH_PARALLELISM=2`. Pin image **arm64**: worker = `node:22-bookworm` + `playwright install --with-deps chromium` (**Chromium-only**, bukan base Playwright full); MinIO via `quay.io/minio/*` (Docker Hub minio sudah tidak ada). Host port pakai range **24xxx** (hindari bentrok project lain). Sediakan `--scale worker=3` (maks 3 di M2); `WORKER_ID` diturunkan dari hostname. **Runtime lokal = colima** (`colima start --cpu 4 --memory 8`). Lihat `../SYSTEM_DESIGN.md` §Local Dev & `../INFRA_ANALYST.md` §15.2.",
     "P1-03": "Provisioner **dual-mode**: `PROVISIONER_MODE=k8s` (prod) vs `static` (lokal — daftar worker dari baris `Worker` hasil seed, tak memanggil K8s API). Logika tetap 1 port `K8sClient`/`Provisioner` interface; adapter `static` = no-op. envtest hanya jalan bila Docker/K8s tersedia.",
     "P1-05": "Assign akun pakai bin-packing, **bukan** auto-create buta. Fleet default kosong; container dibuat manual (P1-19). Auto-create = fallback saat tak ada slot (`PROVISION_AUTO_CREATE=true`, default). Auto-delete HANYA untuk container `source=AUTO`; `source=MANUAL` bertahan sampai user Remove.",
     "P1-19": 'Endpoint `POST /containers` + UI "Create Container" (pilih platform). Insert `Worker` `source=MANUAL`, `desiredState=RUNNING` → `enqueue reconcile`. Ini jalur default saat fleet kosong (tidak ada worker sampai user bikin). Uji: buat container tanpa akun → pod+PVC jadi, tidak auto-delete.',
@@ -66,7 +69,7 @@ TICKET_NOTES = {
     "P2-11": "Adapter provider di `internal/adapter/provider/<vendor>.go`; interface di `internal/port`. Kontrak: `FetchMetrics(ctx, acct) (MetricsResult, error)`, `FetchMentions(ctx, acct, since) ([]Mention, error)`. `MetricsResult` menyimpan `Extra map[string]any` untuk metrik platform-spesifik dan `providerRunId`+`FetchedAt` untuk provenance. MVP: satu adapter placeholder sampai vendor dipilih.",
     "P2-12": "Idempotent: satu snapshot per `(officialAccountId, ts)` (bucket 30 menit). Tulis `AnalyticsIngestRun` `PENDING→RUNNING→SUCCESS|PARTIAL|FAILED` dengan `accountsOk`/`accountsErr`. Retry + timeout HTTP; gagal berulang → alert (F5.8). Emit SSE `analytics-updated`. Provider down ≠ error page: data terakhir tetap tampil.",
     "P2-13": "Endpoint `/official-accounts` (list/create/update/archive) + `POST /official-accounts/{id}/refresh` dan `POST /analytics/refresh` (scope). Tambah ke `openapi/openapi.yaml` sebagai SSOT dulu. RBAC: strategist/analyst read, owner/operator write. Verifikasi kepemilikan akun opsional (metadata provider).",
-    "P2-14": "Endpoint analytics: `/analytics/overview` (agregat semua akun resmi) + `/analytics/{platform}` (KPI per platform sesuai `PLATFORM_MATRIX.md` §2.3, tren time-series, top post, mention). Format respons identik antar platform (KPI array generik) agar FE pakai renderer tunggal. Freshness = `now() - lastFetchedAt` dikirim sebagai field, bukan dihitung FE.",
+    "P2-14": "Endpoint analytics: `/analytics/overview` (agregat semua akun resmi) + `/analytics/{platform}` (KPI per platform sesuai `../PLATFORM_MATRIX.md` §2.3, tren time-series, top post, mention). Format respons identik antar platform (KPI array generik) agar FE pakai renderer tunggal. Freshness = `now() - lastFetchedAt` dikirim sebagai field, bukan dihitung FE.",
     "P2-15": "Port 1:1 dari prototype `docs/prototype/monitoring.html` + `analytics-*.html` (sudah disetujui). Nav group 'Monitoring' (Overview + 7 platform). Layout contract tetap; jangan ada `mt-*` di section top-level. Badge `stale` bila freshness > 60 menit; tombol Refresh memicu `POST /analytics/refresh`. Semua platform dirender walau datanya kosong (state empty yang jelas).",
 }
 
@@ -127,6 +130,19 @@ def ac_lines(ac):
     return "\n".join("- [ ] " + p for p in parts)
 
 
+# The SSOT (docs/TICKETS.md) writes doc references relative to docs/, but a
+# generated ticket lives one level deeper in docs/tickets/, so those references
+# are rewrites one directory up when they are copied into a ticket.
+_DEPTH_PREFIX = re.compile(
+    r"(?<![\w/.-])(?!\.\./)(infra/runbooks/[A-Za-z0-9._/*-]+|[A-Za-z0-9_]+\.md)"
+)
+
+
+def deepen(text):
+    """Rebase doc references in an SSOT cell for the docs/tickets/ output dir."""
+    return _DEPTH_PREFIX.sub(lambda m: "../" + m.group(1), text)
+
+
 def write_ticket(r):
     ph = PHASES[r["phase"]]
     body = f"""# {r["id"]} — {r["title"]}
@@ -141,7 +157,7 @@ Tiket ini: {r["title"]}.
 
 ## Scope
 
-{r["scope"]}
+{deepen(r["scope"])}
 
 ## Technical Notes
 
@@ -161,8 +177,8 @@ Tiket ini: {r["title"]}.
 
 ## References
 
-- `DEVELOPMENT_RULE.md`, `DEVELOPMENT_PHASE.md`, `TICKETS.md`.
-- Phase doc: `DEVELOPMENT_PHASE.md` → {r["phase"]} ({ph["name"]}).
+- `../DEVELOPMENT_RULE.md`, `../DEVELOPMENT_PHASE.md`, `../TICKETS.md`.
+- Phase doc: `../DEVELOPMENT_PHASE.md` → {r["phase"]} ({ph["name"]}).
 """
     fn = os.path.join(OUT, r["id"].replace("-", "_").lower() + ".md")
     open(fn, "w", encoding="utf-8").write(body)
@@ -175,7 +191,7 @@ def write_index(rows):
     lines = [
         "# Ticket Index — MVP-1-SMM",
         "",
-        "Satu file per tiket (generated dari `TICKETS.md`). Jangan edit manual — jalankan `python3 scripts/gen_tickets.py`.",
+        "Satu file per tiket (generated dari `../TICKETS.md`). Jangan edit manual — jalankan `python3 scripts/gen_tickets.py`.",
         "",
     ]
     for pid in sorted(by_phase):
@@ -201,7 +217,7 @@ def main():
     for r in rows:
         write_ticket(r)
     write_index(rows)
-    print(f"generated {len(rows)} tickets into tickets/")
+    print(f"generated {len(rows)} tickets into docs/tickets/")
 
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@
 # `make help` lists everything.
 
 COMPOSE ?= docker compose
-# Local worker replicas. Max 3 on a 16 GB machine (INFRA_ANALYST.md §15.2).
+# Local worker replicas. Max 3 on a 16 GB machine (docs/INFRA_ANALYST.md §15.2).
 WORKERS ?= 3
 
 # Bootstrap owner account created by `make seed` (override on the CLI).
@@ -81,6 +81,8 @@ ci: lint typecheck fmt-check ## Run the checks CI runs, locally (no containers n
 	pnpm build
 	pnpm test
 	cd apps/api && go vet ./... && go build ./... && go test ./...
+	@python3 scripts/check_docs_links.py | grep -q "all doc cross-references resolve" \
+	|| { echo "::error::broken doc cross-reference; run 'python3 scripts/check_docs_links.py'"; exit 1; }
 
 test: ## Run all tests
 	pnpm test

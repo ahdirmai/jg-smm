@@ -2,7 +2,7 @@
 
 The backup strategy for MVP-1-SMM. Scripts: [`infra/backup/`](../infra/backup).
 Runbooks: [`infra/runbooks/`](../infra/runbooks/README.md). Severity contract:
-[`docs/SEVERITY.md`](SEVERITY.md).
+[`SEVERITY.md`](SEVERITY.md).
 
 All commands run against the `smm` compose project (colima, linux/arm64 —
 `INFRA_ANALYST.md`). No host-level dependencies beyond `docker`.

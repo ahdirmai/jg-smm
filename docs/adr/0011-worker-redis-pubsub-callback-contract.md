@@ -47,4 +47,4 @@ Worker config contains no DATABASE_URL; callbacks validated + size-limited.
 ## More Information
 
 - SYSTEM_DESIGN worker contract; P1-13; reference `JG/automation`.
-- See also: `DEVELOPMENT_RULE.md` §17.1, `PRD.md`, `ERD.md`, `SYSTEM_DESIGN.md`.
+- See also: `../DEVELOPMENT_RULE.md` §17.1, `../PRD.md`, `../ERD.md`, `../SYSTEM_DESIGN.md`.

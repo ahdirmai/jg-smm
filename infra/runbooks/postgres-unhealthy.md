@@ -25,7 +25,7 @@ scrapes, missed action windows and stalled logins.
 2. **Timescale chunk/hypertable corruption** after an unclean shutdown
    (colima killed without `make down`).
 3. **Bad config applied by `ALTER SYSTEM`** — most likely from the WAL archive
-   enable in `make backup` (see [docs/BACKUP.md](../../docs/BACKUP.md)).
+   enable in `make backup` (see [../../docs/BACKUP.md](../../docs/BACKUP.md)).
 4. **Failed migration** leaving the DB in a dirty state.
 5. Volume loss (the DR case — go to [dr-drill](dr-drill.md) instead).
 
@@ -59,7 +59,7 @@ make migrate-status
 ## Remediation
 
 **0. If data loss is even suspected: stop, page the escalation ladder, and go
-to [docs/BACKUP.md](../../docs/BACKUP.md).** Do not run destructive commands
+to [../../docs/BACKUP.md](../../docs/BACKUP.md).** Do not run destructive commands
 before a backup exists.
 
 ```bash

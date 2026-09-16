@@ -47,4 +47,4 @@ Idempotency via `Worker.generation` + pod label; empty containers auto-delete on
 ## More Information
 
 - INFRA_ANALYST §15; P1-04, P1-05, P1-19; SYSTEM_DESIGN provisioning.
-- See also: `DEVELOPMENT_RULE.md` §17.1, `PRD.md`, `ERD.md`, `SYSTEM_DESIGN.md`.
+- See also: `../DEVELOPMENT_RULE.md` §17.1, `../PRD.md`, `../ERD.md`, `../SYSTEM_DESIGN.md`.

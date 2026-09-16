@@ -62,12 +62,12 @@ neither is required by any MVP acceptance criterion.
 
 ### Confirmation
 
-P2-09 is marked DEFERRED in `docs/PROGRESS.md` referencing this ADR. The
+P2-09 is marked DEFERRED in `../PROGRESS.md` referencing this ADR. The
 monitoring page ships without the live card.
 
 ## Pros and Cons of the Options
 
-### Defer: mark P2-09 deferred. *(chosen)*
+### Defer: mark P2-09 deferred. _(chosen)_
 
 Zero implementation risk; honest UI. Cost is the missing feature, which no MVP
 AC requires.

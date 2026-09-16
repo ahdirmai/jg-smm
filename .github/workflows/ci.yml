@@ -193,11 +193,23 @@ jobs:
           scanners: vuln,secret,misconfig
 
   # ---------------------------------------------------------------------------
+  # Docs: every cross-reference between documents must resolve. Cheap, catches
+  # the broken links that follow any docs reorganisation.
+  # ---------------------------------------------------------------------------
+  docs:
+    name: docs (link check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check doc cross-references
+        run: python3 scripts/check_docs_links.py
+
+  # ---------------------------------------------------------------------------
   # Gate for branch protection — a single required check.
   # ---------------------------------------------------------------------------
   ci-ok:
     name: ci-ok
-    needs: [js, go, codegen, migrate-dry, credential-guard, trivy]
+    needs: [js, go, codegen, migrate-dry, credential-guard, trivy, docs]
     runs-on: ubuntu-latest
     steps:
       - run: echo "all checks passed"

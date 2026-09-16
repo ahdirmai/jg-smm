@@ -47,4 +47,4 @@ Chosen option: **"Single team now; a documented migration path to workspaces lat
 ## More Information
 
 - PRD scope; ERD `TeamConfig`; DEVELOPMENT_RULE §tenancy.
-- See also: `DEVELOPMENT_RULE.md` §17.1, `PRD.md`, `ERD.md`, `SYSTEM_DESIGN.md`.
+- See also: `../DEVELOPMENT_RULE.md` §17.1, `../PRD.md`, `../ERD.md`, `../SYSTEM_DESIGN.md`.

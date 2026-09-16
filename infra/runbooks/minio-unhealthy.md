@@ -77,7 +77,7 @@ docker compose up minio-init
 #    Buckets the stack expects: raw-payload, screenshots, sessions
 #    (created by the minio-init service in compose.yaml).
 
-# D. Total volume loss — restore from backup, see docs/BACKUP.md:
+# D. Total volume loss — restore from backup, see ../../docs/BACKUP.md:
 #    make restore B=latest      (restores minio/<bucket>/ back into MinIO)
 ```
 

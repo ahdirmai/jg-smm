@@ -11,7 +11,7 @@ import (
 // little back, and an account that slides below QuarantineThreshold is pulled
 // out of the pool automatically instead of being driven into a ban.
 //
-// The numbers come from SYSTEM_DESIGN.md (fail = -10, quarantine < 30) with one
+// The numbers come from ../../../../docs/SYSTEM_DESIGN.md (fail = -10, quarantine < 30) with one
 // refinement: the cost is class-weighted, because a TRANSIENT timeout and a
 // BANNED verdict are not the same signal. Charging both -10 burns a good
 // account on a flaky proxy and rescues a dead one far too late.

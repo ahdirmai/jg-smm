@@ -22,7 +22,7 @@ type Config struct {
 	// ProvisionerMode is static (local, no Kubernetes) or k8s (production).
 	ProvisionerMode string
 	// ReconcileIntervalSeconds runs the desired-state loop in the API process.
-	// 0 disables it. Local dev leaves it off (INFRA_ANALYST.md §15.1: no
+	// 0 disables it. Local dev leaves it off (../../../../docs/INFRA_ANALYST.md §15.1: no
 	// cluster locally); production enables it (default there is 30).
 	ReconcileIntervalSeconds int
 	// K8sNamespace is the cluster namespace the k8s driver provisions into.

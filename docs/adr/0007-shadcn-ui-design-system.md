@@ -50,4 +50,4 @@ Every screen uses tokenised classes; light/dark verified by the prototype browse
 ## More Information
 
 - DESIGN_SYSTEM; P0-08; prototype `docs/prototype/`.
-- See also: `DEVELOPMENT_RULE.md` §17.1, `PRD.md`, `ERD.md`, `SYSTEM_DESIGN.md`.
+- See also: `../DEVELOPMENT_RULE.md` §17.1, `../PRD.md`, `../ERD.md`, `../SYSTEM_DESIGN.md`.

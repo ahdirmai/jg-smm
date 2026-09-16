@@ -9,7 +9,7 @@ import (
 )
 
 // StaticProvisioner is the local-development driver. The local tier has no
-// Kubernetes (INFRA_ANALYST.md §15.1): worker containers are scaled manually
+// Kubernetes (../../../../docs/INFRA_ANALYST.md §15.1): worker containers are scaled manually
 // with `docker compose up --scale worker=N`, so provisioning here is
 // bookkeeping only — it records intent and observes the Worker row the
 // containers heartbeat into. It implements the same port.K8sClient contract so

@@ -128,7 +128,7 @@ What you are checking, at each step:
 
 Hold the fleet at ~50 containers under a realistic action load and watch for
 drift over the soak window (start with 30 minutes; the GA sign-off in
-`docs/GA_SIGNOFF.md` asks for longer):
+`GA_SIGNOFF.md` asks for longer):
 
 ```bash
 # Drive the API with the k6 load test (P5-07), p95 target 1500 ms.
@@ -179,6 +179,6 @@ Pass conditions:
 - Ticket: `tickets/p5_01.md` · PRD §F3.9 · `DEVELOPMENT_RULE.md` (bin-packing)
 - Packing logic: `apps/api/internal/service/packer.go`
 - Invariants at scale: `apps/api/internal/service/packer_test.go`
-- Load test (P5-07): `infra/load/api.js`, `docs/LOAD_TEST.md`
+- Load test (P5-07): `infra/load/api.js`, `LOAD_TEST.md`
 - Sizing and quota: `INFRA_ANALYST.md` §3.2, §11
 - DR procedure: `runbooks/` and `make drill`

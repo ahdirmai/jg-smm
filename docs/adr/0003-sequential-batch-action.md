@@ -47,4 +47,4 @@ Worker loop processes exactly one dequeued job at a time (BLPOP → run → ACK)
 ## More Information
 
 - DEVELOPMENT_RULE §concurrency; P1-09; P3-*.
-- See also: `DEVELOPMENT_RULE.md` §17.1, `PRD.md`, `ERD.md`, `SYSTEM_DESIGN.md`.
+- See also: `../DEVELOPMENT_RULE.md` §17.1, `../PRD.md`, `../ERD.md`, `../SYSTEM_DESIGN.md`.

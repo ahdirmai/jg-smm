@@ -256,7 +256,7 @@ func (c *Client) ensurePod(ctx context.Context, w domain.Worker) error {
 }
 
 // ensureService exposes the noVNC live-screen port inside the cluster only
-// (INFRA_ANALYST.md §7: noVNC must never be published).
+// (../../../../../docs/INFRA_ANALYST.md §7: noVNC must never be published).
 func (c *Client) ensureService(ctx context.Context, w domain.Worker) error {
 	name := workerName(w.ID)
 	_, err := c.core.CoreV1().Services(c.ns).Get(ctx, name, metav1.GetOptions{})

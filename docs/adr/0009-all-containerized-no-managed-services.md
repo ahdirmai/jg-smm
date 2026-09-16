@@ -47,4 +47,4 @@ compose.yaml is the single topology; no managed endpoints in config.
 ## More Information
 
 - INFRA_ANALYST; P0-02; SYSTEM_DESIGN storage.
-- See also: `DEVELOPMENT_RULE.md` §17.1, `PRD.md`, `ERD.md`, `SYSTEM_DESIGN.md`.
+- See also: `../DEVELOPMENT_RULE.md` §17.1, `../PRD.md`, `../ERD.md`, `../SYSTEM_DESIGN.md`.

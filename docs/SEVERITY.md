@@ -24,7 +24,7 @@ the same runbooks apply with the k8s equivalents from `INFRA_ANALYST.md`.
 - **Resolve** = the runbook's verification passes and the alert is closed.
 
 The platform's hard DR target is **RTO 30 m / RPO 5 m** for the Postgres plane
-(see [docs/BACKUP.md](BACKUP.md)); a SEV1 restore must stay inside that.
+(see [BACKUP.md](BACKUP.md)); a SEV1 restore must stay inside that.
 
 ## Severity mapping
 
@@ -74,13 +74,13 @@ graph TD
     A[Alert pages primary] -->|unacked 5-10 m| B[Secondary on-call]
     B -->|unacked| C[Infra lead]
     C -->|SEV1 still down 30 m| D[Incident commander + all hands]
-    D -->|data loss suspected| E[DR: docs/BACKUP.md + dr-drill runbook]
+    D -->|data loss suspected| E[DR: BACKUP.md + dr-drill runbook]
 ```
 
 - **SEV1**: escalate at 30 m if not mitigated, regardless of activity.
 - **Suspected data loss** escalates immediately to the DR path: stop guessing,
   run [dr-drill](../infra/runbooks/dr-drill.md) only in an isolated env, and
-  restore from the last good backup per [docs/BACKUP.md](BACKUP.md).
+  restore from the last good backup per [BACKUP.md](BACKUP.md).
 - Nobody is blamed for escalating early. The only bad escalation is the one
   that happens after the SLA has already blown.
 
@@ -106,4 +106,4 @@ graph TD
 
 Every SEV1/SEV2 gets a post-mortem within 48 h. The prompt each runbook ends
 with is the starting point; the write-up must answer the four questions in
-[`infra/runbooks/README.md`](../infra/runbooks/README.md#post-mortem-prompt).
+[`../infra/runbooks/README.md`](../infra/runbooks/README.md#post-mortem-prompt).

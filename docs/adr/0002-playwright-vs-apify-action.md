@@ -50,4 +50,4 @@ Worker has no scrape code; scrapers never hold action sessions.
 ## More Information
 
 - SYSTEM_DESIGN §Components; PLATFORM_MATRIX; P2-03 vs P3-*.
-- See also: `DEVELOPMENT_RULE.md` §17.1, `PRD.md`, `ERD.md`, `SYSTEM_DESIGN.md`.
+- See also: `../DEVELOPMENT_RULE.md` §17.1, `../PRD.md`, `../ERD.md`, `../SYSTEM_DESIGN.md`.

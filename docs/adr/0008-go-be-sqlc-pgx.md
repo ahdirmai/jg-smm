@@ -50,4 +50,4 @@ CI runs gofmt/vet/build/test and fails on sqlc/OpenAPI drift.
 ## More Information
 
 - DEVELOPMENT_RULE §backend; P0-03, P0-05; SYSTEM_DESIGN.
-- See also: `DEVELOPMENT_RULE.md` §17.1, `PRD.md`, `ERD.md`, `SYSTEM_DESIGN.md`.
+- See also: `../DEVELOPMENT_RULE.md` §17.1, `../PRD.md`, `../ERD.md`, `../SYSTEM_DESIGN.md`.

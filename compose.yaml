@@ -1,6 +1,6 @@
 # P0-02 walking skeleton. Local runtime = colima (linux/arm64 on Apple Silicon).
 # Everything runs as containers; no Kubernetes. Worker replicas are scaled with
-# `--scale worker=N` (max 3 on a 16 GB machine — see INFRA_ANALYST.md §15.2).
+# `--scale worker=N` (max 3 on a 16 GB machine — see docs/INFRA_ANALYST.md §15.2).
 name: smm
 
 services:

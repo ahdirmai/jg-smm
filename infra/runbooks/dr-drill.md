@@ -2,7 +2,7 @@
 
 **Severity:** SEV3 when overdue — the restore path is unproven until a drill
 passes.
-**Purpose:** prove the RTO/RPO contract from [docs/BACKUP.md](../../docs/BACKUP.md)
+**Purpose:** prove the RTO/RPO contract from [../../docs/BACKUP.md](../../docs/BACKUP.md)
 by destroying data and bringing it back. Scheduled quarterly (INFRA-13).
 
 > **This procedure destroys data by design.** `make drill` wipes every app

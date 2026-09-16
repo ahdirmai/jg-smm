@@ -37,3 +37,7 @@ vendor/
 # --- Compose / runtime data ---
 /data/
 *.log
+
+# --- Python (docs/ticket generators) ---
+__pycache__/
+*.pyc

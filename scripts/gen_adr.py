@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate the P0-12 ADR set (docs/adr/0001..0012) in MADR format.
 
-The narratives mirror DEVELOPMENT_RULE.md §17.1 so the rule and the ADRs stay
+The narratives mirror ../docs/DEVELOPMENT_RULE.md §17.1 so the rule and the ADRs stay
 consistent. Re-running overwrites the files; the template (0000) is hand-written
 and never touched here.
 """
@@ -415,7 +415,7 @@ Chosen option: **"{a["options"][a["chosen"]]}"** because {a["justification"].rst
 ## More Information
 
 - {a["moreinfo"]}
-- See also: `DEVELOPMENT_RULE.md` §17.1, `PRD.md`, `ERD.md`, `SYSTEM_DESIGN.md`.
+- See also: `../DEVELOPMENT_RULE.md` §17.1, `../PRD.md`, `../ERD.md`, `../SYSTEM_DESIGN.md`.
 """
 
 

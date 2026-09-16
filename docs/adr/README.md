@@ -5,14 +5,14 @@ note in **[MADR](https://adr.github.io/madr/)** format: Context → Drivers →
 Options → Decision → Consequences → Confirmation.
 
 - **Template**: [`0000-template.md`](0000-template.md) — copy it for a new ADR.
-- **Rule**: `DEVELOPMENT_RULE.md` §17. An ADR is required when we change the
+- **Rule**: `../DEVELOPMENT_RULE.md` §17. An ADR is required when we change the
   DB/queue/auth provider, add a platform adapter with new trade-offs, introduce
   a new scaling/provisioning pattern, or add a heavy runtime dependency.
 - **Status** values: `proposed` · `accepted` · `rejected` · `deprecated` ·
   `superseded by ADR-NNNN`. ADRs are append-only: to change a decision, write a
   new ADR that supersedes the old one (do not rewrite history).
 - Scaffold helper: `python3 scripts/gen_adr.py` regenerates 0001–0012 from the
-  narratives in `DEVELOPMENT_RULE.md` §17.1 (keeps the rule and the ADRs in sync).
+  narratives in `../DEVELOPMENT_RULE.md` §17.1 (keeps the rule and the ADRs in sync).
 
 ## Index
 

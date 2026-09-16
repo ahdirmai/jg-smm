@@ -4,7 +4,7 @@
 **Alert source:** no compose healthcheck exists for `worker`; this fires on the
 heartbeat budget (`apps/worker/src/core/heartbeat.ts`) or a human noticing flat
 queues. **This is the documented gap** — see
-[README](README.md) and [docs/SEVERITY.md](../../docs/SEVERITY.md).
+[README](README.md) and [../../docs/SEVERITY.md](../../docs/SEVERITY.md).
 
 ## Symptoms
 

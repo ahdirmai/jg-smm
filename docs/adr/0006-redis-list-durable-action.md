@@ -50,4 +50,4 @@ DB commit happens before LPUSH; worker ACKs only after a verdict.
 ## More Information
 
 - SYSTEM_DESIGN transport table; P1-08, P1-09, P1-11.
-- See also: `DEVELOPMENT_RULE.md` §17.1, `PRD.md`, `ERD.md`, `SYSTEM_DESIGN.md`.
+- See also: `../DEVELOPMENT_RULE.md` §17.1, `../PRD.md`, `../ERD.md`, `../SYSTEM_DESIGN.md`.

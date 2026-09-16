@@ -50,4 +50,4 @@ Retention policy active; dashboards hit hypertables via time_bucket.
 ## More Information
 
 - ERD metrics; SYSTEM_DESIGN storage; P2-01, P2-05, P2-10.
-- See also: `DEVELOPMENT_RULE.md` §17.1, `PRD.md`, `ERD.md`, `SYSTEM_DESIGN.md`.
+- See also: `../DEVELOPMENT_RULE.md` §17.1, `../PRD.md`, `../ERD.md`, `../SYSTEM_DESIGN.md`.

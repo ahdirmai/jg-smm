@@ -50,4 +50,4 @@ Client reconnects and refetches on drop; frames validated by schema.
 ## More Information
 
 - SYSTEM_DESIGN realtime; P1-17, P2-14.
-- See also: `DEVELOPMENT_RULE.md` §17.1, `PRD.md`, `ERD.md`, `SYSTEM_DESIGN.md`.
+- See also: `../DEVELOPMENT_RULE.md` §17.1, `../PRD.md`, `../ERD.md`, `../SYSTEM_DESIGN.md`.

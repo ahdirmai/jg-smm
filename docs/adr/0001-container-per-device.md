@@ -50,4 +50,4 @@ Enforced by `@@unique([workerId, platform])` on `Account`; bounded by `MAX_ACCOU
 ## More Information
 
 - PRD F2/F3; ERD `Account`/`Worker`; SYSTEM_DESIGN provisioning; P1-01, P1-05.
-- See also: `DEVELOPMENT_RULE.md` §17.1, `PRD.md`, `ERD.md`, `SYSTEM_DESIGN.md`.
+- See also: `../DEVELOPMENT_RULE.md` §17.1, `../PRD.md`, `../ERD.md`, `../SYSTEM_DESIGN.md`.

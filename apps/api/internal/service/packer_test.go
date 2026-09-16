@@ -601,7 +601,7 @@ func runPackScale(t *testing.T, tc packScaleCase) {
 //
 // Two shapes cover the quota both as shipped and as documented:
 //   - the PRD shape: 100 accounts over the 2 MVP platforms at quota 2 (the
-//     "100 akun -> ~50 container" figure in PRD.md and the P5-01 ticket), and
+//     "100 akun -> ~50 container" figure in ../../../../docs/PRD.md and the P5-01 ticket), and
 //   - the all-platform shape: 350 accounts over all 7 platforms at quota 7,
 //     which is the same ~50 containers once every platform is live.
 func TestPackScaleFiftyContainers(t *testing.T) {

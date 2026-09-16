@@ -21,10 +21,10 @@ From `DEVELOPMENT_PHASE.md` → P5 Exit Criteria, plus the ticket's own AC:
 | A3  | Alert → Slack end-to-end         | alert fires and is acked           | Alertmanager log + Slack message                                 |
 | A4  | MTTR worker failure              | < 5 min                            | reconciler restore timestamps                                    |
 | A5  | DR drill success                 | restore < 30 min                   | `make drill` output (destructive — staging only)                 |
-| A6  | Runbooks + severity matrix       | all alerts covered                 | `infra/runbooks/`, `docs/SEVERITY.md`                            |
-| A7  | Security review sign-off         | granted                            | `docs/SECURITY_REVIEW.md` — granted, one deferred toolchain item |
-| A8  | Load test                        | API p95 < 1500 ms                  | `make load-test`; see `docs/LOAD_TEST.md`                        |
-| A9  | Scale at ~50 containers          | invariants hold                    | `docs/SCALE_TEST.md`                                             |
+| A6  | Runbooks + severity matrix       | all alerts covered                 | `infra/runbooks/`, `SEVERITY.md`                            |
+| A7  | Security review sign-off         | granted                            | `SECURITY_REVIEW.md` — granted, one deferred toolchain item |
+| A8  | Load test                        | API p95 < 1500 ms                  | `make load-test`; see `LOAD_TEST.md`                        |
+| A9  | Scale at ~50 containers          | invariants hold                    | `SCALE_TEST.md`                                             |
 
 ---
 
@@ -37,12 +37,12 @@ engineering:
   invariants for both the MVP quota (100 accounts / 2 platforms / quota 2) and
   the all-platform quota (350 / 7 / 7): exact fleet size, cap respected, one
   platform per container, no unpacked account, AUTO containers reaped on drain.
-  `docs/SCALE_TEST.md`.
+  `SCALE_TEST.md`.
 - **Security** — RBAC read/write split, `gitleaks` pre-commit hook,
   `govulncheck` clean on application deps (`go-redis` bumped v9.7.0 → v9.7.3 for
-  GO-2025-3540). Sign-off granted in `docs/SECURITY_REVIEW.md`.
+  GO-2025-3540). Sign-off granted in `SECURITY_REVIEW.md`.
 - **Load** — k6 load test, p95 **8.22 ms** at 10 VU / 20 s against a 1500 ms
-  target, zero server errors. `docs/LOAD_TEST.md`.
+  target, zero server errors. `LOAD_TEST.md`.
 - **Observability** — Prometheus/Grafana/Loki/Alertmanager tier behind the `obs`
   profile (`make up-obs`); API metrics wired through `internal/obs`.
 - **Backup / restore / DR** — `make backup`, `make restore`, `make drill`
@@ -50,7 +50,7 @@ engineering:
 - **Health & quarantine** — health score 0–100, auto-quarantine below threshold,
   anti-flapping cap; see `DEVELOPMENT_RULE.md`.
 - **Runbooks** — `infra/runbooks/` (one per alert) with the severity matrix and
-  on-call SLAs in `docs/SEVERITY.md`, and backup/DR mechanics in `docs/BACKUP.md`.
+  on-call SLAs in `SEVERITY.md`, and backup/DR mechanics in `BACKUP.md`.
 
 ---
 
@@ -62,7 +62,7 @@ This is the substance of the ticket and it is calendar time, not code:
 
 1. Deploy the current `main` to the production-like fleet.
 2. Load the fleet to ~50 containers / 100 accounts following
-   `docs/SCALE_TEST.md` §3.2.
+   `SCALE_TEST.md` §3.2.
 3. Run the soak for 30 consecutive days. Collect, per week:
    - fleet uptime and worker restart / OOMKill count,
    - action success rate from `attempt` terminal statuses,
@@ -85,7 +85,7 @@ latest 1.26.x, so the fix is a **rebuild**, not a code change.
 
 `go.mod` deliberately stays at `go 1.26.0` — bumping the directive to 1.26.6
 breaks `go mod tidy` on older toolchains while gaining nothing, since
-`GOTOOLCHAIN=auto` already resolves forward. See `docs/SECURITY_REVIEW.md`
+`GOTOOLCHAIN=auto` already resolves forward. See `SECURITY_REVIEW.md`
 §Toolchain.
 
 ```bash
@@ -102,7 +102,7 @@ exposed to the affected stdlib paths; record the decision either way.
 
 Confirm `PRD.md`, `ERD.md`, `SYSTEM_DESIGN.md`, `DESIGN_SYSTEM.md`,
 `DEVELOPMENT_RULE.md`, `TICKETS.md` and the ADRs still match what shipped.
-Spot-check against `docs/PROGRESS.md`, which is the source of truth for
+Spot-check against `PROGRESS.md`, which is the source of truth for
 ticket → commit mapping.
 
 ---
@@ -112,7 +112,7 @@ ticket → commit mapping.
 | Item                               | Status           | Note                                        |
 | ---------------------------------- | ---------------- | ------------------------------------------- |
 | Scale invariants at ~50 containers | PASS (in code)   | `TestPackScaleFiftyContainers`              |
-| Security review                    | PASS, 1 deferred | `docs/SECURITY_REVIEW.md`; go1.26.6 rebuild |
+| Security review                    | PASS, 1 deferred | `SECURITY_REVIEW.md`; go1.26.6 rebuild |
 | Load test                          | PASS             | p95 8.22 ms vs 1500 ms target               |
 | Backup / restore / DR drill        | PASS (mechanism) | live drill must run in the soak (A5)        |
 | Observability tier                 | PASS             | `make up-obs`                               |
@@ -128,7 +128,7 @@ Until then the build is feature-complete and green, but **not GA**.
 ## 5. References
 
 - Ticket: `tickets/p5_10.md` · Exit criteria: `DEVELOPMENT_PHASE.md` → P5
-- `docs/SCALE_TEST.md` (A9) · `docs/LOAD_TEST.md` (A8)
-- `docs/SECURITY_REVIEW.md` (A7) · `infra/runbooks/` + `docs/SEVERITY.md` (A6)
-  · `docs/BACKUP.md` (A5)
-- Progress: `docs/PROGRESS.md`
+- `SCALE_TEST.md` (A9) · `LOAD_TEST.md` (A8)
+- `SECURITY_REVIEW.md` (A7) · `infra/runbooks/` + `SEVERITY.md` (A6)
+  · `BACKUP.md` (A5)
+- Progress: `PROGRESS.md`

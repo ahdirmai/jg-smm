@@ -1,8 +1,8 @@
 # jg-smm — Social Media Management
 
 Scrape, monitor, and automate actions across social platforms (IG/Threads for
-MVP). Spec set lives in the repo root (`PRD.md`, `ERD.md`, `SYSTEM_DESIGN.md`,
-...).
+MVP). The full spec set lives in [`docs/`](docs/) (`docs/PRD.md`, `docs/ERD.md`,
+`docs/SYSTEM_DESIGN.md`, ...).
 
 ## Layout
 
@@ -11,9 +11,11 @@ apps/api      Go 1.26 API (Echo + pgx + sqlc)
 apps/web      Next.js 15 dashboard (shadcn/ui)
 apps/worker   Node 22 worker (Playwright + Apify)
 packages/     shared TS constants/types (OpenAPI-generated), shadcn/ui, base tsconfig
-infra/        docker + k8s manifests
+infra/        docker + k8s manifests, runbooks, load tests
+docs/         spec set: PRD, ERD, system design, dev rules, tickets, ADRs,
+              platform briefs, prototype, runbooks index
 docs/adr/     architecture decision records
-tickets/      one file per ticket (generated from TICKETS.md)
+docs/tickets/ one file per ticket (generated from docs/TICKETS.md)
 ```
 
 ## Prerequisites (local build target: Mac M2 16 GB)
@@ -27,7 +29,7 @@ tickets/      one file per ticket (generated from TICKETS.md)
 | Docker CLI | any     | provided by colima                                  |
 
 Local containers run via **colima + docker compose** — no Kubernetes (K8s is the
-production path; see `SYSTEM_DESIGN.md` → Local Tier).
+production path; see `docs/SYSTEM_DESIGN.md` → Local Tier).
 
 ## Bootstrap
 
@@ -101,7 +103,7 @@ the team can debug a failed action and see the container state behind it.
 | Infra       | Worker CPU/mem/jobs telemetry                        | `heartbeat` table + worker row     |
 | Infra       | Health probes (postgres/redis readiness)             | `/healthz` + container HEALTHCHECK |
 
-Principles (see `DEVELOPMENT_RULE.md`):
+Principles (see `docs/DEVELOPMENT_RULE.md`):
 
 - Never log credentials or ciphertext (the CI `credential-guard` job enforces this).
 - Structured logs only (key/value JSON), never `fmt.Println` in services.
@@ -127,4 +129,4 @@ Set `JWT_SECRET` (>= 16 bytes) via env before running the API with a database;
 compose provides a dev default. Roles: `OWNER` / `STRATEGIST` / `OPERATOR` /
 `ANALYST` (see `apps/api/internal/domain/role.go` for the permission matrix).
 
-See `DEVELOPMENT_RULE.md` for conventions and `DEVELOPMENT_PHASE.md` for the roadmap.
+See `docs/DEVELOPMENT_RULE.md` for conventions and `docs/DEVELOPMENT_PHASE.md` for the roadmap.
