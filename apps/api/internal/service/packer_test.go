@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"fmt"
+	"io"
+	"log/slog"
 	"sort"
 	"sync"
 	"testing"
@@ -468,5 +470,158 @@ func TestNewWorkerNameUnique(t *testing.T) {
 			t.Fatalf("duplicate worker name after %d tries: %s", i, name)
 		}
 		seen[name] = true
+	}
+}
+
+// packScaleCase is one shape of the P5-01 scale test: a fleet of accounts, a
+// per-container cap, and the number of containers the fleet must spread over.
+type packScaleCase struct {
+	name           string
+	platforms      []domain.Platform
+	maxPer         int
+	wantContainers int
+}
+
+// runPackScale packs totalAccounts accounts (one platform set per container)
+// and asserts the invariants that hold at production scale.
+func runPackScale(t *testing.T, tc packScaleCase) {
+	t.Helper()
+
+	store := newFakeWorkerStore()
+	accounts := newFakeAccountStore()
+
+	platformsPerContainer := len(tc.platforms)
+	totalAccounts := platformsPerContainer * tc.wantContainers
+
+	p := NewPacker(store, accounts, PackerConfig{
+		MaxPerContainer: tc.maxPer,
+		AutoCreate:      true,
+		// Hundreds of packs would flood the test log; the decisions are
+		// asserted below rather than read off stdout.
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+
+	for i := 0; i < totalAccounts; i++ {
+		id := fmt.Sprintf("acc-%03d", i)
+		accounts.seed(domain.Account{
+			ID:         id,
+			Platform:   tc.platforms[i%platformsPerContainer],
+			Username:   "user-" + id,
+			AuthStatus: domain.AuthAuthenticating,
+			Status:     domain.AccountActive,
+		})
+	}
+
+	if err := t.Run("packs the whole fleet", func(t *testing.T) {
+		for i := 0; i < totalAccounts; i++ {
+			id := fmt.Sprintf("acc-%03d", i)
+			if _, _, err := p.Pack(context.Background(), id, accounts.get(id).Platform); err != nil {
+				t.Fatalf("pack %s: %v", id, err)
+			}
+		}
+	}); !err {
+		return
+	}
+
+	fleet := func(t *testing.T) []domain.Worker {
+		t.Helper()
+		out, err := store.List(context.Background(), port.WorkerFilter{})
+		if err != nil {
+			t.Fatalf("list workers: %v", err)
+		}
+		return out
+	}
+
+	t.Run("spreads across exactly the expected fleet size", func(t *testing.T) {
+		if got := len(fleet(t)); got != tc.wantContainers {
+			t.Fatalf("fleet size = %d, want %d", got, tc.wantContainers)
+		}
+	})
+
+	t.Run("honors the per-container account cap", func(t *testing.T) {
+		for _, w := range fleet(t) {
+			count, err := accounts.CountByWorker(context.Background(), w.ID)
+			if err != nil {
+				t.Fatalf("count on %s: %v", w.ID, err)
+			}
+			if count > tc.maxPer {
+				t.Fatalf("container %s holds %d accounts, cap is %d", w.ID, count, tc.maxPer)
+			}
+		}
+	})
+
+	t.Run("hosts at most one account per platform per container", func(t *testing.T) {
+		for _, w := range fleet(t) {
+			hosted, err := accounts.ListByWorker(context.Background(), w.ID)
+			if err != nil {
+				t.Fatalf("list accounts on %s: %v", w.ID, err)
+			}
+			seen := map[domain.Platform]bool{}
+			for _, a := range hosted {
+				if seen[a.Platform] {
+					t.Fatalf("container %s hosts two %s accounts", w.ID, a.Platform)
+				}
+				seen[a.Platform] = true
+			}
+		}
+	})
+
+	t.Run("leaves no account unpacked", func(t *testing.T) {
+		all, err := accounts.List(context.Background(), port.AccountFilter{})
+		if err != nil {
+			t.Fatalf("list accounts: %v", err)
+		}
+		for _, a := range all {
+			if a.WorkerID == nil {
+				t.Fatalf("account %s was never packed onto a container", a.ID)
+			}
+		}
+	})
+
+	t.Run("reaps auto-created containers once they drain", func(t *testing.T) {
+		all, err := accounts.List(context.Background(), port.AccountFilter{})
+		if err != nil {
+			t.Fatalf("list accounts: %v", err)
+		}
+		for _, a := range all {
+			if err := p.Release(context.Background(), a.ID); err != nil {
+				t.Fatalf("release %s: %v", a.ID, err)
+			}
+		}
+		if got := len(fleet(t)); got != 0 {
+			t.Fatalf("%d AUTO containers survived a full drain", got)
+		}
+	})
+}
+
+// TestPackScaleFiftyContainers is the P5-01 scale test. It packs a fleet far
+// larger than one container can hold and asserts the two packing invariants
+// (per-container account cap, one account per platform per container) hold
+// across the whole fleet, then that AUTO containers are reaped once they drain.
+//
+// Two shapes cover the quota both as shipped and as documented:
+//   - the PRD shape: 100 accounts over the 2 MVP platforms at quota 2 (the
+//     "100 akun -> ~50 container" figure in PRD.md and the P5-01 ticket), and
+//   - the all-platform shape: 350 accounts over all 7 platforms at quota 7,
+//     which is the same ~50 containers once every platform is live.
+func TestPackScaleFiftyContainers(t *testing.T) {
+	cases := []packScaleCase{
+		{
+			name:           "mvp_2_platforms_quota_2",
+			platforms:      domain.MVPPlatforms,
+			maxPer:         2,
+			wantContainers: 50,
+		},
+		{
+			name:           "all_7_platforms_quota_7",
+			platforms:      domain.AllPlatforms,
+			maxPer:         7,
+			wantContainers: 50,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			runPackScale(t, tc)
+		})
 	}
 }
