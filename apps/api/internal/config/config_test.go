@@ -148,3 +148,61 @@ func TestLoad_RequiresCredentialKeyWithDB(t *testing.T) {
 		t.Fatalf("unexpected error with a key present: %v", err)
 	}
 }
+
+// TestLoad_ReportEmailOptIn guards the P4-06 contract: the digest may be off
+// with no mail server configured, but enabling it without SMTP_ADDR or a
+// recipient list is a misconfiguration that must surface at boot.
+func TestLoad_ReportEmailOptIn(t *testing.T) {
+	t.Setenv("PROVISIONER_MODE", "")
+	t.Setenv("DATABASE_URL", "")
+
+	// Off by default: no SMTP and no recipients is fine.
+	t.Setenv("REPORT_EMAIL_INTERVAL_SECONDS", "0")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.ReportEmailIntervalSeconds != 0 {
+		t.Errorf("default interval = %d, want 0", cfg.ReportEmailIntervalSeconds)
+	}
+	if cfg.ReportEmailWindowDays != 7 {
+		t.Errorf("default window = %d, want 7", cfg.ReportEmailWindowDays)
+	}
+	if cfg.ReportEmailRecipients != nil {
+		t.Errorf("default recipients = %v, want nil", cfg.ReportEmailRecipients)
+	}
+
+	// Enabled with no SMTP_ADDR must fail at Load, not at first tick.
+	t.Setenv("REPORT_EMAIL_INTERVAL_SECONDS", "604800")
+	if _, err := Load(); err == nil {
+		t.Fatal("want error when REPORT_EMAIL_INTERVAL_SECONDS > 0 but SMTP_ADDR is empty")
+	}
+
+	// SMTP present but no recipient is equally broken.
+	t.Setenv("SMTP_ADDR", "mailpit:1025")
+	if _, err := Load(); err == nil {
+		t.Fatal("want error when REPORT_EMAIL_TO is empty")
+	}
+
+	// A valid pair loads, and the recipient list is split+trimmed.
+	t.Setenv("REPORT_EMAIL_TO", " team@x.com , ops@x.com,")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{"team@x.com", "ops@x.com"}
+	if len(cfg.ReportEmailRecipients) != len(want) {
+		t.Fatalf("recipients = %v, want %v", cfg.ReportEmailRecipients, want)
+	}
+	for i := range want {
+		if cfg.ReportEmailRecipients[i] != want[i] {
+			t.Errorf("recipients[%d] = %q, want %q", i, cfg.ReportEmailRecipients[i], want[i])
+		}
+	}
+
+	// A negative window is not a valid look-back.
+	t.Setenv("REPORT_EMAIL_WINDOW_DAYS", "-1")
+	if _, err := Load(); err == nil {
+		t.Fatal("want error for negative REPORT_EMAIL_WINDOW_DAYS")
+	}
+}

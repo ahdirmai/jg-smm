@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 )
 
 // Config is the process-wide configuration.
@@ -118,6 +119,18 @@ type Config struct {
 	MinioPassword string
 	MinioBucket   string
 	MinioUseSSL   bool
+
+	// SMTP for the weekly report digest (P4-06). The mailer is only constructed
+	// when ReportEmailIntervalSeconds > 0, so a local `make up` never needs a
+	// mail server. The ticket's cadence is weekly (604800s).
+	SmtpAddr                   string
+	SmtpHost                   string
+	SmtpFrom                   string
+	SmtpUsername               string
+	SmtpPassword               string
+	ReportEmailIntervalSeconds int
+	ReportEmailRecipients      []string
+	ReportEmailWindowDays      int
 }
 
 // Load reads configuration from the environment, applying safe defaults.
@@ -170,6 +183,15 @@ func Load() (Config, error) {
 		MinioPassword: os.Getenv("MINIO_PASSWORD"),
 		MinioBucket:   env("MINIO_BUCKET", "smm-raw"),
 		MinioUseSSL:   envBool("MINIO_USE_SSL", false),
+
+		SmtpAddr:                   env("SMTP_ADDR", ""),
+		SmtpHost:                   env("SMTP_HOST", ""),
+		SmtpFrom:                   env("SMTP_FROM", "reports@smm.local"),
+		SmtpUsername:               os.Getenv("SMTP_USERNAME"),
+		SmtpPassword:               os.Getenv("SMTP_PASSWORD"),
+		ReportEmailIntervalSeconds: envInt("REPORT_EMAIL_INTERVAL_SECONDS", 0),
+		ReportEmailRecipients:      splitList(os.Getenv("REPORT_EMAIL_TO")),
+		ReportEmailWindowDays:      envInt("REPORT_EMAIL_WINDOW_DAYS", 7),
 	}
 
 	if cfg.ProvisionerMode != "static" && cfg.ProvisionerMode != "k8s" {
@@ -207,6 +229,19 @@ func Load() (Config, error) {
 	}
 	if cfg.ActionCooldownSeconds < 0 {
 		return Config{}, fmt.Errorf("config: ACTION_COOLDOWN_SECONDS must be >= 0, got %d", cfg.ActionCooldownSeconds)
+	}
+	// The report digest is opt-in. When it runs it needs a mail server and at
+	// least one recipient; an empty list would silently tick and no-op.
+	if cfg.ReportEmailIntervalSeconds > 0 {
+		if cfg.SmtpAddr == "" {
+			return Config{}, fmt.Errorf("config: SMTP_ADDR is required when REPORT_EMAIL_INTERVAL_SECONDS > 0")
+		}
+		if len(cfg.ReportEmailRecipients) == 0 {
+			return Config{}, fmt.Errorf("config: REPORT_EMAIL_TO is required when REPORT_EMAIL_INTERVAL_SECONDS > 0")
+		}
+	}
+	if cfg.ReportEmailWindowDays < 0 {
+		return Config{}, fmt.Errorf("config: REPORT_EMAIL_WINDOW_DAYS must be >= 0, got %d", cfg.ReportEmailWindowDays)
 	}
 	// The JWT secret is only meaningful once the API talks to the DB (auth on).
 	if cfg.DatabaseURL != "" && len(cfg.JWTSecret) < 16 {
@@ -253,4 +288,23 @@ func envFloat(key string, def float64) float64 {
 		}
 	}
 	return def
+}
+
+// splitList parses a comma-separated env var into a trimmed, de-blanked slice.
+// An empty var yields nil, which the consumer treats as "not configured".
+func splitList(v string) []string {
+	if v == "" {
+		return nil
+	}
+	parts := strings.Split(v, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

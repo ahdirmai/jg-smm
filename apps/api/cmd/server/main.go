@@ -20,6 +20,7 @@ import (
 	apifyadapter "github.com/ahdirmai/jg-smm/apps/api/internal/adapter/apify"
 	"github.com/ahdirmai/jg-smm/apps/api/internal/adapter/crypto"
 	"github.com/ahdirmai/jg-smm/apps/api/internal/adapter/k8s"
+	smtpadapter "github.com/ahdirmai/jg-smm/apps/api/internal/adapter/smtp"
 	storageadapter "github.com/ahdirmai/jg-smm/apps/api/internal/adapter/storage"
 	"github.com/ahdirmai/jg-smm/apps/api/internal/adapter/transport"
 	"github.com/ahdirmai/jg-smm/apps/api/internal/config"
@@ -292,6 +293,28 @@ func main() {
 		reportRepo := repository.NewReportRepo(pg.Queries())
 		reportSvc := service.NewReportService(reportRepo, analyticsRepo, logger)
 		deps.Reports = apihttp.NewReportHandler(reportSvc)
+
+		// Weekly report digest (P4-06): renders the same report the dashboard
+		// shows, attaches the CSV, mails a recipient list. Off by default;
+		// enabled with REPORT_EMAIL_INTERVAL_SECONDS (ticket: weekly = 604800).
+		if cfg.ReportEmailIntervalSeconds > 0 {
+			mailer := smtpadapter.NewMailer(smtpadapter.Config{
+				Addr:     cfg.SmtpAddr,
+				Host:     cfg.SmtpHost,
+				From:     cfg.SmtpFrom,
+				Username: cfg.SmtpUsername,
+				Password: cfg.SmtpPassword,
+			})
+			digest := service.NewReportEmailService(reportSvc, mailer, service.ReportEmailConfig{
+				Recipients: cfg.ReportEmailRecipients,
+				SenderName: "JG Social",
+				WindowDays: cfg.ReportEmailWindowDays,
+				Kind:       service.ExportActions,
+				Clock:      time.Now,
+				Logger:     logger,
+			})
+			go digest.Run(ctx, time.Duration(cfg.ReportEmailIntervalSeconds)*time.Second)
+		}
 
 		// Alert engine (P2-07): views-drop and mention-spike rules over scraped
 		// metrics. Off by default; enabled with ALERT_INTERVAL_SECONDS.

@@ -34,6 +34,9 @@ up: env ## Bring the whole stack up (idempotent), with $(WORKERS) worker replica
 up-obs: env ## Bring the app stack up plus the observability tier (Prometheus/Grafana/Loki/Alertmanager)
 	COMPOSE_PROFILES=obs $(COMPOSE) up -d --scale worker=$(WORKERS)
 
+up-mail: env ## Bring the app stack up plus the local mailpit catcher (P4-06)
+	COMPOSE_PROFILES=mail $(COMPOSE) up -d --scale worker=$(WORKERS)
+
 env: ## Create .env from infra/docker/.env.example if missing
 	@if [ ! -f .env ]; then cp infra/docker/.env.example .env; echo "created .env from example"; fi
 

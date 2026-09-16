@@ -126,6 +126,16 @@ services:
       # set them in production so the 90% alert has a real number to divide.
       APIFY_BUDGET_USD: ${APIFY_BUDGET_USD:-0}
       PROXY_BUDGET_GB: ${PROXY_BUDGET_GB:-0}
+      # P4-06 weekly report digest. Off by default; bring the `mail` profile up
+      # (`COMPOSE_PROFILES=mail make up`) and set the interval to run it.
+      SMTP_ADDR: ${SMTP_ADDR:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_FROM: ${SMTP_FROM:-reports@smm.local}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      REPORT_EMAIL_INTERVAL_SECONDS: ${REPORT_EMAIL_INTERVAL_SECONDS:-0}
+      REPORT_EMAIL_TO: ${REPORT_EMAIL_TO:-}
+      REPORT_EMAIL_WINDOW_DAYS: ${REPORT_EMAIL_WINDOW_DAYS:-7}
     ports:
       - '${API_PORT:-24080}:8080'
     healthcheck:
@@ -229,6 +239,18 @@ services:
       GF_USERS_ALLOW_SIGN_UP: 'false'
     ports:
       - '${GRAFANA_PORT:-24030}:3000'
+
+  # Mailpit catches the weekly report digest locally (P4-06). It is opt-in via
+  # the `mail` profile so a bare `make up` never needs a mail server.
+  mailpit:
+    image: axllent/mailpit:latest
+    profiles: ['mail']
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: 'true'
+      MP_SMTP_AUTH_ALLOW_INSECURE: 'true'
+    ports:
+      - '${MAILPIT_SMTP_PORT:-24025}:1025'
+      - '${MAILPIT_UI_PORT:-24026}:8025'
 
 volumes:
   pgdata:
