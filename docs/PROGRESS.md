@@ -78,6 +78,37 @@
 - Empty pool is `ErrTemplatePoolEmpty`, not a fallback to a repeated variant: repeating a comment on one target is what dedupe exists to prevent, so the honest action is to skip.
 - `ScreenBanned` (denylist screen) ships on the service for P3-03 to wrap into the screening pipeline; the per-template denylist column belongs to the pool here.
 
+
+## P4 — Dashboard Polish & Operations UX
+
+| Ticket | Title | Status | Commit | Date | Notes |
+| ------ | ----- | ------ | ------ | ---- | ----- |
+| P4-01 | ContainerCard (container + accounts) | DONE | `b05da97` | 2026-09 | `apps/web/app/workers/page.tsx` container grid with child account rows; ops Pause/Resume/Remove wired to the provisioning API. `use-containers` hook owns fetch + mutation |
+| P4-02 | Job Queue virtualized | DONE | `b05da97` | 2026-09 | `use-virtual-window.ts` (own minimal virtualizer, `@tanstack/react-virtual` not added — no chart/virtual lib in deps by design) renders >1000 queue rows; attempt drawer shows screenshot + excerpt per attempt |
+| P4-03 | SSE realtime lengkap | DONE | `cde5816` | 2026-09 | `action-updated` frame added to the SSE stream contract (`port.Stream`, `packages/shared/src/stream.ts`); job service publishes on terminal callback so queue/list mutate without refetch. Reconnect-with-reference already handled by the SSE hook |
+| P4-04 | Report builder | DONE | `f253485` | 2026-09 | `/api/reports` OpenAPI contract (265 lines) + regenerated Go/TS types; `apps/web/app/reports/page.tsx` picks account/post x range x metric, renders table + the dependency-free SVG `TrendChart`. 166 lines of report-service tests |
+| P4-05 | Export CSV/JSON | DONE | `f253485` | 2026-09 | Export from the report builder; JSON mirrors the on-screen rows, CSV flattens the metric map. Large datasets streamed, not buffered |
+| P4-07 | Bulk import CSV | DONE | `5ab1c6b` | 2026-09 | `ImportAccounts` service: max 100 rows, per-row validation, `{queued,invalid,rate_limit}` response; `import-accounts-dialog.tsx` with progress over SSE; challenge queue reuses the action queue |
+| P4-09 | RBAC UI per role | DONE | `3bce80f` | 2026-09 | `lib/auth/permissions.ts` role->permission map; `use-session` exposes role; `dashboard-shell` hides/disables nav + actions per role. ponytail: `/api` group requires `act` perm, so STRATEGIST/ANALYST get 403 on reads — server-side gap, out of this ticket's scope |
+| P4-10 | Storybook + a11y | DONE | `37d2103` | 2026-09 | `.storybook/main.ts` + `preview.tsx` with `@storybook/addon-a11y`; stories for custom components (`TrendChart`, badges, cards) and UI primitives. a11y play uses raw DOM asserts — `@storybook/test` is not installed |
+
+### P4 wiring
+
+- `dashboard-shell.tsx` gained the Reports nav entry and per-role gating in the same pass.
+- All P4 FE work reuses `packages/shared` generated types — no hand-written request/response shapes.
+
+---
+
+## P5 — Scale, Security & GA Readiness
+
+| Ticket | Title | Status | Commit | Date | Notes |
+| ------ | ----- | ------ | ------ | ---- | ----- |
+| P5-02 | Health score + quarantine | DONE | `d73e134` | 2026-09 | `health_score.go` policy: score 0-100, auto-quarantine <30, anti-flapping (3 restarts/10m). `health_score_wire.go` applies on the job service; `IsPackable` rejects QUARANTINED; `Resume` is the manual reset (score->100). 3 test files, 8+ cases |
+| P5-03 | Observability lengkap | DONE | `4077f43` | 2026-09 | `/metrics` Prometheus endpoint via `internal/obs/metrics.go`; alert rules in `infra/obs/`; `make up-obs` profile brings Grafana + Prometheus. Metric names: action success/failure, queue depth, quarantine count |
+| P5-05 | Backup & restore | DONE | `d593530` | 2026-09 | `infra/backup/` scripts: Postgres WAL basebackup + PITR, MinIO mirror, session PVC snapshot; DR drill script asserts restore < 30 min. `docs/BACKUP.md` documents RPO/RTO |
+| P5-06 | Runbook + severity matrix | DONE | `d593530` | 2026-09 | 13 runbooks in `infra/runbooks/` (one per alert: postgres/redis/minio unhealthy, crashloop, auth-failure, rate-limit, reconciler drift) + `docs/SEVERITY.md` SEV1-SEV4 with on-call escalation |
+| P5-08 | Cost monitoring | DONE | `4077f43` | 2026-09 | `apify_run_cost_usd_total` + `proxy_bytes_used_total` counters; `APIFY_BUDGET_USD` / `PROXY_BUDGET_GB` ceilings with 90% alert rules and 6 cost runbooks (`infra/runbooks/README.md` indexes them) |
+
 ---
 
 ## P0 — Foundation & Walking Skeleton
