@@ -13,6 +13,8 @@ export interface HeartbeatPayload {
   browserStatus: 'starting' | 'idle' | 'busy';
   queueDepth: number;
   lastActionAt: string | null;
+  /** Browser-reachable noVNC URL, or null when unpublished (P4-08). */
+  novncUrl?: string | null;
 }
 
 export interface HeartbeatOptions {

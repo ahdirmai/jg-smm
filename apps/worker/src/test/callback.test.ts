@@ -18,6 +18,7 @@ const cfg: WorkerConfig = {
   dryRun: true,
   display: ':99',
   heartbeatIntervalSec: 30,
+  novncUrl: null,
 };
 
 const silentLogger: Logger = {

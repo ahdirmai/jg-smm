@@ -133,6 +133,11 @@ func (h *InternalHandler) heartbeat(c echo.Context) error {
 	if req.LastActionAt != nil {
 		lastAction = req.LastActionAt
 	}
+	var novncURL *string
+	if req.NovncUrl.IsSpecified() && !req.NovncUrl.IsNull() {
+		v := req.NovncUrl.MustGet()
+		novncURL = &v
+	}
 	err := h.jobs.RecordHeartbeat(c.Request().Context(), service.HeartbeatRecord{
 		WorkerID:      req.WorkerId,
 		BrowserStatus: string(ptrBrowser(req.BrowserStatus)),
@@ -142,6 +147,7 @@ func (h *InternalHandler) heartbeat(c echo.Context) error {
 		Mem:           ptrFloat64(req.Mem),
 		JobsDone:      ptrInt(req.JobsDone),
 		LastActionAt:  lastAction,
+		NovncURL:      novncURL,
 	})
 	return h.translate(c, err)
 }

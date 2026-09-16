@@ -1276,6 +1276,10 @@ components:
         createdAt:
           type: string
           format: date-time
+        novncUrl:
+          type: string
+          nullable: true
+          description: Browser-reachable noVNC view URL (P4-08); null when unpublished.
 
     ContainerAccount:
       type: object
@@ -1811,6 +1815,10 @@ components:
         lastActionAt:
           type: string
           format: date-time
+        novncUrl:
+          type: string
+          nullable: true
+          description: Browser-reachable noVNC view URL (P4-08); null when unpublished.
 
     EnqueueActionsRequest:
       type: object

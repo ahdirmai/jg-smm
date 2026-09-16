@@ -257,6 +257,9 @@ type HeartbeatRecord struct {
 	Mem           float64
 	JobsDone      int
 	LastActionAt  *time.Time
+	// NovncURL is the browser-reachable live-view URL (P4-08). A pointer so an
+	// absent field is distinguishable from an explicitly cleared one.
+	NovncURL *string
 }
 
 // RecordHeartbeat appends telemetry and refreshes the denormalised worker row.
@@ -282,6 +285,7 @@ func (s *JobService) RecordHeartbeat(ctx context.Context, r HeartbeatRecord) err
 		BrowserStatus: defaultStr(r.BrowserStatus, w.BrowserStatus),
 		QueueDepth:    r.QueueDepth,
 		CurrentJobID:  r.CurrentJobID,
+		NovncURL:      r.NovncURL,
 	}
 	if err := s.workers.RecordHeartbeat(ctx, hb, snap); err != nil {
 		return fmt.Errorf("record heartbeat: %w", err)

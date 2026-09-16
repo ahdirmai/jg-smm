@@ -166,13 +166,21 @@ services:
       PROVISIONER_MODE: ${PROVISIONER_MODE:-static}
       ACTION_DRY_RUN: ${ACTION_DRY_RUN:-true}
       PLATFORMS: ${WORKER_PLATFORMS:-instagram,threads}
+      # P4-08 live view. NOVNC_URL wins when the operator knows the exact
+      # reachable address; NOVNC_BASE_URL + the container's NOVNC_PORT is the
+      # shared-host form. Empty = unpublished; the dashboard hides the button.
+      NOVNC_URL: ${WORKER_NOVNC_URL:-}
+      NOVNC_BASE_URL: ${WORKER_NOVNC_BASE_URL:-}
+      NOVNC_PORT: ${WORKER_NOVNC_PORT:-6080}
     volumes:
       - sessions:/data/sessions
       - screenshots:/data/screenshots
-    # noVNC live screen is localhost-only and must not collide across replicas,
-    # so it is intentionally NOT published here. Attach on demand:
-    #   docker compose exec worker bash
+    # noVNC live screen. Published per-replica: compose assigns a unique host
+    # port automatically, so `--scale worker=N` never collides. The worker
+    # reports its own reachable URL via NOVNC_URL/NOVNC_BASE_URL (P4-08).
     expose:
+      - '6080'
+    ports:
       - '6080'
 
   web:

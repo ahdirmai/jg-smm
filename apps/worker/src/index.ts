@@ -72,6 +72,7 @@ const heartbeat = createHeartbeat(
     browserStatus: 'idle',
     queueDepth: state.queueDepth,
     lastActionAt: state.lastActionAt,
+    ...(config.novncUrl ? { novncUrl: config.novncUrl } : {}),
   }),
 );
 heartbeat.start();

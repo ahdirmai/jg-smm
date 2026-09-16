@@ -15,11 +15,22 @@ import {
   Input,
   Label,
 } from '@smm/ui';
-import { AlertCircle, MoreVertical, Pause, Play, Plus, Server, Trash2 } from 'lucide-react';
+import {
+  AlertCircle,
+  MoreVertical,
+  MonitorPlay,
+  Pause,
+  Play,
+  Plus,
+  Server,
+  Trash2,
+} from 'lucide-react';
 import { useMemo, useState } from 'react';
 
 import { useAccounts } from '@/lib/hooks/use-accounts';
 import { useContainers } from '@/lib/hooks/use-containers';
+import { useLiveTicker } from '@/lib/hooks/use-live-ticker';
+import { LiveBrowserModal } from '@/components/live-browser-modal';
 import { PLATFORM_LABEL } from '@/lib/platforms';
 import type { Container } from '@/lib/api';
 import { useSession } from '@/lib/auth/session-context';
@@ -46,9 +57,12 @@ function containerTone(
 export default function WorkersPage() {
   const { containers, loading, error, create, remove } = useContainers();
   const { setStatus, remove: removeAccount } = useAccounts();
+  const ticker = useLiveTicker();
   const session = useSession();
   const role = session.status === 'authenticated' ? session.role : undefined;
   const canAct = can(role, 'act');
+
+  const [live, setLive] = useState<{ name: string; url: string } | null>(null);
 
   const [name, setName] = useState('');
   const [region, setRegion] = useState('');
@@ -108,6 +122,8 @@ export default function WorkersPage() {
         </div>
       ) : null}
 
+      <LiveTicker ticker={ticker} />
+
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {containers.length === 0 && !loading ? (
           <Card className="col-span-full">
@@ -133,25 +149,38 @@ export default function WorkersPage() {
                       {c.id.slice(0, 8)} · {c.region}
                     </CardDescription>
                   </div>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon" className="size-8" disabled={!canAct}>
-                        <MoreVertical className="size-4" />
-                        <span className="sr-only">Open container menu</span>
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem
-                        className="text-destructive"
-                        disabled={busy === c.id || (c.accounts?.length ?? 0) > 0}
-                        onClick={() => onAct(c.id, remove)}
+                  <div className="flex items-center gap-1">
+                    {c.novncUrl ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8"
+                        onClick={() => setLive({ name: c.name, url: c.novncUrl as string })}
                       >
-                        <Trash2 />
-                        Delete
-                        {(c.accounts?.length ?? 0) > 0 ? ' (remove accounts first)' : ''}
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+                        <MonitorPlay className="size-3.5" />
+                        Live view
+                      </Button>
+                    ) : null}
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon" className="size-8" disabled={!canAct}>
+                          <MoreVertical className="size-4" />
+                          <span className="sr-only">Open container menu</span>
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem
+                          className="text-destructive"
+                          disabled={busy === c.id || (c.accounts?.length ?? 0) > 0}
+                          onClick={() => onAct(c.id, remove)}
+                        >
+                          <Trash2 />
+                          Delete
+                          {(c.accounts?.length ?? 0) > 0 ? ' (remove accounts first)' : ''}
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-2 pt-1">
                   <Badge variant={containerTone(c.status)}>{c.status}</Badge>
@@ -275,6 +304,62 @@ export default function WorkersPage() {
           </form>
         </CardContent>
       </Card>
+
+      <LiveBrowserModal
+        open={live !== null}
+        onOpenChange={(open) => {
+          if (!open) setLive(null);
+        }}
+        url={live?.url ?? ''}
+        workerName={live?.name ?? ''}
+      />
+    </div>
+  );
+}
+
+/**
+ * Live ticker (P4-08). A compact, auto-scrolling tail of the SSE stream. It
+ * doubles as a connection health indicator: an empty list with a green dot
+ * means connected-but-quiet, a grey dot means the stream is down.
+ */
+function LiveTicker({ ticker }: { ticker: ReturnType<typeof useLiveTicker> }) {
+  const { items, connected } = ticker;
+  return (
+    <div className="rounded-md border bg-card/60 p-3">
+      <div className="mb-2 flex items-center gap-2">
+        <span
+          className={`inline-block size-2 rounded-full ${connected ? 'bg-emerald-500' : 'bg-muted-foreground/40'}`}
+          aria-hidden
+        />
+        <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          Live activity
+        </span>
+        <span className="ml-auto text-xs text-muted-foreground">
+          {connected ? 'streaming' : 'reconnecting…'}
+        </span>
+      </div>
+      {items.length === 0 ? (
+        <p className="py-2 text-center text-xs text-muted-foreground">
+          No events yet. Worker heartbeats, account updates and action results appear here.
+        </p>
+      ) : (
+        <ol className="space-y-1">
+          {items.slice(0, 8).map((item) => (
+            <li
+              key={item.id}
+              className="flex items-center gap-2 font-mono text-xs text-muted-foreground"
+            >
+              <span className="tabular-nums text-muted-foreground/60">
+                {new Date(item.at).toLocaleTimeString()}
+              </span>
+              <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase">
+                {item.kind.replace('-updated', '').replace('worker-', '')}
+              </span>
+              <span className="truncate">{item.label}</span>
+            </li>
+          ))}
+        </ol>
+      )}
     </div>
   );
 }

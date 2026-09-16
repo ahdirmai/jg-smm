@@ -799,6 +799,8 @@ export interface components {
             accounts?: components["schemas"]["ContainerAccount"][];
             /** Format: date-time */
             createdAt: string;
+            /** @description Browser-reachable noVNC view URL (P4-08); null when unpublished. */
+            novncUrl?: string | null;
         };
         ContainerAccount: {
             id: string;
@@ -1059,6 +1061,8 @@ export interface components {
             jobsDone?: number;
             /** Format: date-time */
             lastActionAt?: string;
+            /** @description Browser-reachable noVNC view URL (P4-08); null when unpublished. */
+            novncUrl?: string | null;
         };
         /** @description A batch of intents. Comment text is deliberately absent: it is composed
          *     from the template pool at dispatch (P3-02) and denylist-screened before

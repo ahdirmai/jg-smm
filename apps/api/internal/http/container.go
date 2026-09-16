@@ -134,5 +134,8 @@ func toContainerResponse(cv service.ContainerView, accounts []service.AccountSum
 		})
 	}
 	out.Accounts = &accs
+	if cv.NovncURL != "" {
+		out.NovncUrl = nullable.NewNullableWithValue[string](cv.NovncURL)
+	}
 	return out
 }

@@ -158,6 +158,9 @@ type ContainerView struct {
 	ObservedGen  *int
 	Accounts     []AccountSummary
 	CreatedAt    time.Time
+	// NovncURL is the browser-reachable live-view URL (P4-08), or empty when
+	// the worker has not reported one (unpublished or pre-heartbeat).
+	NovncURL string
 }
 
 // ToContainerView builds the read model for a single worker. Exported so the
@@ -188,6 +191,7 @@ func toContainerView(w domain.Worker, accounts []domain.Account) ContainerView {
 		ObservedGen:  w.ObservedGen,
 		Accounts:     views,
 		CreatedAt:    w.CreatedAt,
+		NovncURL:     derefStrPtr(w.NoVNCService),
 	}
 }
 

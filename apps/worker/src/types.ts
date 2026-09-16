@@ -55,4 +55,10 @@ export interface WorkerConfig {
   display: string;
   /** Seconds between heartbeats. */
   heartbeatIntervalSec: number;
+  /**
+   * Browser-reachable URL of this worker's noVNC view (P4-08), or null when
+   * the live view is not published. Reported in the heartbeat so the dashboard
+   * can open a LiveBrowserModal without guessing the host.
+   */
+  novncUrl: string | null;
 }

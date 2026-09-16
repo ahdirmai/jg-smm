@@ -423,16 +423,19 @@ type CommentTemplate struct {
 
 // Container defines model for Container.
 type Container struct {
-	Accounts           *[]ContainerAccount    `json:"accounts,omitempty"`
-	CreatedAt          time.Time              `json:"createdAt"`
-	DesiredState       ContainerDesiredState  `json:"desiredState"`
-	Generation         int                    `json:"generation"`
-	Id                 string                 `json:"id"`
-	Name               string                 `json:"name"`
-	ObservedGeneration nullable.Nullable[int] `json:"observedGeneration,omitempty"`
-	Region             string                 `json:"region"`
-	Source             ContainerSource        `json:"source"`
-	Status             ContainerStatus        `json:"status"`
+	Accounts     *[]ContainerAccount   `json:"accounts,omitempty"`
+	CreatedAt    time.Time             `json:"createdAt"`
+	DesiredState ContainerDesiredState `json:"desiredState"`
+	Generation   int                   `json:"generation"`
+	Id           string                `json:"id"`
+	Name         string                `json:"name"`
+
+	// NovncUrl Browser-reachable noVNC view URL (P4-08); null when unpublished.
+	NovncUrl           nullable.Nullable[string] `json:"novncUrl,omitempty"`
+	ObservedGeneration nullable.Nullable[int]    `json:"observedGeneration,omitempty"`
+	Region             string                    `json:"region"`
+	Source             ContainerSource           `json:"source"`
+	Status             ContainerStatus           `json:"status"`
 }
 
 // ContainerDesiredState defines model for Container.DesiredState.
@@ -572,8 +575,11 @@ type Heartbeat struct {
 	JobsDone      *int                    `json:"jobsDone,omitempty"`
 	LastActionAt  *time.Time              `json:"lastActionAt,omitempty"`
 	Mem           *float64                `json:"mem,omitempty"`
-	QueueDepth    *int                    `json:"queueDepth,omitempty"`
-	WorkerId      string                  `json:"workerId"`
+
+	// NovncUrl Browser-reachable noVNC view URL (P4-08); null when unpublished.
+	NovncUrl   nullable.Nullable[string] `json:"novncUrl,omitempty"`
+	QueueDepth *int                      `json:"queueDepth,omitempty"`
+	WorkerId   string                    `json:"workerId"`
 }
 
 // HeartbeatBrowserStatus defines model for Heartbeat.BrowserStatus.

@@ -54,6 +54,7 @@ UPDATE worker SET
     status         = $3,
     browser_status = $4,
     queue_depth    = $5,
-    current_job_id = $6
+    current_job_id = $6,
+    novnc_service  = $7
 WHERE id = $1
 RETURNING *;

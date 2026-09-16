@@ -36,6 +36,8 @@ type WorkerSnapshot struct {
 	BrowserStatus string
 	QueueDepth    int
 	CurrentJobID  *string
+	// NovncURL is the browser-reachable live-view URL (P4-08). nil = unset.
+	NovncURL *string
 }
 
 // AccountFilter narrows an account list query.

@@ -251,7 +251,8 @@ UPDATE worker SET
     status         = $3,
     browser_status = $4,
     queue_depth    = $5,
-    current_job_id = $6
+    current_job_id = $6,
+    novnc_service  = $7
 WHERE id = $1
 RETURNING id, name, container_id, control_channel, action_queue, session_pvc, novnc_service, desired_state, source, region, status, generation, observed_gen, provision_err, browser_status, current_job_id, last_heartbeat, last_action_at, last_error, queue_depth, restart_count, image_version, created_at
 `
@@ -263,6 +264,7 @@ type TouchWorkerHeartbeatParams struct {
 	BrowserStatus string             `json:"browser_status"`
 	QueueDepth    int32              `json:"queue_depth"`
 	CurrentJobID  pgtype.UUID        `json:"current_job_id"`
+	NovncService  *string            `json:"novnc_service"`
 }
 
 func (q *Queries) TouchWorkerHeartbeat(ctx context.Context, arg TouchWorkerHeartbeatParams) (Worker, error) {
@@ -273,6 +275,7 @@ func (q *Queries) TouchWorkerHeartbeat(ctx context.Context, arg TouchWorkerHeart
 		arg.BrowserStatus,
 		arg.QueueDepth,
 		arg.CurrentJobID,
+		arg.NovncService,
 	)
 	var i Worker
 	err := row.Scan(

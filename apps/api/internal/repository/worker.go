@@ -149,6 +149,7 @@ func (r *WorkerRepo) RecordHeartbeat(ctx context.Context, hb domain.Heartbeat, s
 		BrowserStatus: snap.BrowserStatus,
 		QueueDepth:    int32(snap.QueueDepth),
 		CurrentJobID:  uuidValuePtr(snap.CurrentJobID),
+		NovncService:  snap.NovncURL,
 	}); err != nil {
 		return fmt.Errorf("repository.worker.RecordHeartbeat touch: %w", err)
 	}

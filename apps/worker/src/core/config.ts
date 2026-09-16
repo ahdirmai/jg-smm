@@ -34,5 +34,27 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
       env.HEARTBEAT_INTERVAL_SEC,
       DEFAULT_HEARTBEAT_INTERVAL_SEC,
     ),
+    novncUrl: parseNovncUrl(env),
   };
+}
+
+/**
+ * Resolve the browser-reachable noVNC URL (P4-08).
+ *
+ * The container always runs noVNC on NOVNC_PORT (6080), but the *browser*
+ * reaches it through whatever the operator published. The worker cannot
+ * discover its own published host port from inside the container, so the URL
+ * is explicit config:
+ *   NOVNC_URL=http://localhost:6080   (full URL, wins when set)
+ *   NOVNC_BASE_URL=http://localhost     (+ NOVNC_PORT, for a shared host)
+ * When neither is set the live view is not published and the value is null —
+ * the dashboard then hides the modal rather than linking to a dead URL.
+ */
+export function parseNovncUrl(env: NodeJS.ProcessEnv): string | null {
+  const full = env.NOVNC_URL?.trim();
+  if (full) return full.replace(/\/+$/, '');
+  const base = env.NOVNC_BASE_URL?.trim();
+  if (!base) return null;
+  const port = parsePositiveInt(env.NOVNC_PORT, 6080);
+  return `${base.replace(/\/+$/, '')}:${port}`;
 }

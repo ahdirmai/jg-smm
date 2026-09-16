@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { loadConfig, parsePlatforms, parsePositiveInt } from '../core/config.js';
+import { loadConfig, parseNovncUrl, parsePlatforms, parsePositiveInt } from '../core/config.js';
 import { computeJitter } from '../core/controller.js';
 import { getAdapter, supportedPlatforms } from '../platforms/registry.js';
 
@@ -32,6 +32,26 @@ test('loadConfig applies defaults and trims the API url', () => {
   assert.equal(cfg.dryRun, false);
   assert.equal(cfg.heartbeatIntervalSec, 30);
   assert.deepEqual(cfg.platforms, ['instagram', 'threads']);
+});
+
+test('parseNovncUrl resolves the live view URL or null when unpublished', () => {
+  // Nothing configured: the live view is not published, so the value is null
+  // and the dashboard hides the modal instead of linking to a dead URL.
+  assert.equal(parseNovncUrl({}), null);
+  assert.equal(parseNovncUrl({ NOVNC_BASE_URL: '' }), null);
+
+  // A full URL wins and is trailing-slash normalised.
+  assert.equal(parseNovncUrl({ NOVNC_URL: 'http://localhost:6080/' }), 'http://localhost:6080');
+
+  // Base + port compose; an invalid port falls back to 6080.
+  assert.equal(
+    parseNovncUrl({ NOVNC_BASE_URL: 'http://worker-1/', NOVNC_PORT: '16080' }),
+    'http://worker-1:16080',
+  );
+  assert.equal(
+    parseNovncUrl({ NOVNC_BASE_URL: 'http://worker-1', NOVNC_PORT: 'junk' }),
+    'http://worker-1:6080',
+  );
 });
 
 test('computeJitter stays within the range and is injectable', () => {
