@@ -1017,4 +1017,7 @@ type Worker struct {
 	RestartCount   int32              `json:"restart_count"`
 	ImageVersion   string             `json:"image_version"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	Location       *string            `json:"location"`
+	Latitude       *float64           `json:"latitude"`
+	Longitude      *float64           `json:"longitude"`
 }

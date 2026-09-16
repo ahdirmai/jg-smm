@@ -428,14 +428,25 @@ type Container struct {
 	DesiredState ContainerDesiredState `json:"desiredState"`
 	Generation   int                   `json:"generation"`
 	Id           string                `json:"id"`
-	Name         string                `json:"name"`
+
+	// Latitude Frozen GPS latitude inside the city radius.
+	Latitude nullable.Nullable[float64] `json:"latitude,omitempty"`
+
+	// Location City the worker is anchored to; null on pre-geolocation rows.
+	Location nullable.Nullable[string] `json:"location,omitempty"`
+
+	// Longitude Frozen GPS longitude inside the city radius.
+	Longitude nullable.Nullable[float64] `json:"longitude,omitempty"`
+	Name      string                     `json:"name"`
 
 	// NovncUrl Browser-reachable noVNC view URL (P4-08); null when unpublished.
 	NovncUrl           nullable.Nullable[string] `json:"novncUrl,omitempty"`
 	ObservedGeneration nullable.Nullable[int]    `json:"observedGeneration,omitempty"`
-	Region             string                    `json:"region"`
-	Source             ContainerSource           `json:"source"`
-	Status             ContainerStatus           `json:"status"`
+
+	// Region ISO 3166-1 alpha-2 country code the worker operates in.
+	Region string          `json:"region"`
+	Source ContainerSource `json:"source"`
+	Status ContainerStatus `json:"status"`
 }
 
 // ContainerDesiredState defines model for Container.DesiredState.
@@ -485,6 +496,9 @@ type CreateAccountRequestPlatform string
 
 // CreateContainerRequest defines model for CreateContainerRequest.
 type CreateContainerRequest struct {
+	// Location City the worker operates from; picks the GPS radius to randomize a frozen coordinate from. One of GET /api/locations.
+	Location string `json:"location"`
+
 	// Name Optional display name. Omit to get a generated name.
 	Name *string `json:"name,omitempty"`
 
@@ -610,6 +624,21 @@ type ImportResult struct {
 
 // JobStatus The queue-side status; the verdict lives on the attempt.
 type JobStatus string
+
+// Location defines model for Location.
+type Location struct {
+	// Latitude City centre latitude.
+	Latitude float64 `json:"latitude"`
+
+	// Longitude City centre longitude.
+	Longitude float64 `json:"longitude"`
+
+	// Name City name; the value CreateContainerRequest.location takes.
+	Name string `json:"name"`
+
+	// RadiusKm Radius the API randomizes a worker's frozen point within.
+	RadiusKm float64 `json:"radiusKm"`
+}
 
 // LoginRequest defines model for LoginRequest.
 type LoginRequest struct {
@@ -764,6 +793,15 @@ type User struct {
 	Id    string              `json:"id"`
 	Name  string              `json:"name"`
 	Role  Role                `json:"role"`
+}
+
+// WorkerGeolocation defines model for WorkerGeolocation.
+type WorkerGeolocation struct {
+	Latitude float64 `json:"latitude"`
+
+	// Location The city the point was randomized within.
+	Location  *string `json:"location,omitempty"`
+	Longitude float64 `json:"longitude"`
 }
 
 // AccountId defines model for AccountId.

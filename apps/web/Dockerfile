@@ -15,6 +15,13 @@ RUN pnpm install --frozen-lockfile
 # ---- build ----
 FROM deps AS build
 WORKDIR /repo
+# NEXT_PUBLIC_* is inlined into the client bundle at build time, so it cannot
+# be fixed up at runtime. Bake the local dev port in by default; CI overrides
+# it with a build arg.
+ARG NEXT_PUBLIC_API_URL=http://localhost:24080
+ARG NEXT_PUBLIC_SSE_URL=http://localhost:24080/api/stream
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL} \
+    NEXT_PUBLIC_SSE_URL=${NEXT_PUBLIC_SSE_URL}
 COPY . .
 # Build workspace deps first, then the Next standalone output.
 RUN pnpm --filter @smm/shared build \

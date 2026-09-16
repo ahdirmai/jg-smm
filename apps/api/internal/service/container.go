@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math/rand"
 	"strings"
 	"time"
 
@@ -20,6 +21,7 @@ type ContainerService struct {
 	accounts port.AccountStore
 	packer   *Packer
 	clock    port.Clock
+	rnd      *rand.Rand
 	logger   *slog.Logger
 }
 
@@ -43,14 +45,17 @@ func NewContainerService(workers port.WorkerStore, accounts port.AccountStore, p
 		accounts: accounts,
 		packer:   packer,
 		clock:    cfg.Clock,
-		logger:   cfg.Logger,
+		// Per-worker coordinates are chosen once; a fresh source per service is
+		// fine because stability is per-worker, not per-process.
+		rnd:    rand.New(rand.NewSource(time.Now().UnixNano())),
+		logger: cfg.Logger,
 	}
 }
 
 // Create inserts a MANUAL container in the RUNNING desired state. The operator
 // owns its whole life: it is never auto-deleted, even at zero accounts.
 // An empty name gets a generated unique one.
-func (s *ContainerService) Create(ctx context.Context, name, region string) (domain.Worker, error) {
+func (s *ContainerService) Create(ctx context.Context, name, region, location string) (domain.Worker, error) {
 	if region == "" {
 		return domain.Worker{}, fmt.Errorf("%w: region is required", domain.ErrValidation)
 	}
@@ -59,6 +64,17 @@ func (s *ContainerService) Create(ctx context.Context, name, region string) (dom
 	if len(region) != 2 || region != strings.ToUpper(region) {
 		return domain.Worker{}, fmt.Errorf("%w: region must be ISO 3166-1 alpha-2 (two uppercase letters)", domain.ErrValidation)
 	}
+	if location == "" {
+		return domain.Worker{}, fmt.Errorf("%w: location is required", domain.ErrValidation)
+	}
+	city, ok := domain.FindCity(location)
+	if !ok {
+		return domain.Worker{}, fmt.Errorf("%w: unknown location %q", domain.ErrValidation, location)
+	}
+	// A worker is anchored to one randomized point inside its city and keeps
+	// it: a stable GPS fingerprint reads as a real account, a jumping one does
+	// not. See domain.City.RandomPoint.
+	lat, lng := city.RandomPoint(s.rnd)
 	if name == "" {
 		name = newWorkerName(s.clock)
 	}
@@ -74,6 +90,9 @@ func (s *ContainerService) Create(ctx context.Context, name, region string) (dom
 		DesiredState:   domain.DesiredRunning,
 		Source:         domain.SourceManual,
 		Region:         region,
+		Location:       &location,
+		Latitude:       &lat,
+		Longitude:      &lng,
 		Status:         domain.WorkerPending,
 		Generation:     1,
 		ImageVersion:   "v0.1",
@@ -156,11 +175,17 @@ type ContainerView struct {
 	DesiredState domain.DesiredState
 	Source       domain.WorkerSource
 	Region       string
-	Status       domain.WorkerStatus
-	Generation   int
-	ObservedGen  *int
-	Accounts     []AccountSummary
-	CreatedAt    time.Time
+	// Location + Latitude/Longitude are the worker's frozen GPS point: the city
+	// it operates from and one randomized coordinate inside it. Empty on rows
+	// created before worker geolocation existed.
+	Location    *string
+	Latitude    *float64
+	Longitude   *float64
+	Status      domain.WorkerStatus
+	Generation  int
+	ObservedGen *int
+	Accounts    []AccountSummary
+	CreatedAt   time.Time
 	// NovncURL is the browser-reachable live-view URL (P4-08), or empty when
 	// the worker has not reported one (unpublished or pre-heartbeat).
 	NovncURL string
@@ -189,6 +214,9 @@ func toContainerView(w domain.Worker, accounts []domain.Account) ContainerView {
 		DesiredState: w.DesiredState,
 		Source:       w.Source,
 		Region:       w.Region,
+		Location:     w.Location,
+		Latitude:     w.Latitude,
+		Longitude:    w.Longitude,
 		Status:       w.Status,
 		Generation:   w.Generation,
 		ObservedGen:  w.ObservedGen,

@@ -13,6 +13,7 @@ import { createHeartbeat, type HeartbeatPayload } from './core/heartbeat.js';
 import { createController } from './core/controller.js';
 import { clearAuthContext, runLogin, submitAuthInput } from './core/auth.js';
 import { launchBrowser, newAccountContext, type BrowserHandle } from './core/browser.js';
+import { createGeolocation } from './core/geolocation.js';
 import { readSession } from './core/session.js';
 import { createCallback } from './transport/callback.js';
 import { createQueueConsumer } from './transport/queue.js';
@@ -44,6 +45,14 @@ const callback = createCallback(config, logger);
 const queue = createQueueConsumer(config.redisUrl, config.workerId, logger);
 const control = createControlSubscriber(config.redisUrl, config.workerId, logger);
 
+// The worker's frozen GPS point, read once from the API. Best-effort: a worker
+// with no assigned location keeps the real device position (see geolocation.ts).
+const geolocation = createGeolocation({
+  apiUrl: config.apiUrl,
+  workerId: config.workerId,
+  logger,
+});
+
 // One headful browser per container, launched lazily: in dry-run (the compose
 // default) no page is ever opened, so a dev box without Xvfb still boots clean.
 let browserHandle: BrowserHandle | undefined;
@@ -58,8 +67,14 @@ const controller = createController({
   contextFor: async (job) =>
     // A fresh context per job is the isolation boundary (P3-07); the session
     // persisted by login is hydrated from the PVC so a restart needs no
-    // re-login (§7.1).
-    newAccountContext(await browser(), job.platform, await readSession(job.platform)),
+    // re-login (§7.1). The context is pinned to the worker's frozen GPS point
+    // so every page in the session reports the same position.
+    newAccountContext(
+      await browser(),
+      job.platform,
+      await readSession(job.platform),
+      await geolocation.get(),
+    ),
 });
 
 // --- heartbeat -----------------------------------------------------------

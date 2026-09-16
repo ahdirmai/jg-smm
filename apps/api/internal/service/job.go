@@ -293,6 +293,37 @@ func (s *JobService) RecordHeartbeat(ctx context.Context, r HeartbeatRecord) err
 	return nil
 }
 
+// WorkerGeolocation is the frozen coordinate the worker spoofs with Playwright.
+// Empty coordinates mean the worker row has no location (a row created before
+// geolocation, or a worker id the API does not know); the caller treats that as
+// "no spoofing" rather than an error.
+type WorkerGeolocation struct {
+	Latitude  float64
+	Longitude float64
+	Location  string
+}
+
+// Geolocation reads the worker's anchored point. A missing worker or a row
+// without a location returns ErrNotFound: the worker falls back to the real GPS
+// of nothing at all (it is a datacentre), which is fine but logged.
+func (s *JobService) Geolocation(ctx context.Context, workerID string) (WorkerGeolocation, error) {
+	if s.workers == nil {
+		return WorkerGeolocation{}, fmt.Errorf("%w: worker store unavailable", domain.ErrUnavailable)
+	}
+	w, err := s.workers.GetByID(ctx, workerID)
+	if err != nil {
+		return WorkerGeolocation{}, fmt.Errorf("lookup worker %s: %w", workerID, err)
+	}
+	if w.Location == nil || w.Latitude == nil || w.Longitude == nil {
+		return WorkerGeolocation{}, fmt.Errorf("%w: worker %s has no location set", domain.ErrNotFound, workerID)
+	}
+	return WorkerGeolocation{
+		Latitude:  *w.Latitude,
+		Longitude: *w.Longitude,
+		Location:  *w.Location,
+	}, nil
+}
+
 // heartbeatStatus derives the reported status: a worker reporting an error browser
 // state is marked ERROR, otherwise its existing status is preserved.
 func (s *JobService) heartbeatStatus(w domain.Worker, r HeartbeatRecord) domain.WorkerStatus {

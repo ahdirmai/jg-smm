@@ -14,6 +14,7 @@ packages/     shared TS constants/types (OpenAPI-generated), shadcn/ui, base tsc
 infra/        docker + k8s manifests, runbooks, load tests
 docs/         spec set: PRD, ERD, system design, dev rules, tickets, ADRs,
               platform briefs, prototype, runbooks index
+              docs/MANUAL_TESTING.md — the pre-release run-through
 docs/adr/     architecture decision records
 docs/tickets/ one file per ticket (generated from docs/TICKETS.md)
 ```
@@ -130,3 +131,6 @@ compose provides a dev default. Roles: `OWNER` / `STRATEGIST` / `OPERATOR` /
 `ANALYST` (see `apps/api/internal/domain/role.go` for the permission matrix).
 
 See `docs/DEVELOPMENT_RULE.md` for conventions and `docs/DEVELOPMENT_PHASE.md` for the roadmap.
+
+Manual, end-to-end run-through of the live stack (containers up, no mocks):
+`docs/MANUAL_TESTING.md`.

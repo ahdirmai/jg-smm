@@ -6,7 +6,7 @@
 
 import type { ApiSchemas } from '@smm/shared';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080';
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:24080';
 
 export type Account = ApiSchemas['Account'];
 export type AccountList = ApiSchemas['AccountList'];
@@ -104,11 +104,13 @@ export const api = {
 
   listContainers: (signal?: AbortSignal) =>
     request<ContainerList>('/api/containers', signal ? { signal } : undefined),
-  createContainer: (name: string, region: string) =>
+  createContainer: (name: string, region: string, location: string) =>
     request<Container>('/api/containers', {
       method: 'POST',
-      body: JSON.stringify({ name, region }),
+      body: JSON.stringify({ name, region, location }),
     }),
+  listLocations: (signal?: AbortSignal) =>
+    request<ApiSchemas['Location'][]>('/api/locations', signal ? { signal } : undefined),
   deleteContainer: (id: string) => request<void>(`/api/containers/${id}`, { method: 'DELETE' }),
 
   // The queue (P3-13). Enqueue is intent only: account + permalink + type.

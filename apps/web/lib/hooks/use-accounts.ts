@@ -6,7 +6,7 @@ import { subscribeStream } from '@smm/shared';
 
 import { api, type Account } from '../api';
 
-const SSE_URL = process.env.NEXT_PUBLIC_SSE_URL ?? 'http://localhost:8080/api/stream';
+const SSE_URL = process.env.NEXT_PUBLIC_SSE_URL ?? 'http://localhost:24080/api/stream';
 
 export type AccountsState = {
   accounts: Account[];

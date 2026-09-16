@@ -90,6 +90,9 @@ func (r *WorkerRepo) Create(ctx context.Context, w domain.Worker) (domain.Worker
 		Status:         sqlcgen.WorkerStatus(w.Status),
 		Generation:     int32(w.Generation),
 		ImageVersion:   w.ImageVersion,
+		Location:       w.Location,
+		Latitude:       w.Latitude,
+		Longitude:      w.Longitude,
 	})
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -178,6 +181,9 @@ func toWorker(r sqlcgen.Worker) domain.Worker {
 		DesiredState:   domain.DesiredState(r.DesiredState),
 		Source:         domain.WorkerSource(r.Source),
 		Region:         r.Region,
+		Location:       r.Location,
+		Latitude:       float64Ptr(r.Latitude),
+		Longitude:      float64Ptr(r.Longitude),
 		Status:         domain.WorkerStatus(r.Status),
 		Generation:     int(r.Generation),
 		ObservedGen:    intPtr(r.ObservedGen),

@@ -128,6 +128,14 @@ func intPtr(p *int32) *int {
 	return ptr(int(*p))
 }
 
+// float64Ptr round-trips a nullable coordinate.
+func float64Ptr(p *float64) *float64 {
+	if p == nil {
+		return nil
+	}
+	return ptr(*p)
+}
+
 func int32Ptr(p *int) *int32 {
 	if p == nil {
 		return nil

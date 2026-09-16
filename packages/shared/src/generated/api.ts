@@ -304,6 +304,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/locations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List selectable worker locations
+         * @description The city list a worker can be anchored to (P-location). The dashboard
+         *     dropdown renders this; the create request validates against it. Each
+         *     city carries the centre the API randomizes a frozen GPS point around.
+         *
+         */
+        get: operations["listLocations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/containers/{containerId}": {
         parameters: {
             query?: never;
@@ -712,6 +735,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/internal/worker/{workerId}/geolocation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read a worker's frozen GPS coordinates
+         * @description Called by the worker once at boot so Playwright can spoof a fixed
+         *     position before any job runs. The point is randomized inside the
+         *     worker's city at create time and never changes, so a worker keeps a
+         *     stable GPS fingerprint. 404 when the worker has no location set.
+         *
+         */
+        get: operations["getWorkerGeolocation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -775,6 +822,14 @@ export interface components {
         CallbackAck: {
             accepted: boolean;
         };
+        WorkerGeolocation: {
+            /** Format: double */
+            latitude: number;
+            /** Format: double */
+            longitude: number;
+            /** @description The city the point was randomized within. */
+            location?: string;
+        };
         CreateContainerRequest: {
             /** @description Optional display name. Omit to get a generated name. */
             name?: string;
@@ -783,6 +838,11 @@ export interface components {
              * @example ID
              */
             region: string;
+            /**
+             * @description City the worker operates from; picks the GPS radius to randomize a frozen coordinate from. One of GET /api/locations.
+             * @example Jakarta
+             */
+            location: string;
         };
         Container: {
             id: string;
@@ -791,7 +851,20 @@ export interface components {
             desiredState: "RUNNING" | "STOPPED";
             /** @enum {string} */
             source: "MANUAL" | "AUTO";
+            /** @description ISO 3166-1 alpha-2 country code the worker operates in. */
             region: string;
+            /** @description City the worker is anchored to; null on pre-geolocation rows. */
+            location?: string | null;
+            /**
+             * Format: double
+             * @description Frozen GPS latitude inside the city radius.
+             */
+            latitude?: number | null;
+            /**
+             * Format: double
+             * @description Frozen GPS longitude inside the city radius.
+             */
+            longitude?: number | null;
             /** @enum {string} */
             status: "PENDING" | "READY" | "IDLE" | "BUSY" | "DRAINING" | "ERROR" | "DEAD" | "QUARANTINED";
             generation: number;
@@ -801,6 +874,28 @@ export interface components {
             createdAt: string;
             /** @description Browser-reachable noVNC view URL (P4-08); null when unpublished. */
             novncUrl?: string | null;
+        };
+        Location: {
+            /**
+             * @description City name; the value CreateContainerRequest.location takes.
+             * @example Jakarta
+             */
+            name: string;
+            /**
+             * Format: double
+             * @description City centre latitude.
+             */
+            latitude: number;
+            /**
+             * Format: double
+             * @description City centre longitude.
+             */
+            longitude: number;
+            /**
+             * Format: double
+             * @description Radius the API randomizes a worker's frozen point within.
+             */
+            radiusKm: number;
         };
         ContainerAccount: {
             id: string;
@@ -1650,6 +1745,28 @@ export interface operations {
             403: components["responses"]["Error"];
         };
     };
+    listLocations: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cities a worker may operate from. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Location"][];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
     deleteContainer: {
         parameters: {
             query?: never;
@@ -2127,6 +2244,29 @@ export interface operations {
                 };
             };
             400: components["responses"]["Error"];
+        };
+    };
+    getWorkerGeolocation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workerId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The worker's frozen coordinate. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkerGeolocation"];
+                };
+            };
+            404: components["responses"]["Error"];
         };
     };
 }

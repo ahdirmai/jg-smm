@@ -15,11 +15,11 @@ const createWorker = `-- name: CreateWorker :one
 INSERT INTO worker (
     name, container_id, control_channel, action_queue, session_pvc,
     novnc_service, desired_state, source, region, status, generation,
-    image_version
+    image_version, location, latitude, longitude
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
 )
-RETURNING id, name, container_id, control_channel, action_queue, session_pvc, novnc_service, desired_state, source, region, status, generation, observed_gen, provision_err, browser_status, current_job_id, last_heartbeat, last_action_at, last_error, queue_depth, restart_count, image_version, created_at
+RETURNING id, name, container_id, control_channel, action_queue, session_pvc, novnc_service, desired_state, source, region, status, generation, observed_gen, provision_err, browser_status, current_job_id, last_heartbeat, last_action_at, last_error, queue_depth, restart_count, image_version, created_at, location, latitude, longitude
 `
 
 type CreateWorkerParams struct {
@@ -35,6 +35,9 @@ type CreateWorkerParams struct {
 	Status         WorkerStatus `json:"status"`
 	Generation     int32        `json:"generation"`
 	ImageVersion   string       `json:"image_version"`
+	Location       *string      `json:"location"`
+	Latitude       *float64     `json:"latitude"`
+	Longitude      *float64     `json:"longitude"`
 }
 
 func (q *Queries) CreateWorker(ctx context.Context, arg CreateWorkerParams) (Worker, error) {
@@ -51,6 +54,9 @@ func (q *Queries) CreateWorker(ctx context.Context, arg CreateWorkerParams) (Wor
 		arg.Status,
 		arg.Generation,
 		arg.ImageVersion,
+		arg.Location,
+		arg.Latitude,
+		arg.Longitude,
 	)
 	var i Worker
 	err := row.Scan(
@@ -77,6 +83,9 @@ func (q *Queries) CreateWorker(ctx context.Context, arg CreateWorkerParams) (Wor
 		&i.RestartCount,
 		&i.ImageVersion,
 		&i.CreatedAt,
+		&i.Location,
+		&i.Latitude,
+		&i.Longitude,
 	)
 	return i, err
 }
@@ -92,7 +101,7 @@ func (q *Queries) DeleteWorker(ctx context.Context, id pgtype.UUID) error {
 
 const getWorkerByID = `-- name: GetWorkerByID :one
 
-SELECT id, name, container_id, control_channel, action_queue, session_pvc, novnc_service, desired_state, source, region, status, generation, observed_gen, provision_err, browser_status, current_job_id, last_heartbeat, last_action_at, last_error, queue_depth, restart_count, image_version, created_at FROM worker WHERE id = $1
+SELECT id, name, container_id, control_channel, action_queue, session_pvc, novnc_service, desired_state, source, region, status, generation, observed_gen, provision_err, browser_status, current_job_id, last_heartbeat, last_action_at, last_error, queue_depth, restart_count, image_version, created_at, location, latitude, longitude FROM worker WHERE id = $1
 `
 
 // Worker (container) lifecycle queries. One worker = one container hosting
@@ -125,12 +134,15 @@ func (q *Queries) GetWorkerByID(ctx context.Context, id pgtype.UUID) (Worker, er
 		&i.RestartCount,
 		&i.ImageVersion,
 		&i.CreatedAt,
+		&i.Location,
+		&i.Latitude,
+		&i.Longitude,
 	)
 	return i, err
 }
 
 const getWorkerByName = `-- name: GetWorkerByName :one
-SELECT id, name, container_id, control_channel, action_queue, session_pvc, novnc_service, desired_state, source, region, status, generation, observed_gen, provision_err, browser_status, current_job_id, last_heartbeat, last_action_at, last_error, queue_depth, restart_count, image_version, created_at FROM worker WHERE name = $1
+SELECT id, name, container_id, control_channel, action_queue, session_pvc, novnc_service, desired_state, source, region, status, generation, observed_gen, provision_err, browser_status, current_job_id, last_heartbeat, last_action_at, last_error, queue_depth, restart_count, image_version, created_at, location, latitude, longitude FROM worker WHERE name = $1
 `
 
 func (q *Queries) GetWorkerByName(ctx context.Context, name string) (Worker, error) {
@@ -160,6 +172,9 @@ func (q *Queries) GetWorkerByName(ctx context.Context, name string) (Worker, err
 		&i.RestartCount,
 		&i.ImageVersion,
 		&i.CreatedAt,
+		&i.Location,
+		&i.Latitude,
+		&i.Longitude,
 	)
 	return i, err
 }
@@ -189,7 +204,7 @@ func (q *Queries) InsertHeartbeat(ctx context.Context, arg InsertHeartbeatParams
 }
 
 const listWorkers = `-- name: ListWorkers :many
-SELECT id, name, container_id, control_channel, action_queue, session_pvc, novnc_service, desired_state, source, region, status, generation, observed_gen, provision_err, browser_status, current_job_id, last_heartbeat, last_action_at, last_error, queue_depth, restart_count, image_version, created_at FROM worker
+SELECT id, name, container_id, control_channel, action_queue, session_pvc, novnc_service, desired_state, source, region, status, generation, observed_gen, provision_err, browser_status, current_job_id, last_heartbeat, last_action_at, last_error, queue_depth, restart_count, image_version, created_at, location, latitude, longitude FROM worker
 ORDER BY created_at DESC
 LIMIT $1 OFFSET $2
 `
@@ -232,6 +247,9 @@ func (q *Queries) ListWorkers(ctx context.Context, arg ListWorkersParams) ([]Wor
 			&i.RestartCount,
 			&i.ImageVersion,
 			&i.CreatedAt,
+			&i.Location,
+			&i.Latitude,
+			&i.Longitude,
 		); err != nil {
 			return nil, err
 		}
@@ -252,7 +270,7 @@ UPDATE worker SET
     current_job_id = $6,
     novnc_service  = $7
 WHERE id = $1
-RETURNING id, name, container_id, control_channel, action_queue, session_pvc, novnc_service, desired_state, source, region, status, generation, observed_gen, provision_err, browser_status, current_job_id, last_heartbeat, last_action_at, last_error, queue_depth, restart_count, image_version, created_at
+RETURNING id, name, container_id, control_channel, action_queue, session_pvc, novnc_service, desired_state, source, region, status, generation, observed_gen, provision_err, browser_status, current_job_id, last_heartbeat, last_action_at, last_error, queue_depth, restart_count, image_version, created_at, location, latitude, longitude
 `
 
 type TouchWorkerHeartbeatParams struct {
@@ -300,6 +318,9 @@ func (q *Queries) TouchWorkerHeartbeat(ctx context.Context, arg TouchWorkerHeart
 		&i.RestartCount,
 		&i.ImageVersion,
 		&i.CreatedAt,
+		&i.Location,
+		&i.Latitude,
+		&i.Longitude,
 	)
 	return i, err
 }
@@ -320,7 +341,7 @@ UPDATE worker SET
     queue_depth    = $13,
     restart_count  = $14
 WHERE id = $1
-RETURNING id, name, container_id, control_channel, action_queue, session_pvc, novnc_service, desired_state, source, region, status, generation, observed_gen, provision_err, browser_status, current_job_id, last_heartbeat, last_action_at, last_error, queue_depth, restart_count, image_version, created_at
+RETURNING id, name, container_id, control_channel, action_queue, session_pvc, novnc_service, desired_state, source, region, status, generation, observed_gen, provision_err, browser_status, current_job_id, last_heartbeat, last_action_at, last_error, queue_depth, restart_count, image_version, created_at, location, latitude, longitude
 `
 
 type UpdateWorkerParams struct {
@@ -382,6 +403,9 @@ func (q *Queries) UpdateWorker(ctx context.Context, arg UpdateWorkerParams) (Wor
 		&i.RestartCount,
 		&i.ImageVersion,
 		&i.CreatedAt,
+		&i.Location,
+		&i.Latitude,
+		&i.Longitude,
 	)
 	return i, err
 }

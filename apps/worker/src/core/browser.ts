@@ -11,6 +11,8 @@ import type { Browser, BrowserContext } from 'playwright';
 
 import type { Platform } from '@smm/shared';
 
+import type { Geolocation } from './geolocation.js';
+
 export interface BrowserHandle {
   browser: Browser;
   close(): Promise<void>;
@@ -57,11 +59,17 @@ export async function launchBrowser(options: LaunchOptions = {}): Promise<Browse
  * Create an isolated context for one account, hydrating a stored session. A
  * fresh context per account is the isolation boundary: cookies never cross
  * accounts inside one container.
+ *
+ * When geolocation is known, the context is pinned to the worker's frozen
+ * coordinate (see geolocation.ts): Playwright then reports that position to
+ * any page that asks, instead of the datacentre's real one. It is set on the
+ * context, not per-page, so every navigation in the session stays put.
  */
 export async function newAccountContext(
   browser: Browser,
   platform: Platform,
   storageState?: unknown,
+  geo?: Geolocation | null,
 ): Promise<BrowserContext> {
   const ctx = await browser.newContext({
     locale: FIXED_LOCALE,
@@ -70,6 +78,11 @@ export async function newAccountContext(
     userAgent: agentFor(platform),
     ...(storageState ? { storageState: storageState as never } : {}),
   });
+  if (geo) {
+    await ctx.setGeolocation({ latitude: geo.latitude, longitude: geo.longitude });
+    // Grant the permission so a page reading geolocation is not prompted.
+    await ctx.grantPermissions(['geolocation']).catch(() => undefined);
+  }
   return ctx;
 }
 

@@ -473,6 +473,31 @@ paths:
         '403':
           $ref: '#/components/responses/Error'
 
+  /api/locations:
+    get:
+      tags: [containers]
+      summary: List selectable worker locations
+      description: |
+        The city list a worker can be anchored to (P-location). The dashboard
+        dropdown renders this; the create request validates against it. Each
+        city carries the centre the API randomizes a frozen GPS point around.
+      operationId: listLocations
+      security:
+        - accessCookie: []
+      responses:
+        '200':
+          description: Cities a worker may operate from.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Location'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+
   /api/containers/{containerId}:
     parameters:
       - $ref: '#/components/parameters/ContainerId'
@@ -1060,6 +1085,32 @@ paths:
         '400':
           $ref: '#/components/responses/Error'
 
+  /internal/worker/{workerId}/geolocation:
+    get:
+      tags: [internal]
+      summary: Read a worker's frozen GPS coordinates
+      description: |
+        Called by the worker once at boot so Playwright can spoof a fixed
+        position before any job runs. The point is randomized inside the
+        worker's city at create time and never changes, so a worker keeps a
+        stable GPS fingerprint. 404 when the worker has no location set.
+      operationId: getWorkerGeolocation
+      parameters:
+        - name: workerId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The worker's frozen coordinate.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkerGeolocation'
+        '404':
+          $ref: '#/components/responses/Error'
+
 components:
   parameters:
     ContainerId:
@@ -1229,9 +1280,23 @@ components:
         accepted:
           type: boolean
 
+    WorkerGeolocation:
+      type: object
+      required: [latitude, longitude]
+      properties:
+        latitude:
+          type: number
+          format: double
+        longitude:
+          type: number
+          format: double
+        location:
+          type: string
+          description: The city the point was randomized within.
+
     CreateContainerRequest:
       type: object
-      required: [region]
+      required: [region, location]
       properties:
         name:
           type: string
@@ -1244,6 +1309,12 @@ components:
           maxLength: 2
           description: ISO 3166-1 alpha-2 region for proxy placement.
           example: ID
+        location:
+          type: string
+          minLength: 2
+          description: City the worker operates from; picks the GPS radius to
+            randomize a frozen coordinate from. One of GET /api/locations.
+          example: Jakarta
 
     Container:
       type: object
@@ -1261,6 +1332,21 @@ components:
           enum: [MANUAL, AUTO]
         region:
           type: string
+          description: ISO 3166-1 alpha-2 country code the worker operates in.
+        location:
+          type: string
+          nullable: true
+          description: City the worker is anchored to; null on pre-geolocation rows.
+        latitude:
+          type: number
+          format: double
+          nullable: true
+          description: Frozen GPS latitude inside the city radius.
+        longitude:
+          type: number
+          format: double
+          nullable: true
+          description: Frozen GPS longitude inside the city radius.
         status:
           type: string
           enum: [PENDING, READY, IDLE, BUSY, DRAINING, ERROR, DEAD, QUARANTINED]
@@ -1280,6 +1366,27 @@ components:
           type: string
           nullable: true
           description: Browser-reachable noVNC view URL (P4-08); null when unpublished.
+
+    Location:
+      type: object
+      required: [name, latitude, longitude, radiusKm]
+      properties:
+        name:
+          type: string
+          description: City name; the value CreateContainerRequest.location takes.
+          example: Jakarta
+        latitude:
+          type: number
+          format: double
+          description: City centre latitude.
+        longitude:
+          type: number
+          format: double
+          description: City centre longitude.
+        radiusKm:
+          type: number
+          format: double
+          description: Radius the API randomizes a worker's frozen point within.
 
     ContainerAccount:
       type: object

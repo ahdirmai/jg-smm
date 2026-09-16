@@ -2,18 +2,21 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { subscribeStream } from '@smm/shared';
+import { subscribeStream, type ApiSchemas } from '@smm/shared';
 
 import { api, type Container } from '../api';
 
-const SSE_URL = process.env.NEXT_PUBLIC_SSE_URL ?? 'http://localhost:8080/api/stream';
+export type Location = ApiSchemas['Location'];
+
+const SSE_URL = process.env.NEXT_PUBLIC_SSE_URL ?? 'http://localhost:24080/api/stream';
 
 export type ContainersState = {
   containers: Container[];
   loading: boolean;
   error: string | null;
   refresh: () => void;
-  create: (name: string, region: string) => Promise<void>;
+  create: (name: string, region: string, location: string) => Promise<void>;
+  locations: Location[];
   remove: (id: string) => Promise<void>;
 };
 
@@ -24,6 +27,7 @@ export type ContainersState = {
  */
 export function useContainers(): ContainersState {
   const [containers, setContainers] = useState<Container[]>([]);
+  const [locations, setLocations] = useState<Location[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const seq = useRef(0);
@@ -47,6 +51,12 @@ export function useContainers(): ContainersState {
 
   useEffect(() => {
     void refresh();
+    // The create-form dropdown renders this list; it is a domain constant on
+    // the API, so one fetch at mount is enough.
+    void api
+      .listLocations()
+      .then(setLocations)
+      .catch(() => undefined);
   }, [refresh]);
 
   // Both frames can change a card: worker-health flips the container status,
@@ -68,8 +78,8 @@ export function useContainers(): ContainersState {
   }, [refresh]);
 
   const create = useCallback(
-    async (name: string, region: string) => {
-      await api.createContainer(name, region);
+    async (name: string, region: string, location: string) => {
+      await api.createContainer(name, region, location);
       await refresh();
     },
     [refresh],
@@ -88,5 +98,5 @@ export function useContainers(): ContainersState {
     [refresh],
   );
 
-  return { containers, loading, error, refresh, create, remove };
+  return { containers, locations, loading, error, refresh, create, remove };
 }

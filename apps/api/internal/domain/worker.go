@@ -63,6 +63,9 @@ type Worker struct {
 	DesiredState   DesiredState
 	Source         WorkerSource
 	Region         string
+	Location       *string
+	Latitude       *float64
+	Longitude      *float64
 	Status         WorkerStatus
 	Generation     int
 	ObservedGen    *int

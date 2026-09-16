@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -207,7 +208,7 @@ func TestContainerCreateAndList(t *testing.T) {
 	cookies := loginCookieJar(t, srv.URL)
 
 	resp, err := doWithCookies(http.MethodPost, srv.URL, "/api/containers", cookies,
-		strings.NewReader(`{"region":"ID"}`))
+		strings.NewReader(`{"region":"ID","location":"Jakarta"}`))
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -227,6 +228,11 @@ func TestContainerCreateAndList(t *testing.T) {
 	}
 	if got["region"] != "ID" {
 		t.Errorf("region = %v, want ID", got["region"])
+	}
+	// The frozen GPS point the worker spoofs with Playwright.
+	loc, _ := got["location"].(string)
+	if loc != "Jakarta" {
+		t.Errorf("location = %v, want Jakarta", got["location"])
 	}
 	if got["generation"] != float64(1) {
 		t.Errorf("generation = %v, want 1", got["generation"])
@@ -276,7 +282,7 @@ func TestContainerDelete(t *testing.T) {
 	cookies := loginCookieJar(t, srv.URL)
 
 	resp, err := doWithCookies(http.MethodPost, srv.URL, "/api/containers", cookies,
-		strings.NewReader(`{"name":"c1","region":"ID"}`))
+		strings.NewReader(`{"name":"c1","region":"ID","location":"Bandung"}`))
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -386,4 +392,88 @@ func TestContainerRBAC(t *testing.T) {
 			t.Fatalf("anonymous status = %d, want 401", resp.StatusCode)
 		}
 	})
+}
+
+// TestContainerLocations proves the dropdown source: /api/locations lists the
+// same cities the create validator accepts, and a created container carries the
+// frozen GPS point back on its own row.
+func TestContainerLocations(t *testing.T) {
+	srv := newContainerTestServer(t, domain.RoleOperator)
+	defer srv.Close()
+	cookies := loginCookieJar(t, srv.URL)
+
+	resp, err := doWithCookies(http.MethodGet, srv.URL, "/api/locations", cookies, nil)
+	if err != nil {
+		t.Fatalf("locations: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("locations status = %d, want 200", resp.StatusCode)
+	}
+	var cities []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&cities); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(cities) == 0 {
+		t.Fatal("locations returned no cities")
+	}
+	names := map[string]bool{}
+	for _, c := range cities {
+		if name, _ := c["name"].(string); name != "" {
+			names[name] = true
+		}
+	}
+	if !names["Jakarta"] {
+		t.Errorf("locations = %v, want Jakarta among them", names)
+	}
+
+	// A city from the list must be accepted by create, and the row must carry
+	// the frozen coordinate the worker spoofs with Playwright.
+	resp2, err := doWithCookies(http.MethodPost, srv.URL, "/api/containers", cookies,
+		strings.NewReader(`{"name":"geo-01","region":"ID","location":"Surabaya"}`))
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusCreated {
+		t.Fatalf("create status = %d, want 201", resp2.StatusCode)
+	}
+	var got map[string]any
+	if err := json.NewDecoder(resp2.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if loc, _ := got["location"].(string); loc != "Surabaya" {
+		t.Errorf("location = %v, want Surabaya", got["location"])
+	}
+	lat, latOK := got["latitude"].(float64)
+	lng, lngOK := got["longitude"].(float64)
+	if !latOK || !lngOK {
+		t.Fatalf("want coordinates on the row, got lat=%v lng=%v", got["latitude"], got["longitude"])
+	}
+	city, ok := domain.FindCity("Surabaya")
+	if !ok {
+		t.Fatal("Surabaya missing from domain.Cities")
+	}
+	if math.Abs(lat-city.Latitude)*111.32 > city.RadiusKm+1 ||
+		math.Abs(lng-city.Longitude)*111.32 > city.RadiusKm+1 {
+		t.Errorf("point (%.5f, %.5f) outside the Surabaya radius", lat, lng)
+	}
+}
+
+// TestContainerCreateRejectsBadLocation proves an unknown city is a 400, not a
+// 500 from a driver or a silently-empty coordinate.
+func TestContainerCreateRejectsBadLocation(t *testing.T) {
+	srv := newContainerTestServer(t, domain.RoleOperator)
+	defer srv.Close()
+	cookies := loginCookieJar(t, srv.URL)
+
+	resp, err := doWithCookies(http.MethodPost, srv.URL, "/api/containers", cookies,
+		strings.NewReader(`{"region":"ID","location":"Atlantis"}`))
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
 }

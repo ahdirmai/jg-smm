@@ -49,6 +49,7 @@ func (h *InternalHandler) Register(e *echo.Echo) {
 	g.POST("/action-callback", h.actionCallback)
 	g.POST("/account-callback", h.accountCallback)
 	g.POST("/heartbeat", h.heartbeat)
+	g.GET("/worker/:workerId/geolocation", h.geolocation)
 }
 
 // actionCallback records the outcome of one action attempt.
@@ -150,6 +151,28 @@ func (h *InternalHandler) heartbeat(c echo.Context) error {
 		NovncURL:      novncURL,
 	})
 	return h.translate(c, err)
+}
+
+// geolocation returns the worker's frozen GPS point so Playwright can spoof a
+// fixed position before its first job. The internal group is private-network
+// only, so this needs no session.
+func (h *InternalHandler) geolocation(c echo.Context) error {
+	workerID := c.Param("workerId")
+	if workerID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "workerId is required")
+	}
+	if h.jobs == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "job service unavailable")
+	}
+	g, err := h.jobs.Geolocation(c.Request().Context(), workerID)
+	if err != nil {
+		return h.translate(c, err)
+	}
+	return c.JSON(http.StatusOK, oapigen.WorkerGeolocation{
+		Latitude:  g.Latitude,
+		Longitude: g.Longitude,
+		Location:  &g.Location,
+	})
 }
 
 // translate maps a service error onto an HTTP response.

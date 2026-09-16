@@ -31,6 +31,8 @@ func (h *ContainerHandler) Register(g *echo.Group) {
 	g.POST("/containers", h.create, RequirePermission(domain.PermAct))
 	g.GET("/containers", h.list)
 	g.DELETE("/containers/:containerId", h.delete, RequirePermission(domain.PermAct))
+	// The city dropdown sits on the same page as the create form.
+	g.GET("/locations", h.listLocations)
 }
 
 // create inserts a MANUAL container in the RUNNING desired state.
@@ -47,7 +49,7 @@ func (h *ContainerHandler) create(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "container service unavailable")
 	}
 
-	w, err := h.containers.Create(c.Request().Context(), name, req.Region)
+	w, err := h.containers.Create(c.Request().Context(), name, req.Region, req.Location)
 	if err != nil {
 		return translateContainerError(err)
 	}
@@ -107,6 +109,22 @@ func translateContainerError(err error) error {
 	}
 }
 
+// listLocations returns the city list the create dropdown renders and the
+// validator accepts. The list is a domain constant, so this reads straight off
+// it — no store round-trip.
+func (h *ContainerHandler) listLocations(c echo.Context) error {
+	out := make([]oapigen.Location, 0, len(domain.Cities))
+	for _, city := range domain.Cities {
+		out = append(out, oapigen.Location{
+			Name:      city.Name,
+			Latitude:  city.Latitude,
+			Longitude: city.Longitude,
+			RadiusKm:  city.RadiusKm,
+		})
+	}
+	return c.JSON(http.StatusOK, out)
+}
+
 // toContainerResponse builds the API shape from a container view. accounts may
 // be empty; a container with zero accounts is a valid fleet state.
 func toContainerResponse(cv service.ContainerView, accounts []service.AccountSummary) oapigen.Container {
@@ -136,6 +154,17 @@ func toContainerResponse(cv service.ContainerView, accounts []service.AccountSum
 	out.Accounts = &accs
 	if cv.NovncURL != "" {
 		out.NovncUrl = nullable.NewNullableWithValue[string](cv.NovncURL)
+	}
+	// A row predating worker geolocation has a nil location; leave the fields
+	// null rather than emitting an empty string and (0,0).
+	if cv.Location != nil {
+		out.Location = nullable.NewNullableWithValue[string](*cv.Location)
+	}
+	if cv.Latitude != nil {
+		out.Latitude = nullable.NewNullableWithValue[float64](*cv.Latitude)
+	}
+	if cv.Longitude != nil {
+		out.Longitude = nullable.NewNullableWithValue[float64](*cv.Longitude)
 	}
 	return out
 }

@@ -55,7 +55,7 @@ function containerTone(
 }
 
 export default function WorkersPage() {
-  const { containers, loading, error, create, remove } = useContainers();
+  const { containers, locations, loading, error, create, remove } = useContainers();
   const { setStatus, remove: removeAccount } = useAccounts();
   const ticker = useLiveTicker();
   const session = useSession();
@@ -65,7 +65,7 @@ export default function WorkersPage() {
   const [live, setLive] = useState<{ name: string; url: string } | null>(null);
 
   const [name, setName] = useState('');
-  const [region, setRegion] = useState('');
+  const [location, setLocation] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -81,11 +81,17 @@ export default function WorkersPage() {
       setFormError('A container needs a name.');
       return;
     }
+    if (!location) {
+      setFormError('Pick the city the worker operates from.');
+      return;
+    }
     setBusy('__create__');
     try {
-      await create(name.trim(), region.trim() || 'local');
+      // Region is constant for the MVP (Indonesia only); the city is what
+      // varies and what the GPS spoof anchors to.
+      await create(name.trim(), 'ID', location);
       setName('');
-      setRegion('');
+      setLocation('');
     } catch (err) {
       setFormError(err instanceof Error ? err.message : 'Create failed');
     } finally {
@@ -147,6 +153,7 @@ export default function WorkersPage() {
                     <CardTitle className="text-base">{c.name}</CardTitle>
                     <CardDescription className="font-mono text-xs">
                       {c.id.slice(0, 8)} · {c.region}
+                      {c.location ? ` · ${c.location}` : null}
                     </CardDescription>
                   </div>
                   <div className="flex items-center gap-1">
@@ -282,14 +289,21 @@ export default function WorkersPage() {
               />
             </div>
             <div className="grid w-full max-w-xs gap-2">
-              <Label htmlFor="c-region">Region</Label>
-              <Input
-                id="c-region"
-                value={region}
-                onChange={(e) => setRegion(e.target.value)}
-                placeholder="us"
+              <Label htmlFor="c-location">Location</Label>
+              <select
+                id="c-location"
+                className="h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
                 disabled={busy === '__create__' || !canAct}
-              />
+              >
+                <option value="">Select a city…</option>
+                {locations.map((c) => (
+                  <option key={c.name} value={c.name}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
             </div>
             {formError ? (
               <div className="flex items-center gap-2 text-sm text-destructive">

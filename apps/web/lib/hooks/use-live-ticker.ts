@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { subscribeStream, type StreamEvent, type StreamKind } from '@smm/shared';
 
-const SSE_URL = process.env.NEXT_PUBLIC_SSE_URL ?? 'http://localhost:8080/api/stream';
+const SSE_URL = process.env.NEXT_PUBLIC_SSE_URL ?? 'http://localhost:24080/api/stream';
 const TICKER_MAX = 50;
 
 export type TickerItem = {
