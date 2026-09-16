@@ -37,6 +37,11 @@ up-obs: env ## Bring the app stack up plus the observability tier (Prometheus/Gr
 up-mail: env ## Bring the app stack up plus the local mailpit catcher (P4-06)
 	COMPOSE_PROFILES=mail $(COMPOSE) up -d --scale worker=$(WORKERS)
 
+load-test: ## Run the k6 load test against a running stack (P5-07)
+	K6_BASE_URL=$(K6_BASE_URL) K6_DASHBOARD_BASE=$(K6_DASHBOARD_BASE) \
+	K6_VUS=$(K6_VUS) K6_DURATION=$(K6_DURATION) \
+	k6 run infra/load/api.js
+
 env: ## Create .env from infra/docker/.env.example if missing
 	@if [ ! -f .env ]; then cp infra/docker/.env.example .env; echo "created .env from example"; fi
 
