@@ -141,13 +141,22 @@ func (s *AccountService) Pause(ctx context.Context, accountID string) (AccountSu
 // Resume reactivates a paused account. If a packer is wired it is placed back
 // into a container; resume does not require a fresh login because the session
 // persisted on the container's PVC.
+//
+// Resuming a QUARANTINED account is the P5-02 manual reset: the operator has
+// looked at it and decided it is safe, so the health score is restored and the
+// account re-enters the pool. Without this, an auto-quarantined account could
+// only be removed, not recovered.
 func (s *AccountService) Resume(ctx context.Context, accountID string) (AccountSummary, error) {
 	a, err := s.accounts.GetByID(ctx, accountID)
 	if err != nil {
 		return AccountSummary{}, fmt.Errorf("account service: get: %w", err)
 	}
-	if a.Status != domain.AccountPaused {
+	if a.Status != domain.AccountPaused && a.Status != domain.AccountQuarantined {
 		return toAccountView(a), nil
+	}
+	if a.Status == domain.AccountQuarantined {
+		a.HealthScore = DefaultHealthScorePolicy.ScoreMax
+		s.logger.Info("account reset from quarantine", "accountId", accountID, "score", a.HealthScore)
 	}
 	a.Status = domain.AccountActive
 	if _, err := s.accounts.Update(ctx, a); err != nil {

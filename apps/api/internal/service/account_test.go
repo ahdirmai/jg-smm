@@ -316,3 +316,33 @@ func TestAccountImport(t *testing.T) {
 		}
 	})
 }
+
+// TestAccountResumeResetsQuarantine covers the P5-02 manual reset: an
+// auto-quarantined account is out of the pool until an operator explicitly
+// resumes it, and that resume must restore the score, otherwise the account
+// re-enters the pool still sitting under the quarantine threshold.
+func TestAccountResumeResetsQuarantine(t *testing.T) {
+	store := newFakeWorkerStore()
+	accounts := newFakeAccountStore()
+	svc := NewAccountService(accounts, store, nil, AccountConfig{Sealer: stubSealer{}})
+	ctx := context.Background()
+
+	quarantined := accountFixture("q1", domain.PlatformInstagram)
+	quarantined.Status = domain.AccountQuarantined
+	quarantined.HealthScore = 12
+	accounts.seed(quarantined)
+
+	resumed, err := svc.Resume(ctx, "q1")
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if resumed.Status != domain.AccountActive {
+		t.Fatalf("status = %q, want ACTIVE", resumed.Status)
+	}
+	if resumed.HealthScore != DefaultHealthScorePolicy.ScoreMax {
+		t.Errorf("healthScore = %d, want %d after a manual reset", resumed.HealthScore, DefaultHealthScorePolicy.ScoreMax)
+	}
+	if stored, _ := accounts.GetByID(ctx, "q1"); stored.Status != domain.AccountActive {
+		t.Errorf("stored status = %q, want ACTIVE", stored.Status)
+	}
+}

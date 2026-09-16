@@ -25,9 +25,17 @@ type Account struct {
 	CreatedAt    time.Time
 }
 
-// IsPackable reports whether the account can be assigned to a container.
+// IsPackable reports whether the account can be assigned to a container. A
+// QUARANTINED account (P5-02 auto-quarantine below the health threshold, or an
+// operator hold) stays out of the pool on purpose: packing it would immediately
+// re-use the account the health model just pulled out.
 func (a Account) IsPackable() bool {
-	return a.Status != AccountArchived && a.Status != AccountDead
+	switch a.Status {
+	case AccountArchived, AccountDead, AccountQuarantined:
+		return false
+	default:
+		return true
+	}
 }
 
 // ProxyGroup is a residential proxy pool bound to accounts at region level.

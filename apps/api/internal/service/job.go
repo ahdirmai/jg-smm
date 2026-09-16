@@ -160,7 +160,14 @@ func (s *JobService) RecordAttempt(ctx context.Context, r AttemptRecord) error {
 	// read is authoritative) so a race between the log and the job row still
 	// converges to the stored truth.
 	s.publishAction(ctx, log)
-	return s.applyVerdict(ctx, jobID, attempt, r)
+	if err := s.applyVerdict(ctx, jobID, attempt, r); err != nil {
+		return err
+	}
+	// P5-02: the verdict is durable, now let it cost or restore the account's
+	// health. Best-effort and last, so a health write failure never turns an
+	// already-recorded callback into a 500 the worker re-sends.
+	s.applyHealth(ctx, jobID, r)
+	return nil
 }
 
 // publishAction fans an action verdict to dashboards. A nil publisher is the

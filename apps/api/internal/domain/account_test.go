@@ -37,13 +37,15 @@ func TestChannelAndResourceNaming(t *testing.T) {
 }
 
 func TestAccountIsPackable(t *testing.T) {
-	packable := []AccountStatus{AccountPending, AccountActive, AccountPaused, AccountQuarantined}
+	// P5-02: QUARANTINED is a holding state out of the pool. If it were packable,
+	// the health model's auto-quarantine would be undone by the very next pack.
+	packable := []AccountStatus{AccountPending, AccountActive, AccountPaused}
 	for _, s := range packable {
 		if !(Account{Status: s}).IsPackable() {
 			t.Errorf("status %s should be packable", s)
 		}
 	}
-	for _, s := range []AccountStatus{AccountArchived, AccountDead} {
+	for _, s := range []AccountStatus{AccountArchived, AccountDead, AccountQuarantined} {
 		if (Account{Status: s}).IsPackable() {
 			t.Errorf("status %s should not be packable", s)
 		}
