@@ -750,6 +750,193 @@ paths:
         '403':
           $ref: '#/components/responses/Error'
 
+  /api/reports/actions:
+    get:
+      tags: [reports]
+      summary: Action report
+      description: |
+        Daily rollup of executed actions (P4-04): one row per day × account ×
+        action type, with success/failure counts, plus a per-day series for the
+        chart. Read-only — the `read` permission sees it, `export` takes the
+        file out (P4-05).
+      operationId: reportActions
+      security:
+        - accessCookie: []
+      parameters:
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: platform
+          in: query
+          schema:
+            $ref: '#/components/schemas/Platform'
+        - name: accountId
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The rollup rows and the series.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionReport'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+
+  /api/reports/targets:
+    get:
+      tags: [reports]
+      summary: Target (post) report
+      description: |
+        The same action jobs grouped by the post they were aimed at (P4-04),
+        so a strategist can see which content attracted engagement.
+      operationId: reportTargets
+      security:
+        - accessCookie: []
+      parameters:
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: platform
+          in: query
+          schema:
+            $ref: '#/components/schemas/Platform'
+      responses:
+        '200':
+          description: The per-target rollup.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TargetReport'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+
+  /api/reports/analytics:
+    get:
+      tags: [reports]
+      summary: Official-account growth report
+      description: |
+        One monitored account's metric series over the window (P4-04). This is
+        the read side of the analytics ingest (P2-12), not a scrape trigger.
+      operationId: reportAnalytics
+      security:
+        - accessCookie: []
+      parameters:
+        - name: accountId
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: metric
+          in: query
+          schema:
+            type: string
+            default: followers
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: The account's series.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalyticsReport'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+
+  /api/reports/export:
+    get:
+      tags: [reports]
+      summary: Export a report as CSV or JSON
+      description: |
+        Streams the selected report (P4-05). CSV is written row-by-row so a
+        large window never buffers in memory; JSON is the same rows as the
+        typed endpoints. Requires the `export` permission.
+      operationId: reportExport
+      security:
+        - accessCookie: []
+      parameters:
+        - name: kind
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [actions, targets, analytics]
+        - name: format
+          in: query
+          schema:
+            type: string
+            enum: [csv, json]
+            default: csv
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: platform
+          in: query
+          schema:
+            $ref: '#/components/schemas/Platform'
+        - name: accountId
+          in: query
+          schema:
+            type: string
+        - name: metric
+          in: query
+          schema:
+            type: string
+            default: followers
+      responses:
+        '200':
+          description: The report file.
+          content:
+            text/csv:
+              schema:
+                type: string
+                format: binary
+            application/json:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+
   /api/proxy-groups/{proxyGroupId}:
     parameters:
       - $ref: '#/components/parameters/ProxyGroupId'
@@ -1350,6 +1537,84 @@ components:
             $ref: '#/components/schemas/TrendPoint'
         freshness:
           $ref: '#/components/schemas/AnalyticsFreshness'
+
+    ActionReportRow:
+      type: object
+      description: One day × account × action type in the action report.
+      required: [day, accountId, username, platform, actionType, total, succeeded, failed]
+      properties:
+        day:
+          type: string
+          format: date
+        accountId:
+          type: string
+        username:
+          type: string
+        platform:
+          $ref: '#/components/schemas/Platform'
+        actionType:
+          type: string
+          enum: [action_like, action_comment]
+        total:
+          type: integer
+        succeeded:
+          type: integer
+        failed:
+          type: integer
+
+    ActionReport:
+      type: object
+      required: [rows, series]
+      properties:
+        rows:
+          type: array
+          items:
+            $ref: '#/components/schemas/ActionReportRow'
+        series:
+          type: array
+          description: Per-day totals across the whole selection, for the chart.
+          items:
+            $ref: '#/components/schemas/TrendPoint'
+
+    TargetReportRow:
+      type: object
+      description: One target (post) with its action outcome counts.
+      required: [id, url, platform, total, succeeded, failed]
+      properties:
+        id:
+          type: string
+        url:
+          type: string
+        platform:
+          $ref: '#/components/schemas/Platform'
+        total:
+          type: integer
+        succeeded:
+          type: integer
+        failed:
+          type: integer
+
+    TargetReport:
+      type: object
+      required: [rows]
+      properties:
+        rows:
+          type: array
+          items:
+            $ref: '#/components/schemas/TargetReportRow'
+
+    AnalyticsReport:
+      type: object
+      required: [accountId, metric, series]
+      properties:
+        accountId:
+          type: string
+        metric:
+          type: string
+        series:
+          type: array
+          items:
+            $ref: '#/components/schemas/TrendPoint'
 
     AnalyticsFreshness:
       type: object

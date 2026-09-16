@@ -25,6 +25,32 @@ export type CreateTemplateRequest = ApiSchemas['CreateTemplateRequest'];
 export type Platform = ApiSchemas['Platform'];
 export type ImportResult = ApiSchemas['ImportResult'];
 export type MeResponse = ApiSchemas['MeResponse'];
+export type ActionReport = ApiSchemas['ActionReport'];
+export type ActionReportRow = ApiSchemas['ActionReportRow'];
+export type TargetReport = ApiSchemas['TargetReport'];
+export type TargetReportRow = ApiSchemas['TargetReportRow'];
+export type AnalyticsReport = ApiSchemas['AnalyticsReport'];
+export type TrendPoint = ApiSchemas['TrendPoint'];
+
+export type ReportQuery = {
+  kind?: 'actions' | 'targets' | 'analytics';
+  format?: 'csv' | 'json';
+  from?: string;
+  to?: string;
+  platform?: Platform;
+  accountId?: string;
+  metric?: string;
+};
+
+function reportQuery(params: ReportQuery): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === '') continue;
+    search.set(key, String(value));
+  }
+  const qs = search.toString();
+  return qs ? `?${qs}` : '';
+}
 
 export class ApiError extends Error {
   constructor(
@@ -119,4 +145,24 @@ export const api = {
   // Session (P4-09). The role drives UI gating; every write is still checked
   // server-side, so this is a UX layer, not a security boundary.
   me: () => request<MeResponse>('/api/auth/me'),
+
+  // Reports (P4-04 / P4-05). Read-only pivots; export is a separate
+  // permission (`export`) and returns a file, so it is a window location, not
+  // a JSON fetch.
+  reportActions: (params: ReportQuery, signal?: AbortSignal) =>
+    request<ActionReport>(
+      `/api/reports/actions${reportQuery(params)}`,
+      signal ? { signal } : undefined,
+    ),
+  reportTargets: (params: ReportQuery, signal?: AbortSignal) =>
+    request<TargetReport>(
+      `/api/reports/targets${reportQuery(params)}`,
+      signal ? { signal } : undefined,
+    ),
+  reportAnalytics: (params: ReportQuery, signal?: AbortSignal) =>
+    request<AnalyticsReport>(
+      `/api/reports/analytics${reportQuery(params)}`,
+      signal ? { signal } : undefined,
+    ),
+  reportExportURL: (params: ReportQuery) => `${API_URL}/api/reports/export${reportQuery(params)}`,
 };

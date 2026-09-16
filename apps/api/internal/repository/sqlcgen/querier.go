@@ -11,6 +11,17 @@ import (
 )
 
 type Querier interface {
+	// Report builder (P4-04 / P4-05). The dashboard's report view is a pivot over
+	// existing tables, not a new write path: everything here is a read that sums
+	// the action or analytics history the platform already stores.
+	// One row per (day, account, action type): the operator's "what did we do"
+	// report. status is projected from the job (the queue's own projection), so a
+	// re-run after a retry converges without double counting. NULL filters are the
+	// "all" case — the caller passes NULL, not an empty string.
+	ActionRollupDaily(ctx context.Context, arg ActionRollupDailyParams) ([]ActionRollupDailyRow, error)
+	// The per-target (post) view: the same jobs grouped by what they were aimed
+	// at, so a strategist can see which content attracted engagement.
+	ActionTargetRollup(ctx context.Context, arg ActionTargetRollupParams) ([]ActionTargetRollupRow, error)
 	// KPI strip per platform: latest value of each scalar metric per account on
 	// that platform over the trailing window. `last(x, ts)` over the bucket gives
 	// the most recent sample per account without a window-function round trip.

@@ -501,6 +501,97 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/reports/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Action report
+         * @description Daily rollup of executed actions (P4-04): one row per day × account ×
+         *     action type, with success/failure counts, plus a per-day series for the
+         *     chart. Read-only — the `read` permission sees it, `export` takes the
+         *     file out (P4-05).
+         *
+         */
+        get: operations["reportActions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/reports/targets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Target (post) report
+         * @description The same action jobs grouped by the post they were aimed at (P4-04),
+         *     so a strategist can see which content attracted engagement.
+         *
+         */
+        get: operations["reportTargets"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/reports/analytics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Official-account growth report
+         * @description One monitored account's metric series over the window (P4-04). This is
+         *     the read side of the analytics ingest (P2-12), not a scrape trigger.
+         *
+         */
+        get: operations["reportAnalytics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/reports/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export a report as CSV or JSON
+         * @description Streams the selected report (P4-05). CSV is written row-by-row so a
+         *     large window never buffers in memory; JSON is the same rows as the
+         *     typed endpoints. Requires the `export` permission.
+         *
+         */
+        get: operations["reportExport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/proxy-groups/{proxyGroupId}": {
         parameters: {
             query?: never;
@@ -835,6 +926,41 @@ export interface components {
             kpis: components["schemas"]["AnalyticsKpi"][];
             trend: components["schemas"]["TrendPoint"][];
             freshness: components["schemas"]["AnalyticsFreshness"];
+        };
+        /** @description One day × account × action type in the action report. */
+        ActionReportRow: {
+            /** Format: date */
+            day: string;
+            accountId: string;
+            username: string;
+            platform: components["schemas"]["Platform"];
+            /** @enum {string} */
+            actionType: "action_like" | "action_comment";
+            total: number;
+            succeeded: number;
+            failed: number;
+        };
+        ActionReport: {
+            rows: components["schemas"]["ActionReportRow"][];
+            /** @description Per-day totals across the whole selection, for the chart. */
+            series: components["schemas"]["TrendPoint"][];
+        };
+        /** @description One target (post) with its action outcome counts. */
+        TargetReportRow: {
+            id: string;
+            url: string;
+            platform: components["schemas"]["Platform"];
+            total: number;
+            succeeded: number;
+            failed: number;
+        };
+        TargetReport: {
+            rows: components["schemas"]["TargetReportRow"][];
+        };
+        AnalyticsReport: {
+            accountId: string;
+            metric: string;
+            series: components["schemas"]["TrendPoint"][];
         };
         /** @description Backs the dashboard's stale badge (P2-15 AC: stale when older than 60 minutes). */
         AnalyticsFreshness: {
@@ -1761,6 +1887,117 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AnalyticsIngestRun"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    reportActions: {
+        parameters: {
+            query?: {
+                from?: string;
+                to?: string;
+                platform?: components["schemas"]["Platform"];
+                accountId?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The rollup rows and the series. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActionReport"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    reportTargets: {
+        parameters: {
+            query?: {
+                from?: string;
+                to?: string;
+                platform?: components["schemas"]["Platform"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The per-target rollup. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TargetReport"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    reportAnalytics: {
+        parameters: {
+            query: {
+                accountId: string;
+                metric?: string;
+                from?: string;
+                to?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The account's series. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnalyticsReport"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    reportExport: {
+        parameters: {
+            query: {
+                kind: "actions" | "targets" | "analytics";
+                format?: "csv" | "json";
+                from?: string;
+                to?: string;
+                platform?: components["schemas"]["Platform"];
+                accountId?: string;
+                metric?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The report file. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/csv": string;
+                    "application/json": string;
                 };
             };
             401: components["responses"]["Error"];

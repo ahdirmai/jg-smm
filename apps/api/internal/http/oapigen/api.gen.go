@@ -54,6 +54,12 @@ const (
 	ActionJobActionTypeActionLike    ActionJobActionType = "action_like"
 )
 
+// Defines values for ActionReportRowActionType.
+const (
+	ActionComment ActionReportRowActionType = "action_comment"
+	ActionLike    ActionReportRowActionType = "action_like"
+)
+
 // Defines values for AttemptStatus.
 const (
 	AttemptStatusCANCELLED AttemptStatus = "CANCELLED"
@@ -204,6 +210,19 @@ const (
 	WorkerHealth     StreamEventKind = "worker-health"
 )
 
+// Defines values for ReportExportParamsKind.
+const (
+	Actions   ReportExportParamsKind = "actions"
+	Analytics ReportExportParamsKind = "analytics"
+	Targets   ReportExportParamsKind = "targets"
+)
+
+// Defines values for ReportExportParamsFormat.
+const (
+	Csv  ReportExportParamsFormat = "csv"
+	Json ReportExportParamsFormat = "json"
+)
+
 // Account defines model for Account.
 type Account struct {
 	AuthStatus AccountAuthStatus         `json:"authStatus"`
@@ -308,6 +327,31 @@ type ActionJobList struct {
 	Actions []ActionJob `json:"actions"`
 }
 
+// ActionReport defines model for ActionReport.
+type ActionReport struct {
+	Rows []ActionReportRow `json:"rows"`
+
+	// Series Per-day totals across the whole selection, for the chart.
+	Series []TrendPoint `json:"series"`
+}
+
+// ActionReportRow One day × account × action type in the action report.
+type ActionReportRow struct {
+	AccountId  string                    `json:"accountId"`
+	ActionType ActionReportRowActionType `json:"actionType"`
+	Day        openapi_types.Date        `json:"day"`
+	Failed     int                       `json:"failed"`
+
+	// Platform The social platform. MVP active set is Instagram + Threads.
+	Platform  Platform `json:"platform"`
+	Succeeded int      `json:"succeeded"`
+	Total     int      `json:"total"`
+	Username  string   `json:"username"`
+}
+
+// ActionReportRowActionType defines model for ActionReportRow.ActionType.
+type ActionReportRowActionType string
+
 // AnalyticsFreshness Backs the dashboard's stale badge (P2-15 AC: stale when older than 60 minutes).
 type AnalyticsFreshness struct {
 	LastRunAt        nullable.Nullable[time.Time] `json:"lastRunAt,omitempty"`
@@ -343,6 +387,13 @@ type AnalyticsOverview struct {
 	// Freshness Backs the dashboard's stale badge (P2-15 AC: stale when older than 60 minutes).
 	Freshness AnalyticsFreshness `json:"freshness"`
 	Kpis      []AnalyticsKpi     `json:"kpis"`
+}
+
+// AnalyticsReport defines model for AnalyticsReport.
+type AnalyticsReport struct {
+	AccountId string       `json:"accountId"`
+	Metric    string       `json:"metric"`
+	Series    []TrendPoint `json:"series"`
 }
 
 // AttemptStatus defines model for AttemptStatus.
@@ -673,6 +724,23 @@ type StreamEvent struct {
 // StreamEventKind The SSE `event:` line; the client dispatches on this.
 type StreamEventKind string
 
+// TargetReport defines model for TargetReport.
+type TargetReport struct {
+	Rows []TargetReportRow `json:"rows"`
+}
+
+// TargetReportRow One target (post) with its action outcome counts.
+type TargetReportRow struct {
+	Failed int    `json:"failed"`
+	Id     string `json:"id"`
+
+	// Platform The social platform. MVP active set is Instagram + Threads.
+	Platform  Platform `json:"platform"`
+	Succeeded int      `json:"succeeded"`
+	Total     int      `json:"total"`
+	Url       string   `json:"url"`
+}
+
 // TemplateList defines model for TemplateList.
 type TemplateList struct {
 	Templates []CommentTemplate `json:"templates"`
@@ -730,6 +798,46 @@ type AnalyticsByPlatformParams struct {
 // ListOfficialAccountsParams defines parameters for ListOfficialAccounts.
 type ListOfficialAccountsParams struct {
 	Platform *Platform `form:"platform,omitempty" json:"platform,omitempty"`
+}
+
+// ReportActionsParams defines parameters for ReportActions.
+type ReportActionsParams struct {
+	From      *openapi_types.Date `form:"from,omitempty" json:"from,omitempty"`
+	To        *openapi_types.Date `form:"to,omitempty" json:"to,omitempty"`
+	Platform  *Platform           `form:"platform,omitempty" json:"platform,omitempty"`
+	AccountId *string             `form:"accountId,omitempty" json:"accountId,omitempty"`
+}
+
+// ReportAnalyticsParams defines parameters for ReportAnalytics.
+type ReportAnalyticsParams struct {
+	AccountId string              `form:"accountId" json:"accountId"`
+	Metric    *string             `form:"metric,omitempty" json:"metric,omitempty"`
+	From      *openapi_types.Date `form:"from,omitempty" json:"from,omitempty"`
+	To        *openapi_types.Date `form:"to,omitempty" json:"to,omitempty"`
+}
+
+// ReportExportParams defines parameters for ReportExport.
+type ReportExportParams struct {
+	Kind      ReportExportParamsKind    `form:"kind" json:"kind"`
+	Format    *ReportExportParamsFormat `form:"format,omitempty" json:"format,omitempty"`
+	From      *openapi_types.Date       `form:"from,omitempty" json:"from,omitempty"`
+	To        *openapi_types.Date       `form:"to,omitempty" json:"to,omitempty"`
+	Platform  *Platform                 `form:"platform,omitempty" json:"platform,omitempty"`
+	AccountId *string                   `form:"accountId,omitempty" json:"accountId,omitempty"`
+	Metric    *string                   `form:"metric,omitempty" json:"metric,omitempty"`
+}
+
+// ReportExportParamsKind defines parameters for ReportExport.
+type ReportExportParamsKind string
+
+// ReportExportParamsFormat defines parameters for ReportExport.
+type ReportExportParamsFormat string
+
+// ReportTargetsParams defines parameters for ReportTargets.
+type ReportTargetsParams struct {
+	From     *openapi_types.Date `form:"from,omitempty" json:"from,omitempty"`
+	To       *openapi_types.Date `form:"to,omitempty" json:"to,omitempty"`
+	Platform *Platform           `form:"platform,omitempty" json:"platform,omitempty"`
 }
 
 // ListTemplatesParams defines parameters for ListTemplates.

@@ -273,6 +273,13 @@ func main() {
 		})
 		deps.Analytics = apihttp.NewAnalyticsHandler(analyticsSvc)
 
+		// Report builder + export (P4-04 / P4-05): read-only pivots over the
+		// action queue and the analytics hypertable. The export route carries
+		// its own `export` permission gate in the handler.
+		reportRepo := repository.NewReportRepo(pg.Queries())
+		reportSvc := service.NewReportService(reportRepo, analyticsRepo, logger)
+		deps.Reports = apihttp.NewReportHandler(reportSvc)
+
 		// Alert engine (P2-07): views-drop and mention-spike rules over scraped
 		// metrics. Off by default; enabled with ALERT_INTERVAL_SECONDS.
 		if cfg.AlertIntervalSeconds > 0 {

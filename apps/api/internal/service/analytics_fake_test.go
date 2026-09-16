@@ -17,6 +17,7 @@ type fakeAnalyticsStore struct {
 	snapshots []domain.AnalyticsSnapshot
 	mentions  []domain.AnalyticsMention
 	runs      []domain.AnalyticsIngestRun
+	series    map[string][]domain.TrendPoint
 }
 
 func newFakeAnalyticsStore() *fakeAnalyticsStore {
@@ -152,8 +153,22 @@ func (f *fakeAnalyticsStore) AnalyticsOverview(ctx context.Context, p domain.Pla
 func (f *fakeAnalyticsStore) AnalyticsTrendByPlatform(ctx context.Context, p domain.Platform, metric string, window time.Duration) ([]domain.TrendPoint, error) {
 	return []domain.TrendPoint{{Bucket: time.Now(), Value: 100}}, nil
 }
+
+// trendByAccount overrides the trend for one account when set; otherwise the
+// generic 50-point series is returned (kept for the existing ingestor tests).
+func (f *fakeAnalyticsStore) trendByAccount(accountID string) []domain.TrendPoint {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.series != nil {
+		if pts, ok := f.series[accountID]; ok {
+			return pts
+		}
+	}
+	return []domain.TrendPoint{{Bucket: time.Now(), Value: 50}}
+}
+
 func (f *fakeAnalyticsStore) AnalyticsTrendByAccount(ctx context.Context, accountID string, metric string, window time.Duration) ([]domain.TrendPoint, error) {
-	return []domain.TrendPoint{{Bucket: time.Now(), Value: 50}}, nil
+	return f.trendByAccount(accountID), nil
 }
 func (f *fakeAnalyticsStore) UpsertAnalyticsMention(ctx context.Context, m domain.AnalyticsMention) (domain.AnalyticsMention, error) {
 	f.mu.Lock()
