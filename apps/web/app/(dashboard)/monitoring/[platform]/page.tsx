@@ -25,16 +25,20 @@ import {
   useOfficialAccounts,
   usePlatformAnalytics,
 } from '@/lib/hooks/use-analytics';
-import { ANALYTICS_METRICS, PLATFORMS, PLATFORM_LABEL } from '@/lib/platforms';
+import { PLATFORMS, PLATFORM_LABEL } from '@/lib/platforms';
+import { analyticsConfig } from '@/lib/analytics-config';
 
 /**
- * Per-platform analytics (P2-15). Mirrors the approved prototype's analytics
- * page: platform switcher, account filter, KPI strip and the trend chart. All
- * figures come from the 3rd-party analytics ingest for official (monitored)
- * accounts only — worker accounts are never measured here.
+ * Per-platform analytics (P6-06, mirrors docs/prototype/analytics-<platform>.html).
  *
- * KPI cards aggregate the selected metric set across the platform's accounts so
- * the strip reads as one number per metric, not one per account.
+ * Each platform has its own metric vocabulary (IG: saves + reels views, YouTube:
+ * watch time + CTR, …) read from analyticsConfig; the KPI strip and the trend
+ * pairing follow the approved prototype per platform.
+ *
+ * All figures come from the 3rd-party analytics ingest for official (monitored)
+ * accounts only — worker accounts are never measured here. KPI cards aggregate
+ * the metric across the platform's accounts so the strip reads as one number
+ * per metric.
  */
 export default function PlatformAnalyticsPage({
   params,
@@ -42,9 +46,12 @@ export default function PlatformAnalyticsPage({
   params: Promise<{ platform: string }>;
 }) {
   const { platform } = use(params);
-
+  const cfg = analyticsConfig(platform);
   const label = PLATFORM_LABEL[platform] ?? platform;
-  const [metric, setMetric] = useState('followers');
+
+  // The trend metric defaults to the platform's primary series pair so the
+  // chart title matches the prototype out of the box.
+  const [metric] = useState(cfg?.seriesA ?? 'followers');
   const [accountFilter, setAccountFilter] = useState<string>('all');
 
   const accounts = useOfficialAccounts(platform);
@@ -86,7 +93,7 @@ export default function PlatformAnalyticsPage({
 
   if (!PLATFORMS.includes(platform as (typeof PLATFORMS)[number])) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-4">
         <h1 className="text-2xl font-semibold tracking-tight">Unknown platform</h1>
         <Card>
           <CardContent className="py-10 text-center text-sm text-muted-foreground">
@@ -101,7 +108,7 @@ export default function PlatformAnalyticsPage({
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">{label} analytics</h1>
@@ -112,7 +119,7 @@ export default function PlatformAnalyticsPage({
         <div className="flex items-center gap-2">
           <FreshnessBadge freshness={analytics.data?.freshness} />
           <Button variant="outline" size="sm" onClick={onSync} disabled={syncing}>
-            <RefreshCw className={syncing ? 'mr-2 h-4 w-4 animate-spin' : 'mr-2 h-4 w-4'} />
+            <RefreshCw className={syncing ? 'mr-2 size-4 animate-spin' : 'mr-2 size-4'} />
             {syncing ? 'Syncing…' : 'Sync now'}
           </Button>
         </div>
@@ -160,58 +167,86 @@ export default function PlatformAnalyticsPage({
             ))}
           </SelectContent>
         </Select>
-        <Select value={metric} onValueChange={setMetric}>
-          <SelectTrigger className="w-40">
-            <SelectValue placeholder="Metric" />
-          </SelectTrigger>
-          <SelectContent>
-            {ANALYTICS_METRICS.map((m) => (
-              <SelectItem key={m.key} value={m.key}>
-                {m.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
         <span className="ml-auto text-xs text-muted-foreground">Last 30 days</span>
       </section>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {ANALYTICS_METRICS.slice(0, 4).map((m) => {
-          const value = kpis.get(m.key);
+      {/* KPI strip: the platform's own metric vocabulary (analyticsConfig). */}
+      <section className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        {(cfg?.kpis ?? []).slice(0, 4).map((k) => {
+          const value = kpis.get(k.metric);
+          const Icon = k.icon;
           return (
-            <Card key={m.key}>
-              <CardHeader className="pb-2">
-                <CardDescription>{m.label}</CardDescription>
-                <CardTitle className="text-2xl tabular-nums">
+            <Card key={k.metric}>
+              <CardContent className="space-y-2 p-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs uppercase tracking-wide text-muted-foreground">
+                    {k.label}
+                  </span>
+                  <Icon className="size-4 text-muted-foreground" />
+                </div>
+                <div className="text-2xl font-semibold tracking-tight tabular-nums">
                   {analytics.loading || value == null ? '—' : value.toLocaleString()}
-                </CardTitle>
-              </CardHeader>
+                </div>
+              </CardContent>
             </Card>
           );
         })}
-      </div>
+      </section>
 
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle>
-                {ANALYTICS_METRICS.find((m) => m.key === metric)?.label ?? 'Trend'}
-              </CardTitle>
-              <CardDescription>Daily series across the platform · last 30 days</CardDescription>
+      <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <Card className="lg:col-span-2">
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle>{cfg?.trendTitle ?? 'Trend'}</CardTitle>
+                <CardDescription>Daily series · last 30 days</CardDescription>
+              </div>
+              <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block size-2 rounded-full bg-[hsl(var(--chart-1))]" />
+                  {cfg?.seriesA}
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block size-2 rounded-full bg-[hsl(var(--chart-4))]" />
+                  {cfg?.seriesB}
+                </span>
+              </div>
             </div>
-            <div className="flex items-center gap-3 text-xs text-muted-foreground">
-              <span className="flex items-center gap-1.5">
-                <span className="inline-block size-2 rounded-full bg-[hsl(var(--chart-1))]" />
-                {label}
-              </span>
+          </CardHeader>
+          <CardContent>
+            <TrendChart points={trend} />
+          </CardContent>
+        </Card>
+
+        {/* Audience mix: read-only geo split from the ingestion layer. */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle>Audience</CardTitle>
+                <CardDescription>Follower mix</CardDescription>
+              </div>
+              <Badge variant="outline">sample</Badge>
             </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <TrendChart points={trend} />
-        </CardContent>
-      </Card>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {AUDIENCE_MIX.map((row) => (
+              <div key={row.region} className="space-y-1.5">
+                <div className="flex justify-between text-sm">
+                  <span>{row.region}</span>
+                  <span className="font-mono text-xs">{row.pct}%</span>
+                </div>
+                <div className="h-1.5 rounded-full bg-secondary">
+                  <div
+                    className="h-full rounded-full bg-primary"
+                    style={{ width: `${row.pct}%` }}
+                  />
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      </section>
 
       <Card>
         <CardHeader>
@@ -224,9 +259,12 @@ export default function PlatformAnalyticsPage({
           {accounts.loading ? (
             <p className="py-6 text-center text-sm text-muted-foreground">Loading accounts…</p>
           ) : accountRows.length === 0 ? (
-            <p className="py-6 text-center text-sm text-muted-foreground">
-              No official {label} accounts monitored yet.
-            </p>
+            <div className="flex flex-col items-center gap-2 py-10 text-center">
+              <p className="text-sm font-medium">No official {label} accounts monitored yet</p>
+              <p className="text-xs text-muted-foreground">
+                Add an official account to start receiving 3rd-party analytics for {label}.
+              </p>
+            </div>
           ) : (
             <ul className="divide-y">
               {accountRows.map((a) => (
@@ -263,3 +301,16 @@ function kpisForAccount(
   const k = kpis.find((x) => x.officialAccountId === id && x.metric === metric);
   return k?.value != null ? k.value.toLocaleString() : '—';
 }
+
+/**
+ * Audience geo split. The prototype shows this panel on every platform; the
+ * real split comes from the 3rd-party ingestion and is not yet exposed by the
+ * API. The panel renders with a clear `sample` tag until the endpoint lands —
+ * never present example numbers as live.
+ */
+const AUDIENCE_MIX: { region: string; pct: number }[] = [
+  { region: 'Indonesia', pct: 48 },
+  { region: 'Singapore', pct: 21 },
+  { region: 'Malaysia', pct: 12 },
+  { region: 'Other', pct: 19 },
+];

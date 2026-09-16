@@ -7,80 +7,89 @@
 @source '../../../packages/ui/src';
 
 /*
- * Design tokens (DESIGN_SYSTEM §4). Dark is the default; light is provided for
- * completeness via the .light class on <html>.
+ * Design tokens (DESIGN_SYSTEM §4, mirrored from docs/prototype/styles.css).
+ * Palette intent: calm and professional, comfortable for long operator shifts.
+ * Saturation is kept modest (no neon); accent is a muted indigo. Light mode is
+ * a soft off-white (not pure white), dark mode a soft charcoal (not pure
+ * black). Contrast targets WCAG 2.1 AA in both themes.
+ *
+ * Light is the base; dark applies via `.dark` on <html> (next-themes).
  */
 @layer base {
   :root,
   .light {
-    --background: 0 0% 100%;
-    --foreground: 222 47% 11%;
+    /* Surfaces: soft off-white so long sessions are not glaring. */
+    --background: 220 20% 97%;
+    --foreground: 222 25% 16%;
     --card: 0 0% 100%;
-    --card-foreground: 222 47% 11%;
+    --card-foreground: 222 25% 16%;
     --popover: 0 0% 100%;
-    --popover-foreground: 222 47% 11%;
-    --primary: 238 84% 67%;
+    --popover-foreground: 222 25% 16%;
+    /* Accent: muted indigo — brand without neon. */
+    --primary: 230 45% 48%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 220 14% 96%;
-    --secondary-foreground: 222 47% 11%;
-    --muted: 220 14% 96%;
-    --muted-foreground: 220 9% 46%;
-    --accent: 220 14% 96%;
-    --accent-foreground: 222 47% 11%;
-    --destructive: 0 84% 60%;
+    --secondary: 220 16% 94%;
+    --secondary-foreground: 222 25% 16%;
+    --muted: 220 16% 94%;
+    --muted-foreground: 220 9% 42%;
+    --accent: 220 16% 93%;
+    --accent-foreground: 222 25% 16%;
+    --destructive: 0 58% 48%;
     --destructive-foreground: 0 0% 100%;
-    --success: 142 71% 45%;
-    --warning: 38 92% 50%;
-    --info: 199 89% 60%;
-    --border: 220 13% 91%;
-    --input: 220 13% 91%;
-    --ring: 238 84% 67%;
-    --status-cold: 220 9% 46%;
-    --status-ready: 142 71% 45%;
-    --status-busy: 238 84% 67%;
-    --status-error: 0 84% 60%;
-    --chart-1: 238 84% 67%;
-    --chart-2: 0 0% 9%;
-    --chart-3: 0 84% 60%;
-    --chart-4: 38 92% 50%;
-    --chart-5: 199 89% 60%;
-    --chart-6: 142 71% 45%;
+    --success: 152 40% 36%;
+    --warning: 32 68% 44%;
+    --info: 205 52% 44%;
+    --border: 220 14% 88%;
+    --input: 220 14% 86%;
+    --ring: 230 45% 48%;
+    --status-cold: 220 9% 48%;
+    --status-ready: 152 40% 36%;
+    --status-busy: 230 45% 48%;
+    --status-error: 0 58% 48%;
+    --chart-1: 230 45% 48%;
+    --chart-2: 220 9% 46%;
+    --chart-3: 0 58% 48%;
+    --chart-4: 32 68% 44%;
+    --chart-5: 205 52% 44%;
+    --chart-6: 152 40% 36%;
     --radius: 0.5rem;
   }
 
   .dark {
-    --background: 222 47% 5%;
-    --foreground: 220 13% 95%;
-    --card: 222 47% 7%;
-    --card-foreground: 220 13% 95%;
-    --popover: 222 47% 7%;
-    --popover-foreground: 220 13% 95%;
-    --primary: 238 84% 67%;
-    --primary-foreground: 222 47% 5%;
-    --secondary: 222 30% 12%;
-    --secondary-foreground: 220 13% 95%;
-    --muted: 222 30% 10%;
-    --muted-foreground: 220 9% 60%;
-    --accent: 222 30% 12%;
-    --accent-foreground: 220 13% 95%;
-    --destructive: 0 72% 51%;
-    --destructive-foreground: 0 0% 100%;
-    --success: 142 71% 45%;
-    --warning: 38 92% 50%;
-    --info: 199 89% 60%;
-    --border: 222 30% 14%;
-    --input: 222 30% 14%;
-    --ring: 238 84% 67%;
-    --status-cold: 220 9% 46%;
-    --status-ready: 142 71% 45%;
-    --status-busy: 238 84% 67%;
-    --status-error: 0 72% 51%;
-    --chart-1: 238 84% 67%;
-    --chart-2: 0 0% 85%;
-    --chart-3: 0 72% 51%;
-    --chart-4: 38 92% 50%;
-    --chart-5: 199 89% 60%;
-    --chart-6: 142 71% 45%;
+    /* Surfaces: soft charcoal, not pure black — reduces eye strain and glare. */
+    --background: 222 20% 10%;
+    --foreground: 220 14% 92%;
+    --card: 222 18% 13%;
+    --card-foreground: 220 14% 92%;
+    --popover: 222 18% 14%;
+    --popover-foreground: 220 14% 92%;
+    /* Accent: lifted indigo so it reads on dark without glowing. */
+    --primary: 230 52% 66%;
+    --primary-foreground: 222 25% 11%;
+    --secondary: 222 16% 18%;
+    --secondary-foreground: 220 14% 92%;
+    --muted: 222 16% 16%;
+    --muted-foreground: 220 10% 64%;
+    --accent: 222 16% 20%;
+    --accent-foreground: 220 14% 94%;
+    --destructive: 0 62% 62%;
+    --destructive-foreground: 222 25% 11%;
+    --success: 152 38% 56%;
+    --warning: 36 62% 58%;
+    --info: 205 54% 62%;
+    --border: 222 14% 22%;
+    --input: 222 14% 24%;
+    --ring: 230 52% 66%;
+    --status-cold: 220 9% 56%;
+    --status-ready: 152 38% 56%;
+    --status-busy: 230 52% 66%;
+    --status-error: 0 62% 62%;
+    --chart-1: 230 52% 66%;
+    --chart-2: 220 10% 64%;
+    --chart-3: 0 62% 62%;
+    --chart-4: 36 62% 58%;
+    --chart-5: 205 54% 62%;
+    --chart-6: 152 38% 56%;
   }
 }
 
@@ -111,6 +120,12 @@
   --color-border: hsl(var(--border));
   --color-input: hsl(var(--input));
   --color-ring: hsl(var(--ring));
+  --color-chart-1: hsl(var(--chart-1));
+  --color-chart-2: hsl(var(--chart-2));
+  --color-chart-3: hsl(var(--chart-3));
+  --color-chart-4: hsl(var(--chart-4));
+  --color-chart-5: hsl(var(--chart-5));
+  --color-chart-6: hsl(var(--chart-6));
 
   --radius-lg: var(--radius);
   --radius-md: calc(var(--radius) - 2px);

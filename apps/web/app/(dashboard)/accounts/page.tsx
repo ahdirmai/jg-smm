@@ -27,6 +27,7 @@ import {
   TableRow,
 } from '@smm/ui';
 import { AlertCircle, MoreVertical, Pause, Play, Trash2, Upload, UserPlus } from 'lucide-react';
+import Link from 'next/link';
 import { useMemo, useState } from 'react';
 
 import { useAccounts } from '@/lib/hooks/use-accounts';
@@ -119,24 +120,20 @@ export default function AccountsPage() {
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
-      <header className="flex items-end justify-between gap-4">
-        <div className="space-y-1">
-          <h1 className="text-3xl font-semibold tracking-tight">Accounts</h1>
-          <p className="text-sm text-muted-foreground">
-            Worker accounts used for actions. One account per platform per container.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" disabled={!canAct} onClick={() => setImportOpen(true)}>
-            <Upload />
-            Import
-          </Button>
-          <Button disabled={!canAct} onClick={() => setAddOpen(true)}>
+      {/* Page-level actions. The title/subtitle live in the shell header (h-14),
+          so this row carries only the write controls. */}
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <Button variant="outline" disabled={!canAct} onClick={() => setImportOpen(true)}>
+          <Upload />
+          Import
+        </Button>
+        <Button asChild disabled={!canAct}>
+          <Link href="/accounts/new">
             <UserPlus />
             Add account
-          </Button>
-        </div>
-      </header>
+          </Link>
+        </Button>
+      </div>
 
       <ImportAccountsDialog
         open={importOpen}
