@@ -143,7 +143,17 @@ export default function WorkersPage() {
       setName('');
       setLocation('');
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Create failed');
+      // A dropped connection surfaces from fetch as a TypeError 'Failed to
+      // fetch'; that is the symptom the retry layer is built for, so name it
+      // instead of echoing the browser's generic string.
+      const isNetwork = err instanceof TypeError;
+      setFormError(
+        isNetwork
+          ? 'Create failed: the network dropped the request. Check the connection and try again.'
+          : err instanceof Error
+            ? err.message
+            : 'Create failed',
+      );
     } finally {
       setBusy(null);
     }

@@ -4,11 +4,50 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { subscribeStream, type ApiSchemas } from '@smm/shared';
 
-import { api, type Container } from '../api';
+import { api, ApiError, type Container } from '../api';
 
 export type Location = ApiSchemas['Location'];
 
 const SSE_URL = process.env.NEXT_PUBLIC_SSE_URL ?? 'http://localhost:24080/api/stream';
+
+// A flaky network (proxies, unstable wifi) can kill the POST mid-flight: the
+// browser aborts the fetch, the server logs `context canceled`, and the row
+// may or may not have landed. Retrying turns that into a hiccup instead of a
+// dead click. The retry is safe because create is idempotent on the name — a
+// repeat that hits the conflict means the first one got through, so the
+// existing row is fetched and returned as if it were the create response.
+const CREATE_RETRY = { attempts: 3, delayMs: 400 };
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function createContainerWithRetry(
+  name: string,
+  region: string,
+  location: string,
+): Promise<Container | undefined> {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= CREATE_RETRY.attempts; attempt += 1) {
+    try {
+      return await api.createContainer(name, region, location);
+    } catch (err) {
+      lastErr = err;
+      // 409 = the name is already taken by our own earlier attempt; the create
+      // succeeded, so resolve the row that got through instead of failing.
+      if (err instanceof ApiError && err.status === 409) {
+        const list = await api.listContainers();
+        return list.containers?.find((c) => c.name === name);
+      }
+      // A 4xx other than conflict is a real validation error — retrying cannot
+      // fix it, so let it surface immediately.
+      if (err instanceof ApiError && err.status >= 400 && err.status < 500) {
+        throw err;
+      }
+      // Network drop / abort / 5xx: back off and try again.
+      if (attempt < CREATE_RETRY.attempts) await sleep(CREATE_RETRY.delayMs * attempt);
+    }
+  }
+  throw lastErr;
+}
 
 export type ContainersState = {
   containers: Container[];
@@ -105,11 +144,15 @@ export function useContainers(): ContainersState {
 
   const create = useCallback(
     async (name: string, region: string, location: string) => {
-      const created = await api.createContainer(name, region, location);
-      // The card appears at PENDING before the reconcile round-trip; the
-      // provision-updated frame and the refresh below converge on the same row.
+      // Fire-and-forget: the POST is a fast DB insert that returns the row, and
+      // the card is inserted the moment it lands. The reconcile (refresh) is
+      // kicked off but never awaited — the button unblocks immediately and the
+      // provision-updated / worker-health frames converge the card in the
+      // background. This is the whole point of the SSE path: the create itself
+      // is background work, the UI only registers the intent.
+      const created = await createContainerWithRetry(name, region, location);
       if (created) setContainers((prev) => [...prev, created]);
-      await refresh();
+      void refresh();
     },
     [refresh],
   );

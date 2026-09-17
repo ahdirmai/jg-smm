@@ -1,7 +1,9 @@
 package http
 
 import (
+	"context"
 	"errors"
+	"io"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
@@ -25,6 +27,17 @@ func errorHandler(err error, c echo.Context) {
 
 	httpStatus := http.StatusInternalServerError
 	code := "internal"
+
+	// The caller went away (page reload, tab close, a flaky proxy killing the
+	// connection). The work did not fail — nobody is left to read the response,
+	// so report it as client-closed rather than a 500 the dashboards will treat
+	// as a server fault. Same for a broken pipe / unexpected EOF mid-write.
+	if errors.Is(err, context.Canceled) || errors.Is(err, io.ErrUnexpectedEOF) {
+		c.Logger().Warnf("client closed request: %v %s", c.Request().Method, c.Path())
+		httpStatus, code = 499, "client_closed"
+		c.JSON(httpStatus, errorBody{Error: errorDetail{Code: code, Message: http.StatusText(httpStatus)}})
+		return
+	}
 
 	switch {
 	case errors.Is(err, domain.ErrNotFound):
