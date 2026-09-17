@@ -152,6 +152,7 @@ func main() {
 		containerSvc := service.NewContainerService(workerRepo, accountRepo, packer, service.ContainerConfig{
 			Clock:  adapter.SystemClock{},
 			Logger: logger,
+			Stream: hub,
 		})
 		deps.Containers = apihttp.NewContainerHandler(containerSvc)
 

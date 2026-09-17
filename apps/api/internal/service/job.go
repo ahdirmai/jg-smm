@@ -290,6 +290,27 @@ func (s *JobService) RecordHeartbeat(ctx context.Context, r HeartbeatRecord) err
 	if err := s.workers.RecordHeartbeat(ctx, hb, snap); err != nil {
 		return fmt.Errorf("record heartbeat: %w", err)
 	}
+	// Fan the new state to dashboards so a worker flipping PENDING → READY lands
+	// live. The frame carries the full container (ADR 0010); the status on the
+	// card is what the create-progress UI is waiting on.
+	if s.stream != nil {
+		accounts, err := s.accounts.ListByWorker(ctx, w.ID)
+		if err != nil {
+			s.logger.Warn("record heartbeat: list accounts failed", "workerId", w.ID, "err", err)
+		}
+		updated := w
+		updated.Status = snap.Status
+		updated.BrowserStatus = snap.BrowserStatus
+		if snap.NovncURL != nil {
+			updated.NoVNCService = snap.NovncURL
+		}
+		payload, err := json.Marshal(toContainerView(updated, accounts))
+		if err != nil {
+			s.logger.Warn("record heartbeat: marshal stream frame failed", "workerId", w.ID, "err", err)
+			return nil
+		}
+		s.stream.Publish(ctx, port.EventWorkerHealth, payload)
+	}
 	return nil
 }
 
@@ -327,8 +348,29 @@ func (s *JobService) Geolocation(ctx context.Context, workerID string) (WorkerGe
 // heartbeatStatus derives the reported status: a worker reporting an error browser
 // state is marked ERROR, otherwise its existing status is preserved.
 func (s *JobService) heartbeatStatus(w domain.Worker, r HeartbeatRecord) domain.WorkerStatus {
+	// A heartbeat is proof of life: the container booted, the browser came up,
+	// and the worker found the API. Without this, a healthy heartbeat leaves a
+	// freshly created worker pinned at PENDING forever, and the dashboard's
+	// "starting…" spinner never resolves.
 	if r.BrowserStatus == "error" {
 		return domain.WorkerError
+	}
+	// Preserve an operator's hold (DRAINING/QUARANTINED) — a live heartbeat does
+	// not override a deliberate pause; only the PENDING/ERROR stale states clear.
+	switch w.Status {
+	case domain.WorkerPending, domain.WorkerError, domain.WorkerDead:
+		if r.CurrentJobID != nil {
+			return domain.WorkerBusy
+		}
+		return domain.WorkerReady
+	}
+	// IDLE/BUSY/DRAINING/QUARANTINED/READY already reflect runtime state; the
+	// current-job flag is the only thing a heartbeat can still change.
+	if r.CurrentJobID != nil {
+		return domain.WorkerBusy
+	}
+	if w.Status == domain.WorkerBusy {
+		return domain.WorkerIdle
 	}
 	return w.Status
 }

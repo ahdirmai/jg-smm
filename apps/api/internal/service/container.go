@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"math/rand"
@@ -22,17 +23,24 @@ type ContainerService struct {
 	packer   *Packer
 	clock    port.Clock
 	rnd      *rand.Rand
-	logger   *slog.Logger
+	// stream fans container lifecycle frames to dashboards over SSE (ADR 0010).
+	// Optional: a nil publisher means the write still lands, the dashboard just
+	// has to poll. Create/Delete publish so every open tab sees the fleet change
+	// in real time instead of on its next refresh.
+	stream port.StreamPublisher
+	logger *slog.Logger
 }
 
 // ContainerConfig tunes the container service.
 type ContainerConfig struct {
 	Clock  port.Clock
 	Logger *slog.Logger
+	Stream port.StreamPublisher
 }
 
 // NewContainerService wires the service. packer may be nil; deletion then only
-// removes the row (local/static tier has no pod to reap).
+// removes the row (local/static tier has no pod to reap). stream may be nil;
+// the fleet then reconciles on poll instead of push.
 func NewContainerService(workers port.WorkerStore, accounts port.AccountStore, packer *Packer, cfg ContainerConfig) *ContainerService {
 	if cfg.Clock == nil {
 		cfg.Clock = systemClock{}
@@ -45,6 +53,7 @@ func NewContainerService(workers port.WorkerStore, accounts port.AccountStore, p
 		accounts: accounts,
 		packer:   packer,
 		clock:    cfg.Clock,
+		stream:   cfg.Stream,
 		// Per-worker coordinates are chosen once; a fresh source per service is
 		// fine because stability is per-worker, not per-process.
 		rnd:    rand.New(rand.NewSource(time.Now().UnixNano())),
@@ -105,6 +114,10 @@ func (s *ContainerService) Create(ctx context.Context, name, region, location st
 		return domain.Worker{}, fmt.Errorf("container service: create: %w", err)
 	}
 	s.logger.Info("container created (manual)", "workerId", w.ID, "name", w.Name, "region", region)
+	// Push the new container to every open dashboard so the card appears
+	// immediately. The caller's own POST response carries the same row, but
+	// other tabs and the optimistic insert path reconcile from this frame.
+	s.publishContainer(ctx, w, nil)
 	return w, nil
 }
 
@@ -165,30 +178,48 @@ func (s *ContainerService) Delete(ctx context.Context, workerID string) error {
 		return fmt.Errorf("container service: delete: %w", err)
 	}
 	s.logger.Info("container deleted", "workerId", workerID, "source", w.Source)
+	// Tell every dashboard to drop the card. The frame carries the id; the FE
+	// reconciles by removal, so a concurrent refetch cannot resurrect it.
+	if s.stream != nil {
+		payload, err := json.Marshal(map[string]any{
+			"id":      workerID,
+			"removed": true,
+		})
+		if err == nil {
+			s.stream.Publish(ctx, port.EventProvisionUpdated, payload)
+		}
+	}
 	return nil
 }
 
 // ContainerView is a container with its hosted accounts (read model).
+//
+// JSON tags matter: this struct is marshaled directly onto the SSE stream
+// (provision-updated, worker-health), and the browser reconciles those frames
+// against the same Container type the REST API returns. The API layer maps
+// through toContainerResponse, so the field names here must stay in lockstep
+// with that mapping or the dashboard frames and the dashboard fetch would
+// disagree about a card's shape.
 type ContainerView struct {
-	ID           string
-	Name         string
-	DesiredState domain.DesiredState
-	Source       domain.WorkerSource
-	Region       string
+	ID           string              `json:"id"`
+	Name         string              `json:"name"`
+	DesiredState domain.DesiredState `json:"desiredState"`
+	Source       domain.WorkerSource `json:"source"`
+	Region       string              `json:"region"`
 	// Location + Latitude/Longitude are the worker's frozen GPS point: the city
 	// it operates from and one randomized coordinate inside it. Empty on rows
 	// created before worker geolocation existed.
-	Location    *string
-	Latitude    *float64
-	Longitude   *float64
-	Status      domain.WorkerStatus
-	Generation  int
-	ObservedGen *int
-	Accounts    []AccountSummary
-	CreatedAt   time.Time
+	Location    *string             `json:"location"`
+	Latitude    *float64            `json:"latitude"`
+	Longitude   *float64            `json:"longitude"`
+	Status      domain.WorkerStatus `json:"status"`
+	Generation  int                 `json:"generation"`
+	ObservedGen *int                `json:"observedGeneration"`
+	Accounts    []AccountSummary    `json:"accounts"`
+	CreatedAt   time.Time           `json:"createdAt"`
 	// NovncURL is the browser-reachable live-view URL (P4-08), or empty when
 	// the worker has not reported one (unpublished or pre-heartbeat).
-	NovncURL string
+	NovncURL string `json:"novncUrl"`
 }
 
 // ToContainerView builds the read model for a single worker. Exported so the
@@ -231,4 +262,21 @@ func toContainerView(w domain.Worker, accounts []domain.Account) ContainerView {
 // of driver types.
 func isDomainConflict(err error) bool {
 	return err == domain.ErrConflict
+}
+
+// publishContainer fans the container out to dashboards as a provision-updated
+// frame. The frame carries the full entity (ADR 0010) so the browser reconciles
+// without a second fetch; accounts are optional and empty for a fresh create.
+// A marshal failure is logged and swallowed: the write already succeeded, and
+// the dashboard's next refresh still converges.
+func (s *ContainerService) publishContainer(ctx context.Context, w domain.Worker, accounts []domain.Account) {
+	if s.stream == nil {
+		return
+	}
+	payload, err := json.Marshal(toContainerView(w, accounts))
+	if err != nil {
+		s.logger.Warn("container service: marshal stream frame failed", "workerId", w.ID, "err", err)
+		return
+	}
+	s.stream.Publish(ctx, port.EventProvisionUpdated, payload)
 }

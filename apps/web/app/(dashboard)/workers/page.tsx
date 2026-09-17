@@ -22,6 +22,7 @@ import {
 } from '@smm/ui';
 import {
   AlertCircle,
+  Loader2,
   MoreVertical,
   MonitorPlay,
   Pause,
@@ -48,6 +49,8 @@ function containerTone(
     case 'READY':
     case 'IDLE':
       return 'success';
+    case 'PENDING':
+      return 'secondary';
     case 'BUSY':
       return 'secondary';
     case 'ERROR':
@@ -57,6 +60,13 @@ function containerTone(
     default:
       return 'outline';
   }
+}
+
+// A freshly created worker sits at PENDING until its container heartbeats.
+// The pulse marks it as in-flight, not stuck, and clears the moment the
+// worker-health frame flips it to READY.
+function isStarting(status: Container['status']): boolean {
+  return status === 'PENDING';
 }
 
 export default function WorkersPage() {
@@ -298,7 +308,12 @@ export default function WorkersPage() {
                       </div>
                     </div>
                     <div className="flex flex-wrap items-center gap-2 pt-1">
-                      <Badge variant={containerTone(c.status)}>{c.status}</Badge>
+                      <Badge
+                        variant={containerTone(c.status)}
+                        className={isStarting(c.status) ? 'animate-pulse' : undefined}
+                      >
+                        {isStarting(c.status) ? `${c.status} · starting…` : c.status}
+                      </Badge>
                       <Badge variant="outline">{c.source}</Badge>
                       <Badge variant="outline">{c.desiredState}</Badge>
                       {c.observedGeneration !== c.generation ? (
@@ -422,8 +437,8 @@ export default function WorkersPage() {
               </div>
             ) : null}
             <Button type="submit" disabled={busy === '__create__' || !canAct}>
-              <Plus />
-              Create
+              {busy === '__create__' ? <Loader2 className="animate-spin" /> : <Plus />}
+              {busy === '__create__' ? 'Creating…' : 'Create'}
             </Button>
           </form>
         </CardContent>

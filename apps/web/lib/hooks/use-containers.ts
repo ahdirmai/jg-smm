@@ -62,9 +62,34 @@ export function useContainers(): ContainersState {
   // Both frames can change a card: worker-health flips the container status,
   // account-updated changes its packed rows. Refetch is the reconcile path
   // (ADR 0010) — a frame carries one entity, not the whole packing.
+  // A frame carries the full entity (ADR 0010), so the reconcile is a pure
+  // upsert/delete on local state — no refetch. This is what makes the create
+  // flow feel live: the API publishes provision-updated the moment the row
+  // lands, and worker-health flips PENDING → READY as soon as the container
+  // heartbeats.
+  const upsertFrame = useCallback((frame: unknown) => {
+    const c = frame as Partial<Container> & { id?: string; removed?: boolean };
+    if (!c || typeof c !== 'object' || !c.id) return;
+    if (c.removed) {
+      setContainers((prev) => prev.filter((x) => x.id !== c.id));
+      return;
+    }
+    setContainers((prev) => {
+      const i = prev.findIndex((x) => x.id === c.id);
+      if (i === -1) return [...prev, c as Container];
+      const next = [...prev];
+      next[i] = { ...next[i], ...c } as Container;
+      return next;
+    });
+  }, []);
+
   useEffect(() => {
     const offHealth = subscribeStream(SSE_URL, 'worker-health', {
-      onEvent: () => void refresh(),
+      onEvent: ({ data }) => upsertFrame(data),
+      onError: () => {},
+    });
+    const offProvision = subscribeStream(SSE_URL, 'provision-updated', {
+      onEvent: ({ data }) => upsertFrame(data),
       onError: () => {},
     });
     const offAccount = subscribeStream(SSE_URL, 'account-updated', {
@@ -73,13 +98,17 @@ export function useContainers(): ContainersState {
     });
     return () => {
       offHealth();
+      offProvision();
       offAccount();
     };
-  }, [refresh]);
+  }, [refresh, upsertFrame]);
 
   const create = useCallback(
     async (name: string, region: string, location: string) => {
-      await api.createContainer(name, region, location);
+      const created = await api.createContainer(name, region, location);
+      // The card appears at PENDING before the reconcile round-trip; the
+      // provision-updated frame and the refresh below converge on the same row.
+      if (created) setContainers((prev) => [...prev, created]);
       await refresh();
     },
     [refresh],

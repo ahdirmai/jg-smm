@@ -210,18 +210,22 @@ func (in AccountInput) Validate() error {
 }
 
 // AccountSummary is the credential-free read model.
+//
+// JSON tags match the REST account/container contract: this struct is
+// marshaled straight onto the SSE stream, and the browser reconciles it
+// against the API's Container/Account shape.
 type AccountSummary struct {
-	ID          string
-	Platform    domain.Platform
-	Username    string
-	Handle      *string
-	AuthStatus  domain.AuthStatus
-	Status      domain.AccountStatus
-	HealthScore int
-	WorkerID    *string
-	Tags        []string
-	LastError   *string
-	CreatedAt   string
+	ID          string               `json:"id"`
+	Platform    domain.Platform      `json:"platform"`
+	Username    string               `json:"username"`
+	Handle      *string              `json:"handle"`
+	AuthStatus  domain.AuthStatus    `json:"authStatus"`
+	Status      domain.AccountStatus `json:"status"`
+	HealthScore int                  `json:"healthScore"`
+	WorkerID    *string              `json:"workerId"`
+	Tags        []string             `json:"tags"`
+	LastError   *string              `json:"lastError"`
+	CreatedAt   string               `json:"createdAt"`
 }
 
 func toAccountView(a domain.Account) AccountSummary {
