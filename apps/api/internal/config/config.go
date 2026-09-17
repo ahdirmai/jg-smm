@@ -19,7 +19,9 @@ type Config struct {
 	// DatabaseURL is a Postgres DSN. Empty disables the DB probe.
 	DatabaseURL string
 
-	// ProvisionerMode is static (local, no Kubernetes) or k8s (production).
+	// ProvisionerMode is static (local bookkeeping, no container is spawned),
+	// docker (local workstation: the API itself launches worker containers through
+	// the mounted docker socket), or k8s (production).
 	ProvisionerMode string
 	// ReconcileIntervalSeconds runs the desired-state loop in the API process.
 	// 0 disables it. Local dev leaves it off (../../../../docs/INFRA_ANALYST.md §15.1: no
@@ -27,8 +29,26 @@ type Config struct {
 	ReconcileIntervalSeconds int
 	// K8sNamespace is the cluster namespace the k8s driver provisions into.
 	K8sNamespace string
-	// WorkerImage is the container image the k8s driver launches.
+	// WorkerImage is the container image the k8s + docker drivers launch.
 	WorkerImage string
+	// DockerNetwork is the compose network the docker driver joins workers to so
+	// they can reach the API/Redis/MinIO service names. Empty = "smm_default".
+	DockerNetwork string
+	// DockerSocket is the daemon endpoint the local docker driver dials.
+	DockerSocket string
+	// DockerPublicHost is the host a browser resolves for the live view; it
+	// becomes the NOVNC_URL the worker heartbeats back.
+	DockerPublicHost string
+	// NovncPortMin/Max bound the live-view host ports the docker driver
+	// publishes on 127.0.0.1.
+	NovncPortMin int
+	NovncPortMax int
+	// WorkerPlatforms is the comma-separated platform list handed to every
+	// worker container as PLATFORMS.
+	WorkerPlatforms string
+	// ActionDryRun keeps workers from committing real actions; the docker
+	// driver injects it into every container it launches.
+	ActionDryRun bool
 	// ProvisionAutoCreate allows bin-packing to auto-create a worker container.
 	ProvisionAutoCreate bool
 	// MaxAccountsPerContainer caps accounts per container. The platform unique
@@ -149,6 +169,13 @@ func Load() (Config, error) {
 		ReconcileIntervalSeconds: envInt("RECONCILE_INTERVAL_SECONDS", 0),
 		K8sNamespace:             env("K8S_NAMESPACE", "smm"),
 		WorkerImage:              env("WORKER_IMAGE", ""),
+		DockerNetwork:            env("DOCKER_NETWORK", "smm_default"),
+		DockerSocket:             env("DOCKER_SOCKET", "/var/run/docker.sock"),
+		DockerPublicHost:         env("DOCKER_PUBLIC_HOST", "localhost"),
+		NovncPortMin:             envInt("NOVNC_PORT_MIN", 24100),
+		NovncPortMax:             envInt("NOVNC_PORT_MAX", 24299),
+		WorkerPlatforms:          env("WORKER_PLATFORMS", "instagram,threads"),
+		ActionDryRun:             envBool("ACTION_DRY_RUN", true),
 		ProvisionAutoCreate:      envBool("PROVISION_AUTO_CREATE", true),
 		MaxAccountsPerContainer:  envInt("MAX_ACCOUNTS_PER_CONTAINER", 7),
 		ActionBatchParallelism:   envInt("ACTION_BATCH_PARALLELISM", 2),
@@ -204,11 +231,14 @@ func Load() (Config, error) {
 		ReportEmailWindowDays:      envInt("REPORT_EMAIL_WINDOW_DAYS", 7),
 	}
 
-	if cfg.ProvisionerMode != "static" && cfg.ProvisionerMode != "k8s" {
-		return Config{}, fmt.Errorf("config: PROVISIONER_MODE must be static|k8s, got %q", cfg.ProvisionerMode)
+	if cfg.ProvisionerMode != "static" && cfg.ProvisionerMode != "docker" && cfg.ProvisionerMode != "k8s" {
+		return Config{}, fmt.Errorf("config: PROVISIONER_MODE must be static|docker|k8s, got %q", cfg.ProvisionerMode)
 	}
 	if cfg.ReconcileIntervalSeconds < 0 {
 		return Config{}, fmt.Errorf("config: RECONCILE_INTERVAL_SECONDS must be >= 0, got %d", cfg.ReconcileIntervalSeconds)
+	}
+	if cfg.NovncPortMin <= 0 || cfg.NovncPortMax < cfg.NovncPortMin {
+		return Config{}, fmt.Errorf("config: NOVNC_PORT_MIN must be <= NOVNC_PORT_MAX and > 0, got %d-%d", cfg.NovncPortMin, cfg.NovncPortMax)
 	}
 	if cfg.ActionBatchParallelism < 1 {
 		return Config{}, fmt.Errorf("config: ACTION_BATCH_PARALLELISM must be >= 1, got %d", cfg.ActionBatchParallelism)

@@ -114,7 +114,17 @@ services:
       # P3-07 action scheduler: claim due jobs -> cooldown + rate-limit gates ->
       # worker queue. Off by default; enable to run the action engine.
       ACTION_INTERVAL_SECONDS: ${ACTION_INTERVAL_SECONDS:-0}
-      PROVISIONER_MODE: ${PROVISIONER_MODE:-static}
+      PROVISIONER_MODE: ${PROVISIONER_MODE:-docker}
+      # The reconciler is what actually provisions a dashboard-created row
+      # (F-02): leave it on locally so Create reaches a container.
+      RECONCILE_INTERVAL_SECONDS: ${RECONCILE_INTERVAL_SECONDS:-5}
+      DOCKER_NETWORK: ${DOCKER_NETWORK:-smm_default}
+      DOCKER_PUBLIC_HOST: ${DOCKER_PUBLIC_HOST:-localhost}
+      NOVNC_PORT_MIN: ${NOVNC_PORT_MIN:-24100}
+      NOVNC_PORT_MAX: ${NOVNC_PORT_MAX:-24299}
+      WORKER_IMAGE: ${WORKER_IMAGE:-smm-worker}
+      WORKER_PLATFORMS: ${WORKER_PLATFORMS:-instagram,threads}
+      ACTION_DRY_RUN: ${ACTION_DRY_RUN:-true}
       PROVISION_AUTO_CREATE: ${PROVISION_AUTO_CREATE:-true}
       ACTION_BATCH_PARALLELISM: ${ACTION_BATCH_PARALLELISM:-2}
       JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-me-0123456789}
@@ -138,6 +148,12 @@ services:
       REPORT_EMAIL_WINDOW_DAYS: ${REPORT_EMAIL_WINDOW_DAYS:-7}
     ports:
       - '${API_PORT:-24080}:8080'
+    # Local tier (F-06): the docker driver dials the daemon socket, which the
+    # image's nonroot user cannot open. Root + the socket mount is a local-only
+    # tradeoff (docs/SECURITY_REVIEW.md); the k8s tier keeps its own path.
+    user: root
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
     healthcheck:
       test: ['CMD', '/app/server', 'healthcheck']
       interval: 10s
@@ -145,7 +161,16 @@ services:
       retries: 5
       start_period: 10s
 
+  # Behind the `fleet` profile (F-08): a bare `make up` starts zero workers —
+  # containers are created from the dashboard, where the API allocates the
+  # live-view port and binds it. Bring replicas up the old way with
+  # `make up-fleet`, which publishes 6080 as before.
   worker:
+    profiles: ['fleet']
+    # Named image: the docker driver references WORKER_IMAGE=smm-worker when it
+    # launches a dashboard-created container, so the image must build under a
+    # stable tag regardless of which profile brought it up.
+    image: ${WORKER_IMAGE:-smm-worker}
     build:
       context: .
       dockerfile: apps/worker/Dockerfile
@@ -163,12 +188,11 @@ services:
       API_URL: http://api:8080
       REDIS_URL: redis://redis:6379
       S3_ENDPOINT: http://minio:9000
-      PROVISIONER_MODE: ${PROVISIONER_MODE:-static}
       ACTION_DRY_RUN: ${ACTION_DRY_RUN:-true}
       PLATFORMS: ${WORKER_PLATFORMS:-instagram,threads}
       # P4-08 live view. NOVNC_URL wins when the operator knows the exact
       # reachable address; NOVNC_BASE_URL + the container's NOVNC_PORT is the
-      # shared-host form. Empty = unpublished; the dashboard hides the button.
+      # shared-host form. Empty = unpublished; the dashboard disables the button.
       NOVNC_URL: ${WORKER_NOVNC_URL:-}
       NOVNC_BASE_URL: ${WORKER_NOVNC_BASE_URL:-}
       NOVNC_PORT: ${WORKER_NOVNC_PORT:-6080}
@@ -196,9 +220,6 @@ services:
     depends_on:
       api:
         condition: service_started
-    environment:
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080}
-      NEXT_PUBLIC_SSE_URL: ${NEXT_PUBLIC_SSE_URL:-http://localhost:8080/api/stream}
     ports:
       - '${WEB_PORT:-24081}:3000'
 

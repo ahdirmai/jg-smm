@@ -542,6 +542,9 @@ type CreateContainerRequest struct {
 	// Name Optional display name. Omit to get a generated name.
 	Name *string `json:"name,omitempty"`
 
+	// NovncPort Optional host port to publish the live view on (127.0.0.1 only). Omit to let the API allocate one from NOVNC_PORT_MIN..NOVNC_PORT_MAX. Out-of-range or taken ports are a 400.
+	NovncPort nullable.Nullable[int] `json:"novncPort,omitempty"`
+
 	// Region ISO 3166-1 alpha-2 region for proxy placement.
 	Region string `json:"region"`
 }

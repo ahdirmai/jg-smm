@@ -15,7 +15,7 @@ func TestContainerCreateManual(t *testing.T) {
 	accounts := newFakeAccountStore()
 	svc := NewContainerService(store, accounts, nil, ContainerConfig{})
 
-	w, err := svc.Create(context.Background(), "", "ID", "Jakarta")
+	w, err := svc.Create(context.Background(), "", "ID", "Jakarta", nil)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -44,15 +44,15 @@ func TestContainerCreateValidatesRegion(t *testing.T) {
 	accounts := newFakeAccountStore()
 	svc := NewContainerService(store, accounts, nil, ContainerConfig{})
 
-	if _, err := svc.Create(context.Background(), "c1", "", "Jakarta"); err == nil {
+	if _, err := svc.Create(context.Background(), "c1", "", "Jakarta", nil); err == nil {
 		t.Fatal("want error for missing region")
 	}
-	if _, err := svc.Create(context.Background(), "c1", "IDN", "Jakarta"); err == nil {
+	if _, err := svc.Create(context.Background(), "c1", "IDN", "Jakarta", nil); err == nil {
 		t.Fatal("want error for a 3-letter region")
 	}
 	// The DB check constraint is region ~ '^[A-Z]{2}$'; lowercase must be
 	// rejected here rather than surfacing as a driver error.
-	if _, err := svc.Create(context.Background(), "c1", "id", "Jakarta"); err == nil {
+	if _, err := svc.Create(context.Background(), "c1", "id", "Jakarta", nil); err == nil {
 		t.Fatal("want error for a lowercase region")
 	}
 }
@@ -66,7 +66,7 @@ func TestContainerCreateRejectsLongName(t *testing.T) {
 	for i := range long {
 		long[i] = 'a'
 	}
-	if _, err := svc.Create(context.Background(), string(long), "ID", "Jakarta"); err == nil {
+	if _, err := svc.Create(context.Background(), string(long), "ID", "Jakarta", nil); err == nil {
 		t.Fatal("want error for a name over 64 chars")
 	}
 }
@@ -76,12 +76,12 @@ func TestContainerCreateDuplicateName(t *testing.T) {
 	accounts := newFakeAccountStore()
 	svc := NewContainerService(store, accounts, nil, ContainerConfig{})
 
-	if _, err := svc.Create(context.Background(), "dupe", "ID", "Jakarta"); err != nil {
+	if _, err := svc.Create(context.Background(), "dupe", "ID", "Jakarta", nil); err != nil {
 		t.Fatalf("create 1: %v", err)
 	}
 	// Simulate the store rejecting a second row with the same name.
 	store.duplicateNames["dupe"] = true
-	if _, err := svc.Create(context.Background(), "dupe", "ID", "Jakarta"); err == nil {
+	if _, err := svc.Create(context.Background(), "dupe", "ID", "Jakarta", nil); err == nil {
 		t.Fatal("want conflict for a duplicate name")
 	}
 }
@@ -92,7 +92,7 @@ func TestContainerListIncludesAccounts(t *testing.T) {
 	packer := NewPacker(store, accounts, PackerConfig{MaxPerContainer: 2})
 	svc := NewContainerService(store, accounts, packer, ContainerConfig{})
 
-	w, err := svc.Create(context.Background(), "c1", "ID", "Jakarta")
+	w, err := svc.Create(context.Background(), "c1", "ID", "Jakarta", nil)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestContainerDeleteReleasesAccounts(t *testing.T) {
 	packer := NewPacker(store, accounts, PackerConfig{MaxPerContainer: 2})
 	svc := NewContainerService(store, accounts, packer, ContainerConfig{})
 
-	w, err := svc.Create(context.Background(), "c1", "ID", "Jakarta")
+	w, err := svc.Create(context.Background(), "c1", "ID", "Jakarta", nil)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -150,13 +150,13 @@ func TestContainerCreateValidatesLocation(t *testing.T) {
 	store := newFakeWorkerStore()
 	svc := NewContainerService(store, newFakeAccountStore(), nil, ContainerConfig{})
 
-	if _, err := svc.Create(context.Background(), "c1", "ID", ""); err == nil {
+	if _, err := svc.Create(context.Background(), "c1", "ID", "", nil); err == nil {
 		t.Fatal("want error for missing location")
 	}
-	if _, err := svc.Create(context.Background(), "c1", "ID", "Nowhere"); err == nil {
+	if _, err := svc.Create(context.Background(), "c1", "ID", "Nowhere", nil); err == nil {
 		t.Fatal("want error for an unknown location")
 	}
-	w, err := svc.Create(context.Background(), "c1", "ID", "jakarta")
+	w, err := svc.Create(context.Background(), "c1", "ID", "jakarta", nil)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}

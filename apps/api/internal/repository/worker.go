@@ -52,6 +52,13 @@ const workerCols = `id, name, container_id, control_channel, action_queue, sessi
 // re-claim across restarts).
 const claimSelectOwned = `SELECT ` + workerCols + ` FROM worker WHERE container_id = $1`
 
+// claimSelectByID binds the dashboard-created row whose id the driver injected
+// as WORKER_ID. A recreated container changes hostname, so a row that was
+// claimed under a compose-derived boot id ("worker-<hostname>") must be
+// re-pointable to the same row by its real id — otherwise the worker falls
+// back to its boot id and its queue goes unheard.
+const claimSelectByID = `SELECT ` + workerCols + ` FROM worker WHERE id = $1 FOR UPDATE SKIP LOCKED`
+
 // claimSelectFree takes the oldest PENDING row nobody has claimed yet, and
 // locks it so concurrent `--scale`d workers each take a distinct one.
 const claimSelectFree = `SELECT ` + workerCols + `
@@ -135,7 +142,33 @@ func (r *WorkerRepo) Claim(ctx context.Context, claim port.WorkerClaim) (domain.
 		return domain.Worker{}, fmt.Errorf("repository.worker.Claim: owned lookup: %w", err)
 	}
 
-	// 2. Take the oldest free PENDING row that wants to run.
+	// 2. A docker-provisioned container is launched with WORKER_ID=<row id>, so
+	// the claim may name its own row directly even when the row was bound
+	// earlier under a compose-derived boot id (a recreated container changes
+	// hostname). Re-point that row instead of falling back to the boot id,
+	// which would leave its queue unheard.
+	if row, err := scanWorkerRow(ctx, tx.QueryRow(ctx, claimSelectByID, claim.ContainerID)); err == nil {
+		if _, err := tx.Exec(ctx, claimBind,
+			claim.ContainerID, claim.ControlChannel, claim.ActionQueue, claim.SessionPVC,
+			nilIfEmpty(claim.NovncURL), row.ID); err != nil {
+			return domain.Worker{}, fmt.Errorf("repository.worker.Claim: rebind: %w", err)
+		}
+		row.ContainerID = &claim.ContainerID
+		row.ControlChannel = &claim.ControlChannel
+		row.ActionQueue = &claim.ActionQueue
+		row.SessionPVC = &claim.SessionPVC
+		if claim.NovncURL != nil && *claim.NovncURL != "" {
+			row.NoVNCService = claim.NovncURL
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return domain.Worker{}, fmt.Errorf("repository.worker.Claim: commit: %w", err)
+		}
+		return row, nil
+	} else if !errors.Is(err, domain.ErrNotFound) {
+		return domain.Worker{}, fmt.Errorf("repository.worker.Claim: id lookup: %w", err)
+	}
+
+	// 3. Take the oldest free PENDING row that wants to run.
 	row, err := scanWorkerRow(ctx, tx.QueryRow(ctx, claimSelectFree))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.Worker{}, domain.ErrNotFound
@@ -144,7 +177,7 @@ func (r *WorkerRepo) Claim(ctx context.Context, claim port.WorkerClaim) (domain.
 		return domain.Worker{}, fmt.Errorf("repository.worker.Claim: free lookup: %w", err)
 	}
 
-	// 3. Bind it. The "pending" placeholder channels the row was created with
+	// 4. Bind it. The "pending" placeholder channels the row was created with
 	// are replaced by the live keys this worker actually subscribes to, so a job
 	// queued to the row reaches the container that claimed it.
 	if _, err := tx.Exec(ctx, claimBind,

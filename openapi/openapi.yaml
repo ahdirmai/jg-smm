@@ -1500,6 +1500,15 @@ components:
           description: City the worker operates from; picks the GPS radius to
             randomize a frozen coordinate from. One of GET /api/locations.
           example: Jakarta
+        novncPort:
+          type: integer
+          nullable: true
+          minimum: 1024
+          maximum: 65535
+          description: Optional host port to publish the live view on
+            (127.0.0.1 only). Omit to let the API allocate one from
+            NOVNC_PORT_MIN..NOVNC_PORT_MAX. Out-of-range or taken ports are a 400.
+          example: 24150
 
     Container:
       type: object

@@ -74,29 +74,38 @@ The fleet starts empty — this section is where the first real data appears.
 - [ ] `/workers` shows the empty state with a **Create** button (0 containers).
 - [ ] The **KPI strip** shows Containers/Ready/Busy/Error/Accounts enrolled
       (all zero on an empty fleet).
-- [ ] Create a worker from the UI. In static mode (`PROVISIONER_MODE=static`)
-      this **records the row + audit log only** — it does not start a container.
-      Pick a city from the **location dropdown** (all Indonesia) and create.
+- [ ] Create a worker from the UI. With the default `PROVISIONER_MODE=docker`
+      the API **launches a real container** within one reconcile tick
+      (`RECONCILE_INTERVAL_SECONDS`, default 5s) — the row starts `PENDING`
+      and flips to `READY` on the worker's first heartbeat. Pick a city from
+      the **location dropdown** (all Indonesia) and create.
       The API rejects a region that is not ISO alpha-2 (use `ID`) and a location
       that is not a seeded city name (use e.g. `Jakarta`).
+- [ ] The create response and the card carry the live-view URL immediately
+      (`novncUrl`, e.g. `http://localhost:24100`) because the port is allocated
+      at create time from `NOVNC_PORT_MIN..MAX`. An out-of-range port in the
+      form's **noVNC port** field is a 400 naming the range; a port another
+      container holds is a 409.
 - [ ] The new row carries the city + a frozen coordinate:
       `GET /api/containers/<id>` shows `location`, `latitude`, `longitude`.
       The point must sit inside the city's radius, not at (0,0).
 - [ ] With ≥2 cities present, containers are **grouped under a city heading**
       with the anchor coordinates; the **city filter** narrows the grid.
-- [ ] **Scale the container up manually** (static provisioner, by design — there
-      are zero worker containers until a user adds one):
-      `docker compose up -d --scale worker=1`, then refresh; the row picks up a
-      heartbeat and status transitions to running.
-- [ ] `docker ps` shows the worker container.
+- [ ] `docker ps` shows the worker container as
+      `smm-worker-<uuid>`, published on `127.0.0.1:<port>` (loopback only).
 - [ ] Worker heartbeat reaches the API: `GET /api/containers/<id>` → 200.
 - [ ] **Geolocation is applied**: `GET /internal/worker/<id>/geolocation` → 200
       with the same frozen coordinate as the row (the worker spoofs this fixed
       GPS via Playwright before every job).
-- [ ] **Live browser (P4-08)**: open the worker's noVNC modal → screen connects
-      (needs `WORKER_NOVNC_URL`/`WORKER_NOVNC_BASE_URL` in `.env`; skip if unset
-      and note it).
-- [ ] Delete/stop the worker → row leaves the list, container gone.
+- [ ] **Live browser (P4-08)**: the **Live view** button is always rendered;
+      without a `novncUrl` it is disabled with a tooltip naming the reason.
+      On a provisioned worker it opens the modal and the Xvfb screen connects.
+- [ ] **An action runs end to end**: with `ACTION_INTERVAL_SECONDS>0`, enqueue a
+      like from the actions page. The scheduler publishes to the worker's queue,
+      the worker BLPOPs it and callbacks `SUCCESS` (`ACTION_DRY_RUN=true` skips
+      the real browser step by design). The actions page flips to `success`.
+- [ ] Delete/stop the worker → row leaves the list, container and its named
+      volumes are gone.
 
 ## 6. Accounts
 

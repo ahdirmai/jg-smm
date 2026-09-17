@@ -297,3 +297,47 @@ against the rebuilt `api` + `web` images; `make ci` green.
   `limit=10` was emitted as the JSON string `"10"` and rejected by `*int`
   (audit pagination returned 400). Values are now coerced to the target field's
   type first. Covered by unit tests for both the pass and reject paths.
+
+## Remediation — local provisioning + noVNC live view (2026-09-18)
+
+Fixes every finding in [AUDIT_REPORT.md](AUDIT_REPORT.md) /
+[REMEDIATION_PLAN.md](REMEDIATION_PLAN.md). Every step below was verified
+against a rebuilt stack on the operator's workstation; `make ci` green.
+
+- **Docker provisioner (R-01/F-01)**: `adapter/dockerprovisioner` implements
+  `port.K8sClient` against the Docker Engine API over a unix socket with plain
+  `net/http` — no SDK, no new dependency. Label-driven (`smm.worker`, `smm.worker.id`,
+  `smm.generation`) so `Observe`/`ListRunning` read real state, and idempotent per
+  (worker, generation). Covers R-08 too: the sweeper finally distinguishes an
+  orphan from a known worker.
+- **Config + compose (R-02/F-01/F-02/F-06)**: `PROVISIONER_MODE=docker` is now
+  the local default with `RECONCILE_INTERVAL_SECONDS=5`, so a Create reaches a
+  container in one tick instead of dying at the static driver's intent log.
+  The `api` service mounts the socket and runs as root — a local-only,
+  documented tradeoff (`SECURITY_REVIEW.md`), with the socket-proxy upgrade
+  path recorded.
+- **Port allocation (R-03/F-03/F-05/F-12)**: `ContainerService.Create` takes an
+  optional `novncPort` and persists the URL in the existing `novnc_service`
+  column at insert time — no migration. The driver injects it as `NOVNC_URL`,
+  so the worker heartbeats a URL it could never have discovered on its own.
+  Out-of-range is a 400, a taken port is a 409.
+- **Dashboard (R-04/F-04)**: the Live view button is always rendered; without a
+  URL it is disabled and the tooltip says why. A **noVNC port** field was added
+  to the create form.
+- **Fleet defaults (R-05/F-08)**: the `worker` compose service moved behind a
+  `fleet` profile. `make up` starts zero workers and builds the image the
+  driver launches; `make up-fleet` keeps the old `--scale worker=N` behaviour.
+- **Callback status casing**: the worker posted `status:"success"` while the
+  API enum is `SUCCESS`, so every action callback was 400 and the job sat at
+  `running` forever. Mapped in `transport/callback.ts`; the controller layer
+  never sees the wire spelling.
+- **Claim by row id**: a recreated container changes hostname, so a row bound
+  under a compose-derived boot id was unclaimable and the worker fell back to
+  its boot id with its queue unheard. Claim now re-points the row named by the
+  driver-injected `WORKER_ID` before looking for a free one.
+
+**Verified end-to-end** (local stack): `make up` → login → create in Jakarta →
+`docker ps` shows `smm-worker-<uuid>` bound to `127.0.0.1:24100` → card flips
+`PENDING`→`READY` in ~11s → live view modal connects → an enqueued like
+dispatches, is BLPOPped, and callbacks `SUCCESS` (dry-run) → delete removes the
+container and its named volumes.

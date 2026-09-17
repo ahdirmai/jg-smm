@@ -153,10 +153,15 @@ export const api = {
 
   listContainers: (signal?: AbortSignal) =>
     request<ContainerList>('/api/containers', signal ? { signal } : undefined),
-  createContainer: (name: string, region: string, location: string) =>
+  createContainer: (
+    name: string,
+    region: string,
+    location: string,
+    novncPort?: number,
+  ) =>
     request<Container>('/api/containers', {
       method: 'POST',
-      body: JSON.stringify({ name, region, location }),
+      body: JSON.stringify({ name, region, location, novncPort: novncPort ?? null }),
     }),
   listLocations: (signal?: AbortSignal) =>
     request<ApiSchemas['Location'][]>('/api/locations', signal ? { signal } : undefined),

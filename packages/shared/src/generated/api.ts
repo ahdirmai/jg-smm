@@ -928,6 +928,11 @@ export interface components {
              * @example Jakarta
              */
             location: string;
+            /**
+             * @description Optional host port to publish the live view on (127.0.0.1 only). Omit to let the API allocate one from NOVNC_PORT_MIN..NOVNC_PORT_MAX. Out-of-range or taken ports are a 400.
+             * @example 24150
+             */
+            novncPort?: number | null;
         };
         Container: {
             id: string;

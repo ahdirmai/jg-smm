@@ -24,11 +24,12 @@ async function createContainerWithRetry(
   name: string,
   region: string,
   location: string,
+  novncPort?: number,
 ): Promise<Container | undefined> {
   let lastErr: unknown;
   for (let attempt = 1; attempt <= CREATE_RETRY.attempts; attempt += 1) {
     try {
-      return await api.createContainer(name, region, location);
+      return await api.createContainer(name, region, location, novncPort);
     } catch (err) {
       lastErr = err;
       // 409 = the name is already taken by our own earlier attempt; the create
@@ -54,7 +55,7 @@ export type ContainersState = {
   loading: boolean;
   error: string | null;
   refresh: () => void;
-  create: (name: string, region: string, location: string) => Promise<void>;
+  create: (name: string, region: string, location: string, novncPort?: number) => Promise<void>;
   locations: Location[];
   remove: (id: string) => Promise<void>;
 };
@@ -143,14 +144,14 @@ export function useContainers(): ContainersState {
   }, [refresh, upsertFrame]);
 
   const create = useCallback(
-    async (name: string, region: string, location: string) => {
+    async (name: string, region: string, location: string, novncPort?: number) => {
       // Fire-and-forget: the POST is a fast DB insert that returns the row, and
       // the card is inserted the moment it lands. The reconcile (refresh) is
       // kicked off but never awaited — the button unblocks immediately and the
       // provision-updated / worker-health frames converge the card in the
       // background. This is the whole point of the SSE path: the create itself
       // is background work, the UI only registers the intent.
-      const created = await createContainerWithRetry(name, region, location);
+      const created = await createContainerWithRetry(name, region, location, novncPort);
       if (created) setContainers((prev) => [...prev, created]);
       void refresh();
     },

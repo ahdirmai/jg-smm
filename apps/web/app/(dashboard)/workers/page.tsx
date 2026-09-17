@@ -81,6 +81,9 @@ export default function WorkersPage() {
 
   const [name, setName] = useState('');
   const [location, setLocation] = useState('');
+  // P4-08: the operator may pin the live-view host port; empty lets the API
+  // allocate one. The hint mirrors the server's NOVNC_PORT_MIN..MAX range.
+  const [novncPort, setNovncPort] = useState('');
   // P6-05: group the fleet by city. "all" keeps every container in one grid.
   const [city, setCity] = useState('all');
   const [busy, setBusy] = useState<string | null>(null);
@@ -139,9 +142,15 @@ export default function WorkersPage() {
     try {
       // Region is constant for the MVP (Indonesia only); the city is what
       // varies and what the GPS spoof anchors to.
-      await create(name.trim(), 'ID', location);
+      const port = novncPort.trim() ? Number.parseInt(novncPort.trim(), 10) : undefined;
+      if (novncPort.trim() && !Number.isFinite(port)) {
+        setFormError('noVNC port must be a number, or empty to let the API pick one.');
+        return;
+      }
+      await create(name.trim(), 'ID', location, port);
       setName('');
       setLocation('');
+      setNovncPort('');
     } catch (err) {
       // A dropped connection surfaces from fetch as a TypeError 'Failed to
       // fetch'; that is the symptom the retry layer is built for, so name it
@@ -280,6 +289,13 @@ export default function WorkersPage() {
                         </CardDescription>
                       </div>
                       <div className="flex items-center gap-1">
+                        {/*
+                          The button is always rendered (REMEDIATION_PLAN R-04): a
+                          missing control reads as "this build has no live view",
+                          while a disabled one names the real reason — the worker
+                          has not published its URL yet — so OTP/2FA work is not
+                          blocked on a support round-trip.
+                        */}
                         {c.novncUrl ? (
                           <Button
                             variant="outline"
@@ -290,7 +306,18 @@ export default function WorkersPage() {
                             <MonitorPlay className="size-3.5" />
                             Live view
                           </Button>
-                        ) : null}
+                        ) : (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8"
+                            disabled
+                            title="The live view is published when the worker reports its noVNC URL. This card flips to a working button on the first heartbeat."
+                          >
+                            <MonitorPlay className="size-3.5" />
+                            Live view
+                          </Button>
+                        )}
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button
@@ -439,6 +466,17 @@ export default function WorkersPage() {
                   </option>
                 ))}
               </select>
+            </div>
+            <div className="grid w-full max-w-[8rem] gap-2">
+              <Label htmlFor="c-novnc">noVNC port</Label>
+              <Input
+                id="c-novnc"
+                inputMode="numeric"
+                value={novncPort}
+                onChange={(e) => setNovncPort(e.target.value)}
+                placeholder="24100–24299"
+                disabled={busy === '__create__' || !canAct}
+              />
             </div>
             {formError ? (
               <div className="flex items-center gap-2 text-sm text-destructive">

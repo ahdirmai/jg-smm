@@ -28,14 +28,24 @@ OAPI_CODEGEN_VERSION ?= v2.4.1
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
-up: env ## Bring the whole stack up (idempotent), with $(WORKERS) worker replicas
-	$(COMPOSE) up -d --scale worker=$(WORKERS)
+up: env ## Bring the app stack up (api/web/db). Workers are created from the dashboard
+	@$(MAKE) worker-image
+	$(COMPOSE) build api web
+	$(COMPOSE) up -d
+
+up-fleet: env ## Bring the stack up plus $(WORKERS) worker replicas (the pre-dashboard way)
+	COMPOSE_PROFILES=fleet $(COMPOSE) up -d --scale worker=$(WORKERS)
+
+worker-image: ## Build the image the docker driver launches (WORKER_IMAGE)
+	COMPOSE_PROFILES=fleet $(COMPOSE) build worker
+up-fleet: env ## Bring the stack up plus $(WORKERS) worker replicas (the pre-dashboard way)
+	COMPOSE_PROFILES=fleet $(COMPOSE) up -d --scale worker=$(WORKERS)
 
 up-obs: env ## Bring the app stack up plus the observability tier (Prometheus/Grafana/Loki/Alertmanager)
-	COMPOSE_PROFILES=obs $(COMPOSE) up -d --scale worker=$(WORKERS)
+	COMPOSE_PROFILES=obs $(COMPOSE) up -d
 
 up-mail: env ## Bring the app stack up plus the local mailpit catcher (P4-06)
-	COMPOSE_PROFILES=mail $(COMPOSE) up -d --scale worker=$(WORKERS)
+	COMPOSE_PROFILES=mail $(COMPOSE) up -d
 
 load-test: ## Run the k6 load test against a running stack (P5-07)
 	K6_BASE_URL=$(K6_BASE_URL) K6_DASHBOARD_BASE=$(K6_DASHBOARD_BASE) \

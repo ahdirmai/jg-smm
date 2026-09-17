@@ -49,7 +49,12 @@ func (h *ContainerHandler) create(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "container service unavailable")
 	}
 
-	w, err := h.containers.Create(c.Request().Context(), name, req.Region, req.Location)
+	var novncPort *int
+	if req.NovncPort != nil && !req.NovncPort.IsNull() {
+		p := int(req.NovncPort.MustGet())
+		novncPort = &p
+	}
+	w, err := h.containers.Create(c.Request().Context(), name, req.Region, req.Location, novncPort)
 	if err != nil {
 		return translateContainerError(err)
 	}

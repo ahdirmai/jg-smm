@@ -33,6 +33,10 @@ export function createCallback(
     // callback updates the verdict instead of duplicating it.
     const body = JSON.stringify({
       ...result,
+      // The wire enum is UPPERCASE (AttemptStatus in openapi.yaml); the
+      // in-process status is lowercase. Translate here so the controller and
+      // the DOM layers never see the wire spelling.
+      status: result.status.toUpperCase(),
       attemptId: `${result.jobId}:${result.attempt}`,
       workerId: config.workerId,
     });

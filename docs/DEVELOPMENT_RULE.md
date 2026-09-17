@@ -271,7 +271,7 @@ Semua service (BE, FE, Worker, Postgres+TimescaleDB, Redis, MinIO) berjalan dala
 
 - BE Deployment pakai init container `migrate` (`golang-migrate up`) sebelum app start. Failure → CrashLoopBackOff → alert. Alternatif: ArgoCD hook / one-shot Job per release tag.
 - **Tidak ada secret di env/Dockerfile.** Inject runtime dari K8s Secret (BE) atau BE→Worker via secure channel saat pod ready. Dev: `compose/.env` (gitignored) + secrets file mount.
-- **Tier config (non-secret) via env `Setting`:** `PROVISIONER_MODE={static|k8s}` (lokal=static), `ACTION_BATCH_PARALLELISM` (lokal=2, prod=4), `ACTION_DRY_RUN` (lokal=true, prod=false), `MAX_ACCOUNTS_PER_CONTAINER`. Lihat `INFRA_ANALYST.md` §15.2.
+- **Tier config (non-secret) via env `Setting`:** `PROVISIONER_MODE={static|docker|k8s}` (lokal=docker: API sendiri yang meluncurkan container worker via socket docker yang di-mount; static = bookkeeping saja; k8s = produksi), `RECONCILE_INTERVAL_SECONDS` (lokal=5; 0 = provisioning tidak pernah jalan), `NOVNC_PORT_MIN`/`NOVNC_PORT_MAX` (range port live view, default 24100–24299), `ACTION_BATCH_PARALLELISM` (lokal=2, prod=4), `ACTION_DRY_RUN` (lokal=true, prod=false), `MAX_ACCOUNTS_PER_CONTAINER`. Lihat `INFRA_ANALYST.md` §15.2.
 
 ### 8.4 Dev Container
 

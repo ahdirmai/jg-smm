@@ -69,9 +69,19 @@ make ci
 
 ## noVNC production caveat
 
-`x11vnc` runs with `-nopw` and the port is published. That is fine for the
-local single-node tier (the compose network is trusted and the port binds to
-the dev machine). In the Kubernetes tier the noVNC `Service` is `ClusterIP`
+`x11vnc` runs with `-nopw`. The local tier binds the live view to `127.0.0.1`
+only (`HostConfig.PortBindings.HostIp`), so it reaches the operator's browser
+and nothing else. In the Kubernetes tier the noVNC `Service` is `ClusterIP`
 with no ingress, so it is not externally reachable — but if a live view is ever
 exposed beyond the cluster, it needs a password or an authenticating proxy
 first. Recorded here so it is a decision, not an oversight.
+
+## Docker socket escalation (local tier only)
+
+`PROVISIONER_MODE=docker` mounts `/var/run/docker.sock` into the API container
+and runs it as `root`, because the image's nonroot user cannot open the socket.
+This is a deliberate local-only tradeoff: the API process can create and delete
+any container on the host. It is opt-in and is never a production default —
+`PROVISIONER_MODE=k8s` remains the production path and is untouched by this.
+Upgrade path: put a socket proxy (e.g. tecnio's `docker-socket-proxy`) in front
+and whitelist only the container endpoints the driver uses, then drop root.

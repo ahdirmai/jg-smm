@@ -19,6 +19,7 @@ import (
 	analyticsprovider "github.com/ahdirmai/jg-smm/apps/api/internal/adapter/analytics"
 	apifyadapter "github.com/ahdirmai/jg-smm/apps/api/internal/adapter/apify"
 	"github.com/ahdirmai/jg-smm/apps/api/internal/adapter/crypto"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/adapter/dockerprovisioner"
 	"github.com/ahdirmai/jg-smm/apps/api/internal/adapter/k8s"
 	smtpadapter "github.com/ahdirmai/jg-smm/apps/api/internal/adapter/smtp"
 	storageadapter "github.com/ahdirmai/jg-smm/apps/api/internal/adapter/storage"
@@ -150,9 +151,12 @@ func main() {
 		// Container API (P1-19): create/list/delete MANUAL containers. The
 		// reconciler provisions the pod from the row this service writes.
 		containerSvc := service.NewContainerService(workerRepo, accountRepo, packer, service.ContainerConfig{
-			Clock:  adapter.SystemClock{},
-			Logger: logger,
-			Stream: hub,
+			Clock:        adapter.SystemClock{},
+			Logger:       logger,
+			Stream:       hub,
+			NovncHost:    cfg.DockerPublicHost,
+			NovncPortMin: cfg.NovncPortMin,
+			NovncPortMax: cfg.NovncPortMax,
 		})
 		deps.Containers = apihttp.NewContainerHandler(containerSvc)
 
@@ -420,20 +424,39 @@ func run(ctx context.Context, e *echo.Echo, addr string, timeout time.Duration, 
 }
 
 // provisionDriver picks the container-platform driver for the configured tier:
-// k8s inside a cluster, static bookkeeping on a workstation. Both implement
-// port.K8sClient, so the reconciler and services are tier-agnostic.
+// k8s inside a cluster, docker on a workstation, static for bookkeeping-only.
+// All three implement port.K8sClient, so the reconciler and services are
+// tier-agnostic.
 func provisionDriver(ctx context.Context, cfg config.Config, workers port.WorkerStore, logs port.ProvisionLogStore, logger *slog.Logger) (port.K8sClient, error) {
-	if cfg.ProvisionerMode != "k8s" {
+	switch cfg.ProvisionerMode {
+	case "k8s":
+		logger.Info("provisioner: k8s driver", "namespace", cfg.K8sNamespace)
+		return k8s.New(ctx, k8s.Config{
+			Namespace:        cfg.K8sNamespace,
+			Image:            cfg.WorkerImage,
+			CreatesPerMinute: 10,
+			Logger:           logger,
+		})
+	case "docker":
+		// The local tier's real driver: the API itself launches worker
+		// containers through the mounted socket. Local-only and opt-in
+		// (REMEDIATION_PLAN §1.5): k8s stays the production path.
+		logger.Info("provisioner: docker driver", "socket", cfg.DockerSocket, "network", cfg.DockerNetwork)
+		return dockerprovisioner.New(dockerprovisioner.Config{
+			SocketPath: cfg.DockerSocket,
+			Network:    cfg.DockerNetwork,
+			Image:      cfg.WorkerImage,
+			PublicHost: cfg.DockerPublicHost,
+			PortMin:    cfg.NovncPortMin,
+			PortMax:    cfg.NovncPortMax,
+			Platforms:  cfg.WorkerPlatforms,
+			DryRun:     cfg.ActionDryRun,
+			Logger:     logger,
+		})
+	default:
 		logger.Info("provisioner: static driver (no cluster); scale locally with docker compose")
 		return adapter.NewStaticProvisioner(workers, logs, adapter.SystemClock{}, logger), nil
 	}
-	logger.Info("provisioner: k8s driver", "namespace", cfg.K8sNamespace)
-	return k8s.New(ctx, k8s.Config{
-		Namespace:        cfg.K8sNamespace,
-		Image:            cfg.WorkerImage,
-		CreatesPerMinute: 10,
-		Logger:           logger,
-	})
 }
 
 // actorForPlatform maps a platform to its configured Apify actor id. The ids
