@@ -1,12 +1,13 @@
 'use client';
 
-import { Suspense } from 'react';
+import { Suspense, useEffect } from 'react';
 import { useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Activity, Loader2 } from 'lucide-react';
 
 import { Button, Card, CardContent, Input, Label } from '@smm/ui';
 import { ModeToggle } from '@/components/mode-toggle';
+import { useSession } from '@/lib/auth/session-context';
 
 /**
  * Login page (P6-03, mirrors docs/prototype/login.html).
@@ -18,6 +19,16 @@ import { ModeToggle } from '@/components/mode-toggle';
  * The API sets the session cookie on success (credentials: include), so the
  * redirect to `/` is already authenticated on first paint.
  */
+
+// `next` is attacker-controlled (it comes from the query string). Only accept a
+// same-origin relative path: a bare `//evil.com` or an absolute URL would
+// otherwise bounce a signed-in user to a third party after login.
+function safeNext(raw: string | null): string {
+  if (!raw) return '/';
+  if (raw.startsWith('/') && !raw.startsWith('//') && !raw.startsWith('\\')) return raw;
+  return '/';
+}
+
 export default function LoginPage() {
   return (
     <Suspense
@@ -37,7 +48,14 @@ export default function LoginPage() {
 function LoginForm() {
   const router = useRouter();
   const search = useSearchParams();
-  const next = search.get('next') ?? '/';
+  const next = safeNext(search.get('next'));
+  const session = useSession();
+
+  // Already signed in (e.g. navigated to /login by hand): bounce back to the
+  // app instead of showing a redundant form.
+  useEffect(() => {
+    if (session.status === 'authenticated') router.replace(next);
+  }, [session.status, next, router]);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);

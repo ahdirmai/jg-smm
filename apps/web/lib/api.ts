@@ -89,6 +89,22 @@ export class ApiError extends Error {
   }
 }
 
+// A single in-flight redirect guard so an expired session mid-session (the
+// token dies while the dashboard is open) lands on /login once, not once per
+// concurrent request. Every API call funnels through `request`, so this is the
+// only place the 401 needs handling — pages keep throwing ApiError as before.
+let redirectingToLogin = false;
+
+function redirectToLogin(): void {
+  if (redirectingToLogin || typeof window === 'undefined') return;
+  // Already there: the login page is under the root SessionProvider, so it also
+  // probes /api/auth/me and gets a 401 — redirecting would loop on itself.
+  if (window.location.pathname.startsWith('/login')) return;
+  redirectingToLogin = true;
+  const next = window.location.pathname + window.location.search;
+  window.location.assign(`/login?next=${encodeURIComponent(next)}`);
+}
+
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const resp = await fetch(`${API_URL}${path}`, {
     credentials: 'include',
@@ -97,6 +113,12 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
 
   if (!resp.ok) {
+    // 401 = no usable session. Navigate to the login page rather than letting
+    // every page surface this as a "Failed to fetch". The login form is a raw
+    // fetch (not this client), so there is no redirect loop on a bad password —
+    // that comes back 401 too and is rendered inline as a form error.
+    if (resp.status === 401) redirectToLogin();
+
     // The error body is `{ error: { code, message } }` per the OpenAPI contract.
     let message = resp.statusText;
     try {

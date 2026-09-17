@@ -6,6 +6,7 @@ import {
   FileText,
   Gauge,
   LayoutDashboard,
+  Loader2,
   MessageSquareText,
   MonitorSmartphone,
   ScrollText,
@@ -14,8 +15,8 @@ import {
   Users,
 } from 'lucide-react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import { useState } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
+import { useEffect, useState } from 'react';
 
 import { ModeToggle } from '@/components/mode-toggle';
 import { cn } from '@/lib/utils';
@@ -179,10 +180,42 @@ function NavGroup({ group, pathname }: { group: Group; pathname: string }) {
  * column inside `main` — page authors write top-level sections with no manual
  * mt-*, vertical rhythm comes from the gap.
  */
+function ShellSplash() {
+  return (
+    <div
+      className="flex min-h-screen items-center justify-center bg-background"
+      data-testid="shell-splash"
+    >
+      <Loader2 className="size-6 animate-spin text-muted-foreground" />
+    </div>
+  );
+}
+
 export function DashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
   const session = useSession();
-  const role = session.status === 'authenticated' ? session.role : undefined;
+
+  // No session = no dashboard. The API client also redirects on a mid-session
+  // 401 (see lib/api.ts); this guard covers a hard navigation/refresh where
+  // /api/auth/me is the only call that runs. Login keeps its `next` param so a
+  // successful sign-in lands back on the page the caller wanted.
+  useEffect(() => {
+    if (session.status === 'anonymous') {
+      router.replace(`/login?next=${encodeURIComponent(pathname)}`);
+    }
+  }, [session.status, pathname, router]);
+
+  // Resolve before painting: otherwise the nav flashes for an unauthenticated
+  // caller between the first render and the redirect firing.
+  if (session.status === 'loading') {
+    return <ShellSplash />;
+  }
+  if (session.status === 'anonymous') {
+    return <ShellSplash />;
+  }
+
+  const role = session.role;
   const { title, subtitle } = titleFor(pathname);
 
   const visible = NAV.filter((entry) => {
