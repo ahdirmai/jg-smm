@@ -43,12 +43,19 @@ func NewInternalHandler(jobs *service.JobService) *InternalHandler {
 	return &InternalHandler{jobs: jobs}
 }
 
-// Register mounts the internal routes behind a body-size limit.
+// Register mounts the internal routes behind a body-size limit. Mounted on the
+// root echo (not the /api group): these are private-network calls from the
+// API's own worker containers, so they carry no session and no RBAC gate.
 func (h *InternalHandler) Register(e *echo.Echo) {
 	g := e.Group("/internal", limitBody(MaxCallbackBytes))
 	g.POST("/action-callback", h.actionCallback)
 	g.POST("/account-callback", h.accountCallback)
 	g.POST("/heartbeat", h.heartbeat)
+	// A locally scaled worker boots knowing only its hostname; this is how it
+	// learns which dashboard-created row is its and what GPS to spoof. Mounted
+	// next to the heartbeat because it is the handshake that makes the heartbeat
+	// resolvable at all (see WorkerClaim).
+	g.POST("/claim", h.claim)
 	g.GET("/worker/:workerId/geolocation", h.geolocation)
 }
 
@@ -151,6 +158,46 @@ func (h *InternalHandler) heartbeat(c echo.Context) error {
 		NovncURL:      novncURL,
 	})
 	return h.translate(c, err)
+}
+
+// claim binds a booted worker container to a dashboard-created row. The
+// worker sends its hostname-derived identity and the redis keys it is already
+// subscribed to; the response carries the row's real id (so every later
+// heartbeat, queue pop and control subscription addresses the row) and the
+// frozen GPS point the browser must spoof before its first job.
+//
+// Not in oapigen: the internal group is a private-network contract between the
+// API and its own workers, not part of the public dashboard API, so it defines
+// its request/response shapes inline rather than generating them.
+func (h *InternalHandler) claim(c echo.Context) error {
+	var req struct {
+		ContainerID    string  `json:"containerId"`
+		ControlChannel *string `json:"controlChannel"`
+		ActionQueue    *string `json:"actionQueue"`
+		SessionPVC     *string `json:"sessionPvc"`
+		NovncURL       *string `json:"novncUrl"`
+	}
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid claim body")
+	}
+	if req.ContainerID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "containerId is required")
+	}
+	if h.jobs == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "job service unavailable")
+	}
+
+	res, err := h.jobs.Claim(c.Request().Context(), service.WorkerClaim{
+		ContainerID:    req.ContainerID,
+		ControlChannel: derefStr(req.ControlChannel),
+		ActionQueue:    derefStr(req.ActionQueue),
+		SessionPVC:     derefStr(req.SessionPVC),
+		NovncURL:       req.NovncURL,
+	})
+	if err != nil {
+		return h.translate(c, err)
+	}
+	return c.JSON(http.StatusOK, res)
 }
 
 // geolocation returns the worker's frozen GPS point so Playwright can spoof a

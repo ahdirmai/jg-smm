@@ -114,6 +114,14 @@ func (s *fakeWorkerStore) GetByName(ctx context.Context, name string) (domain.Wo
 	return domain.Worker{}, domain.ErrNotFound
 }
 
+func (s *fakeWorkerStore) GetByContainerID(ctx context.Context, containerID string) (domain.Worker, error) {
+	return domain.Worker{}, domain.ErrNotFound
+}
+
+func (s *fakeWorkerStore) Claim(ctx context.Context, claim port.WorkerClaim) (domain.Worker, error) {
+	return domain.Worker{}, domain.ErrNotFound
+}
+
 func (s *fakeWorkerStore) List(ctx context.Context, f port.WorkerFilter) ([]domain.Worker, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -14,7 +14,7 @@ import type { Logger } from './logger.js';
 export interface Geolocation {
   latitude: number;
   longitude: number;
-  location?: string;
+  location?: string | undefined;
 }
 
 export interface GeolocationReader {
@@ -26,6 +26,9 @@ export interface GeolocationOptions {
   apiUrl: string;
   workerId: string;
   logger: Logger;
+  /** A point already known at boot (from the claim response). Used while the
+   * API lookup resolves, and kept when the lookup has nothing better. */
+  initial?: Geolocation | null | undefined;
   /** Override for tests / DI. Defaults to global fetch. */
   fetchImpl?: typeof fetch;
 }
@@ -35,7 +38,7 @@ export function createGeolocation(
 ): GeolocationReader & AsyncDisposable {
   const logger = options.logger.child({ component: 'geolocation' });
   const doFetch = options.fetchImpl ?? fetch;
-  let cached: Geolocation | null = null;
+  let cached: Geolocation | null = options.initial ?? null;
   let loaded = false;
 
   async function load(): Promise<void> {

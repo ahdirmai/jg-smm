@@ -36,6 +36,12 @@ func (m *memWorkerStore) GetByID(ctx context.Context, id string) (domain.Worker,
 func (m *memWorkerStore) GetByName(ctx context.Context, name string) (domain.Worker, error) {
 	return domain.Worker{}, domain.ErrNotFound
 }
+func (m *memWorkerStore) GetByContainerID(ctx context.Context, containerID string) (domain.Worker, error) {
+	return domain.Worker{}, domain.ErrNotFound
+}
+func (m *memWorkerStore) Claim(ctx context.Context, claim port.WorkerClaim) (domain.Worker, error) {
+	return domain.Worker{}, domain.ErrNotFound
+}
 func (m *memWorkerStore) List(ctx context.Context, f port.WorkerFilter) ([]domain.Worker, error) {
 	return nil, nil
 }

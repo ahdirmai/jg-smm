@@ -14,15 +14,73 @@ import (
 )
 
 // WorkerRepo persists worker (container) rows and their telemetry. It implements
-// port.WorkerStore on top of the sqlc-generated query handle.
+// port.WorkerStore on top of the sqlc-generated query handle. A beginner is
+// held alongside it for the claim path, which needs a SELECT ... FOR UPDATE
+// SKIP LOCKED that sqlc's generated one-shots cannot express.
 type WorkerRepo struct {
-	q *sqlcgen.Queries
+	q     *sqlcgen.Queries
+	begin beginner
 }
 
-// NewWorkerRepo binds the repo to a sqlc query handle.
-func NewWorkerRepo(q *sqlcgen.Queries) *WorkerRepo { return &WorkerRepo{q: q} }
+// beginner is the slice of pgx the claim needs: start a transaction, and run
+// queries inside it. *pgxpool.Pool and pgx.Tx both satisfy it, so the repo works
+// on the pool and (for tests) on a hand-rolled tx.
+type beginner interface {
+	Begin(ctx context.Context) (pgx.Tx, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// NewWorkerRepo binds the repo to a sqlc query handle. The second argument is
+// the pool the claim transaction runs on; it defaults to the generated handle's
+// connection when nil (tests pass a stub instead of a live pool).
+func NewWorkerRepo(q *sqlcgen.Queries, raw beginner) *WorkerRepo {
+	r := &WorkerRepo{q: q, begin: raw}
+	return r
+}
 
 var _ port.WorkerStore = (*WorkerRepo)(nil)
+
+// The worker columns scanWorkerRow reads, in the order both claim queries return
+// them. Kept identical to the generated SELECTs so toWorker can be reused.
+const workerCols = `id, name, container_id, control_channel, action_queue, session_pvc,
+	novnc_service, desired_state, source, region, status, generation, observed_gen,
+	provision_err, browser_status, current_job_id, last_heartbeat, last_action_at,
+	last_error, queue_depth, restart_count, image_version, created_at, location,
+	latitude, longitude`
+
+// claimSelectOwned finds the row this container already owns (idempotent
+// re-claim across restarts).
+const claimSelectOwned = `SELECT ` + workerCols + ` FROM worker WHERE container_id = $1`
+
+// claimSelectFree takes the oldest PENDING row nobody has claimed yet, and
+// locks it so concurrent `--scale`d workers each take a distinct one.
+const claimSelectFree = `SELECT ` + workerCols + `
+FROM worker
+WHERE container_id IS NULL AND status = 'PENDING' AND desired_state = 'RUNNING'
+ORDER BY created_at
+FOR UPDATE SKIP LOCKED
+LIMIT 1`
+
+// claimBind stamps the container's live identity + runtime redis keys onto the
+// row it just won.
+const claimBind = `UPDATE worker SET
+	container_id   = $1,
+	control_channel = $2,
+	action_queue    = $3,
+	session_pvc     = $4,
+	novnc_service   = $5
+WHERE id = $6`
+
+// beginTx starts a transaction on the pool, or reuses the one already bound
+// (a test may hand the repo a tx directly). The claim is the only
+// read-modify-write on the worker path that needs atomicity; the rest of the
+// repo stays on the generated one-shots.
+func beginTx(ctx context.Context, b beginner) (pgx.Tx, error) {
+	if t, ok := b.(pgx.Tx); ok {
+		return t, nil
+	}
+	return b.Begin(ctx)
+}
 
 // GetByID returns the worker with the given id.
 func (r *WorkerRepo) GetByID(ctx context.Context, id string) (domain.Worker, error) {
@@ -36,7 +94,77 @@ func (r *WorkerRepo) GetByID(ctx context.Context, id string) (domain.Worker, err
 	return toWorker(row), nil
 }
 
-// GetByName returns the worker with the given (unique) name.
+// GetByContainerID resolves a row by the boot identity a live worker reported
+// when it claimed the row ("worker-<hostname>"). A heartbeat or geolocation
+// probe carries that id, not the row's UUID.
+func (r *WorkerRepo) GetByContainerID(ctx context.Context, containerID string) (domain.Worker, error) {
+	w, err := scanWorkerRow(ctx, r.begin.QueryRow(ctx, claimSelectOwned, containerID))
+	if errors.Is(err, domain.ErrNotFound) {
+		return domain.Worker{}, domain.ErrNotFound
+	}
+	if err != nil {
+		return domain.Worker{}, fmt.Errorf("repository.worker.GetByContainerID: %w", err)
+	}
+	return w, nil
+}
+
+// Claim atomically binds the oldest unclaimed PENDING row to this container's
+// boot identity and re-points its redis channels at the worker's runtime keys.
+//
+// FOR UPDATE SKIP LOCKED is what makes `docker compose up --scale worker=N`
+// safe: N containers race for N rows, each takes a distinct one, and a slow
+// starter never blocks the rest. A UNIQUE constraint on container_id plus the
+// idempotent re-claim branch means a container that restarts reclaims the row
+// it already owns instead of consuming a second one.
+func (r *WorkerRepo) Claim(ctx context.Context, claim port.WorkerClaim) (domain.Worker, error) {
+	tx, err := beginTx(ctx, r.begin)
+	if err != nil {
+		return domain.Worker{}, fmt.Errorf("repository.worker.Claim: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() // no-op once committed
+
+	// 1. Idempotent re-claim: this container already owns a row.
+	owned, err := scanWorkerRow(ctx, tx.QueryRow(ctx, claimSelectOwned, claim.ContainerID))
+	if err == nil {
+		if err := tx.Commit(ctx); err != nil {
+			return domain.Worker{}, fmt.Errorf("repository.worker.Claim: commit: %w", err)
+		}
+		return owned, nil
+	}
+	if !errors.Is(err, domain.ErrNotFound) {
+		return domain.Worker{}, fmt.Errorf("repository.worker.Claim: owned lookup: %w", err)
+	}
+
+	// 2. Take the oldest free PENDING row that wants to run.
+	row, err := scanWorkerRow(ctx, tx.QueryRow(ctx, claimSelectFree))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Worker{}, domain.ErrNotFound
+	}
+	if err != nil {
+		return domain.Worker{}, fmt.Errorf("repository.worker.Claim: free lookup: %w", err)
+	}
+
+	// 3. Bind it. The "pending" placeholder channels the row was created with
+	// are replaced by the live keys this worker actually subscribes to, so a job
+	// queued to the row reaches the container that claimed it.
+	if _, err := tx.Exec(ctx, claimBind,
+		claim.ContainerID, claim.ControlChannel, claim.ActionQueue, claim.SessionPVC,
+		nilIfEmpty(claim.NovncURL), row.ID); err != nil {
+		return domain.Worker{}, fmt.Errorf("repository.worker.Claim: bind: %w", err)
+	}
+	row.ContainerID = &claim.ContainerID
+	row.ControlChannel = &claim.ControlChannel
+	row.ActionQueue = &claim.ActionQueue
+	row.SessionPVC = &claim.SessionPVC
+	if claim.NovncURL != nil && *claim.NovncURL != "" {
+		row.NoVNCService = claim.NovncURL
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return domain.Worker{}, fmt.Errorf("repository.worker.Claim: commit: %w", err)
+	}
+	return row, nil
+}
 func (r *WorkerRepo) GetByName(ctx context.Context, name string) (domain.Worker, error) {
 	row, err := r.q.GetWorkerByName(ctx, name)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -169,6 +297,9 @@ func (r *WorkerRepo) RecordHeartbeat(ctx context.Context, hb domain.Heartbeat, s
 
 // toWorker maps a generated row to the domain entity. Postgres enum values are
 // stored UPPER; domain uses lower for platform only (the rest already match).
+// scanWorkerRow reads the worker column list in workerCols order into the
+// domain type. Both claim queries return it, and it mirrors toWorker so a claimed
+// row is shaped exactly like a fetched one.
 func toWorker(r sqlcgen.Worker) domain.Worker {
 	return domain.Worker{
 		ID:             uuidString(r.ID),
@@ -198,4 +329,88 @@ func toWorker(r sqlcgen.Worker) domain.Worker {
 		ImageVersion:   r.ImageVersion,
 		CreatedAt:      tsTimeOrZero(r.CreatedAt),
 	}
+}
+
+// scanWorkerRow reads the worker column list in workerCols order into the
+// domain type. Both claim queries return it, and it mirrors toWorker so a
+// claimed row is shaped exactly like a fetched one.
+func scanWorkerRow(ctx context.Context, row pgx.Row) (domain.Worker, error) {
+	var (
+		id             pgtype.UUID
+		name           string
+		containerID    *string
+		controlChannel *string
+		actionQueue    *string
+		sessionPVC     *string
+		novncService   *string
+		desiredState   sqlcgen.DesiredState
+		source         sqlcgen.WorkerSource
+		region         string
+		status         sqlcgen.WorkerStatus
+		generation     int32
+		observedGen    *int32
+		provisionErr   *string
+		browserStatus  string
+		currentJobID   pgtype.UUID
+		lastHeartbeat  pgtype.Timestamptz
+		lastActionAt   pgtype.Timestamptz
+		lastError      *string
+		queueDepth     int32
+		restartCount   int32
+		imageVersion   string
+		createdAt      pgtype.Timestamptz
+		location       *string
+		latitude       *float64
+		longitude      *float64
+	)
+	err := row.Scan(
+		&id, &name, &containerID, &controlChannel, &actionQueue, &sessionPVC,
+		&novncService, &desiredState, &source, &region, &status, &generation, &observedGen,
+		&provisionErr, &browserStatus, &currentJobID, &lastHeartbeat, &lastActionAt,
+		&lastError, &queueDepth, &restartCount, &imageVersion, &createdAt, &location,
+		&latitude, &longitude,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Worker{}, domain.ErrNotFound
+	}
+	if err != nil {
+		return domain.Worker{}, err
+	}
+	return domain.Worker{
+		ID:             uuidString(id),
+		Name:           name,
+		ContainerID:    containerID,
+		ControlChannel: controlChannel,
+		ActionQueue:    actionQueue,
+		SessionPVC:     sessionPVC,
+		NoVNCService:   novncService,
+		DesiredState:   domain.DesiredState(desiredState),
+		Source:         domain.WorkerSource(source),
+		Region:         region,
+		Location:       location,
+		Latitude:       latitude,
+		Longitude:      longitude,
+		Status:         domain.WorkerStatus(status),
+		Generation:     int(generation),
+		ObservedGen:    intPtr(observedGen),
+		ProvisionErr:   provisionErr,
+		BrowserStatus:  browserStatus,
+		CurrentJobID:   uuidStrPtr(currentJobID),
+		LastHeartbeat:  tsTime(lastHeartbeat),
+		LastActionAt:   tsTime(lastActionAt),
+		LastError:      lastError,
+		QueueDepth:     int(queueDepth),
+		RestartCount:   int(restartCount),
+		ImageVersion:   imageVersion,
+		CreatedAt:      tsTimeOrZero(createdAt),
+	}, nil
+}
+
+// nilIfEmpty keeps an empty string from clobbering a real noVNC url: the claim
+// sends the URL only when the worker actually publishes one.
+func nilIfEmpty(s *string) *string {
+	if s == nil || *s == "" {
+		return nil
+	}
+	return s
 }

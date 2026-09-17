@@ -38,7 +38,7 @@ func testPool(t *testing.T) *pgxpool.Pool {
 func newTestRepos(t *testing.T) (worker *WorkerRepo, account *AccountRepo, logs *ProvisionLogRepo) {
 	pool := testPool(t)
 	q := sqlcgen.New(pool)
-	return NewWorkerRepo(q), NewAccountRepo(q), NewProvisionLogRepo(q)
+	return NewWorkerRepo(q, pool), NewAccountRepo(q), NewProvisionLogRepo(q)
 }
 
 // TestWorkerRoundTrip proves create/get/update/delete and the enum round trip

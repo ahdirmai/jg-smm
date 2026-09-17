@@ -130,7 +130,7 @@ func main() {
 
 		// Worker callbacks (heartbeat / auth outcome / action verdict). The
 		// worker container POSTs here; it never touches the DB directly.
-		workerRepo := repository.NewWorkerRepo(pg.Queries())
+		workerRepo := repository.NewWorkerRepo(pg.Queries(), pg.Pool())
 		accountRepo := repository.NewAccountRepo(pg.Queries())
 		logRepo := repository.NewProvisionLogRepo(pg.Queries())
 		actionRepo := repository.NewActionRepo(pg.Queries())

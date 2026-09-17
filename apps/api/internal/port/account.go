@@ -15,12 +15,38 @@ type WorkerFilter struct {
 	Offset       int
 }
 
+// WorkerClaim is what a booted worker container presents to adopt a row: the
+// hostname-derived id it boots with, and the redis channels it subscribes to.
+// The claim binds container_id so the dashboard can see which row is live, and
+// re-points control_channel/action_queue at the worker's runtime keys so a job
+// queued to the row actually reaches the container that claimed it.
+type WorkerClaim struct {
+	// ContainerID is the worker's boot identity: WORKER_ID=worker-<hostname>.
+	// Unique on the worker row, so a restart of the same container reclaims the
+	// same row instead of stealing a different one.
+	ContainerID    string
+	ControlChannel string
+	ActionQueue    string
+	SessionPVC     string
+	NovncURL       *string
+}
+
 // WorkerStore persists workers (containers) and their telemetry.
 type WorkerStore interface {
 	GetByID(ctx context.Context, id string) (domain.Worker, error)
 	GetByName(ctx context.Context, name string) (domain.Worker, error)
+	// GetByContainerID resolves a row by the boot id the worker claimed it with
+	// ("worker-<hostname>"). A heartbeat or geolocation probe arrives carrying
+	// that id, not the row's UUID, so this is the lookup that makes a locally
+	// scaled container reachable at all.
+	GetByContainerID(ctx context.Context, containerID string) (domain.Worker, error)
 	List(ctx context.Context, f WorkerFilter) ([]domain.Worker, error)
 	Create(ctx context.Context, w domain.Worker) (domain.Worker, error)
+	// Claim binds an unclaimed PENDING row to this container's boot identity and
+	// re-points its channels at the worker's runtime keys. Idempotent for the
+	// same ContainerID: a worker that reboots reclaims the row it already owns
+	// rather than consuming a second one. Returns ErrNotFound when no row is free.
+	Claim(ctx context.Context, claim WorkerClaim) (domain.Worker, error)
 	// Update persists mutable fields (desired_state, status, generation,
 	// observed_gen, provision_err, heartbeat fields) and returns the new row.
 	Update(ctx context.Context, w domain.Worker) (domain.Worker, error)

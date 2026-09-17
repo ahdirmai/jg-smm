@@ -10,6 +10,7 @@
 import { loadConfig } from './core/config.js';
 import { createLogger } from './core/logger.js';
 import { createHeartbeat, type HeartbeatPayload } from './core/heartbeat.js';
+import { claimRow } from './core/claim.js';
 import { createController } from './core/controller.js';
 import { clearAuthContext, runLogin, submitAuthInput } from './core/auth.js';
 import { launchBrowser, newAccountContext, type BrowserHandle } from './core/browser.js';
@@ -33,24 +34,54 @@ logger.info('worker starting', {
   display: config.display,
 });
 
+// --- claim ---------------------------------------------------------------
+// A scaled container knows only its hostname. Claim binds it to the oldest
+// free dashboard-created row and returns that row's real id — which is what
+// the queue key, the control channel and every heartbeat must address. Until
+// this resolves the worker is unassigned; it stays alive on its boot id and
+// retries on the next cycle rather than crashing (see claim.ts).
+const bootId = config.workerId;
+const claimed = await claimRow(
+  {
+    containerId: bootId,
+    controlChannel: process.env.CONTROL_CHANNEL,
+    actionQueue: process.env.ACTION_QUEUE,
+    sessionPvc: process.env.SESSION_PVC,
+    novncUrl: config.novncUrl,
+  },
+  { apiUrl: config.apiUrl, logger },
+);
+// The resolved id is what the rest of the process addresses; the boot id is
+// kept only for the log line above and the fallback in claim.ts.
+const workerId = claimed.workerId;
+// A claimed row may carry its own frozen GPS point; expose it to the
+// geolocation reader so the spoof matches the row, not the boot id.
+const claimedLocation =
+  typeof claimed.latitude === 'number' && typeof claimed.longitude === 'number'
+    ? { latitude: claimed.latitude, longitude: claimed.longitude, location: claimed.location }
+    : null;
+
 // --- composition ---------------------------------------------------------
 // Adapter boot deps are set once, before any job can run, so the screenshot
 // name is deterministic from the first action (§7.3).
 configureAdapters({
-  workerId: config.workerId,
+  workerId,
   screenshotDir: process.env.SCREENSHOT_DIR ?? '/data/screenshots',
 });
 
 const callback = createCallback(config, logger);
-const queue = createQueueConsumer(config.redisUrl, config.workerId, logger);
-const control = createControlSubscriber(config.redisUrl, config.workerId, logger);
+const queue = createQueueConsumer(config.redisUrl, workerId, logger);
+const control = createControlSubscriber(config.redisUrl, workerId, logger);
 
-// The worker's frozen GPS point, read once from the API. Best-effort: a worker
-// with no assigned location keeps the real device position (see geolocation.ts).
+// The worker's frozen GPS point, read once from the API. A claimed row may
+// already carry it; the API lookup is still tried so a row whose point was set
+// after the claim is honoured. Best-effort: a worker with no assigned location
+// keeps the real device position (see geolocation.ts).
 const geolocation = createGeolocation({
   apiUrl: config.apiUrl,
-  workerId: config.workerId,
+  workerId,
   logger,
+  initial: claimedLocation ?? undefined,
 });
 
 // One headful browser per container, launched lazily: in dry-run (the compose
@@ -80,10 +111,10 @@ const controller = createController({
 // --- heartbeat -----------------------------------------------------------
 const state = { lastActionAt: null as string | null, queueDepth: 0 };
 const heartbeat = createHeartbeat(
-  config,
+  { ...config, workerId },
   logger,
   (): HeartbeatPayload => ({
-    workerId: config.workerId,
+    workerId,
     browserStatus: 'idle',
     queueDepth: state.queueDepth,
     lastActionAt: state.lastActionAt,

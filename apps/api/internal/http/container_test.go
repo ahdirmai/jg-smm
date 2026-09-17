@@ -41,6 +41,43 @@ func (s *containerWorkerStore) GetByName(_ context.Context, name string) (domain
 	}
 	return domain.Worker{}, domain.ErrNotFound
 }
+func (s *containerWorkerStore) GetByContainerID(_ context.Context, containerID string) (domain.Worker, error) {
+	for _, w := range s.workers {
+		if w.ContainerID != nil && *w.ContainerID == containerID {
+			return w, nil
+		}
+	}
+	return domain.Worker{}, domain.ErrNotFound
+}
+
+// Claim hands the caller the row it already owns (by container id), or the
+// oldest PENDING row when it owns none yet — the same shape as the real store,
+// so the container handler's claim path is exercised against a fake.
+func (s *containerWorkerStore) Claim(_ context.Context, claim port.WorkerClaim) (domain.Worker, error) {
+	if w, err := s.GetByContainerID(context.Background(), claim.ContainerID); err == nil {
+		return w, nil
+	}
+	var oldest *domain.Worker
+	for i := range s.workers {
+		w := s.workers[i]
+		if w.Status == domain.WorkerPending && (w.ContainerID == nil || *w.ContainerID == "") {
+			if oldest == nil || w.CreatedAt.Before(oldest.CreatedAt) {
+				picked := w
+				oldest = &picked
+			}
+		}
+	}
+	if oldest == nil {
+		return domain.Worker{}, domain.ErrNotFound
+	}
+	picked := *oldest
+	picked.ContainerID = &claim.ContainerID
+	picked.ControlChannel = &claim.ControlChannel
+	picked.ActionQueue = &claim.ActionQueue
+	picked.SessionPVC = &claim.SessionPVC
+	s.workers[picked.ID] = picked
+	return picked, nil
+}
 func (s *containerWorkerStore) List(_ context.Context, _ port.WorkerFilter) ([]domain.Worker, error) {
 	out := make([]domain.Worker, 0, len(s.workers))
 	for _, w := range s.workers {

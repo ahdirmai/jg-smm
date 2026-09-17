@@ -48,6 +48,35 @@ func (s *fakeWorkerStore) GetByName(_ context.Context, name string) (domain.Work
 	}
 	return domain.Worker{}, domain.ErrNotFound
 }
+func (s *fakeWorkerStore) GetByContainerID(_ context.Context, containerID string) (domain.Worker, error) {
+	for _, w := range s.workers {
+		if w.ContainerID != nil && *w.ContainerID == containerID {
+			return w, nil
+		}
+	}
+	return domain.Worker{}, domain.ErrNotFound
+}
+func (s *fakeWorkerStore) Claim(_ context.Context, claim port.WorkerClaim) (domain.Worker, error) {
+	if w, err := s.GetByContainerID(context.Background(), claim.ContainerID); err == nil {
+		return w, nil
+	}
+	var oldest *domain.Worker
+	for _, w := range s.workers {
+		if w.Status == domain.WorkerPending && (w.ContainerID == nil || *w.ContainerID == "") {
+			if oldest == nil || w.CreatedAt.Before(oldest.CreatedAt) {
+				picked := w
+				oldest = &picked
+			}
+		}
+	}
+	if oldest == nil {
+		return domain.Worker{}, domain.ErrNotFound
+	}
+	picked := *oldest
+	picked.ContainerID = &claim.ContainerID
+	s.workers[picked.ID] = picked
+	return picked, nil
+}
 func (s *fakeWorkerStore) List(_ context.Context, _ port.WorkerFilter) ([]domain.Worker, error) {
 	out := make([]domain.Worker, 0, len(s.workers))
 	for _, w := range s.workers {

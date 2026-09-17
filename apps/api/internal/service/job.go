@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -268,7 +269,7 @@ func (s *JobService) RecordHeartbeat(ctx context.Context, r HeartbeatRecord) err
 	if s.workers == nil {
 		return fmt.Errorf("%w: worker store unavailable", domain.ErrUnavailable)
 	}
-	w, err := s.workers.GetByID(ctx, r.WorkerID)
+	w, err := s.resolveWorker(ctx, r.WorkerID)
 	if err != nil {
 		return fmt.Errorf("lookup worker %s: %w", r.WorkerID, err)
 	}
@@ -327,11 +328,114 @@ type WorkerGeolocation struct {
 // Geolocation reads the worker's anchored point. A missing worker or a row
 // without a location returns ErrNotFound: the worker falls back to the real GPS
 // of nothing at all (it is a datacentre), which is fine but logged.
+// resolveWorker finds the row a worker container is talking about. The worker
+// boots with a hostname-derived id ("worker-<hostname>") and only learns the
+// row's UUID after claiming, so both the pre-claim heartbeat and the geolocation
+// probe arrive carrying the boot id. Try the UUID first (the post-claim path,
+// and the k8s tier where the id is the pod name), then fall back to container_id
+// (a locally scaled container mid-claim, or one that never finished claiming).
+func (s *JobService) resolveWorker(ctx context.Context, workerID string) (domain.Worker, error) {
+	w, err := s.workers.GetByID(ctx, workerID)
+	if err == nil {
+		return w, nil
+	}
+	if !errors.Is(err, domain.ErrNotFound) {
+		return domain.Worker{}, err
+	}
+	// Not a row id: treat it as the container's boot identity.
+	return s.workers.GetByContainerID(ctx, workerID)
+}
+
+// Claim is the handshake that makes a locally scaled worker usable. A container
+// booted by `docker compose up --scale worker=N` knows nothing about the rows
+// the dashboard created; it presents its boot identity and the redis keys it is
+// already subscribed to, and this binds the oldest free PENDING row to it and
+// hands back the row's real id + frozen GPS point.
+//
+// Without it the row stays PENDING forever: the container's heartbeats carry a
+// hostname that matches no UUID, so no status ever flips, and jobs queued to the
+// row land on a redis key nothing is listening on.
+func (s *JobService) Claim(ctx context.Context, c WorkerClaim) (WorkerClaimResult, error) {
+	if s.workers == nil {
+		return WorkerClaimResult{}, fmt.Errorf("%w: worker store unavailable", domain.ErrUnavailable)
+	}
+	if c.ContainerID == "" {
+		return WorkerClaimResult{}, fmt.Errorf("%w: container id is required", domain.ErrValidation)
+	}
+
+	channel := c.ControlChannel
+	if channel == "" {
+		channel = domain.ControlChannel(c.ContainerID)
+	}
+	queue := c.ActionQueue
+	if queue == "" {
+		queue = domain.ActionQueue(c.ContainerID)
+	}
+	pvc := c.SessionPVC
+	if pvc == "" {
+		pvc = domain.SessionPVCName(c.ContainerID)
+	}
+
+	w, err := s.workers.Claim(ctx, port.WorkerClaim{
+		ContainerID:    c.ContainerID,
+		ControlChannel: channel,
+		ActionQueue:    queue,
+		SessionPVC:     pvc,
+		NovncURL:       c.NovncURL,
+	})
+	if err != nil {
+		return WorkerClaimResult{}, err
+	}
+
+	// The dashboard fleet card shows the container binding, so fan it out the
+	// same way a heartbeat does.
+	if s.stream != nil {
+		accounts, err := s.accounts.ListByWorker(ctx, w.ID)
+		if err != nil {
+			s.logger.Warn("claim: list accounts failed", "workerId", w.ID, "err", err)
+		}
+		payload, err := json.Marshal(toContainerView(w, accounts))
+		if err == nil {
+			s.stream.Publish(ctx, port.EventWorkerHealth, payload)
+		}
+	}
+
+	out := WorkerClaimResult{WorkerID: w.ID, Name: w.Name, Region: w.Region}
+	if w.Location != nil {
+		out.Location = *w.Location
+	}
+	if w.Latitude != nil && w.Longitude != nil {
+		out.Latitude, out.Longitude = *w.Latitude, *w.Longitude
+	}
+	return out, nil
+}
+
+// WorkerClaim is the worker's boot identity presented at claim time.
+type WorkerClaim struct {
+	ContainerID    string
+	ControlChannel string
+	ActionQueue    string
+	SessionPVC     string
+	NovncURL       *string
+}
+
+// WorkerClaimResult is what the worker needs back: the row's real id (so its
+// heartbeats, queue key and control subscription all address the row) and the
+// frozen GPS point it must spoof before its first job.
+type WorkerClaimResult struct {
+	WorkerID  string  `json:"workerId"`
+	Name      string  `json:"name"`
+	Region    string  `json:"region"`
+	Location  string  `json:"location"`
+	Latitude  float64 `json:"latitude"`
+	Longitude float64 `json:"longitude"`
+}
+
 func (s *JobService) Geolocation(ctx context.Context, workerID string) (WorkerGeolocation, error) {
 	if s.workers == nil {
 		return WorkerGeolocation{}, fmt.Errorf("%w: worker store unavailable", domain.ErrUnavailable)
 	}
-	w, err := s.workers.GetByID(ctx, workerID)
+	w, err := s.resolveWorker(ctx, workerID)
 	if err != nil {
 		return WorkerGeolocation{}, fmt.Errorf("lookup worker %s: %w", workerID, err)
 	}
