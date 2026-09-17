@@ -85,6 +85,10 @@ function LoginForm() {
         }
         throw new Error(message);
       }
+      // Re-probe before navigating: the dashboard's anonymous guard reads this
+      // context, and it is still the pre-login `anonymous` value here. If we
+      // navigate first, the guard fires and sends the caller back to /login.
+      await session.refresh();
       router.replace(next);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Sign in failed');

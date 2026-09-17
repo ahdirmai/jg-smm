@@ -7,6 +7,7 @@ import {
   Gauge,
   LayoutDashboard,
   Loader2,
+  LogOut,
   MessageSquareText,
   MonitorSmartphone,
   ScrollText,
@@ -20,6 +21,7 @@ import { useEffect, useState } from 'react';
 
 import { ModeToggle } from '@/components/mode-toggle';
 import { cn } from '@/lib/utils';
+import { api } from '@/lib/api';
 import { useSession } from '@/lib/auth/session-context';
 import { ROLE_LABEL, can } from '@/lib/auth/permissions';
 import type { Permission } from '@/lib/auth/permissions';
@@ -191,6 +193,44 @@ function ShellSplash() {
   );
 }
 
+/**
+ * Sign out: clear the session server-side (the refresh cookie is what the API
+ * needs to revoke), then re-probe so the context flips to anonymous and the
+ * shell guard sends us to /login rather than a half-logged-out dashboard.
+ */
+function SignOutButton() {
+  const router = useRouter();
+  const session = useSession();
+  const [busy, setBusy] = useState(false);
+
+  const signOut = async () => {
+    setBusy(true);
+    try {
+      await api.logout();
+    } catch {
+      // Even if the network call failed the local session is stale; still
+      // re-probe so the UI does not leave a dead cookie behind.
+    } finally {
+      setBusy(false);
+      await session.refresh();
+      router.replace('/login');
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={signOut}
+      disabled={busy}
+      data-testid="sign-out"
+      className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
+    >
+      {busy ? <Loader2 className="size-4 animate-spin" /> : <LogOut className="size-4" />}
+      Sign out
+    </button>
+  );
+}
+
 export function DashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -257,6 +297,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
               </div>
             </div>
           ) : null}
+          <SignOutButton />
           <ModeToggle />
         </div>
       </aside>

@@ -3,7 +3,7 @@ import type { Meta, StoryObj } from '@storybook/nextjs';
 import { FreshnessBadge } from '../components/freshness-badge';
 import { TrendChart } from '../components/trend-chart';
 import { SessionContext } from '../lib/auth/session-context';
-import type { SessionState } from '../lib/auth/session-context';
+import type { SessionContextValue } from '../lib/auth/session-context';
 
 const meta = {
   title: 'App/Components',
@@ -62,10 +62,11 @@ export const TrendChartEmpty: StoryObj = {
 // A read-only role still renders; the write controls are the gated surface.
 export const SessionReadOnly: StoryObj = {
   render: () => {
-    const session: SessionState = {
+    const session: SessionContextValue = {
       status: 'authenticated',
       userId: 'u-1',
       role: 'STRATEGIST',
+      refresh: async () => {},
     };
     return (
       <SessionContext.Provider value={session}>
@@ -77,7 +78,7 @@ export const SessionReadOnly: StoryObj = {
 
 export const SessionLoading: StoryObj = {
   render: () => (
-    <SessionContext.Provider value={{ status: 'loading' }}>
+    <SessionContext.Provider value={{ status: 'loading', refresh: async () => {} }}>
       <div className="text-sm text-muted-foreground">Resolving session…</div>
     </SessionContext.Provider>
   ),

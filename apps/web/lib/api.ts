@@ -196,6 +196,7 @@ export const api = {
   // Session (P4-09). The role drives UI gating; every write is still checked
   // server-side, so this is a UX layer, not a security boundary.
   me: () => request<MeResponse>('/api/auth/me'),
+  logout: () => request<void>('/api/auth/logout', { method: 'POST' }),
 
   // Reports (P4-04 / P4-05). Read-only pivots; export is a separate
   // permission (`export`) and returns a file, so it is a window location, not
