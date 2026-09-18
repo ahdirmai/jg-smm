@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
@@ -16,7 +17,46 @@ import (
 const (
 	AccessTokenTTL  = 24 * time.Hour
 	RefreshTokenTTL = 30 * 24 * time.Hour
+
+	// Login rate limiting: the credential endpoint is the only public one, so
+	// an unbounded attempt rate is a brute-force oracle. The window is short
+	// and the cap small because a human mistyping a password does not need 10
+	// tries a minute.
+	loginWindow   = time.Minute
+	loginMaxPerIP = 10
 )
+
+// loginLimiter caps failed+successful login attempts per source IP per window.
+// In-process: a single API replica is the local deployment, and a wrong answer
+// here costs an account, so the simple option is the honest one. A multi-node
+// deployment moves this to Redis (the same adapter the action scheduler uses).
+type loginLimiter struct {
+	mu       sync.Mutex
+	attempts map[string][]time.Time
+}
+
+// allow reports whether an attempt from ip is within the window cap, and
+// records the attempt either way so a flood cannot sneak under the counter.
+func (l *loginLimiter) allow(now time.Time, ip string) bool {
+	if ip == "" {
+		// No client IP (behind a proxy that did not forward one): fail open
+		// rather than lock out every request.
+		return true
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	cutoff := now.Add(-loginWindow)
+	hits := l.attempts[ip]
+	kept := hits[:0]
+	for _, t := range hits {
+		if t.After(cutoff) {
+			kept = append(kept, t)
+		}
+	}
+	l.attempts[ip] = append(kept, now)
+	return len(kept) < loginMaxPerIP
+}
 
 // Session is the result of a successful login or refresh.
 type Session struct {
@@ -33,16 +73,22 @@ type AuthService struct {
 	sessions port.SessionStore
 	issuer   port.TokenIssuer
 	clock    port.Clock
+	limiter  *loginLimiter
 }
 
 // NewAuthService wires the auth dependencies.
 func NewAuthService(users port.UserStore, sessions port.SessionStore, issuer port.TokenIssuer, clock port.Clock) *AuthService {
-	return &AuthService{users: users, sessions: sessions, issuer: issuer, clock: clock}
+	return &AuthService{users: users, sessions: sessions, issuer: issuer, clock: clock, limiter: &loginLimiter{attempts: map[string][]time.Time{}}}
 }
 
 // Login verifies credentials and starts a session. A wrong email or password
-// both return domain.ErrUnauthorized (no user enumeration).
+// both return domain.ErrUnauthorized (no user enumeration). The attempt rate
+// is capped per source IP: the credential endpoint is the only public one, and
+// an unbounded rate turns it into a brute-force oracle.
 func (s *AuthService) Login(ctx context.Context, email, password, userAgent, ip string) (Session, error) {
+	if s.limiter != nil && !s.limiter.allow(s.clock.Now(), ip) {
+		return Session{}, fmt.Errorf("%w: too many login attempts, try again in a minute", domain.ErrRateLimited)
+	}
 	user, err := s.users.GetByEmail(ctx, email)
 	if err != nil {
 		if err == domain.ErrNotFound {
