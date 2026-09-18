@@ -143,6 +143,15 @@ export const api = {
   setAccountStatus: (id: string, body: SetAccountStatusRequest) =>
     request<Account>(`/api/accounts/${id}`, { method: 'POST', body: JSON.stringify(body) }),
   removeAccount: (id: string) => request<void>(`/api/accounts/${id}`, { method: 'DELETE' }),
+  // Operator headful login (P1-11 / P1-12): the credential is typed in the
+  // worker's noVNC view, never here.
+  startAccountLogin: (id: string) =>
+    request<Account>(`/api/accounts/${id}/login`, { method: 'POST' }),
+  submitAccountInput: (id: string, value: string) =>
+    request<Account>(`/api/accounts/${id}/input`, {
+      method: 'POST',
+      body: JSON.stringify({ value }),
+    }),
 
   // Bulk import (P4-07). Per-row failures come back in the body with a 200;
   // only call-level preconditions (empty, over cap) or the rate limit error.

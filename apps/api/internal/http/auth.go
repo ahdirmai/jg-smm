@@ -112,11 +112,16 @@ func (h *AuthHandler) setCookies(c echo.Context, sess service.Session) {
 }
 
 func (h *AuthHandler) clearCookies(c echo.Context) {
-	for _, name := range []string{accessCookieName, refreshCookieName} {
+	// A cookie is only overwritten when Path matches the one it was set with,
+	// so the refresh cookie must be cleared on /api/auth, not /.
+	for name, path := range map[string]string{
+		accessCookieName:  "/",
+		refreshCookieName: "/api/auth",
+	} {
 		c.SetCookie(&http.Cookie{
 			Name:     name,
 			Value:    "",
-			Path:     "/",
+			Path:     path,
 			MaxAge:   -1,
 			Expires:  time.Unix(0, 0),
 			HttpOnly: true,

@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -237,12 +238,15 @@ func (c *Client) Observe(ctx context.Context, workerID string) (int, bool, error
 // ListRunning returns every worker id the daemon hosts. Label-derived, so the
 // sweeper can finally distinguish an orphan from a scaled replica.
 func (c *Client) ListRunning(ctx context.Context) ([]string, error) {
-	filter, _ := json.Marshal(map[string]map[string][]string{"label": {LabelWorker: {"true"}}})
+	// The daemon's filter form is {"label":["smm.worker=true"]} — a list of
+	// key=value predicates, not a map. The map form is a 400 "invalid filter".
+	// Encoded: the raw blob is rejected by the query parser.
+	filter := url.QueryEscape(`{"label":["` + LabelWorker + `=true"]}`)
 	var list []struct {
 		Names  []string          `json:"Names"`
 		Labels map[string]string `json:"Labels"`
 	}
-	if err := c.getJSON(ctx, "/containers/json?all=1&filters="+string(filter), &list); err != nil {
+	if err := c.getJSON(ctx, "/containers/json?all=1&filters="+filter, &list); err != nil {
 		return nil, fmt.Errorf("docker: list containers: %w", err)
 	}
 	ids := make([]string, 0, len(list))

@@ -219,3 +219,28 @@ B-1 is the one worth a test: the casing sat unnoticed because the worker's
 callback fails *soft* (it logs a warning and stops on 4xx), so the only symptom
 was a job that never finished. Any future drift in that enum will look exactly
 like this again — silent.
+
+## 7. Second verification round — auth chain and allocator convergence
+
+Found by exercising the stack a second time, after the auth-login flow was
+wired end to end. Three of the four were silent at rest; only the delete
+orphan produced a visible symptom (a container that would not die).
+
+| #   | Bug                                                                                      | Class                     | Fix                                                                                                                              | Guard that would catch a regression                                                                                     |
+| --- | ---------------------------------------------------------------------------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| B-3 | `DELETE /api/containers` returned 204 but the container kept running and polling forever. The row was deleted *before* the reconciler could observe `STOPPED`, so nothing ever called `DeleteWorker` — the only consumer of desired state was gone. | Desired-state teardown     | `ContainerService.Delete` now calls `driver.DeleteWorker` while the row still exists, then removes the row (`service/container.go`). Verified live: delete → 204, container + both volumes gone within seconds. | Create a worker, wait READY, delete it, assert `docker ps -a` shows nothing and the API row 404s.                        |
+| B-4 | The orphan sweeper 400'd on every tick: `docker engine 400 Bad Request: invalid filter`. The daemon's label filter is `{"label":["smm.worker=true"]}` (a list of `k=v` predicates), not a map — and the JSON was passed raw into the query string. | Wire-contract mismatch     | Build the predicate-list form and URL-encode it (`dockerprovisioner/docker.go`). Verified live: sweeper tick is clean.             | A test that asserts the list request path round-trips through a real `url.Parse` and carries the encoded filter.        |
+| B-5 | `Packer.createWorker` never set `novnc_service`, so an AUTO-spawned card had a dead Live view button, and the manual and AUTO paths picked ports from two separate computations of "free", so they could collide. | Convergent allocation      | One `NovncAllocator` is built in `main.go` and handed to both the container service and the packer (`service/novnc_allocator.go`). | `TestNovncAllocatorSharesPorts`: allocate on path A, seed the row, assert path B gets the next port and path A's is a 409. |
+| B-6 | `Pause` never released the container slot — a paused account stayed assigned, so the worker kept presenting it. | Lifecycle                 | `Pause` calls `packer.Release` after the status write; the failure is logged, not swallowed (`service/account.go`).               | Pause an assigned account, assert `workerId` is null and an empty AUTO container is reaped.                             |
+| B-7 | Logout cleared the refresh cookie on `Path=/` but it was set on `Path=/api/auth`, so the browser kept it and the session stayed live until expiry. | Cookie scoping             | `clearCookies` clears each cookie on the path it was set with (`http/auth.go`). Verified live via `Set-Cookie` headers.            | Assert the logout response carries a `smm_rt` expiry with `Path=/api/auth`, not `/`.                                    |
+
+The auth chain itself was the bigger finding: `P1-12` was recorded as DONE, but
+the worker's login outcome never reached the API at all — there was no
+`/internal/account-callback` POST on the worker side, no endpoint to publish
+`auth-login`, and no dashboard affordance to start a login or enter a code. The
+pieces (parked contexts, `auth-input`, the callback handler) each existed; the
+wiring between them did not. That is now wired: two new endpoints
+(`POST /api/accounts/{id}/login` and `.../input`), a `createAuthCallback` on the
+worker that posts the outcome with the same soft-fail contract as the action
+callback, and dashboard actions for both. The lesson is the one from B-1: a
+chain verified one link at a time is not verified.

@@ -247,6 +247,74 @@ paths:
         '404':
           $ref: '#/components/responses/Error'
 
+  /api/accounts/{accountId}/login:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    post:
+      tags: [accounts]
+      summary: Start an operator headful login
+      description: |
+        Publishes `auth-login` on the account's worker control channel. The
+        worker opens the platform login page in a headful browser under Xvfb,
+        and the operator completes the credential in the worker's noVNC live
+        view. The outcome arrives later over `/internal/account-callback`
+        (authStatus becomes `PENDING` on dispatch).
+      operationId: startAccountLogin
+      security:
+        - accessCookie: []
+      responses:
+        '202':
+          description: Login instruction dispatched.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+
+  /api/accounts/{accountId}/input:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    post:
+      tags: [accounts]
+      summary: Submit a 2FA / checkpoint code
+      description: |
+        Publishes `auth-input` on the control channel with the operator's code.
+        Only valid while the account's login is parked awaiting input; a login
+        that is not parked is reported as a conflict, not a crash.
+      operationId: submitAccountInput
+      security:
+        - accessCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccountInputRequest'
+      responses:
+        '202':
+          description: Input submitted; the worker continues the login.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+
   /api/actions:
     post:
       tags: [actions]
@@ -2183,6 +2251,16 @@ components:
         status:
           type: string
           enum: [ACTIVE, PAUSED]
+
+    AccountInputRequest:
+      type: object
+      required: [value]
+      properties:
+        value:
+          type: string
+          minLength: 4
+          maxLength: 32
+          description: The verification code or checkpoint answer.
 
     ActionCallback:
       type: object

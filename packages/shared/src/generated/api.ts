@@ -189,6 +189,60 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/accounts/{accountId}/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The account ID. */
+                accountId: components["parameters"]["AccountId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start an operator headful login
+         * @description Publishes `auth-login` on the account's worker control channel. The
+         *     worker opens the platform login page in a headful browser under Xvfb,
+         *     and the operator completes the credential in the worker's noVNC live
+         *     view. The outcome arrives later over `/internal/account-callback`
+         *     (authStatus becomes `PENDING` on dispatch).
+         *
+         */
+        post: operations["startAccountLogin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/accounts/{accountId}/input": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The account ID. */
+                accountId: components["parameters"]["AccountId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Submit a 2FA / checkpoint code
+         * @description Publishes `auth-input` on the control channel with the operator's code.
+         *     Only valid while the account's login is parked awaiting input; a login
+         *     that is not parked is reported as a conflict, not a crash.
+         *
+         */
+        post: operations["submitAccountInput"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/actions": {
         parameters: {
             query?: never;
@@ -1275,6 +1329,10 @@ export interface components {
             /** @enum {string} */
             status: "ACTIVE" | "PAUSED";
         };
+        AccountInputRequest: {
+            /** @description The verification code or checkpoint answer. */
+            value: string;
+        };
         ActionCallback: {
             attemptId: string;
             status: components["schemas"]["AttemptStatus"];
@@ -1702,6 +1760,65 @@ export interface operations {
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
+        };
+    };
+    startAccountLogin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The account ID. */
+                accountId: components["parameters"]["AccountId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Login instruction dispatched. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Account"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+        };
+    };
+    submitAccountInput: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The account ID. */
+                accountId: components["parameters"]["AccountId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccountInputRequest"];
+            };
+        };
+        responses: {
+            /** @description Input submitted; the worker continues the login. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Account"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
         };
     };
     listActions: {

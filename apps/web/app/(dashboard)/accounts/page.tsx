@@ -26,9 +26,11 @@ import {
   TableHeader,
   TableRow,
 } from '@smm/ui';
-import { AlertCircle, MoreVertical, Pause, Play, Trash2, Upload, UserPlus } from 'lucide-react';
+import { AlertCircle, KeyRound, MoreVertical, Pause, Play, Trash2, Upload, UserPlus } from 'lucide-react';
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
+
+import { api } from '@/lib/api';
 
 import { useAccounts } from '@/lib/hooks/use-accounts';
 import type { Account } from '@/lib/api';
@@ -149,6 +151,24 @@ export default function AccountsPage() {
     } finally {
       setBusy(null);
     }
+  };
+
+  // Start an operator headful login. The worker opens the platform login page
+  // in its noVNC view; the operator completes it there. The badge flips to
+  // AUTHENTICATING now and the callback settles it.
+  const startLogin = async (id: string) => {
+    await api.startAccountLogin(id);
+    refresh();
+  };
+
+  // Submit a 2FA / checkpoint code to a parked login. The browser prompt is the
+  // MVP input affordance; a dedicated dialog can replace it without changing
+  // the contract.
+  const submitInput = async (id: string) => {
+    const value = window.prompt('Enter the verification code shown in the live view:');
+    if (!value) return;
+    await api.submitAccountInput(id, value);
+    refresh();
   };
 
   return (
@@ -355,6 +375,21 @@ export default function AccountsPage() {
                                 Pause
                               </DropdownMenuItem>
                             )}
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              onClick={() => void onAct(a.id, startLogin)}
+                            >
+                              <KeyRound />
+                              Log in
+                            </DropdownMenuItem>
+                            {a.authStatus === 'NEEDS_INPUT' ? (
+                              <DropdownMenuItem
+                                onClick={() => void onAct(a.id, submitInput)}
+                              >
+                                <KeyRound />
+                                Enter code
+                              </DropdownMenuItem>
+                            ) : null}
                             <DropdownMenuSeparator />
                             <DropdownMenuItem
                               className="text-destructive focus:text-destructive"

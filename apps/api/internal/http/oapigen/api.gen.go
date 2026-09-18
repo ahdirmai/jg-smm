@@ -273,6 +273,12 @@ type AccountCallback struct {
 	Handle *string `json:"handle,omitempty"`
 }
 
+// AccountInputRequest defines model for AccountInputRequest.
+type AccountInputRequest struct {
+	// Value The verification code or checkpoint answer.
+	Value string `json:"value"`
+}
+
 // AccountList defines model for AccountList.
 type AccountList struct {
 	Accounts []Account `json:"accounts"`
@@ -1038,6 +1044,9 @@ type ImportAccountsJSONRequestBody = ImportAccountsRequest
 
 // SetAccountStatusJSONRequestBody defines body for SetAccountStatus for application/json ContentType.
 type SetAccountStatusJSONRequestBody = SetAccountStatusRequest
+
+// SubmitAccountInputJSONRequestBody defines body for SubmitAccountInput for application/json ContentType.
+type SubmitAccountInputJSONRequestBody = AccountInputRequest
 
 // EnqueueActionsJSONRequestBody defines body for EnqueueActions for application/json ContentType.
 type EnqueueActionsJSONRequestBody = EnqueueActionsRequest

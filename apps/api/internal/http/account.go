@@ -33,6 +33,10 @@ func (h *AccountHandler) Register(g *echo.Group) {
 	g.POST("/accounts/import", h.importRows, RequirePermission(domain.PermAct))
 	g.POST("/accounts/:accountId", h.setStatus, RequirePermission(domain.PermAct))
 	g.DELETE("/accounts/:accountId", h.remove, RequirePermission(domain.PermAct))
+	// Operator headful login (P1-11 / P1-12): the credential is typed in the
+	// worker's noVNC view, so it never crosses this API.
+	g.POST("/accounts/:accountId/login", h.startLogin, RequirePermission(domain.PermAct))
+	g.POST("/accounts/:accountId/input", h.submitInput, RequirePermission(domain.PermAct))
 }
 
 // create stores an account and packs it into a container.
@@ -190,6 +194,45 @@ func (h *AccountHandler) remove(c echo.Context) error {
 	return c.NoContent(http.StatusNoContent)
 }
 
+// startLogin dispatches an operator headful login on the account's worker.
+func (h *AccountHandler) startLogin(c echo.Context) error {
+	if h.accounts == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "account service unavailable")
+	}
+	id := c.Param("accountId")
+	if id == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "accountId is required")
+	}
+	account, err := h.accounts.Login(c.Request().Context(), id)
+	if err != nil {
+		return translateAccountError(err)
+	}
+	return c.JSON(http.StatusAccepted, toAccountResponse(account))
+}
+
+// submitInput carries a 2FA / checkpoint code to a parked login.
+func (h *AccountHandler) submitInput(c echo.Context) error {
+	if h.accounts == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "account service unavailable")
+	}
+	id := c.Param("accountId")
+	if id == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "accountId is required")
+	}
+	var req oapigen.AccountInputRequest
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+	if req.Value == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "value is required")
+	}
+	account, err := h.accounts.SubmitInput(c.Request().Context(), id, req.Value)
+	if err != nil {
+		return translateAccountError(err)
+	}
+	return c.JSON(http.StatusAccepted, toAccountResponse(account))
+}
+
 // translateAccountError maps domain errors to HTTP statuses.
 func translateAccountError(err error) error {
 	switch {
@@ -201,6 +244,8 @@ func translateAccountError(err error) error {
 		return echo.NewHTTPError(http.StatusNotFound, err.Error())
 	case errors.Is(err, domain.ErrConflict):
 		return echo.NewHTTPError(http.StatusConflict, err.Error())
+	case errors.Is(err, domain.ErrUnavailable):
+		return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
 	case errors.Is(err, domain.ErrUnauthorized):
 		return echo.NewHTTPError(http.StatusUnauthorized, err.Error())
 	case errors.Is(err, domain.ErrForbidden):

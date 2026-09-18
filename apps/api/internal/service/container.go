@@ -26,12 +26,14 @@ type ContainerService struct {
 	// logs is the provisioner audit trail. Optional: nil keeps create/delete
 	// working, only the per-card history stays unread.
 	logs port.ProvisionLogStore
-	// novncHost is the host a browser uses to reach a live view, baked into the
-	// URL written to worker.novnc_service at create time.
-	novncHost string
-	// novncPortMin/Max bound the live-view host ports the service allocates.
-	novncPortMin int
-	novncPortMax int
+	// driver tears a container down at delete time. Optional: nil falls back to
+	// leaving the platform work to the reconciler (the static tier has no
+	// platform at all, so this is genuinely a no-op there).
+	driver port.K8sClient
+	// novnc allocates the live-view host port and writes the URL onto the row.
+	// Optional: nil leaves novnc_service empty and the dashboard shows a
+	// disabled Live view button instead of a dead link.
+	novnc *NovncAllocator
 	// stream fans container lifecycle frames to dashboards over SSE (ADR 0010).
 	// Optional: a nil publisher means the write still lands, the dashboard just
 	// has to poll. Create/Delete publish so every open tab sees the fleet change
@@ -47,14 +49,14 @@ type ContainerConfig struct {
 	Stream port.StreamPublisher
 	// Logs stores the provisioner audit rows the dashboard reads back per card.
 	Logs port.ProvisionLogStore
-	// NovncHost is the host the browser resolves for a live view. Defaults to
-	// localhost, which is correct for the local tier's 127.0.0.1 bindings.
-	NovncHost string
-	// NovncPortMin/Max bound the allocatable live-view host ports. Zero
-	// disables allocation; novnc_service then stays empty until a caller sets
-	// one, and the dashboard shows a disabled Live view button instead of none.
-	NovncPortMin int
-	NovncPortMax int
+	// Driver removes the platform container at delete time. Nil is valid: the
+	// reconciler then owns teardown, which is correct for the static tier.
+	Driver port.K8sClient
+	// Novnc allocates the live-view host port and writes the URL onto the row.
+	// Shared with the packer so the manual and AUTO paths cannot collide. Nil
+	// is valid: novnc_service stays empty and the dashboard shows a disabled
+	// Live view button instead of a dead link.
+	Novnc *NovncAllocator
 }
 
 // NewContainerService wires the service. packer may be nil; deletion then only
@@ -68,15 +70,14 @@ func NewContainerService(workers port.WorkerStore, accounts port.AccountStore, p
 		cfg.Logger = slog.Default()
 	}
 	return &ContainerService{
-		workers:      workers,
-		accounts:     accounts,
-		packer:       packer,
-		clock:        cfg.Clock,
-		logs:         cfg.Logs,
-		stream:       cfg.Stream,
-		novncHost:    cfg.NovncHost,
-		novncPortMin: cfg.NovncPortMin,
-		novncPortMax: cfg.NovncPortMax,
+		workers:  workers,
+		accounts: accounts,
+		packer:   packer,
+		clock:    cfg.Clock,
+		logs:     cfg.Logs,
+		driver:   cfg.Driver,
+		stream:   cfg.Stream,
+		novnc:    cfg.Novnc,
 		// Per-worker coordinates are chosen once; a fresh source per service is
 		// fine because stability is per-worker, not per-process.
 		rnd:    rand.New(rand.NewSource(time.Now().UnixNano())),
@@ -115,9 +116,13 @@ func (s *ContainerService) Create(ctx context.Context, name, region, location st
 		return domain.Worker{}, fmt.Errorf("%w: name too long (max 64)", domain.ErrValidation)
 	}
 
-	novncURL, err := s.resolveNovncURL(ctx, novncPort)
-	if err != nil {
-		return domain.Worker{}, err
+	var novncURL *string
+	if s.novnc != nil {
+		var err error
+		novncURL, err = s.novnc.Allocate(ctx, novncPort)
+		if err != nil {
+			return domain.Worker{}, err
+		}
 	}
 
 	w, err := s.workers.Create(ctx, domain.Worker{
@@ -187,8 +192,11 @@ func (s *ContainerService) List(ctx context.Context) ([]ContainerView, error) {
 }
 
 // Delete tears a container down: accounts are released first (so an AUTO
-// container reaps cleanly), then the row is removed. The reconciler deletes the
-// pod+PVC+service for any row still desired=RUNNING before this runs.
+// container reaps cleanly), the platform resources are removed, then the row
+// goes. The order matters: the row is the reconciler's only view of desired
+// state, so deleting it first leaves the container orphaned forever — nothing
+// remains that wants it gone. With the row still present and desired=STOPPED,
+// the reconciler's own delete pass converges it.
 func (s *ContainerService) Delete(ctx context.Context, workerID string) error {
 	w, err := s.workers.GetByID(ctx, workerID)
 	if err != nil {
@@ -213,11 +221,21 @@ func (s *ContainerService) Delete(ctx context.Context, workerID string) error {
 	}
 
 	if w.DesiredState == domain.DesiredRunning {
-		// Flip to STOPPED so the reconciler deletes the pod first; the row is
-		// removed below by the caller or the next sweep.
+		// Flip to STOPPED with the row still in place so the reconciler's delete
+		// branch sees it and tears the container + volumes down. Removing the
+		// row here would orphan the container: the sweeper's ListRunning would
+		// report it, but only after the 60s grace and only for a driver whose
+		// ids are label-derived.
 		w.DesiredState = domain.DesiredStopped
 		if _, err := s.workers.Update(ctx, w); err != nil {
 			return fmt.Errorf("container service: mark stopped: %w", err)
+		}
+		if s.driver != nil {
+			if err := s.driver.DeleteWorker(ctx, workerID); err != nil {
+				// The row still says STOPPED, so the reconciler retries next tick
+				// and the sweep covers a driver that is temporarily unreachable.
+				s.logger.Warn("container service: platform delete failed; reconciler will retry", "workerId", workerID, "err", err)
+			}
 		}
 	}
 
@@ -307,86 +325,6 @@ func toContainerView(w domain.Worker, accounts []domain.Account) ContainerView {
 // isDomainConflict reports whether err is the domain-level conflict sentinel.
 // The repository maps a unique-constraint violation to it, so this stays free
 // of driver types.
-// resolveNovncURL returns the browser-reachable live-view URL for a new worker,
-// or nil when the local tier does not publish one (range unset). The port is
-// persisted on the row at insert time, so the dashboard can render the button
-// before the first heartbeat and the docker driver can bind it at provision
-// time (REMEDIATION_PLAN R-03).
-func (s *ContainerService) resolveNovncURL(ctx context.Context, requested *int) (*string, error) {
-	if s.novncPortMax <= 0 {
-		return nil, nil
-	}
-	port, err := s.allocateNovncPort(ctx, requested)
-	if err != nil {
-		return nil, err
-	}
-	host := s.novncHost
-	if host == "" {
-		host = "localhost"
-	}
-	return ptrString(fmt.Sprintf("http://%s:%d", host, port)), nil
-}
-
-// allocateNovncPort picks the live-view host port. An explicit request is
-// validated against the range and against the ports every other worker already
-// holds; nil takes the first free one. Ports are allocated as URLs on the row,
-// so an unavailable port is reported as a 409, not a daemon error.
-func (s *ContainerService) allocateNovncPort(ctx context.Context, requested *int) (int, error) {
-	taken, err := s.usedNovncPorts(ctx)
-	if err != nil {
-		return 0, err
-	}
-	if requested != nil {
-		// The range is the service's contract with the compose tier: the
-		// operator sets NOVNC_PORT_MIN/MAX to match the published binding.
-		if *requested < s.novncPortMin || *requested > s.novncPortMax {
-			return 0, fmt.Errorf("%w: novncPort must be in %d-%d", domain.ErrValidation, s.novncPortMin, s.novncPortMax)
-		}
-		if taken[*requested] {
-			return 0, fmt.Errorf("%w: novncPort %d is already used by another container", domain.ErrConflict, *requested)
-		}
-		return *requested, nil
-	}
-	for p := s.novncPortMin; p <= s.novncPortMax; p++ {
-		if !taken[p] {
-			return p, nil
-		}
-	}
-	return 0, fmt.Errorf("%w: no free novnc port in %d-%d", domain.ErrConflict, s.novncPortMin, s.novncPortMax)
-}
-
-// usedNovncPorts is the set of ports already claimed by existing workers. The
-// URL tail is the port; a malformed value is skipped, not fatal.
-func (s *ContainerService) usedNovncPorts(ctx context.Context) (map[int]bool, error) {
-	workers, err := s.workers.List(ctx, port.WorkerFilter{Limit: 500})
-	if err != nil {
-		return nil, fmt.Errorf("container service: list for novnc ports: %w", err)
-	}
-	taken := make(map[int]bool, len(workers))
-	for _, w := range workers {
-		if w.NoVNCService == nil {
-			continue
-		}
-		if p := novncPortOf(*w.NoVNCService); p > 0 {
-			taken[p] = true
-		}
-	}
-	return taken, nil
-}
-
-// novncPortOf reads the trailing :port of a stored live-view URL.
-func novncPortOf(url string) int {
-	i := strings.LastIndex(url, ":")
-	if i < 0 {
-		return 0
-	}
-	var p int
-	if _, err := fmt.Sscanf(url[i+1:], "%d", &p); err != nil {
-		return 0
-	}
-	return p
-}
-
 func isDomainConflict(err error) bool {
 	return err == domain.ErrConflict
 }

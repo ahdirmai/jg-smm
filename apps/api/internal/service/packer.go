@@ -30,6 +30,10 @@ type Packer struct {
 	maxPerContainer int
 	// autoCreate allows the fallback that spawns an AUTO container.
 	autoCreate bool
+	// novnc allocates the live-view port for an AUTO container. Optional: nil
+	// leaves novnc_service empty, so an auto-spawned card has a disabled Live
+	// view button instead of a dead link.
+	novnc *NovncAllocator
 }
 
 // PackerConfig tunes packing.
@@ -38,6 +42,9 @@ type PackerConfig struct {
 	AutoCreate      bool
 	Clock           port.Clock
 	Logger          *slog.Logger
+	// Novnc allocates the live-view port for AUTO containers. Share one
+	// allocator with ContainerService so the two paths cannot collide.
+	Novnc *NovncAllocator
 }
 
 // NewPacker wires the packer. MaxPerContainer < 1 is clamped to 1.
@@ -58,6 +65,7 @@ func NewPacker(workers port.WorkerStore, accounts port.AccountStore, cfg PackerC
 		logger:          cfg.Logger,
 		maxPerContainer: cfg.MaxPerContainer,
 		autoCreate:      cfg.AutoCreate,
+		novnc:           cfg.Novnc,
 	}
 }
 
@@ -167,6 +175,16 @@ func (p *Packer) assign(ctx context.Context, account domain.Account, w domain.Wo
 func (p *Packer) createWorker(ctx context.Context, source domain.WorkerSource) (domain.Worker, error) {
 	var w domain.Worker
 	var err error
+	// The live-view port is allocated up front so the AUTO card gets the same
+	// Live view button as a MANUAL one. Nil allocator = range unset, and the
+	// button stays disabled rather than dead.
+	var novncURL *string
+	if p.novnc != nil {
+		novncURL, err = p.novnc.Allocate(ctx, nil)
+		if err != nil {
+			return domain.Worker{}, fmt.Errorf("packer: novnc port: %w", err)
+		}
+	}
 	for attempt := 0; attempt < 3; attempt++ {
 		w, err = p.workers.Create(ctx, domain.Worker{
 			Name:           newWorkerName(p.clock),
@@ -179,6 +197,7 @@ func (p *Packer) createWorker(ctx context.Context, source domain.WorkerSource) (
 			Status:         domain.WorkerPending,
 			Generation:     1,
 			ImageVersion:   "v0.1",
+			NoVNCService:   novncURL,
 			CreatedAt:      p.clock.Now(),
 		})
 		if err == nil {

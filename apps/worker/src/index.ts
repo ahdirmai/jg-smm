@@ -17,6 +17,7 @@ import { launchBrowser, newAccountContext, type BrowserHandle } from './core/bro
 import { createGeolocation } from './core/geolocation.js';
 import { readSession } from './core/session.js';
 import { createCallback } from './transport/callback.js';
+import { createAuthCallback } from './transport/auth-callback.js';
 import { createQueueConsumer } from './transport/queue.js';
 import { createControlSubscriber, isControlMessage } from './transport/control.js';
 import { configureAdapters } from './platforms/deps.js';
@@ -136,6 +137,10 @@ const authDeps = {
   ...(process.env.SCREENSHOT_DIR ? { screenshotDir: process.env.SCREENSHOT_DIR } : {}),
 };
 
+// The login outcome is reported back so the dashboard's auth badge moves on
+// its own; without this the row sits on AUTHENTICATING forever.
+const authCallback = createAuthCallback({ ...config, workerId }, logger);
+
 void control
   .start(async (message) => {
     if (!isControlMessage(message)) {
@@ -147,7 +152,7 @@ void control
       case 'auth-login':
         // Operator headful login: the credential is typed in the noVNC view,
         // never held by the worker. The context is parked for auth-input.
-        await runLogin(message.accountId, message.platform, authDeps);
+        await authCallback.post(message.accountId, await runLogin(message.accountId, message.platform, authDeps));
         break;
       case 'auth-input': {
         const code = typeof message.payload?.value === 'string' ? message.payload.value : '';
@@ -155,7 +160,7 @@ void control
           logger.warn('auth-input without a value', { accountId: message.accountId });
           break;
         }
-        await submitAuthInput(message.accountId, code, authDeps);
+        await authCallback.post(message.accountId, await submitAuthInput(message.accountId, code, authDeps));
         break;
       }
       case 'auth-clear':

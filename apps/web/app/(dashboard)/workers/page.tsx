@@ -311,6 +311,7 @@ export default function WorkersPage() {
                           {c.latitude != null && c.longitude != null
                             ? ` · ${c.latitude.toFixed(4)}, ${c.longitude.toFixed(4)}`
                             : null}
+                          {c.novncUrl ? ` · noVNC ${novncPortOf(c.novncUrl)}` : null}
                         </CardDescription>
                       </div>
                       <div className="flex items-center gap-1">
@@ -559,6 +560,12 @@ export default function WorkersPage() {
       />
     </div>
   );
+}
+
+/** The host port a worker's live view is bound on, from its stored URL. */
+function novncPortOf(url: string): string {
+  const i = url.lastIndexOf(':');
+  return i < 0 ? '—' : url.slice(i + 1);
 }
 
 /**

@@ -22,6 +22,7 @@ type AccountService struct {
 	sealer   port.Sealer
 	clock    port.Clock
 	stream   port.StreamPublisher
+	control  port.Publisher
 	imports  *importLimiter
 	logger   *slog.Logger
 }
@@ -31,7 +32,11 @@ type AccountConfig struct {
 	Sealer port.Sealer
 	Clock  port.Clock
 	Stream port.StreamPublisher
-	Logger *slog.Logger
+	// Control publishes auth-login/auth-input on a worker's control channel.
+	// Optional: nil keeps account CRUD working, only the operator login flow is
+	// unavailable.
+	Control port.Publisher
+	Logger  *slog.Logger
 }
 
 // NewAccountService wires the service. packer may be nil; accounts are then
@@ -50,6 +55,7 @@ func NewAccountService(accounts port.AccountStore, workers port.WorkerStore, pac
 		sealer:   cfg.Sealer,
 		clock:    cfg.Clock,
 		stream:   cfg.Stream,
+		control:  cfg.Control,
 		imports:  newImportLimiter(time.Minute, ImportRateLimit),
 		logger:   cfg.Logger,
 	}
@@ -132,6 +138,15 @@ func (s *AccountService) Pause(ctx context.Context, accountID string) (AccountSu
 	if _, err := s.accounts.Update(ctx, a); err != nil {
 		return AccountSummary{}, fmt.Errorf("account service: pause: %w", err)
 	}
+	// Release the slot after the status write: the row is paused either way, and
+	// a failed release must not swallow the pause. An AUTO container left empty
+	// by this is reaped, which is the point of pausing — the worker stops
+	// presenting the account. Resume packs it back into a live slot.
+	if s.packer != nil {
+		if err := s.packer.Release(ctx, accountID); err != nil {
+			s.logger.Warn("account paused but slot not released", "accountId", accountID, "err", err)
+		}
+	}
 	s.logger.Info("account paused", "accountId", accountID)
 	view := toAccountView(a)
 	s.publishAccount(ctx, view)
@@ -166,6 +181,93 @@ func (s *AccountService) Resume(ctx context.Context, accountID string) (AccountS
 	view := toAccountView(a)
 	s.publishAccount(ctx, view)
 	return view, nil
+}
+
+// Login dispatches an operator headful login (P1-11 / P1-12). The worker opens
+// the platform login page in its noVNC-visible browser; the operator types the
+// credential there, so the API never sees it. The row flips to PENDING_AUTH
+// immediately — the card shows the live view while the login is in flight —
+// and the worker reports the real outcome over /internal/account-callback.
+func (s *AccountService) Login(ctx context.Context, accountID string) (AccountSummary, error) {
+	if s.control == nil {
+		return AccountSummary{}, fmt.Errorf("%w: auth control channel is not configured", domain.ErrUnavailable)
+	}
+	a, err := s.accounts.GetByID(ctx, accountID)
+	if err != nil {
+		return AccountSummary{}, fmt.Errorf("account service: get: %w", err)
+	}
+	if a.WorkerID == nil {
+		return AccountSummary{}, fmt.Errorf("%w: account has no container to log in on", domain.ErrConflict)
+	}
+	w, err := s.workers.GetByID(ctx, *a.WorkerID)
+	if err != nil {
+		return AccountSummary{}, fmt.Errorf("account service: worker: %w", err)
+	}
+	if w.NoVNCService == nil {
+		return AccountSummary{}, fmt.Errorf("%w: worker has no live view to log in through", domain.ErrConflict)
+	}
+	msg, err := json.Marshal(controlMessage{
+		Type:      "auth-login",
+		AccountID: accountID,
+		Platform:  string(a.Platform),
+	})
+	if err != nil {
+		return AccountSummary{}, fmt.Errorf("account service: marshal control: %w", err)
+	}
+	if err := s.control.PublishControl(ctx, w.ID, msg); err != nil {
+		return AccountSummary{}, fmt.Errorf("account service: publish auth-login: %w", err)
+	}
+	// Optimistic state: the callback is the authority, but the operator should
+	// not have to refresh to see the login started.
+	a.AuthStatus = domain.AuthAuthenticating
+	if _, err := s.accounts.Update(ctx, a); err != nil {
+		return AccountSummary{}, fmt.Errorf("account service: mark pending auth: %w", err)
+	}
+	s.logger.Info("auth-login dispatched", "accountId", accountID, "workerId", w.ID)
+	view := toAccountView(a)
+	s.publishAccount(ctx, view)
+	return view, nil
+}
+
+// SubmitInput carries a 2FA / checkpoint code to a parked login. Only valid
+// while the worker still holds the context (authStatus PENDING_AUTH); a login
+// that already settled is a conflict rather than a crash.
+func (s *AccountService) SubmitInput(ctx context.Context, accountID, value string) (AccountSummary, error) {
+	if s.control == nil {
+		return AccountSummary{}, fmt.Errorf("%w: auth control channel is not configured", domain.ErrUnavailable)
+	}
+	a, err := s.accounts.GetByID(ctx, accountID)
+	if err != nil {
+		return AccountSummary{}, fmt.Errorf("account service: get: %w", err)
+	}
+	if a.WorkerID == nil {
+		return AccountSummary{}, fmt.Errorf("%w: account has no container to log in on", domain.ErrConflict)
+	}
+	if a.AuthStatus != domain.AuthAuthenticating {
+		return AccountSummary{}, fmt.Errorf("%w: account login is not awaiting input", domain.ErrConflict)
+	}
+	msg, err := json.Marshal(controlMessage{
+		Type:      "auth-input",
+		AccountID: accountID,
+		Platform:  string(a.Platform),
+		Payload:   map[string]string{"value": value},
+	})
+	if err != nil {
+		return AccountSummary{}, fmt.Errorf("account service: marshal control: %w", err)
+	}
+	if err := s.control.PublishControl(ctx, *a.WorkerID, msg); err != nil {
+		return AccountSummary{}, fmt.Errorf("account service: publish auth-input: %w", err)
+	}
+	s.logger.Info("auth-input dispatched", "accountId", accountID, "workerId", *a.WorkerID)
+	return toAccountView(a), nil
+}
+
+// controlMessage is the wire shape the worker's control subscriber expects.
+type controlMessage struct {
+	Type      string            `json:"type"`
+	AccountID string            `json:"accountId"`
+	Platform  string            `json:"platform"`
+	Payload   map[string]string `json:"payload,omitempty"`
 }
 
 // Remove deletes an account and releases its container slot. An AUTO container

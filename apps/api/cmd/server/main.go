@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/ahdirmai/jg-smm/apps/api/internal/adapter"
 	analyticsprovider "github.com/ahdirmai/jg-smm/apps/api/internal/adapter/analytics"
@@ -138,6 +139,11 @@ func main() {
 		jobSvc := service.NewJobService(workerRepo, accountRepo, logRepo, actionRepo, adapter.SystemClock{}, hub, metrics, logger)
 		deps.Internal = apihttp.NewInternalHandler(jobSvc)
 
+		// One live-view port allocator for both paths: the manual container API
+		// and the packer's AUTO fallback. Sharing it is what keeps a manual
+		// create and an auto-spawn from picking the same port.
+		novnc := service.NewNovncAllocator(workerRepo, cfg.DockerPublicHost, cfg.NovncPortMin, cfg.NovncPortMax)
+
 		// Bin-packing: accounts land in the first container with a free platform
 		// slot; PROVISION_AUTO_CREATE is the fallback that spawns an AUTO
 		// container when the fleet is full (P1-05).
@@ -146,28 +152,60 @@ func main() {
 			AutoCreate:      cfg.ProvisionAutoCreate,
 			Clock:           adapter.SystemClock{},
 			Logger:          logger,
+			Novnc:           novnc,
 		})
+
+		// The provisioner driver: k8s in a cluster, docker on a workstation,
+		// static for bookkeeping-only. Built here (before the container service
+		// and the reconciler) because the delete path needs it directly — the
+		// row is the reconciler's only view of desired state, so a delete must
+		// tear the container down while the row still says STOPPED.
+		raw, err := provisionDriver(ctx, cfg, workerRepo, logRepo, logger)
+		if err != nil {
+			logger.Error("provisioner init failed", "err", err)
+			os.Exit(1)
+		}
+		driver := service.NewLoggingDriver(raw, logRepo, adapter.SystemClock{}, logger)
 
 		// Container API (P1-19): create/list/delete MANUAL containers. The
 		// reconciler provisions the pod from the row this service writes.
 		containerSvc := service.NewContainerService(workerRepo, accountRepo, packer, service.ContainerConfig{
-			Clock:        adapter.SystemClock{},
-			Logger:       logger,
-			Stream:       hub,
-			Logs:         logRepo,
-			NovncHost:    cfg.DockerPublicHost,
-			NovncPortMin: cfg.NovncPortMin,
-			NovncPortMax: cfg.NovncPortMax,
+			Clock:  adapter.SystemClock{},
+			Logger: logger,
+			Stream: hub,
+			Logs:   logRepo,
+			Driver: driver,
+			Novnc:  novnc,
 		})
 		deps.Containers = apihttp.NewContainerHandler(containerSvc)
 
+		// Redis is the transport for action queues and worker control
+		// channels. It is optional: an unset URL leaves both the action
+		// scheduler and the operator login flow off, but the dashboard still
+		// serves.
+		var publisher port.Publisher
+		var redisClient *redis.Client
+		if cfg.RedisURL != "" {
+			rc, err := adapter.NewRedis(ctx, cfg.RedisURL)
+			if err != nil {
+				logger.Error("redis init failed", "err", err)
+				os.Exit(1)
+			}
+			defer rc.Close()
+			checkers["redis"] = rc
+			redisClient = rc.Client()
+			publisher = transport.NewPublisher(redisClient)
+		}
+
 		// Account API (P1-15 / P1-16): add/list/pause/resume/remove. The
 		// sealer is injected so the plaintext password never reaches the store.
+		// Control carries the auth-login/auth-input flow (P1-11 / P1-12).
 		accountSvc := service.NewAccountService(accountRepo, workerRepo, packer, service.AccountConfig{
-			Sealer: sealer,
-			Clock:  adapter.SystemClock{},
-			Stream: hub,
-			Logger: logger,
+			Sealer:  sealer,
+			Clock:   adapter.SystemClock{},
+			Stream:  hub,
+			Control: publisher,
+			Logger:  logger,
 		})
 		deps.Accounts = apihttp.NewAccountHandler(accountSvc)
 		deps.Stream = apihttp.NewStreamHandler(hub)
@@ -270,15 +308,8 @@ func main() {
 		// survivors onto the owning worker's Redis queue. Opt-in via
 		// ACTION_INTERVAL_SECONDS, mirroring the scrape scheduler: off by
 		// default locally so `make up` never depends on Redis being wired.
-		if cfg.ActionIntervalSeconds > 0 && cfg.RedisURL != "" {
-			rc, err := adapter.NewRedis(ctx, cfg.RedisURL)
-			if err != nil {
-				logger.Error("redis init failed", "err", err)
-				os.Exit(1)
-			}
-			defer rc.Close()
-			checkers["redis"] = rc
-
+		// redisClient is non-nil whenever publisher is (both gate on RedisURL).
+		if cfg.ActionIntervalSeconds > 0 && redisClient != nil {
 			// The composer is the template engine (P3-02/P3-03): it picks an unused
 			// variant for the target, renders it, and denylist-screens the result,
 			// so the only text a worker ever receives is already safe to post.
@@ -288,9 +319,9 @@ func main() {
 				accountRepo,
 				scrapeRepo,
 				templateSvc,
-				adapter.NewCooldownGate(rc.Client(), "smm:cooldown"),
-				adapter.NewRateLimiter(rc.Client(), "smm:ratelimit"),
-				transport.NewPublisher(rc.Client()),
+				adapter.NewCooldownGate(redisClient, "smm:cooldown"),
+				adapter.NewRateLimiter(redisClient, "smm:ratelimit"),
+				publisher,
 				service.ActionSchedulerConfig{
 					TickBudget: cfg.ActionBatchParallelism * 10,
 					Cooldown:   time.Duration(cfg.ActionCooldownSeconds) * time.Second,
@@ -360,16 +391,6 @@ func main() {
 			})
 			go agg.Run(ctx, time.Duration(cfg.AggregateIntervalSeconds)*time.Second)
 		}
-
-		// a workstation. The reconciler is a pure loop over this port, so both
-		// tiers share the same code path (P1-03/P1-04). The LoggingDriver wraps
-		// either one so every create/delete lands in provision_log (P1-06).
-		raw, err := provisionDriver(ctx, cfg, workerRepo, logRepo, logger)
-		if err != nil {
-			logger.Error("provisioner init failed", "err", err)
-			os.Exit(1)
-		}
-		driver := service.NewLoggingDriver(raw, logRepo, adapter.SystemClock{}, logger)
 
 		// The desired-state loop is opt-in via RECONCILE_INTERVAL_SECONDS. It is
 		// off by default so `make up` locally never depends on it (P1-04).
