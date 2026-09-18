@@ -154,6 +154,7 @@ func main() {
 			Clock:        adapter.SystemClock{},
 			Logger:       logger,
 			Stream:       hub,
+			Logs:         logRepo,
 			NovncHost:    cfg.DockerPublicHost,
 			NovncPortMin: cfg.NovncPortMin,
 			NovncPortMax: cfg.NovncPortMax,

@@ -3,7 +3,9 @@ package service
 import (
 	"context"
 	"math"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
 )
@@ -181,4 +183,84 @@ func TestContainerCreateValidatesLocation(t *testing.T) {
 func inRange(point, centre float64, radiusKm float64) bool {
 	const tol = 0.5 // slack for the 5-decimal rounding
 	return math.Abs(point-centre)*111.32 <= radiusKm+tol
+}
+
+// TestContainerLogsReturnsAuditTrail covers R-06/F-07: a PENDING card can show
+// the provisioner's own record instead of an unexplained spinner.
+func TestContainerLogsReturnsAuditTrail(t *testing.T) {
+	store := newFakeWorkerStore()
+	accounts := newFakeAccountStore()
+	logs := newFakeProvisionLogStore()
+	svc := NewContainerService(store, accounts, nil, ContainerConfig{Logs: logs})
+
+	now := time.Date(2026, 9, 18, 1, 0, 0, 0, time.UTC)
+	logs.append(domain.ProvisionLog{
+		ID: "l1", WorkerID: "w1", Op: domain.OpCreate, Generation: 1,
+		Status: domain.ProvisionFailed, Error: ptrString("image not found"), TS: now,
+	})
+	logs.append(domain.ProvisionLog{
+		ID: "l2", WorkerID: "w1", Op: domain.OpCreate, Generation: 1,
+		Status: domain.ProvisionApplied, TS: now.Add(time.Second),
+	})
+
+	out, err := svc.Logs(context.Background(), "w1", 0)
+	if err != nil {
+		t.Fatalf("Logs: %v", err)
+	}
+	if len(out) != 2 {
+		t.Fatalf("logs = %d entries, want 2", len(out))
+	}
+	// Newest first: the failure explains the card only if it is at the top.
+	if out[0].ID != "l2" {
+		t.Errorf("first entry = %s, want the newest (l2)", out[0].ID)
+	}
+}
+
+// Without a store the call is a nil slice, not an error: the card renders
+// "nothing recorded" instead of 500-ing before the DB is wired.
+func TestContainerLogsWithoutStore(t *testing.T) {
+	svc := NewContainerService(newFakeWorkerStore(), newFakeAccountStore(), nil, ContainerConfig{})
+	out, err := svc.Logs(context.Background(), "w1", 0)
+	if err != nil {
+		t.Fatalf("Logs: %v", err)
+	}
+	if out != nil {
+		t.Fatalf("want nil, got %d entries", len(out))
+	}
+}
+
+// fakeProvisionLogStore is the in-memory provision_log for service tests.
+type fakeProvisionLogStore struct {
+	mu   sync.Mutex
+	logs []domain.ProvisionLog
+}
+
+func newFakeProvisionLogStore() *fakeProvisionLogStore {
+	return &fakeProvisionLogStore{}
+}
+
+func (s *fakeProvisionLogStore) append(l domain.ProvisionLog) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.logs = append(s.logs, l)
+}
+
+func (s *fakeProvisionLogStore) Append(_ context.Context, l domain.ProvisionLog) error {
+	s.append(l)
+	return nil
+}
+
+func (s *fakeProvisionLogStore) ListByWorker(_ context.Context, workerID string, limit int) ([]domain.ProvisionLog, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]domain.ProvisionLog, 0, len(s.logs))
+	for i := len(s.logs) - 1; i >= 0; i-- {
+		if s.logs[i].WorkerID == workerID {
+			out = append(out, s.logs[i])
+		}
+	}
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }

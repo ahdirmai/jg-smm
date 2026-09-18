@@ -189,6 +189,18 @@ const (
 	PlatformYoutube   Platform = "youtube"
 )
 
+// Defines values for ProvisionLogEntryOp.
+const (
+	CREATE ProvisionLogEntryOp = "CREATE"
+	DELETE ProvisionLogEntryOp = "DELETE"
+)
+
+// Defines values for ProvisionLogEntryStatus.
+const (
+	APPLIED ProvisionLogEntryStatus = "APPLIED"
+	FAILED  ProvisionLogEntryStatus = "FAILED"
+)
+
 // Defines values for ReadinessStatusStatus.
 const (
 	Degraded ReadinessStatusStatus = "degraded"
@@ -756,6 +768,34 @@ type PlatformAnalytics struct {
 	Trend    []TrendPoint `json:"trend"`
 }
 
+// ProvisionLogEntry defines model for ProvisionLogEntry.
+type ProvisionLogEntry struct {
+	// Error The daemon or driver error when status is FAILED.
+	Error      nullable.Nullable[string] `json:"error,omitempty"`
+	Generation int                       `json:"generation"`
+	Id         string                    `json:"id"`
+
+	// K8sRef Platform-side reference (container id locally).
+	K8sRef nullable.Nullable[string] `json:"k8sRef,omitempty"`
+
+	// Op The provisioner operation.
+	Op       ProvisionLogEntryOp     `json:"op"`
+	Status   ProvisionLogEntryStatus `json:"status"`
+	Ts       time.Time               `json:"ts"`
+	WorkerId string                  `json:"workerId"`
+}
+
+// ProvisionLogEntryOp The provisioner operation.
+type ProvisionLogEntryOp string
+
+// ProvisionLogEntryStatus defines model for ProvisionLogEntry.Status.
+type ProvisionLogEntryStatus string
+
+// ProvisionLogList defines model for ProvisionLogList.
+type ProvisionLogList struct {
+	Logs []ProvisionLogEntry `json:"logs"`
+}
+
 // ProxyGroup A residential proxy pool. The pool key is write-only and never present
 // in a response.
 type ProxyGroup struct {
@@ -874,6 +914,9 @@ type AccountId = string
 // ContainerId defines model for ContainerId.
 type ContainerId = string
 
+// LogLimit defines model for LogLimit.
+type LogLimit = int
+
 // OfficialAccountId defines model for OfficialAccountId.
 type OfficialAccountId = string
 
@@ -928,6 +971,12 @@ type ListAuditParams struct {
 
 	// Offset Page offset.
 	Offset *int `form:"offset,omitempty" json:"offset,omitempty"`
+}
+
+// ListContainerLogsParams defines parameters for ListContainerLogs.
+type ListContainerLogsParams struct {
+	// Limit How many log entries to return (newest first).
+	Limit *LogLimit `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // ListOfficialAccountsParams defines parameters for ListOfficialAccounts.

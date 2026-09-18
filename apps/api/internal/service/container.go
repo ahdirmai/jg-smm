@@ -23,6 +23,9 @@ type ContainerService struct {
 	packer   *Packer
 	clock    port.Clock
 	rnd      *rand.Rand
+	// logs is the provisioner audit trail. Optional: nil keeps create/delete
+	// working, only the per-card history stays unread.
+	logs port.ProvisionLogStore
 	// novncHost is the host a browser uses to reach a live view, baked into the
 	// URL written to worker.novnc_service at create time.
 	novncHost string
@@ -42,6 +45,8 @@ type ContainerConfig struct {
 	Clock  port.Clock
 	Logger *slog.Logger
 	Stream port.StreamPublisher
+	// Logs stores the provisioner audit rows the dashboard reads back per card.
+	Logs port.ProvisionLogStore
 	// NovncHost is the host the browser resolves for a live view. Defaults to
 	// localhost, which is correct for the local tier's 127.0.0.1 bindings.
 	NovncHost string
@@ -67,6 +72,7 @@ func NewContainerService(workers port.WorkerStore, accounts port.AccountStore, p
 		accounts:     accounts,
 		packer:       packer,
 		clock:        cfg.Clock,
+		logs:         cfg.Logs,
 		stream:       cfg.Stream,
 		novncHost:    cfg.NovncHost,
 		novncPortMin: cfg.NovncPortMin,
@@ -143,6 +149,23 @@ func (s *ContainerService) Create(ctx context.Context, name, region, location st
 	// other tabs and the optimistic insert path reconcile from this frame.
 	s.publishContainer(ctx, w, nil)
 	return w, nil
+}
+
+// Logs returns the provisioner audit trail for one worker, newest first. The
+// dashboard reads this on a PENDING card so a slow or failed provision says
+// why instead of looking stuck (F-07).
+func (s *ContainerService) Logs(ctx context.Context, workerID string, limit int) ([]domain.ProvisionLog, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	if s.logs == nil {
+		return nil, nil
+	}
+	logs, err := s.logs.ListByWorker(ctx, workerID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("container service: logs: %w", err)
+	}
+	return logs, nil
 }
 
 // List returns every container with the accounts it hosts.

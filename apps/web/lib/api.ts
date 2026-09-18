@@ -15,6 +15,7 @@ export type SetAccountStatusRequest = ApiSchemas['SetAccountStatusRequest'];
 export type Container = ApiSchemas['Container'];
 export type ContainerList = ApiSchemas['ContainerList'];
 export type ActionJob = ApiSchemas['ActionJob'];
+export type LogEntry = ApiSchemas['ProvisionLogEntry'];
 export type ActionJobList = ApiSchemas['ActionJobList'];
 export type EnqueueActionsRequest = ApiSchemas['EnqueueActionsRequest'];
 export type ActionItem = ApiSchemas['ActionItem'];
@@ -165,6 +166,8 @@ export const api = {
     }),
   listLocations: (signal?: AbortSignal) =>
     request<ApiSchemas['Location'][]>('/api/locations', signal ? { signal } : undefined),
+  containerLogs: (id: string, limit = 20) =>
+    request<ApiSchemas['ProvisionLogList']>(`/api/containers/${id}?limit=${limit}`),
   deleteContainer: (id: string) => request<void>(`/api/containers/${id}`, { method: 'DELETE' }),
 
   // The queue (P3-13). Enqueue is intent only: account + permalink + type.

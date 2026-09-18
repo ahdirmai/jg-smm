@@ -38,7 +38,8 @@ import { useContainers } from '@/lib/hooks/use-containers';
 import { useLiveTicker } from '@/lib/hooks/use-live-ticker';
 import { LiveBrowserModal } from '@/components/live-browser-modal';
 import { PLATFORM_LABEL } from '@/lib/platforms';
-import type { Container } from '@/lib/api';
+import { api } from '@/lib/api';
+import type { Container, LogEntry } from '@/lib/api';
 import { useSession } from '@/lib/auth/session-context';
 import { can } from '@/lib/auth/permissions';
 
@@ -88,6 +89,10 @@ export default function WorkersPage() {
   const [city, setCity] = useState('all');
   const [busy, setBusy] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
+  // F-07: a card whose provisioning looks stuck can be expanded to show the
+  // provisioner's own audit trail, fetched on demand rather than per render.
+  const [logFor, setLogFor] = useState<string | null>(null);
+  const [logs, setLogs] = useState<LogEntry[] | null>(null);
 
   const cities = useMemo(() => {
     type CityAnchor = { name: string; latitude: number; longitude: number; radiusKm: number };
@@ -176,6 +181,26 @@ export default function WorkersPage() {
       console.error('container op failed', err);
     } finally {
       setBusy(null);
+    }
+  };
+
+  // F-07: expand a card to read the provisioner's audit trail. Fetched on
+  // demand so a fleet listing never pays for N log reads, and closed again on
+  // the same click.
+  const toggleLogs = async (id: string) => {
+    if (logFor === id) {
+      setLogFor(null);
+      setLogs(null);
+      return;
+    }
+    setLogFor(id);
+    setLogs(null);
+    try {
+      const res = await api.containerLogs(id);
+      setLogs(res.logs ?? []);
+    } catch (err) {
+      console.error('container logs failed', err);
+      setLogs([]);
     }
   };
 
@@ -358,7 +383,39 @@ export default function WorkersPage() {
                           reconciling
                         </Badge>
                       ) : null}
+                      <button
+                        type="button"
+                        onClick={() => toggleLogs(c.id)}
+                        className="ml-auto text-xs text-muted-foreground underline-offset-2 hover:underline"
+                      >
+                        {logFor === c.id ? 'hide provisioning log' : 'provisioning log'}
+                      </button>
                     </div>
+                    {logFor === c.id ? (
+                      <div className="mt-2 rounded-md border bg-muted/30 p-2 text-xs">
+                        {logs === null ? (
+                          <p className="text-muted-foreground">loading…</p>
+                        ) : logs.length === 0 ? (
+                          <p className="text-muted-foreground">No provisioning ops recorded yet.</p>
+                        ) : (
+                          <ul className="space-y-1 font-mono">
+                            {logs.map((l) => (
+                              <li key={l.id} className="flex gap-2">
+                                <span className="text-muted-foreground">
+                                  {new Date(l.ts).toLocaleTimeString()}
+                                </span>
+                                <span>{l.op}</span>
+                                <span>gen {l.generation}</span>
+                                <span className={l.status === 'FAILED' ? 'text-destructive' : 'text-emerald-600 dark:text-emerald-400'}>
+                                  {l.status}
+                                </span>
+                                {l.error ? <span className="truncate text-destructive">{l.error}</span> : null}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    ) : null}
                   </CardHeader>
                   <CardContent>
                     {(c.accounts?.length ?? 0) === 0 ? (

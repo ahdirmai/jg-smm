@@ -203,3 +203,19 @@ End-to-end, recorded in `MANUAL_TESTING.md`:
 
 Every commit is additive to `main`; `git revert` of a single `R-0n` commit is a
 complete rollback for that workstream.
+
+## 6. Bugs found while verifying the stack live
+
+Both were found by exercising the fixed chain against a real stack, not by
+reading code. Both are fixed in `7290536`; recorded here so the *class* is not
+repeated.
+
+| #   | Bug                                                                                      | Class                     | Fix                                                                                                                              | Guard that would catch a regression                                                                                     |
+| --- | ---------------------------------------------------------------------------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| B-1 | Worker callback posted `status:"success"`; the API enum is `SUCCESS`. Every action verdict was a `400` and the job sat at `running` forever. | Wire-contract mismatch     | Map at the transport seam (`transport/callback.ts`), so the controller and DOM layers never see the wire spelling.               | A contract test that posts a verdict through the real `/internal/action-callback` and reads the job back `success`.     |
+| B-2 | A recreated container changes hostname, so a row bound under a compose-derived boot id (`worker-<hostname>`) was unclaimable — the worker fell back to its boot id and its queue went unheard. | Identity binding          | Claim re-points the row named by the driver-injected `WORKER_ID` before looking for a free row (`repository/worker.go`).         | Claim a row, remove the container, let the reconciler recreate it, assert the same row is re-claimed (not a second one). |
+
+B-1 is the one worth a test: the casing sat unnoticed because the worker's
+callback fails *soft* (it logs a warning and stops on 4xx), so the only symptom
+was a job that never finished. Any future drift in that enum will look exactly
+like this again — silent.

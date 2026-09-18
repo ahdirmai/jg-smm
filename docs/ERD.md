@@ -159,7 +159,7 @@ model Worker {
   controlChannel String?               // Redis: control-<workerId>
   actionQueue    String?               // Redis list: queue:action:<workerId> (job bawa accountId)
   sessionPvc     String?               // K8s PVC: smm-session-<workerId> (storageState per platform)
-  novncService   String?               // ClusterIP service noVNC dalam pod (tidak pernah publik)
+  novncService   String?               // URL live view: lokal = http://localhost:<port> (loopback, dialokasikan saat create); k8s = ClusterIP service noVNC dalam pod (tidak pernah publik)
   desiredState   DesiredState @default(RUNNING) // sumber keinginan provisioning container
   source         WorkerSource @default(MANUAL)  // MANUAL = user-created (tak auto-delete saat 0 akun); AUTO = fallback auto-create (auto-delete saat 0 akun)
   region         String                // region default pod (proxy per-akun bisa override)

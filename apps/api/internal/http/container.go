@@ -30,6 +30,7 @@ func NewContainerHandler(containers *service.ContainerService) *ContainerHandler
 func (h *ContainerHandler) Register(g *echo.Group) {
 	g.POST("/containers", h.create, RequirePermission(domain.PermAct))
 	g.GET("/containers", h.list)
+	g.GET("/containers/:containerId", h.listLogs)
 	g.DELETE("/containers/:containerId", h.delete, RequirePermission(domain.PermAct))
 	// The city dropdown sits on the same page as the create form.
 	g.GET("/locations", h.listLocations)
@@ -92,6 +93,45 @@ func (h *ContainerHandler) delete(c echo.Context) error {
 		return translateContainerError(err)
 	}
 	return c.NoContent(http.StatusNoContent)
+}
+
+// listLogs returns the provisioner audit trail for one container, so a PENDING
+// card can explain itself instead of looking stuck (F-07).
+func (h *ContainerHandler) listLogs(c echo.Context) error {
+	if h.containers == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "container service unavailable")
+	}
+	var params oapigen.ListContainerLogsParams
+	if err := c.Bind(&params); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid query parameters")
+	}
+	limit := 20
+	if params.Limit != nil {
+		limit = *params.Limit
+	}
+	logs, err := h.containers.Logs(c.Request().Context(), c.Param("containerId"), limit)
+	if err != nil {
+		return translateContainerError(err)
+	}
+	items := make([]oapigen.ProvisionLogEntry, 0, len(logs))
+	for _, l := range logs {
+		entry := oapigen.ProvisionLogEntry{
+			Id:         l.ID,
+			WorkerId:   l.WorkerID,
+			Op:         oapigen.ProvisionLogEntryOp(l.Op),
+			Generation: l.Generation,
+			Status:     oapigen.ProvisionLogEntryStatus(l.Status),
+			Ts:         l.TS,
+		}
+		if l.K8sRef != nil {
+			entry.K8sRef = nullable.NewNullableWithValue(*l.K8sRef)
+		}
+		if l.Error != nil {
+			entry.Error = nullable.NewNullableWithValue(*l.Error)
+		}
+		items = append(items, entry)
+	}
+	return c.JSON(http.StatusOK, oapigen.ProvisionLogList{Logs: items})
 }
 
 // translateContainerError maps domain errors to HTTP statuses.

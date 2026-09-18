@@ -337,7 +337,15 @@ export interface paths {
             };
             cookie?: never;
         };
-        get?: never;
+        /**
+         * Provisioning log for a container
+         * @description The provisioner's audit trail for this container, newest first: every
+         *     create/delete attempt with its generation and outcome. The dashboard
+         *     shows it on a PENDING card so a slow or failed provision explains
+         *     itself instead of looking stuck.
+         *
+         */
+        get: operations["listContainerLogs"];
         put?: never;
         post?: never;
         /**
@@ -1000,6 +1008,27 @@ export interface components {
         ContainerList: {
             containers: components["schemas"]["Container"][];
         };
+        ProvisionLogEntry: {
+            id: string;
+            workerId: string;
+            /**
+             * @description The provisioner operation.
+             * @enum {string}
+             */
+            op: "CREATE" | "DELETE";
+            generation: number;
+            /** @description Platform-side reference (container id locally). */
+            k8sRef?: string | null;
+            /** @enum {string} */
+            status: "APPLIED" | "FAILED";
+            /** @description The daemon or driver error when status is FAILED. */
+            error?: string | null;
+            /** Format: date-time */
+            ts: string;
+        };
+        ProvisionLogList: {
+            logs: components["schemas"]["ProvisionLogEntry"][];
+        };
         CreateAccountRequest: {
             /** @enum {string} */
             platform: "instagram" | "threads" | "facebook" | "linkedin" | "x" | "youtube" | "tiktok";
@@ -1390,6 +1419,8 @@ export interface components {
     parameters: {
         /** @description The container ID. */
         ContainerId: string;
+        /** @description How many log entries to return (newest first). */
+        LogLimit: number;
         /** @description The account ID. */
         AccountId: string;
         /** @description The template ID. */
@@ -1897,6 +1928,34 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Location"][];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    listContainerLogs: {
+        parameters: {
+            query?: {
+                /** @description How many log entries to return (newest first). */
+                limit?: components["parameters"]["LogLimit"];
+            };
+            header?: never;
+            path: {
+                /** @description The container ID. */
+                containerId: components["parameters"]["ContainerId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Provisioning log entries. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProvisionLogList"];
                 };
             };
             401: components["responses"]["Error"];

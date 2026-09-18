@@ -186,6 +186,8 @@ flowchart LR
 | —       | Worker                             | selain di atas     | **DENY**                                |
 
 > noVNC (6080) **tidak** diekspos publik & **tidak** punya Ingress; akses hanya via BE yang meng-autentikasi operator lalu stream.
+>
+> Pengecualian lokal (tier `docker`): browser operator butuh reachable langsung, jadi 6080 dipublikasi ke `127.0.0.1:<port>` **loopback saja** (range `NOVNC_PORT_MIN..MAX`), port dialokasikan saat create. Tidak ada network publik; binding loopback = hanya machine yang sama.
 
 ---
 
@@ -232,7 +234,7 @@ flowchart LR
 | Registry        | image pin **by digest**; Trivy scan per push (CVE high/critical block); Kyverno/OPA (v1) enforce signed image     |
 | RBAC            | `smm-provisioner` SA: hanya `pods create,delete,get,list` namespace `smm`; **nol** akses secret/node/RBAC         |
 | Internal API    | `/internal/*` mTLS (Linkerd) atau token + IP allowlist (worker ns saja)                                           |
-| noVNC           | internal-only, di belakang BE auth; tidak diekspos                                                                |
+| noVNC           | k8s: internal-only ClusterIP, tidak diekspos. Lokal (tier docker): publik di **loopback saja** (`127.0.0.1:<port>`, range `NOVNC_PORT_MIN..MAX`), tradeoff socket-mount + root API yang tercatat di `SECURITY_REVIEW.md` |
 | Supply chain    | `gitleaks` pre-commit, `govulncheck`/`pnpm audit` per PR, Dependabot                                              |
 | Ketahanan creds | kredensial akun AES-256-GCM at-rest; write-only; dilarang di log (CI grep gate)                                   |
 
@@ -396,7 +398,7 @@ Semua keputusan di bawah **sudah dikonfirmasi user** kecuali Q1 yang menunggu sp
 
 Implikasi:
 
-- **Local tier = docker-compose, TIDAK pakai K8s.** K8s (k3s + reconciler `Worker.desiredState`) adalah **jalur produksi** (P1+ untuk provisioning dinamis) — di lokal, "worker dinamis" disimulasikan via `docker compose up --scale worker=N`. Menjalankan K8s di Mac menambah VM/etcd overhead yang tak perlu untuk 16 GB.
+- **Local tier = docker-compose, TIDAK pakai K8s.** K8s (k3s + reconciler `Worker.desiredState`) adalah **jalur produksi**. Di lokal, `PROVISIONER_MODE=docker` membuat API sendiri yang meluncurkan container worker melalui socket Docker yang di-mount — provisioning dinamis nyata, bukan disimulasi. Jalur lama `docker compose up --scale worker=N` masih ada di `make up-fleet`. Menjalankan K8s di Mac menambah VM/etcd overhead yang tak perlu untuk 16 GB. Tradeoff socket-mount + API root tercatat di `SECURITY_REVIEW.md` (lokal saja; k8s tetap nonroot UID 10001).
 - **ARM64 (Apple Silicon):** semua image harus multi-arch/arm64. Playwright base image `mcr.microsoft.com/playwright:vX.Y.Z-noble` punya arm64; headful Chromium + Xvfb + noVNC jalan di arm64 Linux container. Pin digest di `compose.yaml`.
 - **Proxy egress** tetap wajib (worker → IG/Threads) walau dev lokal; tanpa proxy, akun = cara tercepat kena ban.
 - **Apify scrape tidak memakan resource lokal** (jalan di cloud Apify) → yang membebani Mac hanya worker Playwright + stack data.
@@ -406,7 +408,7 @@ Implikasi:
 | Item                       | `local` (dev, Mac M2 16 GB)             | `prod` (server user, TBD)             |
 | -------------------------- | --------------------------------------- | ------------------------------------- |
 | Orchestrator               | docker-compose                          | K8s (k3s/kubeadm)                     |
-| Worker dinamis             | `--scale worker=N` (manual)             | reconciler `desiredState` + pod label |
+| Worker dinamis             | `PROVISIONER_MODE=docker` (API launch container via socket) | reconciler `desiredState` + pod label |
 | Max worker concurrent      | **3**                                   | 50 (sesuai §3)                        |
 | `ACTION_BATCH_PARALLELISM` | **2**                                   | 4                                     |
 | Worker request/limit       | 250m / 1Gi → 1 / 2Gi _(dev-only relax)_ | 750m / 1Gi → 2 / 4Gi                  |

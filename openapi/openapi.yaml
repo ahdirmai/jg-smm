@@ -519,6 +519,30 @@ paths:
           $ref: '#/components/responses/Error'
         '404':
           $ref: '#/components/responses/Error'
+    get:
+      tags: [containers]
+      summary: Provisioning log for a container
+      description: |
+        The provisioner's audit trail for this container, newest first: every
+        create/delete attempt with its generation and outcome. The dashboard
+        shows it on a PENDING card so a slow or failed provision explains
+        itself instead of looking stuck.
+      operationId: listContainerLogs
+      security:
+        - accessCookie: []
+      parameters:
+        - $ref: '#/components/parameters/LogLimit'
+      responses:
+        '200':
+          description: Provisioning log entries.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProvisionLogList'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
 
   /api/admin/ping:
     get:
@@ -1297,6 +1321,16 @@ components:
       schema:
         type: string
       description: The container ID.
+    LogLimit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+      description: How many log entries to return (newest first).
     AccountId:
       name: accountId
       in: path
@@ -1608,6 +1642,44 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Container'
+
+    ProvisionLogEntry:
+      type: object
+      required: [id, workerId, op, generation, status, ts]
+      properties:
+        id:
+          type: string
+        workerId:
+          type: string
+        op:
+          type: string
+          enum: [CREATE, DELETE]
+          description: The provisioner operation.
+        generation:
+          type: integer
+        k8sRef:
+          type: string
+          nullable: true
+          description: Platform-side reference (container id locally).
+        status:
+          type: string
+          enum: [APPLIED, FAILED]
+        error:
+          type: string
+          nullable: true
+          description: The daemon or driver error when status is FAILED.
+        ts:
+          type: string
+          format: date-time
+
+    ProvisionLogList:
+      type: object
+      required: [logs]
+      properties:
+        logs:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProvisionLogEntry'
 
     CreateAccountRequest:
       type: object
