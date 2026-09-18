@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -20,12 +21,15 @@ type fakeDaemon struct {
 	deletes []string
 	// running containers keyed by name → generation label.
 	containers map[string]string
+	// the worker id each container name belongs to.
+	ids map[string]string
 }
 
 func newFakeDaemon() *fakeDaemon {
 	return &fakeDaemon{
 		posts:      map[string][]map[string]any{},
 		containers: map[string]string{},
+		ids:        map[string]string{},
 	}
 }
 
@@ -46,11 +50,52 @@ func (d *fakeDaemon) handler(w http.ResponseWriter, r *http.Request) {
 			name = "unnamed"
 		}
 		d.containers[name] = "1"
+		if labels, ok := req["Labels"].(map[string]any); ok {
+			if id, ok := labels[LabelWorkerID].(string); ok {
+				d.ids[name] = id
+			}
+			if g, ok := labels[LabelGeneration].(string); ok {
+				d.containers[name] = g
+			}
+		}
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(map[string]any{"Id": "abc123"})
 	case r.Method == http.MethodPost && strings.Contains(path, "/start"):
 		d.started = append(d.started, path)
 		w.WriteHeader(http.StatusNoContent)
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/containers/json"):
+		// Honour the label filter the way the real daemon does, so the
+		// lookup-by-label path has a container to find after a create.
+		raw, _ := url.QueryUnescape(r.URL.Query().Get("filters"))
+		var parsed map[string][]string
+		_ = json.Unmarshal([]byte(raw), &parsed)
+		wantID := ""
+		if ids, ok := parsed["label"]; ok && len(ids) > 0 {
+			for _, pred := range ids {
+				if k, v, ok := strings.Cut(pred, "="); ok && k == LabelWorkerID {
+					wantID = v
+				}
+			}
+		}
+		out := make([]map[string]any, 0, len(d.containers))
+		for name, gen := range d.containers {
+			id := name
+			if wid, ok := d.ids[name]; ok {
+				id = wid
+			}
+			if wantID != "" && id != wantID {
+				continue
+			}
+			entry := map[string]any{"Names": []string{"/" + name}}
+			if wantID == "" {
+				entry["Labels"] = map[string]any{LabelWorkerID: id}
+			} else {
+				entry["Labels"] = map[string]any{LabelWorkerID: id, LabelGeneration: gen}
+			}
+			out = append(out, entry)
+		}
+		w.Header().Set("content-type", "application/json")
+		_ = json.NewEncoder(w).Encode(out)
 	case r.Method == http.MethodGet && strings.HasSuffix(path, "/json"):
 		name := strings.TrimSuffix(strings.TrimPrefix(path, "/containers/"), "/json")
 		gen, ok := d.containers[name]
@@ -64,9 +109,6 @@ func (d *fakeDaemon) handler(w http.ResponseWriter, r *http.Request) {
 			"State":  map[string]any{"Running": true},
 			"Config": map[string]any{"Labels": map[string]any{LabelWorkerID: name, LabelGeneration: gen}},
 		})
-	case r.Method == http.MethodGet && path == "/containers/json":
-		w.Header().Set("content-type", "application/json")
-		_ = json.NewEncoder(w).Encode([]map[string]any{})
 	case r.Method == http.MethodDelete:
 		d.deletes = append(d.deletes, path)
 		name := strings.Split(strings.TrimPrefix(path, "/containers/"), "?")[0]
@@ -104,7 +146,7 @@ func TestCreateWorkerSendsExpectedContainer(t *testing.T) {
 	c := newTestClient(t, d)
 
 	url := "http://localhost:24100"
-	w := domain.Worker{ID: "w1", Generation: 3, NoVNCService: &url}
+	w := domain.Worker{ID: "w1", Name: "coba jakarta 1", Generation: 3, NoVNCService: &url}
 	if err := c.CreateWorker(context.Background(), w); err != nil {
 		t.Fatalf("CreateWorker: %v", err)
 	}
@@ -143,7 +185,7 @@ func TestCreateWorkerIsIdempotentAtSameGeneration(t *testing.T) {
 	d := newFakeDaemon()
 	c := newTestClient(t, d)
 	url := "http://localhost:24100"
-	w := domain.Worker{ID: "w1", Generation: 1, NoVNCService: &url}
+	w := domain.Worker{ID: "w1", Name: "coba jakarta 1", Generation: 1, NoVNCService: &url}
 
 	if err := c.CreateWorker(context.Background(), w); err != nil {
 		t.Fatalf("create 1: %v", err)
@@ -164,11 +206,11 @@ func TestObserveReportsGenerationAndAbsence(t *testing.T) {
 		t.Fatalf("Observe(missing) = (%d,%v,%v), want (0,false,nil)", gen, exists, err)
 	}
 	url := "http://localhost:24100"
-	if err := c.CreateWorker(context.Background(), domain.Worker{ID: "w1", Generation: 2, NoVNCService: &url}); err != nil {
+	if err := c.CreateWorker(context.Background(), domain.Worker{ID: "w1", Name: "coba jakarta 1", Generation: 2, NoVNCService: &url}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if gen, exists, err := c.Observe(context.Background(), "w1"); err != nil || !exists || gen != 1 {
-		t.Fatalf("Observe(w1) = (%d,%v,%v), want (1,true,nil)", gen, exists, err)
+	if gen, exists, err := c.Observe(context.Background(), "w1"); err != nil || !exists || gen != 2 {
+		t.Fatalf("Observe(w1) = (%d,%v,%v), want (2,true,nil)", gen, exists, err)
 	}
 }
 
@@ -176,13 +218,13 @@ func TestDeleteWorkerRemovesContainerAndVolumes(t *testing.T) {
 	d := newFakeDaemon()
 	c := newTestClient(t, d)
 	url := "http://localhost:24100"
-	if err := c.CreateWorker(context.Background(), domain.Worker{ID: "w1", Generation: 1, NoVNCService: &url}); err != nil {
+	if err := c.CreateWorker(context.Background(), domain.Worker{ID: "w1", Name: "coba jakarta 1", Generation: 1, NoVNCService: &url}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	if err := c.DeleteWorker(context.Background(), "w1"); err != nil {
 		t.Fatalf("DeleteWorker: %v", err)
 	}
-	if !containsPrefix(d.deletes, "/containers/smm-worker-w1") {
+	if !containsPrefix(d.deletes, "/containers/smm-worker-coba-jakarta-1-w1") {
 		t.Errorf("deletes = %v, want the container force-removed", d.deletes)
 	}
 	// Idempotent: deleting again is not an error.

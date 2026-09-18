@@ -46,3 +46,6 @@ __pycache__/
 docs.zip
 *.zip
 cc.txt
+apps/web/test-results/
+apps/web/playwright-report/
+apps/web/report/

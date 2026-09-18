@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -144,7 +145,7 @@ func (c *Client) CreateWorker(ctx context.Context, w domain.Worker) error {
 	} else if exists && gen >= w.Generation {
 		return nil
 	} else if exists {
-		if err := c.deleteByName(ctx, workerContainerName(w.ID), "stale-generation"); err != nil {
+		if err := c.deleteByWorkerID(ctx, w.ID, "stale-generation"); err != nil {
 			return err
 		}
 	}
@@ -188,20 +189,20 @@ func (c *Client) CreateWorker(ctx context.Context, w domain.Worker) error {
 	}
 
 	var created struct{ ID string }
-	if err := c.postJSON(ctx, "/containers/create?name="+workerContainerName(w.ID), body, &created); err != nil {
+	if err := c.postJSON(ctx, "/containers/create?name="+workerContainerName(w), body, &created); err != nil {
 		return fmt.Errorf("docker: create container: %w", err)
 	}
 	if err := c.postEmpty(ctx, "/containers/"+created.ID+"/start"); err != nil {
 		return fmt.Errorf("docker: start container: %w", err)
 	}
-	c.logger.Info("worker container started", "workerId", w.ID, "container", shortID(created.ID), "novncPort", hostPort)
+	c.logger.Info("worker container started", "workerId", w.ID, "name", w.Name, "container", shortID(created.ID), "novncPort", hostPort)
 	return nil
 }
 
 // DeleteWorker removes the container and its volumes. A missing container is
 // success: the desired end state is "absent".
 func (c *Client) DeleteWorker(ctx context.Context, workerID string) error {
-	if err := c.deleteByName(ctx, workerContainerName(workerID), "deprovision"); err != nil {
+	if err := c.deleteByWorkerID(ctx, workerID, "deprovision"); err != nil {
 		return err
 	}
 	// Named volumes outlive the container; drop them so sessions/screenshots do
@@ -217,6 +218,13 @@ func (c *Client) DeleteWorker(ctx context.Context, workerID string) error {
 
 // Observe returns the running generation, or (0,false) when absent.
 func (c *Client) Observe(ctx context.Context, workerID string) (int, bool, error) {
+	name, err := c.containerByWorkerID(ctx, workerID)
+	if err != nil {
+		return 0, false, err
+	}
+	if name == "" {
+		return 0, false, nil
+	}
 	var info struct {
 		State struct {
 			Running bool `json:"Running"`
@@ -225,11 +233,10 @@ func (c *Client) Observe(ctx context.Context, workerID string) (int, bool, error
 			Labels map[string]string `json:"Labels"`
 		} `json:"Config"`
 	}
-	err := c.getJSON(ctx, "/containers/"+workerContainerName(workerID)+"/json", &info)
-	if isNotFound(err) {
-		return 0, false, nil
-	}
-	if err != nil {
+	if err := c.getJSON(ctx, "/containers/"+name+"/json", &info); err != nil {
+		if isNotFound(err) {
+			return 0, false, nil
+		}
 		return 0, false, err
 	}
 	return parseGeneration(info.Config.Labels), info.State.Running, nil
@@ -311,11 +318,40 @@ func (c *Client) portTaken(ctx context.Context, port int) bool {
 	return false
 }
 
-func (c *Client) deleteByName(ctx context.Context, name, reason string) error {
+func (c *Client) deleteByWorkerID(ctx context.Context, workerID, reason string) error {
+	name, err := c.containerByWorkerID(ctx, workerID)
+	if err != nil {
+		return fmt.Errorf("docker: delete container (%s): %w", reason, err)
+	}
+	if name == "" {
+		return nil // nothing running for this row
+	}
 	if err := c.deleteEmpty(ctx, "/containers/"+name+"?force=1&v=1"); err != nil && !isNotFound(err) {
 		return fmt.Errorf("docker: delete container (%s): %w", reason, err)
 	}
 	return nil
+}
+
+// containerByWorkerID finds the running container carrying this worker's id
+// label. Docker names are not derivable from a workerID alone once they carry
+// the operator's free-text name, so the label is the lookup key; it also
+// matches containers named the legacy way (smm-worker-<id>) without a
+// migration.
+func (c *Client) containerByWorkerID(ctx context.Context, workerID string) (string, error) {
+	filter := url.QueryEscape(`{"label":["` + LabelWorkerID + `=` + workerID + `"]}`)
+	var list []struct {
+		Names []string `json:"Names"`
+	}
+	if err := c.getJSON(ctx, "/containers/json?all=1&filters="+filter, &list); err != nil {
+		return "", fmt.Errorf("docker: lookup container: %w", err)
+	}
+	if len(list) == 0 {
+		return "", nil
+	}
+	// The daemon prefixes names with "/"; strip it so the value is a valid
+	// path segment for the /containers/<name> routes.
+	name := strings.TrimPrefix(list[0].Names[0], "/")
+	return name, nil
 }
 
 // --- transport -----------------------------------------------------------
@@ -412,8 +448,25 @@ func boolStr(b bool) string {
 	return "false"
 }
 
-func workerContainerName(workerID string) string {
-	return "smm-worker-" + workerID
+// workerContainerName is the name `docker ps` shows. It leads with the
+// operator's row name (slugified: Docker permits only [a-zA-Z0-9][a-zA-Z0-9_.-]
+// and the row name is free text) so the fleet is readable on the command line,
+// and ends with a short id tail so the name stays unique even if the row name
+// is later edited — the label is the identity, the name is only a label for
+// humans.
+func workerContainerName(w domain.Worker) string {
+	slug := slugify(w.Name)
+	if slug == "" {
+		slug = "unnamed"
+	}
+	return "smm-worker-" + slug + "-" + shortID(w.ID)
+}
+
+var slugRe = regexp.MustCompile(`[^a-z0-9]+`)
+
+// slugify maps free text onto the character set Docker allows in a name.
+func slugify(s string) string {
+	return strings.Trim(slugRe.ReplaceAllString(strings.ToLower(s), "-"), "-")
 }
 
 // shortID trims a container id to the length `docker ps` shows, tolerating a
