@@ -244,3 +244,16 @@ wiring between them did not. That is now wired: two new endpoints
 worker that posts the outcome with the same soft-fail contract as the action
 callback, and dashboard actions for both. The lesson is the one from B-1: a
 chain verified one link at a time is not verified.
+
+## 8. Third verification round — claim safety and the credential endpoint
+
+| #   | Bug                                                                                      | Class                     | Fix                                                                                                                              | Guard that would catch a regression                                                                                     |
+| --- | ---------------------------------------------------------------------------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| B-8 | The login endpoint had no attempt cap. It is the only public credential endpoint, so an unbounded rate made it a brute-force oracle. | Missing rate limit        | Ten attempts per source IP per minute, in-process (`service/auth.go`). An absent client IP fails open — a proxy that forwarded nothing must not lock the deployment out. | `TestLoginRateLimit`: fill the window with wrong passwords, assert the 11th is refused even with the right one, and a second IP is unaffected. |
+| B-9 | The by-id claim path rebound its row unconditionally, so a stale `WORKER_ID` stole a row a live container was still serving — two workers on one queue. | Identity binding          | Refuse with `ErrConflict` when the named row is owned by a different container (`repository/worker.go`).                          | `TestWorkerClaimRefusesStolenRow`: claim a row, then claim it again under a second container id naming the row's uuid; assert refusal and that the owner keeps the row. |
+| B-10 | The by-id claim query 22P02'd on a compose-derived `worker-<hostname>`, because that is not a uuid. Every scaled worker that fell through to it errored instead of taking a free row. | Wire-contract mismatch    | Gate the by-id lookup behind `isUUID`, so non-uuid container ids fall straight through to the free-row path.                       | `TestWorkerClaimProvesAssignment`, which uses hostname-shaped ids and now passes against a live database.               |
+
+B-8 and B-9 are the two worth a second look: both are silent at rest and both
+cost an account. B-8 because the endpoint answers every attempt with a clean
+401, and B-9 because the second worker wins the heartbeat — the first keeps
+running with a queue nothing writes to.
