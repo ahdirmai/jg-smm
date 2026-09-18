@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
@@ -119,6 +120,71 @@ func TestWorkerClaimProvesAssignment(t *testing.T) {
 	}
 	if _, err := workers.GetByContainerID(ctx, "worker-claim-test-unknown"); err != domain.ErrNotFound {
 		t.Fatalf("unknown container: want ErrNotFound, got %v", err)
+	}
+}
+
+// TestWorkerClaimRefusesStolenRow covers the claim-steal gap: the by-id
+// rebind path exists so a recreated container can find its own row again, but
+// it must not rebind a row another live container already owns. Without the
+// guard, a stale WORKER_ID puts two workers on one queue — the second one
+// silently wins the heartbeat and the first is orphaned.
+func TestWorkerClaimRefusesStolenRow(t *testing.T) {
+	workers, _, _ := newTestRepos(t)
+	pool := testPool(t)
+	ctx := context.Background()
+
+	row := newClaimRow(t, workers, "claim-test-stolen")
+	t.Cleanup(func() {
+		if _, err := pool.Exec(ctx, claimCleanupSQL,
+			[]string{"worker-claim-owner", "worker-claim-thief"}); err != nil {
+			t.Errorf("cleanup unbind: %v", err)
+		}
+		if _, err := pool.Exec(ctx, `DELETE FROM worker WHERE name = $1`, "claim-test-stolen"); err != nil {
+			t.Errorf("cleanup: %v", err)
+		}
+	})
+
+	// The legitimate owner claims the row first.
+	owner, err := workers.Claim(ctx, port.WorkerClaim{
+		ContainerID:    "worker-claim-owner",
+		ControlChannel: "control-owner",
+		ActionQueue:    "queue:action:owner",
+		SessionPVC:     "smm-session-owner",
+	})
+	if err != nil {
+		t.Fatalf("owner claim: %v", err)
+	}
+	if owner.ID != row.ID {
+		t.Fatalf("owner claimed %s, expected the free row %s", owner.ID, row.ID)
+	}
+
+	// A container that names the SAME row by its real id — the docker driver's
+	// injected WORKER_ID, which an image reuse or a row recycled mid-replace
+	// can carry past its owner — must be refused: the row is owned and the
+	// claimant is not the owner. The container id here IS the row uuid, which
+	// is what makes the by-id path run at all.
+	_, err = workers.Claim(ctx, port.WorkerClaim{
+		ContainerID:    row.ID,
+		ControlChannel: "control-thief",
+		ActionQueue:    "queue:action:thief",
+		SessionPVC:     "smm-session-thief",
+	})
+	if err == nil {
+		t.Fatal("claim of an owned row must fail")
+	}
+	if !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("want conflict, got %v", err)
+	}
+
+	// The owner keeps the row: the refused claim changed nothing.
+	if got, err := workers.GetByContainerID(ctx, "worker-claim-owner"); err != nil || got.ID != row.ID {
+		t.Fatalf("owner lost its row: got %v err %v", got.ID, err)
+	}
+	// The thief did not rebind it either.
+	if got, err := workers.GetByID(ctx, row.ID); err != nil || got.ContainerID == nil {
+		t.Fatalf("row unbound or missing: got %v err %v", got.ID, err)
+	} else if *got.ContainerID != "worker-claim-owner" {
+		t.Fatalf("row container_id = %s, want the owner's", *got.ContainerID)
 	}
 }
 

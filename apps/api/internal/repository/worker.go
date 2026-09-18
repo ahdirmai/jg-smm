@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
@@ -147,25 +148,42 @@ func (r *WorkerRepo) Claim(ctx context.Context, claim port.WorkerClaim) (domain.
 	// earlier under a compose-derived boot id (a recreated container changes
 	// hostname). Re-point that row instead of falling back to the boot id,
 	// which would leave its queue unheard.
-	if row, err := scanWorkerRow(ctx, tx.QueryRow(ctx, claimSelectByID, claim.ContainerID)); err == nil {
-		if _, err := tx.Exec(ctx, claimBind,
-			claim.ContainerID, claim.ControlChannel, claim.ActionQueue, claim.SessionPVC,
-			nilIfEmpty(claim.NovncURL), row.ID); err != nil {
-			return domain.Worker{}, fmt.Errorf("repository.worker.Claim: rebind: %w", err)
+	//
+	// Only attempted when the container id is a row uuid: a compose-derived
+	// "worker-<hostname>" is not, and querying it would 22P02 instead of
+	// falling through to the free-row path.
+	//
+	// And only when the row is unowned or already this container's: a row that
+	// a different live container owns is not ours to take. Without the guard, a
+	// stale WORKER_ID (an env baked into a reused image, or a row recycled
+	// while its container was being replaced) would silently steal a row the
+	// owner is still serving — two workers on one queue.
+	if isUUID(claim.ContainerID) {
+		row, err := scanWorkerRow(ctx, tx.QueryRow(ctx, claimSelectByID, claim.ContainerID))
+		if err == nil {
+			if row.ContainerID != nil && *row.ContainerID != "" && *row.ContainerID != claim.ContainerID {
+				return domain.Worker{}, fmt.Errorf("%w: worker row %s is owned by another container", domain.ErrConflict, row.ID)
+			}
+			if _, err := tx.Exec(ctx, claimBind,
+				claim.ContainerID, claim.ControlChannel, claim.ActionQueue, claim.SessionPVC,
+				nilIfEmpty(claim.NovncURL), row.ID); err != nil {
+				return domain.Worker{}, fmt.Errorf("repository.worker.Claim: rebind: %w", err)
+			}
+			row.ContainerID = &claim.ContainerID
+			row.ControlChannel = &claim.ControlChannel
+			row.ActionQueue = &claim.ActionQueue
+			row.SessionPVC = &claim.SessionPVC
+			if claim.NovncURL != nil && *claim.NovncURL != "" {
+				row.NoVNCService = claim.NovncURL
+			}
+			if err := tx.Commit(ctx); err != nil {
+				return domain.Worker{}, fmt.Errorf("repository.worker.Claim: commit: %w", err)
+			}
+			return row, nil
 		}
-		row.ContainerID = &claim.ContainerID
-		row.ControlChannel = &claim.ControlChannel
-		row.ActionQueue = &claim.ActionQueue
-		row.SessionPVC = &claim.SessionPVC
-		if claim.NovncURL != nil && *claim.NovncURL != "" {
-			row.NoVNCService = claim.NovncURL
+		if !errors.Is(err, domain.ErrNotFound) {
+			return domain.Worker{}, fmt.Errorf("repository.worker.Claim: id lookup: %w", err)
 		}
-		if err := tx.Commit(ctx); err != nil {
-			return domain.Worker{}, fmt.Errorf("repository.worker.Claim: commit: %w", err)
-		}
-		return row, nil
-	} else if !errors.Is(err, domain.ErrNotFound) {
-		return domain.Worker{}, fmt.Errorf("repository.worker.Claim: id lookup: %w", err)
 	}
 
 	// 3. Take the oldest free PENDING row that wants to run.
@@ -446,4 +464,12 @@ func nilIfEmpty(s *string) *string {
 		return nil
 	}
 	return s
+}
+
+// isUUID reports whether s parses as a row id. The docker driver injects one
+// as WORKER_ID; a compose-derived "worker-<hostname>" does not, and querying
+// the by-id path with it is a 22P02, not a fall-through.
+func isUUID(s string) bool {
+	_, err := uuid.Parse(s)
+	return err == nil
 }
