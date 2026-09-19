@@ -59,7 +59,16 @@ fails with "Cannot navigate to invalid URL".
 - `authedPage` — a browser context holding the owner's `smm_at` cookie. The
   cookie comes from one shared login, not one per test: the API caps login at
   10 attempts per source IP per minute, so a per-test login rate-limits the
-  suite partway through.
+  suite partway through. `ownerCookie()` in `base.ts` retries a `429` across the
+  ~60s window and never caches a failed login — one saturated window (a prior
+  run) no longer poisons every downstream test with a replayed rejection.
+- Config: `actionTimeout: 10_000` bounds a single click/fill so a renamed or
+  restructured locator fails in seconds instead of stalling to the 120s test
+  timeout; `retries: 1` absorbs SSE-propagation / audit-write timing jitter on
+  the live stack without masking repeatable failures (which fail both attempts).
+- `/api/auth/me` returns `{ role, userId }` only — no email, no `user` wrapper.
+  The session card asserts role + user id; specs that need an email read it from
+  the team roster (`listUsers`), not the session.
 - Specs that test the login page use the plain `page` fixture instead — they
   need an anonymous browser.
 - `fixtures/teardown.ts` — the suite-level cleanup backstop (see Conventions).
@@ -87,6 +96,45 @@ event never fires and the default `waitUntil` hangs until timeout.
 
 Docker assertions (`workers.spec.ts`) are skipped when no daemon is reachable,
 so the rest of the suite still runs in CI without a socket.
+
+## Status & known real bugs (audited 2026-09-19)
+
+Last full run: **71 passed / 4 failed / 1 skipped**. The 4 failures are genuine
+app/env issues, not stale selectors — they are not force-passed:
+
+- **`GET /api/templates` with no `platform` defaults to instagram-only**
+  (`apps/api/internal/http/template.go`). The templates page fetches unfiltered
+  and filters client-side, so non-Instagram variants never render and the
+  platform filter is dead for other platforms. (`templates.spec.ts` platform
+  filter.)
+- **Live-fleet timing:** an enqueued job leaves `PENDING` before the "Pending"
+  filter assertion, and the global queue accumulates across tests, so
+  `1 of 1 shown` is not stable against a running fleet. (`actions.spec.ts`.)
+- **TikTok is not a provisioned platform in the MVP:** a TikTok account is
+  returned by the REST API but does not survive/render under the TikTok filter.
+  (`accounts.spec.ts` bulk/filter.)
+- **SSE-propagation flakiness:** `audit`/`settings` assertions that wait on
+  audit-trail or roster propagation are intermittent; `retries: 1` covers this.
+
+Live-action smoke (manual, real session, `ACTION_DRY_RUN=false`):
+
+- `action_like` on a real post → **SUCCESS** end to end from a noVNC-authenticated
+  account (proves session cookies + like automation).
+- `action_comment` → **FAILED** — `locator.fill` times out waiting for
+  `div[contenteditable="true"][role="textbox"]`. The IG comment composer either
+  moved or now needs the comment affordance clicked first; the like-button path
+  is fine, the comment-box path is stale. Real worker fix (IG `commentOnPost`),
+  not a test bug.
+
+Product notes to flag before ship:
+
+- The dashboard shell hardcodes the operator name `ahdirmai` and renders
+  `{role}@local.test` as the email; the session exposes no real email. The UI
+  implies an account email the session does not have.
+- Per-platform login/like/comment for facebook/linkedin/x/youtube/tiktok are
+  honest not-implemented stubs (the OTP-via-web contract is wired for all; the
+  automation is not). Their OTP selectors + proof cookies are best-effort and
+  unverified against live markup.
 
 ## Known gaps
 
