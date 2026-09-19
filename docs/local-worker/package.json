@@ -1,0 +1,17 @@
+{
+  "name": "local-worker-harness",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Standalone LOCAL dev harness that drives the real apps/worker Playwright automation against a headful local Chromium (no docker). For iterating on IG selectors/flows fast. NOT part of the pnpm workspace. Do not commit.",
+  "scripts": {
+    "login": "tsx src/run.ts login",
+    "like": "tsx src/run.ts like",
+    "comment": "tsx src/run.ts comment",
+    "harness": "tsx src/run.ts"
+  },
+  "devDependencies": {
+    "playwright": "1.48.2",
+    "tsx": "^4.19.2"
+  }
+}
