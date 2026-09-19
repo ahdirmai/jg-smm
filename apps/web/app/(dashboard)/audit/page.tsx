@@ -96,7 +96,7 @@ export default function AuditPage() {
         <CardContent className="flex flex-wrap items-center gap-3 p-4">
           <div className="w-48">
             <Select value={actorId} onValueChange={setActorId}>
-              <SelectTrigger>
+              <SelectTrigger aria-label="Actor">
                 <SelectValue placeholder="All actors" />
               </SelectTrigger>
               <SelectContent>
@@ -111,7 +111,7 @@ export default function AuditPage() {
           </div>
           <div className="w-48">
             <Select value={action} onValueChange={setAction}>
-              <SelectTrigger>
+              <SelectTrigger aria-label="Action">
                 <SelectValue placeholder="All actions" />
               </SelectTrigger>
               <SelectContent>

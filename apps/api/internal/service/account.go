@@ -229,9 +229,11 @@ func (s *AccountService) Login(ctx context.Context, accountID string) (AccountSu
 	return view, nil
 }
 
-// SubmitInput carries a 2FA / checkpoint code to a parked login. Only valid
-// while the worker still holds the context (authStatus PENDING_AUTH); a login
-// that already settled is a conflict rather than a crash.
+// SubmitInput carries a 2FA / checkpoint code to a parked login. Valid while
+// the worker still holds the parked context: the login was started
+// (AUTHENTICATING) or the worker parked at a 2FA/checkpoint field and reported
+// NEEDS_INPUT — the state the UI shows the "Submit code" button on. A login
+// that already settled (AUTHENTICATED / FAILED) is a conflict, not a crash.
 func (s *AccountService) SubmitInput(ctx context.Context, accountID, value string) (AccountSummary, error) {
 	if s.control == nil {
 		return AccountSummary{}, fmt.Errorf("%w: auth control channel is not configured", domain.ErrUnavailable)
@@ -243,7 +245,7 @@ func (s *AccountService) SubmitInput(ctx context.Context, accountID, value strin
 	if a.WorkerID == nil {
 		return AccountSummary{}, fmt.Errorf("%w: account has no container to log in on", domain.ErrConflict)
 	}
-	if a.AuthStatus != domain.AuthAuthenticating {
+	if a.AuthStatus != domain.AuthAuthenticating && a.AuthStatus != domain.AuthNeedsInput {
 		return AccountSummary{}, fmt.Errorf("%w: account login is not awaiting input", domain.ErrConflict)
 	}
 	msg, err := json.Marshal(controlMessage{

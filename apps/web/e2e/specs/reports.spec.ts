@@ -11,14 +11,17 @@ const TARGET = 'https://www.instagram.com/p/DdaJ8Y8gp3u/';
 test.describe('reports page', () => {
   test('renders the filters and runs an empty actions report', async ({ authedPage }) => {
     await authedPage.goto('/reports');
-    await expect(authedPage.getByRole('heading', { name: 'Reports' })).toBeVisible();
+    // The shell header and the page h1 both render a "Reports" heading; the
+    // first proves the page rendered.
+    await expect(authedPage.getByRole('heading', { name: 'Reports' }).first()).toBeVisible();
 
     await authedPage.getByLabel('Report').click();
     await authedPage.getByRole('option', { name: 'Actions by day' }).click();
     await authedPage.getByRole('button', { name: 'Run report' }).click();
 
-    // An empty window must say so, not render a hollow chart.
-    await expect(authedPage.getByText('No rows in this window')).toBeVisible({
+    // An empty window must say so, not render a hollow chart. Two panels render
+    // the same empty-state copy, so scope to the first.
+    await expect(authedPage.getByText('No rows in this window').first()).toBeVisible({
       timeout: 30_000,
     });
   });
@@ -41,14 +44,15 @@ test.describe('reports page', () => {
     await api.removeAccount(account.id);
   });
 
-  test('the export endpoint answers with CSV for the owner', async ({ authedPage, request, apiUrl }) => {
+  test('the export endpoint answers with CSV for the owner', async ({ authedPage, apiUrl }) => {
     await authedPage.goto('/reports');
     await expect(authedPage.getByRole('button', { name: 'Export CSV' })).toBeEnabled();
 
     // Export is wired as a navigation, not a fetch — clicking it would leave the
     // page. Assert the endpoint the button targets instead: owner has `export`,
-    // so it must return real CSV.
-    const res = await request.get(`${apiUrl}/api/reports/export`, {
+    // so it must return real CSV. Use the page's request context so it carries
+    // the owner's smm_at cookie; the bare `request` fixture is anonymous → 401.
+    const res = await authedPage.request.get(`${apiUrl}/api/reports/export`, {
       params: { kind: 'actions', format: 'csv' },
     });
     expect(res.ok(), `export returned ${res.status()}`).toBe(true);

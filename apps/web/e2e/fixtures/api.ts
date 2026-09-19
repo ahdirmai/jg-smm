@@ -41,6 +41,11 @@ export class ApiClient {
     if (!res.ok) throw new Error(`login failed: ${res.status}`);
   }
 
+  /** Adopt a cookie obtained elsewhere (the shared fixture login). */
+  async setCookie(value: string): Promise<void> {
+    this.cookie = `smm_at=${value}`;
+  }
+
   async json<T>(path: string, init?: RequestInit): Promise<T> {
     const res = await this.req(path, init);
     if (!res.ok) {
@@ -76,9 +81,17 @@ export class ApiClient {
     return this.json<AccountList>('/api/accounts');
   }
   createAccount(username: string, platform: string) {
+    // The contract requires a password. Actions never use it — the worker runs
+    // on a stored session, not this value — so a fixed placeholder keeps the
+    // row packable without inventing a real credential.
     return this.json<Account>('/api/accounts', {
       method: 'POST',
-      body: JSON.stringify({ username, platform, tags: [] }),
+      body: JSON.stringify({
+        username,
+        platform,
+        password: 'e2e-placeholder-password',
+        tags: [],
+      }),
     });
   }
   setAccountStatus(id: string, status: 'ACTIVE' | 'PAUSED') {
@@ -122,6 +135,26 @@ export class ApiClient {
   listUsers() {
     return this.json<UserList>('/api/users');
   }
+  createUser(body: {
+    email: string;
+    name: string;
+    password: string;
+    role?: string;
+  }) {
+    return this.json<User>('/api/users', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  }
+  updateUser(id: string, body: { role?: string }) {
+    return this.json<User>(`/api/users/${id}`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  }
+  removeUser(id: string) {
+    return this.json<void>(`/api/users/${id}`, { method: 'DELETE' });
+  }
   listAudit() {
     return this.json<AuditLogList>('/api/audit?limit=20');
   }
@@ -163,7 +196,10 @@ export type ActionJob = {
   id: string;
   actionType: string;
   accountId: string;
-  targetUrl?: string;
+  targetId: string;
+  // Resolved from the target at dispatch; null on a PENDING job the queue then
+  // renders by targetId.
+  targetUrl?: string | null;
   status: string;
   attempts: number;
   renderedText?: string | null;
@@ -185,4 +221,7 @@ export type AuditLog = { id: string; actorId: string; action: string; entity: st
 export type AuditLogList = { logs: AuditLog[] };
 export type User = { id: string; email: string; name: string; role: string };
 export type UserList = { users: User[] };
-export type MeResponse = { user: User };
+// /api/auth/me returns only the session's role + id — no email, no user wrapper.
+// Operator email is not surfaced by the session; the team roster (listUsers) is
+// the source of an account's email.
+export type MeResponse = { role: string; userId: string };

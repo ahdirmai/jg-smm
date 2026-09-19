@@ -16,9 +16,13 @@ test.describe('login page', () => {
     await page.getByLabel('Password').fill('changeme-changeme');
     await page.getByRole('button', { name: 'Sign in' }).click();
 
-    // The dashboard renders, not the login form again.
-    await expect(page).toHaveURL(/.*\/(workers|accounts|actions)/);
-    await expect(page.getByRole('button', { name: 'Add container' }).or(page.getByText('Containers'))).toBeVisible();
+    // safeNext(null) defaults to '/', so a plain sign-in lands on the dashboard
+    // index (Getting started / KPI strip), not /workers. The contract under test
+    // is that login left its page and the authenticated shell rendered — assert
+    // it is no longer on /login (still fails if the sign-in didn't take) and the
+    // shell's session block is present.
+    await expect(page).not.toHaveURL(/\/login/);
+    await expect(page.getByTestId('session-role')).toBeVisible();
   });
 
   test('rejects a bad password inline without leaving the page', async ({ page }) => {

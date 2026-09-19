@@ -48,4 +48,6 @@ docs.zip
 cc.txt
 apps/web/test-results/
 apps/web/playwright-report/
-apps/web/report/
+# e2e/playwright.config.ts sets outputFolder to 'report', resolved beside the config.
+apps/web/e2e/report/
+apps/web/e2e/test-results/

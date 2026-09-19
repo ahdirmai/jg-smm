@@ -11,14 +11,18 @@ test.describe('monitoring page', () => {
   test('renders the KPI strip and its empty state', async ({ authedPage }) => {
     await authedPage.goto('/monitoring');
 
-    await expect(authedPage.getByRole('heading', { name: 'Monitoring' })).toBeVisible();
+    // The shell header and the page both render a "Monitoring" heading; assert
+    // the first, either proves the page rendered.
+    await expect(authedPage.getByRole('heading', { name: 'Monitoring' }).first()).toBeVisible();
     for (const label of [
       'Monitored accounts',
       'Platforms',
       'Total followers',
       'Stale accounts',
     ]) {
-      await expect(authedPage.getByText(label)).toBeVisible();
+      // exact:true — "Platforms" is otherwise also matched by the header subtitle
+      // "Official-account reach across platforms".
+      await expect(authedPage.getByText(label, { exact: true })).toBeVisible();
     }
     // No official accounts are seeded, so the table says so instead of
     // rendering a hollow shell.
@@ -62,6 +66,14 @@ test.describe('dashboard shell', () => {
   for (const { label, url } of NAV) {
     test(`the ${label} nav entry routes to ${url}`, async ({ authedPage }) => {
       await authedPage.goto('/workers');
+
+      // "Overview" is nested under the collapsible "Monitoring" nav group and is
+      // hidden until the group is expanded; the group is collapsed by default on
+      // /workers (no monitoring route is active). Expand it before clicking.
+      if (label === 'Overview') {
+        await authedPage.getByRole('button', { name: 'Monitoring' }).click();
+      }
+
       await authedPage.getByRole('link', { name: label, exact: true }).click();
 
       await expect(authedPage).toHaveURL(new RegExp(`${url.replace(/\//g, '\\/')}\\/?$`));
@@ -78,7 +90,8 @@ test.describe('dashboard shell', () => {
     const me = await api.me();
 
     await authedPage.goto('/workers');
-    await authedPage.getByRole('button', { name: new RegExp(me.user.email) }).click();
-    await expect(authedPage.getByText(me.user.email)).toBeVisible();
+    // Identity is a role-derived label in a static block (the session has no
+    // email and this is not a clickable menu), tagged data-testid=session-role.
+    await expect(authedPage.getByTestId('session-role')).toContainText(me.role.toLowerCase());
   });
 });

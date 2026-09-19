@@ -160,7 +160,10 @@ void control
           logger.warn('auth-input without a value', { accountId: message.accountId });
           break;
         }
-        await authCallback.post(message.accountId, await submitAuthInput(message.accountId, code, authDeps));
+        await authCallback.post(
+          message.accountId,
+          await submitAuthInput(message.accountId, code, message.platform, authDeps),
+        );
         break;
       }
       case 'auth-clear':

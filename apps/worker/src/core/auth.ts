@@ -11,6 +11,12 @@ import type { Browser, BrowserContext } from 'playwright';
 
 import type { Platform } from '@smm/shared';
 
+import type { PlatformAdapter } from '../platforms/adapter.js';
+import {
+  META_OTP_SELECTOR,
+  detectAuthInputWith,
+  submitAuthInputWith,
+} from '../platforms/otp.js';
 import { FIXED_VIEWPORT } from './browser.js';
 import { captureScreenshot } from './screenshot.js';
 import { readSession, writeSession } from './session.js';
@@ -42,12 +48,19 @@ export interface AuthDeps {
 }
 
 /**
- * The cookies that prove a session per platform. A login is `verified` only
- * when all of them are present — never when the URL merely looks logged in. */
-export const SESSION_COOKIES: Partial<Record<Platform, string[]>> = {
-  instagram: ['sessionid', 'ds_user_id'],
-  threads: ['sessionid'],
-};
+ * Resolve a platform's adapter lazily. `core/auth` is imported by the adapters'
+ * DOM layer (`dom.ts` → `pollLoginOutcome`), so a *static* registry import would
+ * close an eval-time cycle: the registry builds its map from the very adapter
+ * consts that are still initialising, and touching it too early throws a TDZ
+ * `ReferenceError`. A dynamic import defers the lookup to call time — when the
+ * registry is fully built — and Node caches the module after the first call, so
+ * the poll loop pays nothing after warm-up. The adapter is the single source of
+ * truth for a platform's proof cookies, 2FA selector and login URL.
+ */
+async function adapterFor(platform: Platform): Promise<PlatformAdapter | undefined> {
+  const { getAdapter } = await import('../platforms/registry.js');
+  return getAdapter(platform);
+}
 
 const POLL_INTERVAL_MS = 1_000;
 /** Upper bound on a login attempt before it is reported `failed`. */
@@ -70,14 +83,15 @@ export async function probeSession(
   platform: Platform,
   ctx: BrowserContext,
 ): Promise<SessionVerdict> {
-  const wanted = SESSION_COOKIES[platform] ?? [];
+  const adapter = await adapterFor(platform);
+  const wanted = adapter?.sessionCookies ?? [];
   const cookies = await ctx.cookies();
   const have = new Set(cookies.map((c) => c.name));
   const proven = wanted.length > 0 && wanted.every((name) => have.has(name));
   const handle = cookies.find((c) => c.name === wanted[0])?.value;
   return {
     proven,
-    needsInput: await needsOperatorInput(ctx),
+    needsInput: await detectAuthInput(ctx, adapter),
     ...(handle ? { handle } : {}),
   };
 }
@@ -122,7 +136,7 @@ export async function runLogin(
 
   const page = await ctx.newPage();
   try {
-    await page.goto(loginUrlFor(platform, deps), { waitUntil: 'domcontentloaded' });
+    await page.goto(await loginUrlFor(platform, deps), { waitUntil: 'domcontentloaded' });
     return await waitForOutcome(accountId, platform, ctx, deps);
   } catch {
     return failedResult(accountId);
@@ -137,6 +151,7 @@ export async function runLogin(
 export async function submitAuthInput(
   accountId: string,
   value: string,
+  platform: Platform,
   deps: AuthDeps,
 ): Promise<LoginResult> {
   const ctx = authContexts.get(accountId);
@@ -146,13 +161,14 @@ export async function submitAuthInput(
   const page = pages[pages.length - 1];
   if (!page) return failedResult(accountId);
 
-  const platform = platformFromUrl(page.url());
+  // The platform is carried by the `auth-input` control message — the worker
+  // never guesses it from the open URL. Delegate the fill/submit to the
+  // platform's adapter so a bespoke (multi-box) challenge is handled per
+  // platform; fall back to the Meta default only for an unregistered platform.
   try {
-    const field = page.locator(
-      'input[name="verificationCode"], input[autocomplete="one-time-code"]',
-    );
-    await field.fill(value);
-    await field.press('Enter');
+    const adapter = await adapterFor(platform);
+    if (adapter) await adapter.submitAuthInput(ctx, value);
+    else await submitAuthInputWith(ctx, value, META_OTP_SELECTOR);
     return await waitForOutcome(accountId, platform, ctx, deps);
   } catch {
     return failedResult(accountId);
@@ -191,15 +207,14 @@ async function waitForOutcome(
   return outcome;
 }
 
-async function needsOperatorInput(ctx: BrowserContext): Promise<boolean> {
-  for (const page of ctx.pages()) {
-    const count = await page
-      .locator('input[name="verificationCode"], input[autocomplete="one-time-code"]')
-      .count()
-      .catch(() => 0);
-    if (count > 0) return true;
-  }
-  return false;
+/**
+ * Whether a 2FA/checkpoint field is showing. Delegates to the platform's
+ * adapter so each platform owns its own selector (DRY with the action path);
+ * an unregistered platform falls back to the Meta default rather than crashing.
+ */
+function detectAuthInput(ctx: BrowserContext, adapter?: PlatformAdapter): Promise<boolean> {
+  if (adapter) return adapter.detectAuthInput(ctx);
+  return detectAuthInputWith(ctx, META_OTP_SELECTOR);
 }
 
 async function takeScreenshot(
@@ -219,23 +234,14 @@ async function takeScreenshot(
   );
 }
 
-function loginUrlFor(platform: Platform, deps: AuthDeps): string {
+/**
+ * The platform's login URL, owned by its adapter (DRY). The test hook still
+ * wins so the poll loop can be driven against a fixture; the `https://…` guess
+ * is a last resort for a platform with no registered adapter.
+ */
+async function loginUrlFor(platform: Platform, deps: AuthDeps): Promise<string> {
   if (deps.loginUrlFor) return deps.loginUrlFor(platform);
-  switch (platform) {
-    case 'instagram':
-      return 'https://www.instagram.com/accounts/login/';
-    case 'threads':
-      return 'https://www.threads.net/login';
-    default:
-      return `https://${platform}.com/login`;
-  }
-}
-
-/** Best-effort platform guess for a parked context, from the open page host. */
-function platformFromUrl(url: string): Platform {
-  if (url.includes('instagram')) return 'instagram';
-  if (url.includes('threads')) return 'threads';
-  return 'instagram';
+  return (await adapterFor(platform))?.loginUrl ?? `https://www.${platform}.com/login`;
 }
 
 function failedResult(accountId: string): LoginResult {

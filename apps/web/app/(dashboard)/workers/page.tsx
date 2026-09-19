@@ -239,7 +239,7 @@ export default function WorkersPage() {
 
       <section className="flex flex-wrap items-center gap-2">
         <Select value={city} onValueChange={setCity}>
-          <SelectTrigger className="w-48">
+          <SelectTrigger className="w-48" aria-label="All cities">
             <SelectValue placeholder="All cities" />
           </SelectTrigger>
           <SelectContent>

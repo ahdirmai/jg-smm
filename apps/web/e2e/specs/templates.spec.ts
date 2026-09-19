@@ -22,7 +22,10 @@ test.describe('templates page', () => {
     await authedPage.getByRole('button', { name: 'New variant' }).click();
 
     await expect(authedPage.getByRole('dialog')).toContainText('New variant');
-    await authedPage.getByLabel('Body').fill(BODY);
+    // A declared variable must be referenced in the text, or the API rejects the
+    // create (400: "declared var {topic} is not used by the text"). Put the
+    // placeholder in the body so the {topic} var is actually used.
+    await authedPage.getByLabel('Body').fill(`${BODY} {topic}`);
     await authedPage.getByLabel('Variables').fill('topic');
 
     const [response] = await Promise.all([
@@ -68,7 +71,9 @@ test.describe('templates page', () => {
 
     await expect(authedPage.getByRole('dialog')).toBeHidden();
     await expect(authedPage.getByText(next)).toBeVisible();
-    await expect(authedPage.getByText(BODY)).toBeHidden();
+    // exact:true — `next` is `${BODY}-edited`, so a substring match on BODY still
+    // hits the renamed row and this would never go hidden.
+    await expect(authedPage.getByText(BODY, { exact: true })).toBeHidden();
 
     await api.deleteTemplate(created.id);
   });

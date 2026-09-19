@@ -161,7 +161,7 @@ export default function PlatformAnalyticsPage({
       {/* Filters: account narrows the KPI strip; metric drives the trend. */}
       <section className="flex flex-wrap items-center gap-2">
         <Select value={accountFilter} onValueChange={setAccountFilter}>
-          <SelectTrigger className="w-56">
+          <SelectTrigger className="w-56" aria-label="All official accounts">
             <SelectValue placeholder="All official accounts" />
           </SelectTrigger>
           <SelectContent>

@@ -88,7 +88,7 @@ test('login reports needs_input when a verification field appears', async () => 
 });
 
 test('submitAuthInput fails when no context is parked', async () => {
-  const result = await submitAuthInput('ghost', '123456', {
+  const result = await submitAuthInput('ghost', '123456', 'instagram', {
     browser: async () => ({}) as Browser,
   });
   assert.equal(result.outcome, 'failed');

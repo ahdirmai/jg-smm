@@ -293,7 +293,7 @@ export default function ActionsPage() {
         <CardContent className="space-y-4">
           <section className="flex items-center gap-2">
             <Select value={status} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-40">
+              <SelectTrigger className="w-40" aria-label="All statuses">
                 <SelectValue placeholder="All statuses" />
               </SelectTrigger>
               <SelectContent>

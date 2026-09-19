@@ -26,11 +26,19 @@ import {
   waitForCommentText,
   failShot,
 } from './dom.js';
+import { META_OTP_SELECTOR, otpHandlers } from './otp.js';
 
 const LOGIN_URL = 'https://www.instagram.com/accounts/login/';
 
 export const instagramAdapter: PlatformAdapter = {
   platform: 'instagram',
+  loginUrl: LOGIN_URL,
+  // `sessionid` alone is set pre-2FA; `ds_user_id` only lands once the account
+  // is fully resolved, so both are required to call a login proven.
+  sessionCookies: ['sessionid', 'ds_user_id'],
+  // IG + Threads share Meta's 2FA/checkpoint markup (DRY: one selector, one
+  // detect/submit implementation).
+  ...otpHandlers(META_OTP_SELECTOR),
 
   login(ctx: BrowserContext, credentials: LoginCredentials): Promise<LoginResultLike> {
     return credentialLogin(ctx, 'instagram', credentials, LOGIN_URL);

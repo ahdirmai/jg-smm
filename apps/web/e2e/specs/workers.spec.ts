@@ -16,7 +16,9 @@ const CITY = 'Jakarta';
 test.describe('workers page', () => {
   test('renders the create form with the city list', async ({ authedPage, api }) => {
     await authedPage.goto('/workers');
-    await expect(authedPage.getByRole('heading', { name: 'Add container' })).toBeVisible();
+    // The "Add container" card title is a @smm/ui CardTitle (a <div>), not a
+    // heading element, so match on its text rather than the heading role.
+    await expect(authedPage.getByText('Add container', { exact: true })).toBeVisible();
 
     const locations = await api.listLocations();
     for (const loc of locations.slice(0, 3)) {
@@ -79,7 +81,7 @@ test.describe('workers page', () => {
     const created = await api.createContainer(name, CITY);
 
     await authedPage.goto('/workers');
-    const card = authedPage.getByText(name).locator('xpath=ancestor::div[contains(@class,"rounded-xl")]');
+    const card = authedPage.getByText(name).locator('xpath=ancestor::div[contains(@class,"rounded-lg")]');
 
     // A fresh row has no URL yet; the button is present but disabled and says why.
     if (!created.novncUrl) {
@@ -94,7 +96,7 @@ test.describe('workers page', () => {
     const created = await api.createContainer(name, CITY);
 
     await authedPage.goto('/workers');
-    const card = authedPage.getByText(name).locator('xpath=ancestor::div[contains(@class,"rounded-xl")]');
+    const card = authedPage.getByText(name).locator('xpath=ancestor::div[contains(@class,"rounded-lg")]');
     await card.getByRole('button', { name: /provisioning log/i }).click();
 
     // The audit trail renders (rows may be empty for a fast provision, so the
@@ -118,7 +120,7 @@ test.describe('workers page', () => {
       .toBeTruthy();
 
     await authedPage.goto('/workers');
-    const card = authedPage.getByText(name).locator('xpath=ancestor::div[contains(@class,"rounded-xl")]');
+    const card = authedPage.getByText(name).locator('xpath=ancestor::div[contains(@class,"rounded-lg")]');
     await card.getByRole('button', { name: 'Open container menu' }).click();
     await authedPage.getByRole('menuitem', { name: /Delete/i }).click();
 
@@ -134,7 +136,7 @@ test.describe('workers page', () => {
     const account = await api.createAccount(`e2e_bot_${Date.now().toString(36)}`, 'instagram');
 
     await authedPage.goto('/workers');
-    const card = authedPage.getByText(name).locator('xpath=ancestor::div[contains(@class,"rounded-xl")]');
+    const card = authedPage.getByText(name).locator('xpath=ancestor::div[contains(@class,"rounded-lg")]');
     await card.getByRole('button', { name: 'Open container menu' }).click();
     // The guard is UX: the item names the reason.
     await expect(authedPage.getByRole('menuitem', { name: /Delete \(remove accounts first\)/i })).toBeDisabled();
@@ -152,7 +154,9 @@ test.describe('workers page', () => {
     await expect(authedPage.getByText(a.name)).toBeVisible();
     await expect(authedPage.getByText(b.name)).toBeVisible();
 
-    await authedPage.getByRole('button', { name: /All cities/i }).click();
+    // The city filter is a @smm/ui Select (role=combobox, aria-label "All
+    // cities"), not a button.
+    await authedPage.getByRole('combobox', { name: /All cities/i }).click();
     await authedPage.getByRole('option', { name: 'Bandung' }).click();
     await expect(authedPage.getByText(b.name)).toBeVisible();
 

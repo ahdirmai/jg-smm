@@ -204,7 +204,7 @@ export default function AccountsPage() {
         <CardContent className="space-y-4">
           <section className="flex flex-wrap items-center gap-2">
             <Select value={platform} onValueChange={setPlatform}>
-              <SelectTrigger className="w-40">
+              <SelectTrigger className="w-40" aria-label="All platforms">
                 <SelectValue placeholder="All platforms" />
               </SelectTrigger>
               <SelectContent>
@@ -218,7 +218,7 @@ export default function AccountsPage() {
             </Select>
 
             <Select value={status} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-40">
+              <SelectTrigger className="w-40" aria-label="All statuses">
                 <SelectValue placeholder="All statuses" />
               </SelectTrigger>
               <SelectContent>
@@ -353,7 +353,7 @@ export default function AccountsPage() {
                       <TableCell>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" disabled={busy === a.id || !canAct}>
+                            <Button variant="ghost" size="icon" aria-label="Open account menu" disabled={busy === a.id || !canAct}>
                               <MoreVertical />
                             </Button>
                           </DropdownMenuTrigger>

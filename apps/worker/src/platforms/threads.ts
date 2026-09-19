@@ -21,11 +21,17 @@ import {
   waitForCommentText,
   failShot,
 } from './dom.js';
+import { META_OTP_SELECTOR, otpHandlers } from './otp.js';
 
 const LOGIN_URL = 'https://www.threads.net/login';
 
 export const threadsAdapter: PlatformAdapter = {
   platform: 'threads',
+  loginUrl: LOGIN_URL,
+  // Threads rides the Instagram session: a single `sessionid` proves it.
+  sessionCookies: ['sessionid'],
+  // Same Meta markup as Instagram — reuse the shared OTP handlers (DRY).
+  ...otpHandlers(META_OTP_SELECTOR),
 
   login(ctx: BrowserContext, credentials: LoginCredentials): Promise<LoginResultLike> {
     return credentialLogin(ctx, 'threads', credentials, LOGIN_URL);

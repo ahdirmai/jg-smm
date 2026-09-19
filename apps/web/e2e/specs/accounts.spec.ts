@@ -22,10 +22,19 @@ test.describe('accounts page', () => {
     await expect(authedPage.getByRole('option', { name: 'Instagram' })).toBeVisible();
   });
 
-  test('the new-account route renders its form', async ({ authedPage }) => {
+  test('the new-account route renders its wizard', async ({ authedPage }) => {
     await authedPage.goto('/accounts/new');
+
+    // Step 0 is the platform picker: heading, the platform buttons, and the
+    // Continue affordance. Credentials fields only appear on step 1.
+    await expect(authedPage.getByRole('heading', { name: 'Pick a platform' })).toBeVisible();
+    await expect(authedPage.getByRole('button', { name: 'Instagram' })).toBeVisible();
+    await expect(authedPage.getByRole('button', { name: 'Continue' })).toBeVisible();
+
+    // Advancing to step 1 surfaces the credentials form.
+    await authedPage.getByRole('button', { name: 'Instagram' }).click();
+    await authedPage.getByRole('button', { name: 'Continue' }).click();
     await expect(authedPage.getByLabel(/Username/i)).toBeVisible();
-    await expect(authedPage.getByRole('button', { name: /Add account|Create/i })).toBeVisible();
   });
 
   test('a row created via the API renders with its auth badge', async ({ authedPage, api }) => {
@@ -33,7 +42,9 @@ test.describe('accounts page', () => {
 
     await authedPage.goto('/accounts');
     await expect(authedPage.getByText(`@${USER}`)).toBeVisible();
-    await expect(authedPage.getByText('PENDING')).toBeVisible();
+    // A fresh account is mid-login: the card shows the authStatus the API
+    // actually holds, which is AUTHENTICATING until a worker claims it.
+    await expect(authedPage.getByText('AUTHENTICATING')).toBeVisible();
 
     await api.removeAccount(account.id);
   });
@@ -46,24 +57,24 @@ test.describe('accounts page', () => {
 
     await authedPage
       .getByRole('row')
-      .filter({ hasText: USER })
+      .filter({ has: authedPage.getByText(`@${USER}`, { exact: true }) })
       .getByRole('button', { name: 'Open account menu' })
       .click();
     await authedPage.getByRole('menuitem', { name: 'Pause' }).click();
 
     // The badge is the operator's only signal; it must settle without a reload.
     await expect(
-      authedPage.getByRole('row').filter({ hasText: USER }).getByText('PAUSED'),
+      authedPage.getByRole('row').filter({ has: authedPage.getByText(`@${USER}`, { exact: true }) }).getByText('PAUSED'),
     ).toBeVisible({ timeout: 30_000 });
 
     await authedPage
       .getByRole('row')
-      .filter({ hasText: USER })
+      .filter({ has: authedPage.getByText(`@${USER}`, { exact: true }) })
       .getByRole('button', { name: 'Open account menu' })
       .click();
     await authedPage.getByRole('menuitem', { name: 'Resume' }).click();
     await expect(
-      authedPage.getByRole('row').filter({ hasText: USER }).getByText('ACTIVE'),
+      authedPage.getByRole('row').filter({ has: authedPage.getByText(`@${USER}`, { exact: true }) }).getByText('ACTIVE'),
     ).toBeVisible({ timeout: 30_000 });
 
     await api.removeAccount(account.id);
@@ -77,9 +88,16 @@ test.describe('accounts page', () => {
     const b = await api.createAccount(`${USER}2`, 'tiktok');
 
     await authedPage.goto('/accounts');
+    // Both rows must have landed (initial fetch + SSE) before we filter, or the
+    // TikTok row can still be in flight when the filter is applied and the
+    // narrowed view reads as empty.
+    await expect(authedPage.getByText(`@${USER}`, { exact: true })).toBeVisible();
+    await expect(authedPage.getByText(`@${USER}2`, { exact: true })).toBeVisible();
+    // hasText is a substring match, so `USER` also matches `${USER}2`; scope on
+    // the exact label instead, or the locator is ambiguous by one row.
     await authedPage
       .getByRole('row')
-      .filter({ hasText: USER })
+      .filter({ has: authedPage.getByText(`@${USER}`, { exact: true }) })
       .getByRole('checkbox', { name: `Select @${USER}` })
       .check();
 
@@ -120,7 +138,7 @@ test.describe('accounts page', () => {
     await authedPage.goto('/accounts');
     await authedPage
       .getByRole('row')
-      .filter({ hasText: USER })
+      .filter({ has: authedPage.getByText(`@${USER}`, { exact: true }) })
       .getByRole('button', { name: 'Open account menu' })
       .click();
     await authedPage.getByRole('menuitem', { name: 'Remove' }).click();
