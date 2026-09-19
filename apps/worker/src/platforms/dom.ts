@@ -121,14 +121,17 @@ export async function commentOnPost(d: DomDeps, text: string): Promise<AdapterRe
   await box.click({ timeout: 3_000 }).catch(() => undefined);
   await box.fill(text, { timeout: 5_000 });
 
-  // Submit keyboard-first, then the Post button as a last resort.
+  // Submit keyboard-first, then the Post button as a last resort. Each extra
+  // attempt is guarded by `composerStillHas`: once the composer has cleared the
+  // submit landed, so re-pressing would post a DUPLICATE. Only retry while the
+  // text is still sitting in the box unsent.
   await box.press('Enter').catch(() => undefined);
-  let rendered = await waitForCommentText(d, text, 1_500);
-  if (!rendered) {
+  let rendered = await waitForCommentText(d, text, 3_000);
+  if (!rendered && (await composerStillHas(box, text))) {
     await box.press('Control+Enter').catch(() => undefined);
-    rendered = await waitForCommentText(d, text, 1_500);
+    rendered = await waitForCommentText(d, text, 3_000);
   }
-  if (!rendered && sel.submitButton) {
+  if (!rendered && sel.submitButton && (await composerStillHas(box, text))) {
     await page
       .locator(sel.submitButton)
       .first()
@@ -136,8 +139,27 @@ export async function commentOnPost(d: DomDeps, text: string): Promise<AdapterRe
       .catch(() => undefined);
     rendered = await waitForCommentText(d, text);
   }
+  // The composer cleared but the feed had not rendered yet within the short
+  // per-attempt windows: give it the full verify budget before giving up, so a
+  // slow render is not misreported as a failure (which would trigger a retry
+  // and a duplicate comment).
+  if (!rendered && !(await composerStillHas(box, text))) {
+    rendered = await waitForCommentText(d, text);
+  }
   if (!rendered) return failShot(d, 'comment not visible in feed (verification failed)');
   return { ok: true, renderedText: rendered };
+}
+
+/**
+ * True while the composer still holds the unsent text. A textarea exposes it as
+ * the input value; a contenteditable as its text content. Used to gate submit
+ * retries so a landed comment is never posted twice.
+ */
+async function composerStillHas(box: Locator, text: string): Promise<boolean> {
+  const val = await box.inputValue().catch(() => null);
+  if (val !== null) return val.includes(text);
+  const inner = await box.innerText().catch(() => '');
+  return inner.includes(text);
 }
 
 /** The ordered composer candidates, preferring the explicit list over the single. */
@@ -182,10 +204,17 @@ export async function waitForCommentText(
   text: string,
   timeoutMs: number = VERIFY_TIMEOUT_MS,
 ): Promise<string | undefined> {
-  const feed = d.sel.feed ? d.page.locator(d.sel.feed).first() : d.page.locator('body').first();
+  // Scan the whole document, not just the first feed match. On current IG the
+  // feed selector's first match is often the media/header section, whose text
+  // never contains a freshly-posted comment — reading only that turned a landed
+  // comment into a false "not visible" and drove retries. Body innerText always
+  // includes a rendered comment; the pinned feed is a narrowing hint, not a gate.
   const started = (d.now ?? Date.now)();
   for (;;) {
-    const body = await feed.innerText().catch(() => '');
+    let body = await d.page.locator('body').innerText().catch(() => '');
+    if (!body && d.sel.feed) {
+      body = await d.page.locator(d.sel.feed).first().innerText().catch(() => '');
+    }
     if (body.includes(text)) return text;
     if ((d.now ?? Date.now)() - started >= timeoutMs) return undefined;
     await sleep(d.pollMs ?? POLL_MS);
