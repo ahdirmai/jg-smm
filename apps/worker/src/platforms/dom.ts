@@ -9,7 +9,7 @@
  * comment counts only when its text is visible in the feed, and a like counts
  * only when the button state changed. No verified signal ⇒ no SUCCESS.
  */
-import type { BrowserContext, Page } from 'playwright';
+import type { BrowserContext, Locator, Page } from 'playwright';
 
 import type { Platform } from '@smm/shared';
 
@@ -76,34 +76,100 @@ export async function likePost(d: DomDeps): Promise<AdapterResult> {
   return { ok: true };
 }
 
+/** How long to hunt for the composer once the affordance has been clicked. */
+const COMPOSER_OPEN_TIMEOUT_MS = 8_000;
+/** A quick first look: on a permalink the composer is usually already mounted. */
+const COMPOSER_PROBE_MS = 1_000;
+
 /**
- * Submit a comment and verify it rendered (§7.4: Ctrl+Enter → fallback click →
- * verify). The composer submit is tried on the keyboard first; only when the
- * text is still absent after a short probe does the Post button get clicked —
- * that ordering is what keeps a working keyboard submit from double-posting.
+ * Submit a comment and verify it rendered (§7.4). The flow is defensive because
+ * Meta reshapes the composer across rollouts:
+ *
+ *   1. Look for the composer with the ordered candidate list. It is usually
+ *      already on a post permalink.
+ *   2. If it is not present, click the comment affordance (the reply bubble /
+ *      "Comment" icon) to reveal or focus it, then look again.
+ *   3. Fill the first candidate that appeared, then submit keyboard-first
+ *      (Enter → Ctrl+Enter) and fall back to the "Post" button only when the
+ *      text is still absent — that ordering keeps a working keyboard submit
+ *      from double-posting.
+ *
+ * Every step has a short bound and fails with a screenshot rather than throwing,
+ * so a stale selector is a clear failure, not a 30s hang (the P-A bug).
  */
 export async function commentOnPost(d: DomDeps, text: string): Promise<AdapterResult> {
   const { page, sel } = d;
-  if (!sel.commentButton || !sel.composerInput) {
+  const candidates = composerCandidates(sel);
+  if (candidates.length === 0) {
     return { ok: false, error: 'no comment selectors pinned' };
   }
 
-  await page.locator(sel.commentButton).first().click();
-  const box = page.locator(sel.composerInput).first();
-  await box.fill(text);
+  // 1. The composer is usually already mounted on a permalink.
+  let box = await findComposer(d, candidates, COMPOSER_PROBE_MS);
+  // 2. If not, click the comment affordance to reveal/focus it, then re-hunt.
+  if (!box && sel.commentButton) {
+    await page
+      .locator(sel.commentButton)
+      .first()
+      .click({ timeout: 5_000 })
+      .catch(() => undefined);
+    box = await findComposer(d, candidates, COMPOSER_OPEN_TIMEOUT_MS);
+  }
+  if (!box) return failShot(d, 'comment composer not found (even after opening it)');
 
-  await box.press('Control+Enter');
+  // 3. Fill. A focus click first: some composers only accept input once focused.
+  await box.click({ timeout: 3_000 }).catch(() => undefined);
+  await box.fill(text, { timeout: 5_000 });
+
+  // Submit keyboard-first, then the Post button as a last resort.
+  await box.press('Enter').catch(() => undefined);
   let rendered = await waitForCommentText(d, text, 1_500);
+  if (!rendered) {
+    await box.press('Control+Enter').catch(() => undefined);
+    rendered = await waitForCommentText(d, text, 1_500);
+  }
   if (!rendered && sel.submitButton) {
     await page
       .locator(sel.submitButton)
       .first()
-      .click()
+      .click({ timeout: 5_000 })
       .catch(() => undefined);
     rendered = await waitForCommentText(d, text);
   }
   if (!rendered) return failShot(d, 'comment not visible in feed (verification failed)');
   return { ok: true, renderedText: rendered };
+}
+
+/** The ordered composer candidates, preferring the explicit list over the single. */
+function composerCandidates(sel: SelectorSet): string[] {
+  if (sel.composerInputs && sel.composerInputs.length > 0) return sel.composerInputs;
+  return sel.composerInput ? [sel.composerInput] : [];
+}
+
+/**
+ * Poll the candidate selectors IN ORDER until one is present, or the bound
+ * expires. Presence (count > 0) is used rather than `waitFor` so a candidate
+ * that never mounts on this rollout is skipped immediately instead of eating
+ * the whole timeout.
+ */
+async function findComposer(
+  d: DomDeps,
+  selectors: string[],
+  timeoutMs: number,
+): Promise<Locator | undefined> {
+  const started = (d.now ?? Date.now)();
+  for (;;) {
+    for (const s of selectors) {
+      const loc = d.page.locator(s).first();
+      const present = await loc
+        .count()
+        .then((n) => n > 0)
+        .catch(() => false);
+      if (present) return loc;
+    }
+    if ((d.now ?? Date.now)() - started >= timeoutMs) return undefined;
+    await sleep(d.pollMs ?? POLL_MS);
+  }
 }
 
 /**

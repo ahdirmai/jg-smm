@@ -1,6 +1,7 @@
 package http
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"path"
@@ -34,13 +35,29 @@ const screenshotExt = ".png"
 // heartbeats). Workers never touch the DB (ADR 0011): they SUBSCRIBE control and
 // POST here. The routes are internal-only and body-size limited.
 type InternalHandler struct {
-	jobs *service.JobService
+	jobs     *service.JobService
+	sessions SessionExportSink
+}
+
+// SessionExportSink receives a session (cookies) a worker dumped in response to
+// an auth-export, and hands it to the operator request waiting on it. Kept as an
+// interface so the internal handler does not depend on the account service
+// concrete type. SECURITY: implementations must not persist or log the value.
+type SessionExportSink interface {
+	DeliverExportedSession(requestID string, session json.RawMessage)
 }
 
 // NewInternalHandler builds the handler. A nil JobService keeps the API bootable
 // before the worker path is wired (routes then return 503).
 func NewInternalHandler(jobs *service.JobService) *InternalHandler {
 	return &InternalHandler{jobs: jobs}
+}
+
+// SetSessionExportSink wires the session-export callback target. Called after
+// the account service is built (it is the sink), so the internal group can
+// relay a worker's session dump to the waiting operator request.
+func (h *InternalHandler) SetSessionExportSink(sink SessionExportSink) {
+	h.sessions = sink
 }
 
 // Register mounts the internal routes behind a body-size limit. Mounted on the
@@ -57,6 +74,39 @@ func (h *InternalHandler) Register(e *echo.Echo) {
 	// resolvable at all (see WorkerClaim).
 	g.POST("/claim", h.claim)
 	g.GET("/worker/:workerId/geolocation", h.geolocation)
+	// A worker dumps an account's session here in response to auth-export. The
+	// body carries cookies, so this route (like the group) is private-network
+	// only and its body is never logged.
+	g.POST("/session-export", h.sessionExport)
+}
+
+// sessionExport receives a worker's session dump and relays it to the operator
+// request waiting on it (correlated by requestId). SECURITY: the session is a
+// credential — it is not persisted and never logged here.
+func (h *InternalHandler) sessionExport(c echo.Context) error {
+	var req struct {
+		AccountID string          `json:"accountId"`
+		Platform  string          `json:"platform"`
+		RequestID string          `json:"requestId"`
+		Session   json.RawMessage `json:"session"`
+	}
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid session-export body")
+	}
+	if req.RequestID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "requestId is required")
+	}
+	if h.sessions == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "session export sink unavailable")
+	}
+	// A JSON `null` (no session on the container) becomes an empty payload so the
+	// waiter reports "no session" rather than relaying the literal null.
+	var session json.RawMessage
+	if len(req.Session) > 0 && string(req.Session) != "null" {
+		session = req.Session
+	}
+	h.sessions.DeliverExportedSession(req.RequestID, session)
+	return c.JSON(http.StatusOK, oapigen.CallbackAck{Accepted: true})
 }
 
 // actionCallback records the outcome of one action attempt.

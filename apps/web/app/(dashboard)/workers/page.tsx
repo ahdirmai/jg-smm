@@ -8,6 +8,12 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -22,6 +28,7 @@ import {
 } from '@smm/ui';
 import {
   AlertCircle,
+  Download,
   Loader2,
   MoreVertical,
   MonitorPlay,
@@ -77,8 +84,17 @@ export default function WorkersPage() {
   const session = useSession();
   const role = session.status === 'authenticated' ? session.role : undefined;
   const canAct = can(role, 'act');
+  // Exporting a session dumps cookies (credentials); the server gates it to
+  // owner/admin, so the button is only offered to that role.
+  const canExport = can(role, 'admin');
 
   const [live, setLive] = useState<{ name: string; url: string } | null>(null);
+  // Delete-with-accounts confirm (P-C): a container still holding packed
+  // accounts can lose their sessions on delete, so the operator is offered a
+  // session export before deleting anyway.
+  const [deleteTarget, setDeleteTarget] = useState<Container | null>(null);
+  const [sessionBusy, setSessionBusy] = useState(false);
+  const [sessionError, setSessionError] = useState<string | null>(null);
 
   const [name, setName] = useState('');
   const [location, setLocation] = useState('');
@@ -201,6 +217,85 @@ export default function WorkersPage() {
     } catch (err) {
       console.error('container logs failed', err);
       setLogs([]);
+    }
+  };
+
+  // Clicking Delete on a container with packed accounts opens the confirm
+  // dialog; an empty container is deleted straight away.
+  const onDeleteContainer = (c: Container) => {
+    if ((c.accounts?.length ?? 0) > 0) {
+      setSessionError(null);
+      setDeleteTarget(c);
+    } else {
+      void onAct(c.id, remove);
+    }
+  };
+
+  // Export every packed account's session (cookies) and hand the operator a
+  // single JSON file to re-import into a fresh container. The value is never
+  // logged; it lives only in the downloaded file.
+  const onExportSessions = async (c: Container) => {
+    setSessionBusy(true);
+    setSessionError(null);
+    try {
+      const accounts = c.accounts ?? [];
+      const sessions: Array<Record<string, unknown>> = [];
+      const failures: string[] = [];
+      for (const a of accounts) {
+        try {
+          const sessionData = await api.exportAccountSession(a.id);
+          sessions.push({
+            accountId: a.id,
+            username: a.username,
+            platform: a.platform,
+            session: sessionData,
+          });
+        } catch (err) {
+          failures.push(`@${a.username}: ${err instanceof Error ? err.message : 'export failed'}`);
+        }
+      }
+      if (sessions.length > 0) {
+        const payload = {
+          container: { id: c.id, name: c.name },
+          exportedAt: new Date().toISOString(),
+          sessions,
+        };
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = `sessions-${c.name || c.id}.json`;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        URL.revokeObjectURL(url);
+      }
+      if (failures.length > 0) {
+        setSessionError(`Some sessions could not be exported — ${failures.join('; ')}`);
+      } else if (sessions.length === 0) {
+        setSessionError('No sessions were available to export from this container.');
+      }
+    } finally {
+      setSessionBusy(false);
+    }
+  };
+
+  // Delete anyway: release the packed accounts (which removes their rows) and
+  // then delete the container. The sessions are gone once this completes, which
+  // is exactly why the export above is offered first.
+  const onDeleteAnyway = async (c: Container) => {
+    setSessionBusy(true);
+    setSessionError(null);
+    try {
+      for (const a of c.accounts ?? []) {
+        await removeAccount(a.id);
+      }
+      await remove(c.id);
+      setDeleteTarget(null);
+    } catch (err) {
+      setSessionError(err instanceof Error ? err.message : 'Delete failed');
+    } finally {
+      setSessionBusy(false);
     }
   };
 
@@ -359,12 +454,12 @@ export default function WorkersPage() {
                           <DropdownMenuContent align="end">
                             <DropdownMenuItem
                               className="text-destructive"
-                              disabled={busy === c.id || (c.accounts?.length ?? 0) > 0}
-                              onClick={() => onAct(c.id, remove)}
+                              disabled={busy === c.id}
+                              onClick={() => onDeleteContainer(c)}
                             >
                               <Trash2 />
                               Delete
-                              {(c.accounts?.length ?? 0) > 0 ? ' (remove accounts first)' : ''}
+                              {(c.accounts?.length ?? 0) > 0 ? '…' : ''}
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
@@ -558,6 +653,74 @@ export default function WorkersPage() {
         url={live?.url ?? ''}
         workerName={live?.name ?? ''}
       />
+
+      <Dialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => {
+          if (!open && !sessionBusy) {
+            setDeleteTarget(null);
+            setSessionError(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>Delete {deleteTarget?.name}?</DialogTitle>
+            <DialogDescription>
+              This container still has {deleteTarget?.accounts?.length ?? 0} packed account
+              {(deleteTarget?.accounts?.length ?? 0) === 1 ? '' : 's'}. Deleting it discards their
+              saved sessions (cookies). Export the sessions first if you want to re-import them into
+              a new container.
+            </DialogDescription>
+          </DialogHeader>
+
+          {deleteTarget?.accounts && deleteTarget.accounts.length > 0 ? (
+            <ul className="max-h-40 space-y-1 overflow-auto rounded-md border bg-muted/30 p-2 text-sm">
+              {deleteTarget.accounts.map((a) => (
+                <li key={a.id} className="flex items-center justify-between gap-2">
+                  <span className="truncate">@{a.username}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {PLATFORM_LABEL[a.platform] ?? a.platform}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+
+          {!canExport ? (
+            <p className="text-xs text-muted-foreground">
+              Exporting sessions is owner/admin only. Ask an owner to export before deleting if
+              these sessions are worth keeping.
+            </p>
+          ) : null}
+
+          {sessionError ? (
+            <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+              <AlertCircle className="mt-0.5 size-4 shrink-0" />
+              <span>{sessionError}</span>
+            </div>
+          ) : null}
+
+          <DialogFooter className="gap-2 sm:justify-between">
+            <Button
+              variant="outline"
+              disabled={sessionBusy || !canExport}
+              onClick={() => deleteTarget && void onExportSessions(deleteTarget)}
+            >
+              {sessionBusy ? <Loader2 className="animate-spin" /> : <Download className="size-4" />}
+              Export sessions
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={sessionBusy || !canAct}
+              onClick={() => deleteTarget && void onDeleteAnyway(deleteTarget)}
+            >
+              {sessionBusy ? <Loader2 className="animate-spin" /> : <Trash2 className="size-4" />}
+              Delete anyway
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -64,6 +64,24 @@ func (r *TemplateRepo) GetTemplate(ctx context.Context, id string) (domain.Comme
 // toggle so a reviewed variant stays visible without re-entering the pool.
 func (r *TemplateRepo) ListTemplates(ctx context.Context, platform domain.Platform, includeInactive bool, limit, offset *int) ([]domain.CommentTemplate, error) {
 	l, o := ptrPage(limit, offset)
+	// An empty platform is the "all platforms" listing (the dashboard's default
+	// view with no platform filter): omit the platform predicate entirely rather
+	// than defaulting to one platform and hiding the rest.
+	if platform == "" {
+		rows, err := r.q.ListAllCommentTemplates(ctx, sqlcgen.ListAllCommentTemplatesParams{
+			Column1: includeInactive,
+			Limit:   l,
+			Offset:  o,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("repository.template.ListTemplates(all): %w", err)
+		}
+		out := make([]domain.CommentTemplate, 0, len(rows))
+		for _, row := range rows {
+			out = append(out, templateDomain(row))
+		}
+		return out, nil
+	}
 	rows, err := r.q.ListCommentTemplates(ctx, sqlcgen.ListCommentTemplatesParams{
 		Platform: platformEnum(platform),
 		Column2:  includeInactive,

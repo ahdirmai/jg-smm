@@ -145,6 +145,57 @@ func (q *Queries) ListCommentTemplates(ctx context.Context, arg ListCommentTempl
 	return items, nil
 }
 
+const listAllCommentTemplates = `-- name: ListAllCommentTemplates :many
+SELECT id, platform, text, vars, weight, banned_words, is_active, created_at
+FROM comment_template
+WHERE ($1::boolean OR is_active = TRUE)
+ORDER BY created_at DESC
+LIMIT $2 OFFSET $3
+`
+
+type ListAllCommentTemplatesParams struct {
+	Column1 bool  `json:"column_1"`
+	Limit   int32 `json:"limit"`
+	Offset  int32 `json:"offset"`
+}
+
+// The pool view across EVERY platform. The composer's pick is platform-scoped
+// (see PickForTarget), but the dashboard listing needs to show all variants
+// when no platform filter is applied — otherwise non-Instagram variants are
+// invisible and the platform filter has nothing to filter.
+func (q *Queries) ListAllCommentTemplates(ctx context.Context, arg ListAllCommentTemplatesParams) ([]CommentTemplate, error) {
+	rows, err := q.db.Query(ctx, listAllCommentTemplates,
+		arg.Column1,
+		arg.Limit,
+		arg.Offset,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CommentTemplate{}
+	for rows.Next() {
+		var i CommentTemplate
+		if err := rows.Scan(
+			&i.ID,
+			&i.Platform,
+			&i.Text,
+			&i.Vars,
+			&i.Weight,
+			&i.BannedWords,
+			&i.IsActive,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const pickForTarget = `-- name: PickForTarget :many
 SELECT t.id, t.platform, t.text, t.vars, t.weight, t.banned_words, t.is_active,
        t.created_at

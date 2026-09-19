@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -25,6 +27,12 @@ type AccountService struct {
 	control  port.Publisher
 	imports  *importLimiter
 	logger   *slog.Logger
+
+	// exports correlates an in-flight session export with the worker callback
+	// that fulfils it. In-memory and short-lived: a plaintext session is never
+	// persisted server-side, it is held only long enough to hand to the caller.
+	exportMu sync.Mutex
+	exports  map[string]chan json.RawMessage
 }
 
 // AccountConfig tunes the account service.
@@ -58,6 +66,7 @@ func NewAccountService(accounts port.AccountStore, workers port.WorkerStore, pac
 		control:  cfg.Control,
 		imports:  newImportLimiter(time.Minute, ImportRateLimit),
 		logger:   cfg.Logger,
+		exports:  map[string]chan json.RawMessage{},
 	}
 }
 
@@ -270,6 +279,153 @@ type controlMessage struct {
 	AccountID string            `json:"accountId"`
 	Platform  string            `json:"platform"`
 	Payload   map[string]string `json:"payload,omitempty"`
+}
+
+// sessionImportControl carries a session (cookies) as a raw JSON object to the
+// worker. It is separate from controlMessage because the payload here is a JSON
+// object, not the string map the auth flow uses.
+type sessionImportControl struct {
+	Type      string `json:"type"`
+	AccountID string `json:"accountId"`
+	Platform  string `json:"platform"`
+	Payload   struct {
+		Session json.RawMessage `json:"session"`
+	} `json:"payload"`
+}
+
+// sessionExportTimeout bounds how long an export request waits for the worker
+// to dump the session. Generous enough for a busy control channel, short enough
+// that the operator is not left hanging.
+const sessionExportTimeout = 20 * time.Second
+
+// ExportSession asks the account's worker to dump its persisted session
+// (cookies) and returns that JSON to the caller ONCE. SECURITY: the session is
+// a credential — it is never persisted server-side, only relayed in-memory to
+// the caller, and never logged. Owner/admin-only is enforced at the route.
+func (s *AccountService) ExportSession(ctx context.Context, accountID string) (json.RawMessage, error) {
+	if s.control == nil {
+		return nil, fmt.Errorf("%w: auth control channel is not configured", domain.ErrUnavailable)
+	}
+	a, err := s.accounts.GetByID(ctx, accountID)
+	if err != nil {
+		return nil, fmt.Errorf("account service: get: %w", err)
+	}
+	if a.WorkerID == nil {
+		return nil, fmt.Errorf("%w: account has no container to export a session from", domain.ErrConflict)
+	}
+
+	requestID, err := newRequestID()
+	if err != nil {
+		return nil, fmt.Errorf("account service: request id: %w", err)
+	}
+	ch := make(chan json.RawMessage, 1)
+	s.registerExport(requestID, ch)
+	defer s.unregisterExport(requestID)
+
+	msg, err := json.Marshal(controlMessage{
+		Type:      "auth-export",
+		AccountID: accountID,
+		Platform:  string(a.Platform),
+		Payload:   map[string]string{"requestId": requestID},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("account service: marshal control: %w", err)
+	}
+	if err := s.control.PublishControl(ctx, *a.WorkerID, msg); err != nil {
+		return nil, fmt.Errorf("account service: publish auth-export: %w", err)
+	}
+	// Deliberately no session value in this log line.
+	s.logger.Info("auth-export dispatched", "accountId", accountID, "workerId", *a.WorkerID)
+
+	select {
+	case session := <-ch:
+		if len(session) == 0 {
+			return nil, fmt.Errorf("%w: no session is persisted for this account", domain.ErrNotFound)
+		}
+		return session, nil
+	case <-time.After(sessionExportTimeout):
+		return nil, fmt.Errorf("%w: worker did not return a session in time", domain.ErrUnavailable)
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// ImportSession hands a session (cookies) to the account's worker so a fresh
+// container adopts it without a new login. The session is validated as a JSON
+// object and relayed; it is never persisted or logged here.
+func (s *AccountService) ImportSession(ctx context.Context, accountID string, session json.RawMessage) error {
+	if s.control == nil {
+		return fmt.Errorf("%w: auth control channel is not configured", domain.ErrUnavailable)
+	}
+	// Defensive validation: the payload must be a JSON object (a storageState),
+	// not an array, scalar, or garbage.
+	var probe map[string]json.RawMessage
+	if len(session) == 0 || json.Unmarshal(session, &probe) != nil {
+		return fmt.Errorf("%w: session must be a JSON object", domain.ErrValidation)
+	}
+	a, err := s.accounts.GetByID(ctx, accountID)
+	if err != nil {
+		return fmt.Errorf("account service: get: %w", err)
+	}
+	if a.WorkerID == nil {
+		return fmt.Errorf("%w: account has no container to import a session into", domain.ErrConflict)
+	}
+
+	var ctrl sessionImportControl
+	ctrl.Type = "auth-import"
+	ctrl.AccountID = accountID
+	ctrl.Platform = string(a.Platform)
+	ctrl.Payload.Session = session
+	msg, err := json.Marshal(ctrl)
+	if err != nil {
+		return fmt.Errorf("account service: marshal control: %w", err)
+	}
+	if err := s.control.PublishControl(ctx, *a.WorkerID, msg); err != nil {
+		return fmt.Errorf("account service: publish auth-import: %w", err)
+	}
+	s.logger.Info("auth-import dispatched", "accountId", accountID, "workerId", *a.WorkerID)
+	return nil
+}
+
+// DeliverExportedSession fulfils a waiting ExportSession with the session the
+// worker dumped. A nil session (no file on the container) is delivered as an
+// empty payload so the waiter can report "no session" rather than block. Called
+// by the internal callback handler; unknown request ids are dropped (the export
+// already timed out).
+func (s *AccountService) DeliverExportedSession(requestID string, session json.RawMessage) {
+	s.exportMu.Lock()
+	ch := s.exports[requestID]
+	s.exportMu.Unlock()
+	if ch == nil {
+		return
+	}
+	// Non-blocking: the channel is buffered for exactly one delivery, and a
+	// duplicate callback must not block the internal handler.
+	select {
+	case ch <- session:
+	default:
+	}
+}
+
+func (s *AccountService) registerExport(requestID string, ch chan json.RawMessage) {
+	s.exportMu.Lock()
+	s.exports[requestID] = ch
+	s.exportMu.Unlock()
+}
+
+func (s *AccountService) unregisterExport(requestID string) {
+	s.exportMu.Lock()
+	delete(s.exports, requestID)
+	s.exportMu.Unlock()
+}
+
+// newRequestID returns a random correlation id for a session export.
+func newRequestID() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }
 
 // Remove deletes an account and releases its container slot. An AUTO container

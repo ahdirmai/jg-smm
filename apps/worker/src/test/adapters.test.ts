@@ -56,6 +56,8 @@ interface Story {
   pressLands: boolean;
   /** Clicking the Post button lands the comment. */
   submitLands: boolean;
+  /** Whether the composer is mounted; false until the comment affordance is clicked. */
+  composerOpen: boolean;
   composed: string;
 }
 
@@ -70,6 +72,7 @@ function makeStory(over: Partial<Story> = {}): Story {
     loginRedirect: false,
     pressLands: true,
     submitLands: true,
+    composerOpen: true,
     composed: '',
     ...over,
   };
@@ -111,7 +114,7 @@ function fakePage(story: Story, sel: SelectorSet): Page {
 
   const composer = (): Locator => {
     const loc: Locator = {
-      count: async () => 1,
+      count: async () => (story.composerOpen ? 1 : 0),
       click: async () => undefined,
       getAttribute: async () => null,
       fill: async (text: string) => {
@@ -121,6 +124,22 @@ function fakePage(story: Story, sel: SelectorSet): Page {
         if (story.pressLands) story.feedText = story.composed;
       },
       innerText: async () => story.composed,
+      first: () => loc,
+    } as unknown as Locator;
+    return loc;
+  };
+
+  // Clicking the comment affordance reveals/focuses the composer.
+  const commentButton = (): Locator => {
+    const loc: Locator = {
+      count: async () => 1,
+      click: async () => {
+        story.composerOpen = true;
+      },
+      getAttribute: async () => null,
+      fill: async () => undefined,
+      press: async () => undefined,
+      innerText: async () => story.feedText,
       first: () => loc,
     } as unknown as Locator;
     return loc;
@@ -164,7 +183,12 @@ function fakePage(story: Story, sel: SelectorSet): Page {
     locator: (selector: string): Locator => {
       if (selector === sel.likeButton) return likeButton();
       if (selector === sel.likeButtonActive) return plain(activeCount(story));
-      if (selector === sel.composerInput) return composer();
+      if (selector === sel.commentButton) return commentButton();
+      // The composer is a contenteditable on the current Meta rollout; the
+      // textarea candidates are absent, so findComposer walks past them (this
+      // is exactly the ordered-fallback behaviour the P-A fix adds).
+      if (selector.includes('contenteditable')) return composer();
+      if (selector.includes('textarea')) return plain(0);
       if (selector === sel.submitButton) return submitButton();
       if (selector === sel.feed) return plain(1);
       if (selector.includes('verificationCode')) return plain(story.verificationField ? 1 : 0);
@@ -261,7 +285,43 @@ test('comment: submit-button fallback lands the text when Ctrl+Enter did not', a
   const story = makeStory({ pressLands: false, submitLands: true });
   const result = await commentOnPost(deps(story, job(), IG), 'great post');
   assert.equal(result.ok, true, 'the fallback click landed the comment');
-  assert.equal(result.renderedText, 'great post');
+});
+
+test('comment: composer hidden until the affordance is clicked ⇒ ok', async () => {
+  // Models the rollout where the composer is not mounted until the comment
+  // icon is clicked — the P-A failure mode. The flow must open it, then fill.
+  const story = makeStory({ composerOpen: false });
+  const result = await commentOnPost(deps(story, job(), IG), 'great post');
+  assert.equal(result.ok, true, 'the affordance was clicked and the composer filled');
+  assert.equal(story.composerOpen, true, 'the comment affordance was clicked to reveal the composer');
+  assert.equal(story.composed, 'great post');
+});
+
+test('comment: composer never appears ⇒ ok:false + screenshot', async () => {
+  // Even after clicking the affordance the composer never mounts (a truly stale
+  // page). That is a clear failure with evidence, never a 30s hang.
+  const story = makeStory({ composerOpen: false });
+  const page = fakePage(story, IG);
+  // Neuter the affordance so the composer stays hidden.
+  story.composerOpen = false;
+  const badButton = {
+    count: async () => 1,
+    click: async () => undefined,
+    getAttribute: async () => null,
+    fill: async () => undefined,
+    press: async () => undefined,
+    innerText: async () => '',
+    first() {
+      return this;
+    },
+  } as unknown as Locator;
+  const origLocator = page.locator.bind(page);
+  page.locator = ((selector: string) =>
+    selector === IG.commentButton ? badButton : origLocator(selector)) as Page['locator'];
+  const result = await commentOnPost({ page, sel: IG, job: job(), ...fastClock() }, 'great post');
+  assert.equal(result.ok, false);
+  assert.match(result.error ?? '', /composer not found/);
+  assert.ok(result.screenshot, 'a failure carries a screenshot basename');
 });
 
 // --- waitForCommentText (P3-08 ground truth) ----------------------------

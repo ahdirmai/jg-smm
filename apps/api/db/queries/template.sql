@@ -29,6 +29,17 @@ WHERE platform = $1
 ORDER BY created_at DESC
 LIMIT $3 OFFSET $4;
 
+-- name: ListAllCommentTemplates :many
+-- The pool view across EVERY platform. The composer's pick is platform-scoped
+-- (see PickForTarget), but the dashboard listing needs to show all variants
+-- when no platform filter is applied — otherwise non-Instagram variants are
+-- invisible and the platform filter has nothing to filter.
+SELECT id, platform, text, vars, weight, banned_words, is_active, created_at
+FROM comment_template
+WHERE ($1::boolean OR is_active = TRUE)
+ORDER BY created_at DESC
+LIMIT $2 OFFSET $3;
+
 -- name: UpdateCommentTemplate :one
 -- Full-row update: weight/vars/banned_words/is_active all change together from
 -- the composer, so a partial-update builder would only hide a missed field.

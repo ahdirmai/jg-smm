@@ -19,9 +19,14 @@ import (
 // candidates the test set, so the engine is exercised independently of SQL.
 type fakeTemplateStore struct {
 	candidates []domain.CommentTemplate
+	listed     []domain.CommentTemplate
 	created    []domain.CommentTemplate
 	updated    []domain.CommentTemplate
 	deleted    []string
+	// listPlatform records the platform ListTemplates was last called with, so a
+	// test can assert the "all platforms" listing passes an empty platform down.
+	listPlatform domain.Platform
+	listCalled   bool
 }
 
 func (f *fakeTemplateStore) CreateTemplate(ctx context.Context, t domain.CommentTemplate) (domain.CommentTemplate, error) {
@@ -32,6 +37,11 @@ func (f *fakeTemplateStore) GetTemplate(ctx context.Context, id string) (domain.
 	return domain.CommentTemplate{}, domain.ErrNotFound
 }
 func (f *fakeTemplateStore) ListTemplates(ctx context.Context, p domain.Platform, includeInactive bool, limit, offset *int) ([]domain.CommentTemplate, error) {
+	f.listPlatform = p
+	f.listCalled = true
+	if f.listed != nil {
+		return f.listed, nil
+	}
 	return f.candidates, nil
 }
 func (f *fakeTemplateStore) UpdateTemplate(ctx context.Context, t domain.CommentTemplate) (domain.CommentTemplate, error) {
@@ -128,6 +138,53 @@ func TestTemplatePickEmptyPool(t *testing.T) {
 	if _, err := svc.Pick(context.Background(), domain.PlatformInstagram, "target-w", nil); !errors.Is(err, domain.ErrTemplatePoolEmpty) {
 		t.Fatalf("expected ErrTemplatePoolEmpty, got %v", err)
 	}
+}
+
+// TestTemplateListAllPlatforms asserts the "all platforms" path: List with an
+// empty platform passes an empty platform to the store (the unfiltered listing)
+// and returns variants across platforms, while a concrete platform stays
+// scoped. This is the P-B fix — an absent platform must no longer default to
+// Instagram-only and hide every other platform's variants.
+func TestTemplateListAllPlatforms(t *testing.T) {
+	mixed := []domain.CommentTemplate{
+		{ID: "ig1", Platform: domain.PlatformInstagram, Text: "hi {topic}", Vars: []string{"topic"}, Weight: 1},
+		{ID: "th1", Platform: domain.PlatformThreads, Text: "yo {topic}", Vars: []string{"topic"}, Weight: 1},
+	}
+
+	t.Run("empty platform lists all", func(t *testing.T) {
+		store := &fakeTemplateStore{listed: mixed}
+		svc := newTestTemplateService(store, rand.New(rand.NewSource(1)))
+
+		out, err := svc.List(context.Background(), "", false)
+		if err != nil {
+			t.Fatalf("list all: %v", err)
+		}
+		if !store.listCalled || store.listPlatform != "" {
+			t.Fatalf("expected an all-platforms (empty) list call, got platform %q", store.listPlatform)
+		}
+		if len(out) != 2 {
+			t.Fatalf("expected variants across platforms, got %d", len(out))
+		}
+		seen := map[domain.Platform]bool{}
+		for _, v := range out {
+			seen[v.Platform] = true
+		}
+		if !seen[domain.PlatformInstagram] || !seen[domain.PlatformThreads] {
+			t.Fatalf("expected both platforms represented, got %+v", seen)
+		}
+	})
+
+	t.Run("concrete platform stays scoped", func(t *testing.T) {
+		store := &fakeTemplateStore{listed: mixed}
+		svc := newTestTemplateService(store, rand.New(rand.NewSource(1)))
+
+		if _, err := svc.List(context.Background(), domain.PlatformThreads, false); err != nil {
+			t.Fatalf("list threads: %v", err)
+		}
+		if store.listPlatform != domain.PlatformThreads {
+			t.Fatalf("expected the threads platform passed through, got %q", store.listPlatform)
+		}
+	})
 }
 
 // TestTemplateValidate covers the cross-field invariants the schema cannot

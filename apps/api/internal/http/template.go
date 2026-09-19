@@ -68,16 +68,18 @@ func (h *TemplateHandler) update(c echo.Context) error {
 	return c.JSON(http.StatusOK, templateToDTO(t))
 }
 
-// list returns the pool for one platform. The composer is platform-scoped, so
-// an absent platform defaults to the first MVP platform rather than refusing.
+// list returns the pool. With no `platform` query it lists EVERY platform's
+// variants (the dashboard fetches unfiltered and filters client-side, so a
+// per-platform default here would hide every non-Instagram variant); a
+// `platform` query scopes the listing. The composer's Pick stays
+// platform-scoped regardless.
 func (h *TemplateHandler) list(c echo.Context) error {
 	if h.templates == nil {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "template service unavailable")
 	}
-	platform := domain.PlatformInstagram
-	if reqPlatform := domain.Platform(c.QueryParam("platform")); reqPlatform != "" {
-		platform = reqPlatform
-	}
+	// Empty platform = all platforms. The service/repo omit the platform filter
+	// for the empty case rather than defaulting to one.
+	platform := domain.Platform(c.QueryParam("platform"))
 	includeInactive := c.QueryParam("includeInactive") == "true"
 
 	pool, err := h.templates.List(c.Request().Context(), platform, includeInactive)

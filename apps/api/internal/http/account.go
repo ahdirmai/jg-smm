@@ -2,6 +2,7 @@ package http
 
 import (
 	"errors"
+	"io"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
@@ -37,6 +38,61 @@ func (h *AccountHandler) Register(g *echo.Group) {
 	// worker's noVNC view, so it never crosses this API.
 	g.POST("/accounts/:accountId/login", h.startLogin, RequirePermission(domain.PermAct))
 	g.POST("/accounts/:accountId/input", h.submitInput, RequirePermission(domain.PermAct))
+	// Session (cookie) export/import (P-C). Cookies are CREDENTIALS, so these are
+	// owner/admin-only (stricter than the `act` gate the rest of the mutating
+	// routes use) and their bodies are never logged.
+	g.POST("/accounts/:accountId/session/export", h.exportSession, RequirePermission(domain.PermAdmin))
+	g.POST("/accounts/:accountId/session/import", h.importSession, RequirePermission(domain.PermAdmin))
+}
+
+// maxSessionBytes caps an imported session body. A storageState is a few KB of
+// cookies + origins; anything far larger is a mistake or an abuse attempt.
+const maxSessionBytes = 256 << 10 // 256 KiB
+
+// exportSession asks the account's worker to dump its session (cookies) and
+// returns that JSON to the caller ONCE. SECURITY: the session is never
+// persisted server-side and never logged; it is relayed straight to the
+// owner/admin operator so they can re-import it into a fresh container.
+func (h *AccountHandler) exportSession(c echo.Context) error {
+	if h.accounts == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "account service unavailable")
+	}
+	id := c.Param("accountId")
+	if id == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "accountId is required")
+	}
+	session, err := h.accounts.ExportSession(c.Request().Context(), id)
+	if err != nil {
+		return translateAccountError(err)
+	}
+	// Hint the operator's client to save it as a file; the value is not logged.
+	c.Response().Header().Set(echo.HeaderContentDisposition,
+		`attachment; filename="session-`+id+`.json"`)
+	return c.JSONBlob(http.StatusOK, session)
+}
+
+// importSession hands a session (cookies) to the account's worker so a fresh
+// container adopts it. The raw request body IS the session JSON (symmetric with
+// export). SECURITY: owner/admin-only, and the body is never logged.
+func (h *AccountHandler) importSession(c echo.Context) error {
+	if h.accounts == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "account service unavailable")
+	}
+	id := c.Param("accountId")
+	if id == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "accountId is required")
+	}
+	body, err := io.ReadAll(io.LimitReader(c.Request().Body, maxSessionBytes+1))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "could not read request body")
+	}
+	if len(body) > maxSessionBytes {
+		return echo.NewHTTPError(http.StatusRequestEntityTooLarge, "session too large")
+	}
+	if err := h.accounts.ImportSession(c.Request().Context(), id, body); err != nil {
+		return translateAccountError(err)
+	}
+	return c.NoContent(http.StatusNoContent)
 }
 
 // create stores an account and packs it into a container.

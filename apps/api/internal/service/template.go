@@ -138,8 +138,12 @@ func (s *TemplateService) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
-// List returns the pool for one platform. The dashboard asks per platform
-// (the composer is platform-scoped), so the query stays single-platform.
+// List returns the pool. An empty platform lists every platform's variants —
+// the dashboard's default view when no platform filter is applied; a concrete
+// platform scopes the listing. The composer's Pick stays platform-scoped
+// regardless (see PickForTarget): this only widens the read-only listing so a
+// non-Instagram variant is visible in the UI and the platform filter has
+// something to filter.
 func (s *TemplateService) List(ctx context.Context, platform domain.Platform, includeInactive bool) ([]domain.CommentTemplate, error) {
 	out, err := s.templates.ListTemplates(ctx, platform, includeInactive, &listPageSize, nil)
 	if err != nil {

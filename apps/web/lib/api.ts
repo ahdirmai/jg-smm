@@ -153,6 +153,17 @@ export const api = {
       body: JSON.stringify({ value }),
     }),
 
+  // Session (cookie) export/import (P-C). Cookies are CREDENTIALS: these are
+  // owner/admin-only on the server, and the exported session is handed straight
+  // to the operator (returned here as the raw storageState JSON), never stored.
+  exportAccountSession: (id: string) =>
+    request<unknown>(`/api/accounts/${id}/session/export`, { method: 'POST' }),
+  importAccountSession: (id: string, session: unknown) =>
+    request<void>(`/api/accounts/${id}/session/import`, {
+      method: 'POST',
+      body: JSON.stringify(session),
+    }),
+
   // Bulk import (P4-07). Per-row failures come back in the body with a 200;
   // only call-level preconditions (empty, over cap) or the rate limit error.
   importAccounts: (rows: CreateAccountRequest[]) =>

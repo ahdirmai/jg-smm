@@ -15,9 +15,10 @@ import { createController } from './core/controller.js';
 import { clearAuthContext, runLogin, submitAuthInput } from './core/auth.js';
 import { launchBrowser, newAccountContext, type BrowserHandle } from './core/browser.js';
 import { createGeolocation } from './core/geolocation.js';
-import { readSession } from './core/session.js';
+import { readSession, writeSession } from './core/session.js';
 import { createCallback } from './transport/callback.js';
 import { createAuthCallback } from './transport/auth-callback.js';
+import { createSessionCallback } from './transport/session-callback.js';
 import { createQueueConsumer } from './transport/queue.js';
 import { createControlSubscriber, isControlMessage } from './transport/control.js';
 import { configureAdapters } from './platforms/deps.js';
@@ -141,6 +142,11 @@ const authDeps = {
 // its own; without this the row sits on AUTHENTICATING forever.
 const authCallback = createAuthCallback({ ...config, workerId }, logger);
 
+// Session export/import (P-C): the operator can rescue an account's session
+// (cookies) off a container before deleting it. The session never appears in a
+// log line — only the accountId does.
+const sessionCallback = createSessionCallback({ ...config, workerId }, logger);
+
 void control
   .start(async (message) => {
     if (!isControlMessage(message)) {
@@ -169,6 +175,44 @@ void control
       case 'auth-clear':
         clearAuthContext(message.accountId);
         break;
+      case 'auth-export': {
+        // Dump the account's persisted session (cookies) back to the API so an
+        // operator can re-import it into a fresh container. requestId correlates
+        // the dump with the waiting export request.
+        const requestId =
+          typeof message.payload?.requestId === 'string' ? message.payload.requestId : '';
+        if (!requestId) {
+          logger.warn('auth-export without a requestId', { accountId: message.accountId });
+          break;
+        }
+        const session = await readSession(message.platform).catch(() => undefined);
+        await sessionCallback.post({
+          accountId: message.accountId,
+          platform: message.platform,
+          requestId,
+          // null tells the API there is no session on this container to rescue.
+          session: session ?? null,
+        });
+        break;
+      }
+      case 'auth-import': {
+        // Adopt a session handed over from another container. Validate
+        // defensively: a non-object payload is dropped, never written or thrown.
+        const session = message.payload?.session;
+        if (session === null || typeof session !== 'object' || Array.isArray(session)) {
+          logger.warn('auth-import without a valid session payload', {
+            accountId: message.accountId,
+          });
+          break;
+        }
+        await writeSession(message.platform, session);
+        // Log the fact, never the value.
+        logger.info('session imported', {
+          accountId: message.accountId,
+          platform: message.platform,
+        });
+        break;
+      }
       default:
         logger.warn('unknown control type', { type: message.type });
     }

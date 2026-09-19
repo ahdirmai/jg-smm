@@ -208,6 +208,12 @@ func main() {
 			Logger:  logger,
 		})
 		deps.Accounts = apihttp.NewAccountHandler(accountSvc)
+		// The account service is the sink for worker session-export callbacks:
+		// it holds the in-memory waiter that relays the dumped session to the
+		// operator's export request.
+		if deps.Internal != nil {
+			deps.Internal.SetSessionExportSink(accountSvc)
+		}
 		deps.Stream = apihttp.NewStreamHandler(hub)
 
 		// Proxy groups (P1-14): residential pools, region-matched. The same

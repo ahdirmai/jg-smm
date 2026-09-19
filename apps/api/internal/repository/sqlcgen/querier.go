@@ -176,6 +176,11 @@ type Querier interface {
 	ListAnalyticsMentionsByPlatform(ctx context.Context, arg ListAnalyticsMentionsByPlatformParams) ([]AnalyticsMention, error)
 	ListAnalyticsSnapshotsByAccount(ctx context.Context, arg ListAnalyticsSnapshotsByAccountParams) ([]AnalyticsSnapshot, error)
 	ListAuditLogsFiltered(ctx context.Context, arg ListAuditLogsFilteredParams) ([]ListAuditLogsFilteredRow, error)
+	// The pool view across EVERY platform. The composer's pick is platform-scoped
+	// (see PickForTarget), but the dashboard listing needs to show all variants
+	// when no platform filter is applied — otherwise non-Instagram variants are
+	// invisible and the platform filter has nothing to filter.
+	ListAllCommentTemplates(ctx context.Context, arg ListAllCommentTemplatesParams) ([]CommentTemplate, error)
 	// The pool view for one platform. include_inactive is the dashboard's
 	// "show paused variants" toggle; the pool a pick draws from is always active-only
 	// (see PickForTarget).
