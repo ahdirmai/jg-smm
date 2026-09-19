@@ -31,6 +31,7 @@ import {
   needsLogin,
   likePost,
   commentOnPost,
+  replyToComment,
 } from '../../../apps/worker/src/platforms/dom.js';
 import { selectorsFor, type SelectorSet } from '../../../apps/worker/src/sel/index.js';
 import { launchBrowser, newAccountContext } from '../../../apps/worker/src/core/browser.js';
@@ -293,6 +294,58 @@ async function cmdComment(args: Args): Promise<void> {
   }
 }
 
+async function cmdCommentReply(args: Args): Promise<void> {
+  if (!args.url) fail('comment-reply requires --url <commentPermalink>  (e.g. .../p/<post>/c/<commentId>/)');
+  if (!args.text) fail('comment-reply requires --text "..."');
+  const adapter = adapterFor(args.platform);
+  const sel = selectorsFor(args.platform as ActionJob['platform']);
+  const state = await loadStorageState(sessionPath(args.session));
+  reportSession(state, adapter, sessionPath(args.session));
+
+  const { browser, close } = await launchBrowser();
+  const ctx = await newAccountContext(browser, args.platform as ActionJob['platform'], state);
+  const page = await ctx.newPage();
+  try {
+    // The URL is a comment permalink; opening it focuses the target comment.
+    await openPost(page, args.url!);
+    log(`[reply] opened ${page.url()}`);
+    if (await needsLogin(page)) {
+      log('[reply] AUTH WALL — session appears dead (redirected to login/checkpoint).');
+      await maybeKeepOpen(args, ctx);
+      return;
+    }
+
+    if (!args.commit) {
+      const affordance = sel.replyButton ?? sel.commentButton;
+      log(`[reply] DRY RUN — reply affordance: ${affordance ?? '(none pinned)'}`);
+      const candidates = composerCandidates(sel);
+      candidates.forEach((c, i) => log(`           composer [${i}] ${c}`));
+      let match = await probeComposer(page, candidates);
+      if (!match && affordance) {
+        log(`[reply] no composer yet; clicking reply affordance...`);
+        await page.locator(affordance).first().click({ timeout: 5_000 }).catch(() => log('[reply] (affordance click failed/absent)'));
+        await page.waitForTimeout(1_000);
+        match = await probeComposer(page, candidates);
+      }
+      if (!match) {
+        log('[reply] RESULT: NO composer matched after opening reply. <-- fix sel replyButton / composerInputs');
+      } else {
+        log(`[reply] RESULT: matched composer [${match.index}]: ${match.selector} (DRY — not filled/submitted)`);
+      }
+    } else {
+      log('[reply] COMMIT — running the real worker replyToComment() (this POSTS a REAL reply)...');
+      const res = await replyToComment(
+        { page, sel, job: makeJob(args.platform, args.url!, 'reply_comment', args.text) },
+        args.text!,
+      );
+      log(`[reply] COMMIT result: ${JSON.stringify(res)}`);
+    }
+    await maybeKeepOpen(args, ctx);
+  } finally {
+    await close();
+  }
+}
+
 /**
  * The composer probe. Reproduces dom.ts step 1+2 (probe candidates, else click
  * the comment affordance and re-probe) then FILLS the matched candidate — but
@@ -371,6 +424,9 @@ async function main(): Promise<void> {
     case 'comment':
       await cmdComment(args);
       break;
+    case 'comment-reply':
+      await cmdCommentReply(args);
+      break;
     default:
       log(
         [
@@ -378,9 +434,11 @@ async function main(): Promise<void> {
           'SMM local worker harness — headful Playwright against the REAL worker automation.',
           '',
           'Usage:',
-          '  tsx src/run.ts login   --platform instagram',
-          '  tsx src/run.ts like    --url <postUrl> [--platform instagram] [--commit] [--keep-open]',
-          '  tsx src/run.ts comment --url <postUrl> --text "OKE" [--platform instagram] [--commit] [--keep-open]',
+          '  tsx src/run.ts login         --platform instagram',
+          '  tsx src/run.ts like          --url <postUrl> [--platform instagram] [--commit] [--keep-open]',
+          '  tsx src/run.ts comment       --url <postUrl> --text "OKE" [--platform instagram] [--commit] [--keep-open]',
+          '  tsx src/run.ts comment-reply --url <commentPermalink> --text "OKE" [--platform instagram] [--commit]',
+          '                               (comment permalink e.g. .../p/<post>/c/<commentId>/)',
           '',
           'Flags:',
           '  --platform  instagram (default) | threads',

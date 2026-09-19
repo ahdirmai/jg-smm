@@ -29,7 +29,9 @@ export const threadsAdapter: PlatformAdapter = {
   platform: 'threads',
   loginUrl: LOGIN_URL,
   // Threads rides the Instagram session: a single `sessionid` proves it.
-  sessionCookies: ['sessionid'],
+  // ds_user_id ships alongside sessionid on a real Threads login (ref:
+  // jg/automation authCookies) — both prove the session, not the URL alone.
+  sessionCookies: ['sessionid', 'ds_user_id'],
   // Same Meta markup as Instagram — reuse the shared OTP handlers (DRY).
   ...otpHandlers(META_OTP_SELECTOR),
 

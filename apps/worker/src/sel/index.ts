@@ -20,6 +20,12 @@ export interface SelectorSet {
   likeButtonActive?: string;
   /** The button that opens the composer (the "reply" bubble under a post). */
   commentButton?: string;
+  /**
+   * The per-comment "Reply" affordance, for replying to a specific comment on a
+   * comment permalink (`/p/<post>/c/<id>/`). Absent → replyToComment falls back
+   * to `commentButton`.
+   */
+  replyButton?: string;
   /** The composer text box a comment is typed into. */
   composerInput?: string;
   /**
@@ -46,6 +52,9 @@ const SELECTORS: Partial<Record<Platform, SelectorSet>> = {
     // mounted. The button ancestor of the svg is what actually takes the click.
     commentButton:
       'svg[aria-label="Comment"], svg[aria-label="Reply"], button:has(svg[aria-label="Comment"]), [aria-label="Comment"]',
+    // Per-comment Reply affordance. On a /c/<id>/ permalink the target comment
+    // is first, so the first match threads to it. Best-effort — iterate live.
+    replyButton: 'div[role="button"]:has-text("Reply"), button:has-text("Reply")',
     // The composer is a contenteditable on IG, not a textarea.
     composerInput: 'div[contenteditable="true"][role="textbox"]',
     // Tried in order: aria-labelled textarea, the contenteditable box, then a
@@ -67,12 +76,16 @@ const SELECTORS: Partial<Record<Platform, SelectorSet>> = {
     likeButtonActive: 'div[role="button"][aria-pressed="true"] svg, button[aria-label*="nlike"]',
     commentButton: 'div[role="button"][aria-label*="eply"], button[aria-label*="eply"]',
     composerInput: 'div[contenteditable="true"][role="textbox"], textarea',
+    // Lead with the aria-labelled Reply composer (ref: jg/automation worker);
+    // the composer only hydrates after a scroll-to-bottom (dom.ts handles that).
     composerInputs: [
+      '[contenteditable="true"][aria-label*="Reply" i]',
       'div[contenteditable="true"][role="textbox"]',
       'textarea[aria-label*="reply" i]',
       'textarea',
     ],
-    submitButton: 'div[role="button"]:has-text("Post"), button:has-text("Post")',
+    submitButton:
+      'div[role="button"]:has-text("Post"), button[aria-label="Post"], button:has-text("Post")',
   },
 };
 

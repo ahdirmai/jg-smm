@@ -17,7 +17,7 @@ import type { BrowserContext } from 'playwright';
  * live in `core/auth`; it is now the default the Meta adapters opt into.
  */
 export const META_OTP_SELECTOR =
-  'input[name="verificationCode"], input[autocomplete="one-time-code"]';
+  'input[name="verificationCode"], input[autocomplete="one-time-code"], input[name="code"], input[name="checkpoint_submit_input"], input[name="approvals_code"]';
 
 /**
  * Default detection: a login needs operator input when any open page in the

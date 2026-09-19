@@ -104,6 +104,11 @@ export async function commentOnPost(d: DomDeps, text: string): Promise<AdapterRe
     return { ok: false, error: 'no comment selectors pinned' };
   }
 
+  // Threads hydrates the reply composer only after a scroll to the bottom of the
+  // thread, and IG lazy-loads late comments the same way; harmless where the
+  // composer is already mounted. (ref: jg/automation worker.)
+  await scrollToLoadComposer(page);
+
   // 1. The composer is usually already mounted on a permalink.
   let box = await findComposer(d, candidates, COMPOSER_PROBE_MS);
   // 2. If not, click the comment affordance to reveal/focus it, then re-hunt.
@@ -117,14 +122,22 @@ export async function commentOnPost(d: DomDeps, text: string): Promise<AdapterRe
   }
   if (!box) return failShot(d, 'comment composer not found (even after opening it)');
 
-  // 3. Fill. A focus click first: some composers only accept input once focused.
+  // 3. Fill + submit + verify (shared with replyToComment).
+  return fillAndSubmit(d, box, text);
+}
+
+/**
+ * Fill a located composer, submit it, and verify the text landed. Shared by
+ * commentOnPost and replyToComment so "how a comment is sent and confirmed" has
+ * one definition. Submit retries are guarded by `composerStillHas`: once the
+ * composer has cleared the submit landed, so re-pressing would post a DUPLICATE.
+ */
+async function fillAndSubmit(d: DomDeps, box: Locator, text: string): Promise<AdapterResult> {
+  const { page, sel } = d;
+  // A focus click first: some composers only accept input once focused.
   await box.click({ timeout: 3_000 }).catch(() => undefined);
   await box.fill(text, { timeout: 5_000 });
 
-  // Submit keyboard-first, then the Post button as a last resort. Each extra
-  // attempt is guarded by `composerStillHas`: once the composer has cleared the
-  // submit landed, so re-pressing would post a DUPLICATE. Only retry while the
-  // text is still sitting in the box unsent.
   await box.press('Enter').catch(() => undefined);
   let rendered = await waitForCommentText(d, text, 3_000);
   if (!rendered && (await composerStillHas(box, text))) {
@@ -151,6 +164,37 @@ export async function commentOnPost(d: DomDeps, text: string): Promise<AdapterRe
 }
 
 /**
+ * Reply to a specific comment. The target is a comment permalink
+ * (`/p/<post>/c/<commentId>/` on IG) already open in the page, so the target
+ * comment is focused and the first Reply affordance threads to it. Reuses the
+ * same fill/submit/verify path as a top-level comment.
+ */
+export async function replyToComment(d: DomDeps, text: string): Promise<AdapterResult> {
+  const { page, sel } = d;
+  const candidates = composerCandidates(sel);
+  if (candidates.length === 0) {
+    return { ok: false, error: 'no comment selectors pinned' };
+  }
+
+  // Scroll first so a lazily-hydrated reply composer mounts (ref: jg/automation).
+  await scrollToLoadComposer(page);
+  // The composer is sometimes already open on a comment permalink; if not, click
+  // the reply affordance (reply-specific when pinned, else the generic one).
+  let box = await findComposer(d, candidates, COMPOSER_PROBE_MS);
+  const replyAffordance = sel.replyButton ?? sel.commentButton;
+  if (!box && replyAffordance) {
+    await page
+      .locator(replyAffordance)
+      .first()
+      .click({ timeout: 5_000 })
+      .catch(() => undefined);
+    box = await findComposer(d, candidates, COMPOSER_OPEN_TIMEOUT_MS);
+  }
+  if (!box) return failShot(d, 'reply composer not found (even after opening it)');
+  return fillAndSubmit(d, box, text);
+}
+
+/**
  * True while the composer still holds the unsent text. A textarea exposes it as
  * the input value; a contenteditable as its text content. Used to gate submit
  * retries so a landed comment is never posted twice.
@@ -166,6 +210,18 @@ async function composerStillHas(box: Locator, text: string): Promise<boolean> {
 function composerCandidates(sel: SelectorSet): string[] {
   if (sel.composerInputs && sel.composerInputs.length > 0) return sel.composerInputs;
   return sel.composerInput ? [sel.composerInput] : [];
+}
+
+/**
+ * Scroll to the bottom of the thread so a lazily-hydrated reply composer mounts.
+ * Threads renders the composer only after this; IG lazy-loads trailing comments
+ * the same way. Best-effort and harmless when the composer is already present.
+ */
+async function scrollToLoadComposer(page: Page): Promise<void> {
+  // String form so tsc doesn't need the DOM lib for window/document (this runs
+  // in the page, not in the worker's node context).
+  await page.evaluate('window.scrollTo(0, document.body.scrollHeight)').catch(() => undefined);
+  await sleep(600);
 }
 
 /**
