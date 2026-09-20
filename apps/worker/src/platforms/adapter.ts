@@ -43,6 +43,12 @@ export interface PlatformAdapter {
   like(ctx: BrowserContext, job: ActionJob): Promise<AdapterResult>;
   /** Comment on the target post with `job.text`. */
   comment(ctx: BrowserContext, job: ActionJob): Promise<AdapterResult>;
+  /**
+   * Reply to a comment on the target post with `job.text`. Threads the reply
+   * under a comment (IG: preserving the pre-filled @mention; Threads: by the
+   * comment permalink) rather than posting a top-level comment.
+   */
+  replyComment(ctx: BrowserContext, job: ActionJob): Promise<AdapterResult>;
   /** Confirm the effect actually landed (ground truth). */
   verify(ctx: BrowserContext, job: ActionJob): Promise<AdapterResult>;
   /**

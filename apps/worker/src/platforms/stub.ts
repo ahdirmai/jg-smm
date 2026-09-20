@@ -84,6 +84,9 @@ export function makeStubAdapter(config: StubConfig): PlatformAdapter {
     comment(_ctx: BrowserContext, _job: ActionJob): Promise<AdapterResult> {
       return Promise.resolve(notImplementedAction(platform, 'comment'));
     },
+    replyComment(_ctx: BrowserContext, _job: ActionJob): Promise<AdapterResult> {
+      return Promise.resolve(notImplementedAction(platform, 'reply_comment'));
+    },
     verify(_ctx: BrowserContext, _job: ActionJob): Promise<AdapterResult> {
       return Promise.resolve(notImplementedAction(platform, 'verify'));
     },

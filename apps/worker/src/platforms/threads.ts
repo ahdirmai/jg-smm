@@ -17,6 +17,7 @@ import {
   credentialLogin,
   likePost,
   missingText,
+  replyToComment,
   runAction,
   waitForCommentText,
   failShot,
@@ -46,6 +47,11 @@ export const threadsAdapter: PlatformAdapter = {
   comment(ctx: BrowserContext, job: ActionJob): Promise<AdapterResult> {
     if (!job.text) return Promise.resolve(missingText());
     return runAction(ctx, 'threads', job, (d) => commentOnPost(d, job.text as string));
+  },
+
+  replyComment(ctx: BrowserContext, job: ActionJob): Promise<AdapterResult> {
+    if (!job.text) return Promise.resolve(missingText());
+    return runAction(ctx, 'threads', job, (d) => replyToComment(d, job.text as string));
   },
 
   verify(ctx: BrowserContext, job: ActionJob): Promise<AdapterResult> {

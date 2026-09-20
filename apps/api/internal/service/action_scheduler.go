@@ -271,7 +271,9 @@ func (s *ActionScheduler) dispatchOne(ctx context.Context, job domain.ActionJob)
 // denylist. Returns empty text for non-comment actions (a like posts nothing)
 // and when no composer is wired (local play / tests).
 func (s *ActionScheduler) composeText(ctx context.Context, job domain.ActionJob, platform domain.Platform) (string, error) {
-	if s.composer == nil || job.Type != domain.JobTypeActionComment {
+	// Both a comment and a reply post text; a like/report posts nothing.
+	needsText := job.Type == domain.JobTypeActionComment || job.Type == domain.JobTypeActionReplyComment
+	if s.composer == nil || !needsText {
 		return "", nil
 	}
 	// ponytail: template var values ({topic}, {product}) come from Target.Meta
@@ -349,6 +351,8 @@ func actionName(t domain.JobType) string {
 	switch t {
 	case domain.JobTypeActionComment:
 		return "comment"
+	case domain.JobTypeActionReplyComment:
+		return "reply_comment"
 	case domain.JobTypeActionLike:
 		return "like"
 	default:

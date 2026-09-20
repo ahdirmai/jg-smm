@@ -22,6 +22,7 @@ import {
   credentialLogin,
   likePost,
   missingText,
+  replyToComment,
   runAction,
   waitForCommentText,
   failShot,
@@ -51,6 +52,11 @@ export const instagramAdapter: PlatformAdapter = {
   comment(ctx: BrowserContext, job: ActionJob): Promise<AdapterResult> {
     if (!job.text) return Promise.resolve(missingText());
     return runAction(ctx, 'instagram', job, (d) => commentOnPost(d, job.text as string));
+  },
+
+  replyComment(ctx: BrowserContext, job: ActionJob): Promise<AdapterResult> {
+    if (!job.text) return Promise.resolve(missingText());
+    return runAction(ctx, 'instagram', job, (d) => replyToComment(d, job.text as string));
   },
 
   verify(ctx: BrowserContext, job: ActionJob): Promise<AdapterResult> {
