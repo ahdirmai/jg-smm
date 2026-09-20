@@ -135,9 +135,22 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await resp.json()) as T;
 }
 
+// RegionGroup is the hand-rolled shape of GET /api/accounts/by-region (not in
+// the OpenAPI contract): accounts grouped by their worker's region ("wilayah"),
+// each account the same DTO the list endpoint returns.
+export interface RegionGroup {
+  region: string;
+  accounts: Account[];
+}
+export interface AccountsByRegionResponse {
+  regions: RegionGroup[];
+}
+
 export const api = {
   listAccounts: (signal?: AbortSignal) =>
     request<AccountList>('/api/accounts', signal ? { signal } : undefined),
+  listAccountsByRegion: (signal?: AbortSignal) =>
+    request<AccountsByRegionResponse>('/api/accounts/by-region', signal ? { signal } : undefined),
   createAccount: (body: CreateAccountRequest) =>
     request<Account>('/api/accounts', { method: 'POST', body: JSON.stringify(body) }),
   setAccountStatus: (id: string, body: SetAccountStatusRequest) =>

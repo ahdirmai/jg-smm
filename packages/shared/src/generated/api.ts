@@ -1397,7 +1397,10 @@ export interface components {
              * @description The queue JobType; a like needs no text.
              * @enum {string}
              */
-            actionType: "action_like" | "action_comment" | "action_report" | "action_reply_comment";
+            actionType: "action_like" | "action_comment" | "action_report" | "action_reply_comment" | "action_like_comment";
+            /** @description Optional operator-supplied comment body (region-select flow's per-account comment). Omitted → composed from the template pool at dispatch. Only valid for action_comment / action_reply_comment.
+             *      */
+            text?: string;
         };
         /** @description One enqueued action and its live status. */
         ActionJob: {

@@ -25,6 +25,7 @@ import {
 import { AlertCircle, Flag, Heart, Loader2, MessageSquare, Reply } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
+import { RegionCommentWizard } from './region-comment-wizard';
 import { useAccounts } from '@/lib/hooks/use-accounts';
 import { useActions } from '@/lib/hooks/use-actions';
 import { useVirtualRowWindow } from '@/lib/hooks/use-virtual-window';
@@ -164,6 +165,8 @@ export default function ActionsPage() {
 
   return (
     <div className="mx-auto max-w-6xl space-y-4">
+      {/* Region-select comment flow: target link → regions → N accounts → per-account comment. */}
+      <RegionCommentWizard />
       {/* Action to target: pick account + target, then trigger the worker. */}
       <Card>
         <CardHeader className="flex-row items-center justify-between space-y-0">
