@@ -108,6 +108,7 @@ function fakePage(story: Story, sel: SelectorSet): Page {
       press: async () => undefined,
       innerText: async () => story.feedText,
       first: () => loc,
+      last: () => loc,
       filter: () => loc,
     } as unknown as Locator;
     return loc;
@@ -133,6 +134,7 @@ function fakePage(story: Story, sel: SelectorSet): Page {
       },
       innerText: async () => story.composed,
       first: () => loc,
+      last: () => loc,
       filter: () => loc,
     } as unknown as Locator;
     return loc;
@@ -150,6 +152,7 @@ function fakePage(story: Story, sel: SelectorSet): Page {
       press: async () => undefined,
       innerText: async () => story.feedText,
       first: () => loc,
+      last: () => loc,
       filter: () => loc,
     } as unknown as Locator;
     return loc;
@@ -166,6 +169,7 @@ function fakePage(story: Story, sel: SelectorSet): Page {
       press: async () => undefined,
       innerText: async () => story.feedText,
       first: () => loc,
+      last: () => loc,
       filter: () => loc,
     } as unknown as Locator;
     return loc;
@@ -180,7 +184,38 @@ function fakePage(story: Story, sel: SelectorSet): Page {
       press: async () => undefined,
       innerText: async () => story.feedText,
       first: () => loc,
+      last: () => loc,
       filter: () => loc,
+    } as unknown as Locator;
+    return loc;
+  };
+
+  const resolveLocator = (selector: string): Locator => {
+    if (selector === sel.likeButton) return likeButton();
+    if (selector === sel.likeButtonActive) return plain(activeCount(story));
+    if (selector === sel.commentButton) return commentButton();
+    // The composer is a contenteditable on the current Meta rollout; the
+    // textarea candidates are absent, so findComposer walks past them (this
+    // is exactly the ordered-fallback behaviour the P-A fix adds).
+    if (selector.includes('contenteditable')) return composer();
+    if (selector.includes('textarea')) return plain(0);
+    if (selector === sel.submitButton) return submitButton();
+    if (selector === sel.feed) return plain(1);
+    if (selector.includes('verificationCode')) return plain(story.verificationField ? 1 : 0);
+    return plain(1);
+  };
+
+  // The like-button scope (IG action bar). likeRoot takes `.last()` of it and
+  // resolves the like selectors within — so the scope delegates `.locator()`
+  // straight back to the resolver, making scoping transparent to these tests
+  // (the fake has no comment hearts; the scoped active-count path is exercised).
+  const scope = (): Locator => {
+    const loc: Locator = {
+      count: async () => 1,
+      first: () => loc,
+      last: () => loc,
+      filter: () => loc,
+      locator: (s: string) => resolveLocator(s),
     } as unknown as Locator;
     return loc;
   };
@@ -199,18 +234,8 @@ function fakePage(story: Story, sel: SelectorSet): Page {
     evaluate: async () => undefined,
     waitForTimeout: async () => undefined,
     locator: (selector: string): Locator => {
-      if (selector === sel.likeButton) return likeButton();
-      if (selector === sel.likeButtonActive) return plain(activeCount(story));
-      if (selector === sel.commentButton) return commentButton();
-      // The composer is a contenteditable on the current Meta rollout; the
-      // textarea candidates are absent, so findComposer walks past them (this
-      // is exactly the ordered-fallback behaviour the P-A fix adds).
-      if (selector.includes('contenteditable')) return composer();
-      if (selector.includes('textarea')) return plain(0);
-      if (selector === sel.submitButton) return submitButton();
-      if (selector === sel.feed) return plain(1);
-      if (selector.includes('verificationCode')) return plain(story.verificationField ? 1 : 0);
-      return plain(1);
+      if (sel.likeButtonScope && selector === sel.likeButtonScope) return scope();
+      return resolveLocator(selector);
     },
     close: async () => undefined,
   } as unknown as Page;

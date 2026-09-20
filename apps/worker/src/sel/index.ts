@@ -18,6 +18,17 @@ export interface SelectorSet {
   likeButton?: string;
   /** The like button in its pressed/active state. */
   likeButtonActive?: string;
+  /**
+   * Container that scopes the like selectors to the POST's action bar. On IG a
+   * like heart also renders on every comment, so an unscoped `likeButton`
+   * `.first()` targets a comment. The post heart lives in the action bar — the
+   * innermost element that holds BOTH the like heart AND the Comment affordance
+   * — so `likePost`/`likeState` resolve the like button and its active marker
+   * inside `.last()` of this selector (the innermost, i.e. the bar itself).
+   * Absent → the whole page (Threads pre-scopes its like selectors to the
+   * target post, and a post with no comments has a single like heart anyway).
+   */
+  likeButtonScope?: string;
   /** The button that opens the composer (the "reply" bubble under a post). */
   commentButton?: string;
   /**
@@ -76,6 +87,17 @@ const SELECTORS: Partial<Record<Platform, SelectorSet>> = {
     likeButton: 'svg[aria-label="Like"], svg[aria-label="Unlike"]',
     // aria-pressed is the accessibility state Meta flips when a like lands.
     likeButtonActive: 'svg[aria-label="Unlike"], button[aria-pressed="true"] svg',
+    // Scope the like selectors to the POST action bar. Every comment carries its
+    // own like heart (w=16, no Comment svg in its ancestry), so an unscoped
+    // `.first()` in DOM order resolves to a COMMENT heart, not the post's (the
+    // post heart, w=24, renders AFTER the comments in the right column). The
+    // action bar is the tight container holding the like heart AND the Comment
+    // affordance; `:has(Like):has(Comment)` matches every ancestor of it, so
+    // dom.ts takes `.last()` (the innermost = the bar). Verified live: `.last()`
+    // resolves the w=24 post heart and its click flips Like↔Unlike; scoping the
+    // active marker here also stops a liked COMMENT reading as a liked post.
+    likeButtonScope:
+      'div:has(svg[aria-label="Like"]):has(svg[aria-label="Comment"]), div:has(svg[aria-label="Unlike"]):has(svg[aria-label="Comment"])',
     // The affordance that reveals/focuses the composer when it is not already
     // mounted. The button ancestor of the svg is what actually takes the click.
     commentButton:

@@ -166,9 +166,26 @@ export async function needsLogin(page: Page): Promise<boolean> {
 /** How long to wait for the post's action bar (the like button) to paint. */
 const LIKE_BUTTON_TIMEOUT_MS = 8_000;
 
+/**
+ * Root the like selectors resolve against. When `likeButtonScope` is pinned (IG:
+ * every comment renders its own like heart, so an unscoped `likeButton` `.first()`
+ * in DOM order lands on a COMMENT), the post heart lives in the action bar — the
+ * innermost element holding the like heart AND the Comment affordance — so we
+ * take `.last()` of the scope (`:has` matches every ancestor of the bar; the
+ * innermost is the bar). If the scope resolves to nothing (unexpected markup),
+ * fall back to the whole page so a valid post is never misread as "not found".
+ * Absent scope (Threads pre-scopes its like selectors) → the whole page.
+ */
+async function likeRoot(d: DomDeps): Promise<Locator | Page> {
+  const { page, sel } = d;
+  if (!sel.likeButtonScope) return page;
+  const scoped = page.locator(sel.likeButtonScope);
+  return (await scoped.count().catch(() => 0)) > 0 ? scoped.last() : page;
+}
+
 /** Like the post and confirm the button state actually flipped. */
 export async function likePost(d: DomDeps): Promise<AdapterResult> {
-  const { page, sel } = d;
+  const { sel } = d;
   if (!sel.likeButton) return { ok: false, error: 'no like selector pinned' };
 
   // The action bar can paint a beat after openPost returns: IG returns as soon
@@ -177,7 +194,7 @@ export async function likePost(d: DomDeps): Promise<AdapterResult> {
   // single state read here would race that paint and misreport "button not
   // found", so wait (bounded) for the button to be present first.
   const present = await pollUntil(
-    async () => (await page.locator(sel.likeButton!).first().count().catch(() => 0)) > 0,
+    async () => (await (await likeRoot(d)).locator(sel.likeButton!).first().count().catch(() => 0)) > 0,
     d.pollMs ?? POLL_MS,
     LIKE_BUTTON_TIMEOUT_MS,
     d.now,
@@ -188,7 +205,7 @@ export async function likePost(d: DomDeps): Promise<AdapterResult> {
   if (before === undefined) return failShot(d, 'like button not found on the post');
   if (before.liked) return { ok: true }; // idempotent: already liked is success
 
-  await page.locator(sel.likeButton).first().click();
+  await (await likeRoot(d)).locator(sel.likeButton).first().click();
 
   const changed = await pollUntil(
     async () => likeStateChanged(d, before),
@@ -584,18 +601,20 @@ interface LikeState {
  * the svg aria-label (Like↔Unlike), and the pinned active selector.
  */
 async function likeState(d: DomDeps): Promise<LikeState | undefined> {
-  const { page, sel } = d;
+  const { sel } = d;
   if (!sel.likeButton) return undefined;
-  const btn = page.locator(sel.likeButton).first();
+  const root = await likeRoot(d);
+  const btn = root.locator(sel.likeButton).first();
   if ((await btn.count()) === 0) return undefined;
 
   const pressed = await btn.getAttribute('aria-pressed').catch(() => null);
   const label = await btn.getAttribute('aria-label').catch(() => null);
   let active = 0;
   if (sel.likeButtonActive) {
-    active = await page
+    // Count WITHIN the scope: a liked COMMENT would otherwise flip `active` and
+    // read as a liked post (false idempotent success without ever liking it).
+    active = await root
       .locator(sel.likeButtonActive)
-      .first()
       .count()
       .catch(() => 0);
   }
