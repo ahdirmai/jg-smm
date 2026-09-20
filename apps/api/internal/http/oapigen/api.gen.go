@@ -46,6 +46,7 @@ const (
 const (
 	ActionItemActionTypeActionComment      ActionItemActionType = "action_comment"
 	ActionItemActionTypeActionLike         ActionItemActionType = "action_like"
+	ActionItemActionTypeActionLikeComment  ActionItemActionType = "action_like_comment"
 	ActionItemActionTypeActionReplyComment ActionItemActionType = "action_reply_comment"
 	ActionItemActionTypeActionReport       ActionItemActionType = "action_report"
 )
@@ -54,6 +55,7 @@ const (
 const (
 	ActionJobActionTypeActionComment      ActionJobActionType = "action_comment"
 	ActionJobActionTypeActionLike         ActionJobActionType = "action_like"
+	ActionJobActionTypeActionLikeComment  ActionJobActionType = "action_like_comment"
 	ActionJobActionTypeActionReplyComment ActionJobActionType = "action_reply_comment"
 	ActionJobActionTypeActionReport       ActionJobActionType = "action_report"
 )
@@ -62,6 +64,7 @@ const (
 const (
 	ActionReportRowActionTypeActionComment      ActionReportRowActionType = "action_comment"
 	ActionReportRowActionTypeActionLike         ActionReportRowActionType = "action_like"
+	ActionReportRowActionTypeActionLikeComment  ActionReportRowActionType = "action_like_comment"
 	ActionReportRowActionTypeActionReplyComment ActionReportRowActionType = "action_reply_comment"
 	ActionReportRowActionTypeActionReport       ActionReportRowActionType = "action_report"
 )

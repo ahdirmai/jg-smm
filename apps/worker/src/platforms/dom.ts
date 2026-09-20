@@ -217,6 +217,127 @@ export async function likePost(d: DomDeps): Promise<AdapterResult> {
   return { ok: true };
 }
 
+/** Read a like control's state label, whether it is labelled by aria-label
+ * (Instagram: `svg[aria-label="Like"|"Unlike"]`) or by an svg `<title>` (Threads:
+ * `<svg><title>Like|Unlike</title>`). Returns the lowercased word, or undefined
+ * when the element is gone. `liked` is the "Unlike"/"remove like" reading. */
+async function controlLikeLabel(loc: Locator): Promise<string | undefined> {
+  if ((await loc.count().catch(() => 0)) === 0) return undefined;
+  const aria = await loc.getAttribute('aria-label').catch(() => null);
+  if (aria) return aria.trim().toLowerCase();
+  // Threads: the label is an svg <title> inside the button.
+  const title = await loc
+    .locator('svg title')
+    .first()
+    .textContent()
+    .catch(() => null);
+  if (title) return title.trim().toLowerCase();
+  return '';
+}
+
+/** Resolve the first COMMENT like control, excluding the post's own heart. The
+ * post heart (when a post scope is pinned) shares the comment heart's selector;
+ * it is the one inside likeButtonScope, so we skip it and take the next match.
+ * Returns undefined when the only match is the post heart (no comment to like). */
+async function firstCommentLike(d: DomDeps, commentSel: string): Promise<Locator | undefined> {
+  const { page, sel } = d;
+  const all = page.locator(commentSel);
+  const n = await all.count().catch(() => 0);
+  if (n === 0) return undefined;
+
+  // The post heart's element handle (if a post scope is pinned), so we can skip
+  // it by identity rather than by a brittle index.
+  let postHandle: import('playwright').ElementHandle | null = null;
+  if (sel.likeButtonScope && sel.likeButton) {
+    postHandle = await (await likeRoot(d))
+      .locator(sel.likeButton)
+      .first()
+      .elementHandle()
+      .catch(() => null);
+  }
+
+  for (let i = 0; i < n; i++) {
+    const cand = all.nth(i);
+    if (postHandle) {
+      const h = await cand.elementHandle().catch(() => null);
+      const same = h ? await page.evaluate(([a, b]) => a === b, [h, postHandle]).catch(() => false) : false;
+      if (h) await h.dispose().catch(() => undefined);
+      if (same) continue; // this is the post heart, not a comment
+    }
+    return cand;
+  }
+  return undefined;
+}
+
+/**
+ * Like the top comment on the post and confirm the button state flipped
+ * (ACTION_LIKE_COMMENT). Requires `commentLikeButton` to be pinned for the
+ * platform: it never falls back to `likeButton`, which is the POST — liking the
+ * post when asked to like a comment would be a silent wrong action.
+ */
+export async function likeComment(d: DomDeps): Promise<AdapterResult> {
+  const { page, sel } = d;
+  if (!sel.commentLikeButton) {
+    return { ok: false, error: 'like-comment is not supported on this platform yet (no comment-like selector)' };
+  }
+
+  // Wait (bounded) for at least one comment like heart to paint.
+  const present = await pollUntil(
+    async () => (await page.locator(sel.commentLikeButton!).count().catch(() => 0)) > 0,
+    d.pollMs ?? POLL_MS,
+    LIKE_BUTTON_TIMEOUT_MS,
+    d.now,
+  );
+  if (!present) return failShot(d, 'no comment found to like on the post');
+
+  const target = await firstCommentLike(d, sel.commentLikeButton);
+  if (!target) return failShot(d, 'no comment like button found (only the post heart is present)');
+
+  const before = await controlLikeLabel(target);
+  if (before === undefined) return failShot(d, 'comment like button state unreadable');
+  if (/unlike|remove like/i.test(before)) return { ok: true }; // idempotent: already liked
+
+  // Click the BUTTON ancestor, not the svg, and force it. Verified live on a
+  // comment heart: a direct svg click and a plain Playwright click both leave
+  // the state unchanged (an inner element wins Playwright's actionability hit-
+  // test, so the click lands on a non-handling node), while `force: true` — and
+  // a raw JS click — do flip it. force bypasses the intercept check but still
+  // dispatches a real mouse event at the element, which the like handler takes.
+  // `ancestor-or-self` also handles a platform whose commentLikeButton already
+  // points at the button (Threads).
+  // A native JS click dispatched on the button element is what reliably lands
+  // (verified live: a plain Playwright click and even a forced click on the
+  // resolved locator can miss when the comment list re-renders between resolve
+  // and click, but `el.closest(button).click()` evaluated in-page always fires
+  // on the live node). Fall back to a forced Playwright click if evaluate is
+  // unavailable (the fake page in unit tests).
+  const clicked = await target
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .evaluate((el: any) => {
+      const btn = el.closest('[role="button"],button') ?? el;
+      btn.click();
+      return true;
+    })
+    .catch(() => false);
+  if (!clicked) {
+    const clickable = target.locator('xpath=ancestor-or-self::*[self::button or @role="button"][1]');
+    const btnTarget = (await clickable.count().catch(() => 0)) > 0 ? clickable.first() : target;
+    await btnTarget.click({ timeout: 6_000, force: true });
+  }
+
+  const changed = await pollUntil(
+    async () => {
+      const now = await controlLikeLabel(target);
+      return now !== undefined && now !== before;
+    },
+    d.pollMs ?? POLL_MS,
+    VERIFY_TIMEOUT_MS,
+    d.now,
+  );
+  if (!changed) return failShot(d, 'comment like state did not change (verification failed)');
+  return { ok: true };
+}
+
 /** How long to hunt for the composer once the affordance has been clicked. */
 const COMPOSER_OPEN_TIMEOUT_MS = 8_000;
 /** A quick first look: on a permalink the composer is usually already mounted. */

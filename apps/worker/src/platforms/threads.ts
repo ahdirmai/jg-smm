@@ -15,6 +15,7 @@ import type {
 import {
   commentOnPost,
   credentialLogin,
+  likeComment,
   likePost,
   missingText,
   replyToComment,
@@ -52,6 +53,14 @@ export const threadsAdapter: PlatformAdapter = {
   replyComment(ctx: BrowserContext, job: ActionJob): Promise<AdapterResult> {
     if (!job.text) return Promise.resolve(missingText());
     return runAction(ctx, 'threads', job, (d) => replyToComment(d, job.text as string));
+  },
+
+  // Threads' comment-like selector is not pinned yet, so likeComment reports an
+  // honest "not supported" (it never falls back to liking the POST). Wired so
+  // the adapter contract is complete; enable by setting `commentLikeButton` in
+  // sel/index.ts once verified live against a healthy Threads account.
+  likeComment(ctx: BrowserContext, job: ActionJob): Promise<AdapterResult> {
+    return runAction(ctx, 'threads', job, likeComment);
   },
 
   verify(ctx: BrowserContext, job: ActionJob): Promise<AdapterResult> {

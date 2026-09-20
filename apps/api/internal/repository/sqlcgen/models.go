@@ -377,6 +377,7 @@ const (
 	JobTypeACTIONCOMMENT      JobType = "ACTION_COMMENT"
 	JobTypeACTIONREPORT       JobType = "ACTION_REPORT"
 	JobTypeACTIONREPLYCOMMENT JobType = "ACTION_REPLY_COMMENT"
+	JobTypeACTIONLIKECOMMENT  JobType = "ACTION_LIKE_COMMENT"
 )
 
 func (e *JobType) Scan(src interface{}) error {

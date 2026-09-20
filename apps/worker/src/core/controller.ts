@@ -99,6 +99,8 @@ async function dispatch(
       return adapter.comment(ctx, job);
     case 'reply_comment':
       return adapter.replyComment(ctx, job);
+    case 'like_comment':
+      return adapter.likeComment(ctx, job);
     case 'like':
       return adapter.like(ctx, job);
     default:

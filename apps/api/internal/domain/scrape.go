@@ -30,6 +30,7 @@ const (
 	JobTypeActionComment      JobType = "action_comment"
 	JobTypeActionReport       JobType = "action_report"
 	JobTypeActionReplyComment JobType = "action_reply_comment"
+	JobTypeActionLikeComment  JobType = "action_like_comment"
 )
 
 // AllJobTypes lists every job type in a stable order.
@@ -42,6 +43,7 @@ var AllJobTypes = []JobType{
 	JobTypeActionComment,
 	JobTypeActionReport,
 	JobTypeActionReplyComment,
+	JobTypeActionLikeComment,
 }
 
 // Valid reports whether t is a known job type.

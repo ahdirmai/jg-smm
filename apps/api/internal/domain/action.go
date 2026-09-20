@@ -33,7 +33,8 @@ type ActionJob struct {
 // It is the inverse of IsScrape: the shared enum spans both pipelines.
 func (t JobType) IsAction() bool {
 	switch t {
-	case JobTypeActionLike, JobTypeActionComment, JobTypeActionReport, JobTypeActionReplyComment:
+	case JobTypeActionLike, JobTypeActionComment, JobTypeActionReport,
+		JobTypeActionReplyComment, JobTypeActionLikeComment:
 		return true
 	}
 	return false

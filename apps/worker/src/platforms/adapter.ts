@@ -49,6 +49,8 @@ export interface PlatformAdapter {
    * comment permalink) rather than posting a top-level comment.
    */
   replyComment(ctx: BrowserContext, job: ActionJob): Promise<AdapterResult>;
+  /** Like a comment on the target post (not the post itself). */
+  likeComment(ctx: BrowserContext, job: ActionJob): Promise<AdapterResult>;
   /** Confirm the effect actually landed (ground truth). */
   verify(ctx: BrowserContext, job: ActionJob): Promise<AdapterResult>;
   /**

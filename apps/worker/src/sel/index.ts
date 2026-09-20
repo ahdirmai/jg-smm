@@ -29,6 +29,16 @@ export interface SelectorSet {
    * target post, and a post with no comments has a single like heart anyway).
    */
   likeButtonScope?: string;
+  /**
+   * The like heart of a COMMENT (not the post), for the like-comment action.
+   * Distinct from `likeButton`: on a permalink the post heart and a comment
+   * heart share the same aria-label/title, and `likeButton` may be scoped to the
+   * post (Threads) so it never matches a comment at all. likeComment requires
+   * this selector explicitly — it never falls back to `likeButton` (that is the
+   * POST, and liking the post when asked to like a comment is a silent wrong
+   * action). Absent → the platform does not support like-comment yet.
+   */
+  commentLikeButton?: string;
   /** The button that opens the composer (the "reply" bubble under a post). */
   commentButton?: string;
   /**
@@ -98,6 +108,14 @@ const SELECTORS: Partial<Record<Platform, SelectorSet>> = {
     // active marker here also stops a liked COMMENT reading as a liked post.
     likeButtonScope:
       'div:has(svg[aria-label="Like"]):has(svg[aria-label="Comment"]), div:has(svg[aria-label="Unlike"]):has(svg[aria-label="Comment"])',
+    // A comment's like heart. Same aria-label shape as the post heart, but the
+    // post heart is excluded at runtime (it is the one inside likeButtonScope):
+    // on an IG permalink the comment hearts (w=16) precede the post heart
+    // (w=24) in DOM order, so the first match that is NOT the post heart is the
+    // top comment's heart. Verified live: comment hearts carry no Comment svg in
+    // their ancestry (the post action bar does), which is exactly how the post
+    // heart is told apart.
+    commentLikeButton: 'svg[aria-label="Like"], svg[aria-label="Unlike"]',
     // The affordance that reveals/focuses the composer when it is not already
     // mounted. The button ancestor of the svg is what actually takes the click.
     commentButton:
