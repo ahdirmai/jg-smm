@@ -197,6 +197,15 @@ func main() {
 			publisher = transport.NewPublisher(redisClient)
 		}
 
+		// Per-account comment bodies (region-select flow) live in Redis between
+		// enqueue and dispatch. Shared by the enqueue service and the scheduler;
+		// nil without Redis (custom comment text is then unavailable and the
+		// queue falls back to the template pool).
+		var actionTexts port.ActionTextStore
+		if redisClient != nil {
+			actionTexts = adapter.NewActionTextStore(redisClient, "smm:actiontext")
+		}
+
 		// Account API (P1-15 / P1-16): add/list/pause/resume/remove. The
 		// sealer is injected so the plaintext password never reaches the store.
 		// Control carries the auth-login/auth-input flow (P1-11 / P1-12).
@@ -280,7 +289,7 @@ func main() {
 		// the scheduler is the same instance this CRUD handler serves, so a
 		// template edit is visible to dispatch without a restart.
 		templateSvc := service.NewTemplateService(repository.NewTemplateRepo(pg.Queries()), nil, nil, logger)
-		actionSvc := service.NewActionService(actionRepo, accountRepo, scrapeRepo, nil, logger)
+		actionSvc := service.NewActionService(actionRepo, accountRepo, scrapeRepo, nil, logger, actionTexts)
 		deps.Actions = apihttp.NewActionHandler(actionSvc)
 		deps.Templates = apihttp.NewTemplateHandler(templateSvc)
 
@@ -328,6 +337,7 @@ func main() {
 				adapter.NewCooldownGate(redisClient, "smm:cooldown"),
 				adapter.NewRateLimiter(redisClient, "smm:ratelimit"),
 				publisher,
+				actionTexts,
 				service.ActionSchedulerConfig{
 					TickBudget:  cfg.ActionBatchParallelism * 10,
 					Cooldown:    time.Duration(cfg.ActionCooldownSeconds) * time.Second,

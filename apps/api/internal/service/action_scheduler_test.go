@@ -129,7 +129,7 @@ func newSched(t *testing.T, actions *fakeActionStore, cd *schedCooldown, lm *sch
 		actions,
 		&schedAccounts{workerID: "worker-1"},
 		&schedTargets{url: "https://instagram.com/p/x"},
-		composer, cd, lm, tr,
+		composer, cd, lm, tr, nil,
 		ActionSchedulerConfig{
 			TickBudget: 5,
 			Cooldown:   60 * time.Second,
@@ -199,7 +199,7 @@ func TestActionSchedulerAccountPaceBlocks(t *testing.T) {
 		store,
 		&schedAccounts{workerID: "worker-1"},
 		&schedTargets{url: "https://instagram.com/p/x"},
-		nil, cd, lm, tr,
+		nil, cd, lm, tr, nil,
 		ActionSchedulerConfig{
 			TickBudget:  5,
 			Cooldown:    60 * time.Second,
@@ -235,7 +235,7 @@ func TestActionSchedulerAccountPaceAllowsWhenFree(t *testing.T) {
 		store,
 		&schedAccounts{workerID: "worker-1"},
 		&schedTargets{url: "https://instagram.com/p/x"},
-		nil, cd, lm, tr,
+		nil, cd, lm, tr, nil,
 		ActionSchedulerConfig{
 			TickBudget:  5,
 			Cooldown:    60 * time.Second,

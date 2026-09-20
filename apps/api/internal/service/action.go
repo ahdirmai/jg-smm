@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
 	"github.com/ahdirmai/jg-smm/apps/api/internal/port"
@@ -27,7 +28,17 @@ type ActionService struct {
 	scrapes  narrowTargetWriter
 	clock    port.Clock
 	log      *slog.Logger
+	// texts holds an operator-supplied per-account comment body until the
+	// scheduler composes the job. Optional: nil means the region-select flow's
+	// custom comment is unavailable and every comment falls back to the template
+	// pool (local play / no Redis).
+	texts port.ActionTextStore
 }
+
+// ActionTextTTL bounds how long a per-account comment body waits for dispatch.
+// Generous relative to the pacing gate (minutes) so a queued custom comment is
+// never dropped before its job runs, but not unbounded.
+const ActionTextTTL = 24 * 60 * 60 // seconds (24h)
 
 // narrowTargetWriter is the slice of port.ScrapeStore the enqueue path needs:
 // turn a pasted permalink into a Target row (find-or-create) so the scheduler
@@ -41,7 +52,19 @@ type ActionItem struct {
 	AccountID string
 	TargetURL string
 	Type      domain.JobType
+	// Text is an optional operator-supplied comment body (region-select flow's
+	// per-account comment). Empty → the scheduler composes from the template
+	// pool as before. Only meaningful for comment/reply actions; ignored for a
+	// like. Held in the text store keyed by the created job id, read back at
+	// dispatch. Requires a text store to be wired — without one it is dropped
+	// (and the job falls back to a template).
+	Text string
 }
+
+// MaxCommentTextLen caps an operator-supplied comment body. Instagram's own
+// limit is ~2200 chars; this rejects a pathologically long paste before it
+// reaches the store or the worker.
+const MaxCommentTextLen = 2200
 
 // ActionView is one queue row: the job's live status plus the latest attempt's
 // verdict, which is what an operator actually reads.
@@ -59,6 +82,7 @@ func NewActionService(
 	scrapes narrowTargetWriter,
 	clock port.Clock,
 	logger *slog.Logger,
+	texts port.ActionTextStore,
 ) *ActionService {
 	if logger == nil {
 		logger = slog.Default()
@@ -66,7 +90,7 @@ func NewActionService(
 	if clock == nil {
 		clock = systemClock{}
 	}
-	return &ActionService{actions: actions, accounts: accounts, scrapes: scrapes, clock: clock, log: logger}
+	return &ActionService{actions: actions, accounts: accounts, scrapes: scrapes, clock: clock, log: logger, texts: texts}
 }
 
 // Enqueue turns a batch of intents into PENDING jobs. Every item is validated
@@ -86,6 +110,10 @@ func (s *ActionService) Enqueue(ctx context.Context, items []ActionItem) ([]doma
 	jobs := make([]domain.ActionJob, 0, len(items))
 	now := s.clock.Now()
 
+	// Per-item comment bodies are stored AFTER their jobs are created (a job id
+	// is the key), so remember each item's text by its index in the batch.
+	texts := make(map[int]string, len(items))
+
 	for i, item := range items {
 		if err := validateActionType(item.Type); err != nil {
 			return nil, fmt.Errorf("item %d: %w", i, err)
@@ -93,6 +121,19 @@ func (s *ActionService) Enqueue(ctx context.Context, items []ActionItem) ([]doma
 		u, err := safeTargetURL(item.TargetURL)
 		if err != nil {
 			return nil, fmt.Errorf("item %d: %w", i, err)
+		}
+		if text := strings.TrimSpace(item.Text); text != "" {
+			if len(text) > MaxCommentTextLen {
+				return nil, fmt.Errorf("item %d: %w: comment text is %d chars, the cap is %d", i, domain.ErrValidation, len(text), MaxCommentTextLen)
+			}
+			// A supplied body only makes sense for an action that posts text.
+			if item.Type != domain.JobTypeActionComment && item.Type != domain.JobTypeActionReplyComment {
+				return nil, fmt.Errorf("item %d: %w: comment text is only valid for a comment or reply action, not %s", i, domain.ErrValidation, item.Type)
+			}
+			if s.texts == nil {
+				return nil, fmt.Errorf("item %d: %w: per-account comment text is not available (no text store configured)", i, domain.ErrValidation)
+			}
+			texts[i] = text
 		}
 
 		// The account decides the platform, and a target must live under the
@@ -127,10 +168,19 @@ func (s *ActionService) Enqueue(ctx context.Context, items []ActionItem) ([]doma
 	}
 
 	created := make([]domain.ActionJob, 0, len(jobs))
-	for _, j := range jobs {
+	for idx, j := range jobs {
 		row, err := s.actions.CreateActionJob(ctx, j)
 		if err != nil {
 			return nil, fmt.Errorf("create action job: %w", err)
+		}
+		// Stash the operator's comment body under the new job id so the scheduler
+		// reads it at dispatch instead of composing from templates. Best-effort:
+		// a store failure is logged, not fatal — the job still runs and simply
+		// falls back to a template, which is the pre-existing behaviour.
+		if text, ok := texts[idx]; ok && s.texts != nil {
+			if err := s.texts.Put(ctx, row.ID, text, ActionTextTTL*time.Second); err != nil {
+				s.log.Warn("store per-account comment text failed; job will fall back to template", "job", row.ID, "err", err)
+			}
 		}
 		created = append(created, row)
 	}

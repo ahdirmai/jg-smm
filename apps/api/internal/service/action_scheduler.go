@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
@@ -59,6 +60,10 @@ type ActionScheduler struct {
 	cfg       ActionSchedulerConfig
 	clock     func() time.Time
 	log       *slog.Logger
+	// texts is the operator-supplied per-account comment store (region-select
+	// flow). Optional: when a job has a stored body it is used verbatim instead
+	// of composing from the template pool; nil or a miss falls back to the pool.
+	texts port.ActionTextStore
 }
 
 // ActionSchedulerConfig bounds the loop. Zero values fall back to documented
@@ -99,6 +104,7 @@ func NewActionScheduler(
 	cooldown port.CooldownGate,
 	limits port.RateLimiter,
 	transport port.Publisher,
+	texts port.ActionTextStore,
 	cfg ActionSchedulerConfig,
 ) *ActionScheduler {
 	if cfg.TickBudget <= 0 {
@@ -124,6 +130,7 @@ func NewActionScheduler(
 		cooldown:  cooldown,
 		limits:    limits,
 		transport: transport,
+		texts:     texts,
 		cfg:       cfg,
 		clock:     cfg.Clock,
 		log:       cfg.Logger,
@@ -298,7 +305,20 @@ func (s *ActionScheduler) dispatchOne(ctx context.Context, job domain.ActionJob)
 func (s *ActionScheduler) composeText(ctx context.Context, job domain.ActionJob, platform domain.Platform) (string, error) {
 	// Both a comment and a reply post text; a like/report posts nothing.
 	needsText := job.Type == domain.JobTypeActionComment || job.Type == domain.JobTypeActionReplyComment
-	if s.composer == nil || !needsText {
+	if !needsText {
+		return "", nil
+	}
+	// An operator-supplied per-account body (region-select flow) wins over the
+	// template pool. A store miss or error falls through to composition, so the
+	// job still ships a template rather than failing on a transient Redis blip.
+	if s.texts != nil {
+		if text, ok, err := s.texts.Get(ctx, job.ID); err != nil {
+			s.log.Warn("read per-account comment text failed; falling back to template", "job", job.ID, "err", err)
+		} else if ok && strings.TrimSpace(text) != "" {
+			return text, nil
+		}
+	}
+	if s.composer == nil {
 		return "", nil
 	}
 	// ponytail: template var values ({topic}, {product}) come from Target.Meta

@@ -45,11 +45,15 @@ func (h *ActionHandler) enqueue(c echo.Context) error {
 
 	items := make([]service.ActionItem, 0, len(req.Items))
 	for _, it := range req.Items {
-		items = append(items, service.ActionItem{
+		item := service.ActionItem{
 			AccountID: it.AccountId,
 			TargetURL: it.TargetUrl,
 			Type:      domain.JobType(it.ActionType),
-		})
+		}
+		if it.Text != nil {
+			item.Text = *it.Text
+		}
+		items = append(items, item)
 	}
 
 	jobs, err := h.actions.Enqueue(c.Request().Context(), items)

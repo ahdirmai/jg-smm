@@ -320,6 +320,11 @@ type ActionItem struct {
 
 	// TargetUrl Permalink of the post to act on. SSRF-guarded server-side.
 	TargetUrl string `json:"targetUrl"`
+
+	// Text Optional operator-supplied comment body (region-select flow's
+	// per-account comment). Empty/omitted → composed from the template pool.
+	// Only valid for a comment or reply action.
+	Text *string `json:"text,omitempty"`
 }
 
 // ActionItemActionType The queue JobType; a like needs no text.
