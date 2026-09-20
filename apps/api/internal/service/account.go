@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -131,6 +133,71 @@ func (s *AccountService) List(ctx context.Context) ([]AccountSummary, error) {
 		views = append(views, toAccountView(a))
 	}
 	return views, nil
+}
+
+// RegionGroup is the accounts operating from one region ("wilayah"), the unit
+// the region-select comment flow fans an action out over.
+type RegionGroup struct {
+	Region   string           `json:"region"`
+	Accounts []AccountSummary `json:"accounts"`
+}
+
+// UnassignedRegion labels accounts whose worker has no region, or that have no
+// worker at all. It sorts last so a real region is never hidden behind it.
+const UnassignedRegion = "unassigned"
+
+// AccountsByRegion groups every account by the region of the worker it runs on
+// (account.worker_id -> worker.region). An account with no worker, or a worker
+// with a blank region, lands in UnassignedRegion. Composed from the existing
+// account + worker lists (no new query): the fleet is small, so a per-worker
+// region map is cheap and keeps this off the sqlc path.
+func (s *AccountService) AccountsByRegion(ctx context.Context) ([]RegionGroup, error) {
+	accounts, err := s.accounts.List(ctx, port.AccountFilter{Limit: 200})
+	if err != nil {
+		return nil, fmt.Errorf("account service: by-region: list accounts: %w", err)
+	}
+	regionByWorker := map[string]string{}
+	if s.workers != nil {
+		workers, err := s.workers.List(ctx, port.WorkerFilter{Limit: 500})
+		if err != nil {
+			return nil, fmt.Errorf("account service: by-region: list workers: %w", err)
+		}
+		for _, w := range workers {
+			regionByWorker[w.ID] = strings.TrimSpace(w.Region)
+		}
+	}
+
+	byRegion := map[string][]AccountSummary{}
+	for _, a := range accounts {
+		region := UnassignedRegion
+		if a.WorkerID != nil {
+			if r, ok := regionByWorker[*a.WorkerID]; ok && r != "" {
+				region = r
+			}
+		}
+		byRegion[region] = append(byRegion[region], toAccountView(a))
+	}
+
+	regions := make([]string, 0, len(byRegion))
+	for r := range byRegion {
+		regions = append(regions, r)
+	}
+	// Real regions alphabetical, UnassignedRegion always last.
+	sort.Slice(regions, func(i, j int) bool {
+		if regions[i] == UnassignedRegion {
+			return false
+		}
+		if regions[j] == UnassignedRegion {
+			return true
+		}
+		return regions[i] < regions[j]
+	})
+
+	groups := make([]RegionGroup, 0, len(regions))
+	for _, r := range regions {
+		groups = append(groups, RegionGroup{Region: r, Accounts: byRegion[r]})
+	}
+	return groups, nil
 }
 
 // Pause suspends an account: it is unassigned from its container so the worker

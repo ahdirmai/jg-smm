@@ -31,6 +31,8 @@ func NewAccountHandler(accounts *service.AccountService) *AccountHandler {
 func (h *AccountHandler) Register(g *echo.Group) {
 	g.POST("/accounts", h.create, RequirePermission(domain.PermAct))
 	g.GET("/accounts", h.list)
+	// Accounts grouped by region ("wilayah") for the region-select comment flow.
+	g.GET("/accounts/by-region", h.byRegion)
 	g.POST("/accounts/import", h.importRows, RequirePermission(domain.PermAct))
 	g.POST("/accounts/:accountId", h.setStatus, RequirePermission(domain.PermAct))
 	g.DELETE("/accounts/:accountId", h.remove, RequirePermission(domain.PermAct))
@@ -203,6 +205,33 @@ func (h *AccountHandler) list(c echo.Context) error {
 		items = append(items, toAccountResponse(v))
 	}
 	return c.JSON(http.StatusOK, oapigen.AccountList{Accounts: items})
+}
+
+// regionGroupResponse is the wire shape for GET /accounts/by-region. Hand-rolled
+// (not oapigen) so the region-select flow can ship without an OpenAPI regen;
+// each account reuses the same account DTO the list endpoint returns.
+type regionGroupResponse struct {
+	Region   string            `json:"region"`
+	Accounts []oapigen.Account `json:"accounts"`
+}
+
+func (h *AccountHandler) byRegion(c echo.Context) error {
+	if h.accounts == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "account service unavailable")
+	}
+	groups, err := h.accounts.AccountsByRegion(c.Request().Context())
+	if err != nil {
+		return translateAccountError(err)
+	}
+	out := make([]regionGroupResponse, 0, len(groups))
+	for _, g := range groups {
+		accs := make([]oapigen.Account, 0, len(g.Accounts))
+		for _, v := range g.Accounts {
+			accs = append(accs, toAccountResponse(v))
+		}
+		out = append(out, regionGroupResponse{Region: g.Region, Accounts: accs})
+	}
+	return c.JSON(http.StatusOK, map[string]any{"regions": out})
 }
 
 // setStatus drives pause/resume.
