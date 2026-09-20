@@ -108,6 +108,7 @@ function fakePage(story: Story, sel: SelectorSet): Page {
       press: async () => undefined,
       innerText: async () => story.feedText,
       first: () => loc,
+      filter: () => loc,
     } as unknown as Locator;
     return loc;
   };
@@ -117,6 +118,13 @@ function fakePage(story: Story, sel: SelectorSet): Page {
       count: async () => (story.composerOpen ? 1 : 0),
       click: async () => undefined,
       getAttribute: async () => null,
+      // The IG/Threads composer is a contenteditable, not an <input>: real
+      // Playwright `inputValue()` REJECTS on it, and `composerStillHas` relies on
+      // that to fall through to `innerText`. Modelling it as a throw keeps the
+      // fake honest to the contenteditable contract the flow is written against.
+      inputValue: async () => {
+        throw new Error('Node is not an <input>, <textarea> or <select> element');
+      },
       fill: async (text: string) => {
         story.composed = text;
       },
@@ -125,6 +133,7 @@ function fakePage(story: Story, sel: SelectorSet): Page {
       },
       innerText: async () => story.composed,
       first: () => loc,
+      filter: () => loc,
     } as unknown as Locator;
     return loc;
   };
@@ -141,6 +150,7 @@ function fakePage(story: Story, sel: SelectorSet): Page {
       press: async () => undefined,
       innerText: async () => story.feedText,
       first: () => loc,
+      filter: () => loc,
     } as unknown as Locator;
     return loc;
   };
@@ -156,6 +166,7 @@ function fakePage(story: Story, sel: SelectorSet): Page {
       press: async () => undefined,
       innerText: async () => story.feedText,
       first: () => loc,
+      filter: () => loc,
     } as unknown as Locator;
     return loc;
   };
@@ -169,6 +180,7 @@ function fakePage(story: Story, sel: SelectorSet): Page {
       press: async () => undefined,
       innerText: async () => story.feedText,
       first: () => loc,
+      filter: () => loc,
     } as unknown as Locator;
     return loc;
   };
@@ -180,6 +192,12 @@ function fakePage(story: Story, sel: SelectorSet): Page {
       story.url = story.loginRedirect ? 'https://www.instagram.com/accounts/login/' : url;
     },
     url: () => story.url,
+    // In-page scripts (scrollToLoadComposer's scroll-to-bottom, deep-link
+    // recovery probes) run against a real DOM in the browser; the fake has none,
+    // so evaluate is a no-op. The flow treats it as best-effort (`.catch`), so a
+    // no-op faithfully models "nothing to scroll" rather than masking a failure.
+    evaluate: async () => undefined,
+    waitForTimeout: async () => undefined,
     locator: (selector: string): Locator => {
       if (selector === sel.likeButton) return likeButton();
       if (selector === sel.likeButtonActive) return plain(activeCount(story));

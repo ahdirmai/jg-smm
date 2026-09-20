@@ -34,12 +34,120 @@ export interface DomDeps {
   now?: () => number;
 }
 
+/** How long to wait for a bounced permalink to inject its post link / to route. */
+const DEEPLINK_RECOVER_MS = 8_000;
+const DEEPLINK_POLL_MS = 400;
+
+/** The post shortcode in a Meta permalink (IG `/p|reel|tv/<code>`, Threads `/post/<code>`). */
+export function postShortcode(url: string): string | undefined {
+  return /\/(?:p|reel|tv|post|c)\/([A-Za-z0-9_-]+)/.exec(url)?.[1];
+}
+
+/** Bound for the account-chooser interstitial to appear/settle after a cold load. */
+const INTERSTITIAL_WAIT_MS = 4_000;
+
+/**
+ * Dismiss Meta's "Continue as <user>" account-chooser interstitial if present.
+ * A cold context lands on it with a valid session; the "Continue" button (a
+ * `<button>`/`<div role=button>`/`<a>` whose own text is exactly "Continue")
+ * warms the profile. Returns true when a Continue affordance was clicked, so the
+ * caller knows to re-navigate. Best-effort: any miss or error returns false and
+ * the normal flow proceeds. Scoped to an exact-text match so it never fires on
+ * an unrelated "Continue" elsewhere in the app.
+ */
+export async function dismissContinueInterstitial(page: Page): Promise<boolean> {
+  const btn = page
+    .locator('button, div[role="button"], a')
+    .filter({ hasText: /^\s*Continue\s*$/ })
+    .first();
+  const started = Date.now();
+  while (Date.now() - started < INTERSTITIAL_WAIT_MS) {
+    if ((await btn.count().catch(() => 0)) > 0) {
+      const clicked = await btn
+        .click({ timeout: 5_000 })
+        .then(() => true)
+        .catch(() => false);
+      if (clicked) {
+        await sleep(DEEPLINK_POLL_MS);
+        return true;
+      }
+    }
+    await sleep(DEEPLINK_POLL_MS);
+  }
+  return false;
+}
+
 /**
  * Open a post permalink. `domcontentloaded` only: `networkidle` never fires on
  * a Meta page (infinite re-layout), so waiting on it would time out every job.
+ *
+ * Deep-link recovery (Threads): a COLD permalink load boots the SPA, which
+ * bounces to the home feed and normalises the URL to `/` — but it injects the
+ * target post's own link into that feed (`injected_media_ids`). A full
+ * `page.goto` can only ever cold-boot, so it never lands on the post. When we
+ * bounce, click the injected link: that is a client-side route, which the SPA
+ * resolves to the standalone post view. IG lands on the permalink directly, so
+ * the URL already carries the shortcode and this is a no-op there.
  */
 export async function openPost(page: Page, url: string): Promise<void> {
   await page.goto(url, { waitUntil: 'domcontentloaded' });
+
+  const short = postShortcode(url);
+  if (!short) return;
+
+  // Already on the post (IG, or a Threads load that didn't bounce): done, and
+  // crucially we do NOT wait on anything below — IG mounts the composer only
+  // after the comment affordance is clicked, so waiting for it here would hang.
+  const onPost = (): boolean => page.url().includes(short);
+  if (onPost()) return;
+
+  // Meta account-chooser interstitial. A COLD browser context (fresh container
+  // profile, valid session cookie but no warmed profile) loads a permalink into
+  // a "Continue as <user>" screen that bounces the URL to `/` with NO injected
+  // post link — so the deeplink recovery below can never find one to click, and
+  // every action reads an empty action bar ("like button not found"). Clicking
+  // Continue warms the profile; a re-goto then lands on the permalink directly
+  // (IG). Verified live in-container: post URL bounced to `/`, one Continue
+  // click + re-goto put the like button back on the page. Best-effort and
+  // bounded: absent screen → no-op, and Threads still falls through to recovery.
+  if (await dismissContinueInterstitial(page)) {
+    await page.goto(url, { waitUntil: 'domcontentloaded' });
+    if (onPost()) return;
+  }
+
+  // Bounced (Threads): click the injected post link to client-side route in.
+  let recovered = false;
+  const started = Date.now();
+  while (!onPost() && Date.now() - started < DEEPLINK_RECOVER_MS) {
+    const link = page.locator(`a[href*="${short}"]`).first();
+    if ((await link.count().catch(() => 0)) > 0) {
+      await link.click({ timeout: 5_000 }).catch(() => undefined);
+      await sleep(DEEPLINK_POLL_MS);
+      if (onPost()) {
+        recovered = true;
+        break;
+      }
+    }
+    await sleep(DEEPLINK_POLL_MS);
+  }
+
+  // The URL flips to the permalink before the post view finishes mounting, so a
+  // caller that reads the action bar immediately (likePost takes one look, it
+  // does not poll) races the render. After a recovery, wait for the composer —
+  // it mounts together with the post's action bar — so the post is interactive
+  // before we hand back. Bounded; a miss just means the action's own verify runs.
+  if (recovered) {
+    const renderBy = Date.now() + DEEPLINK_RECOVER_MS;
+    while (Date.now() < renderBy) {
+      const present = await page
+        .locator('div[contenteditable="true"][role="textbox"]')
+        .count()
+        .then((n) => n > 0)
+        .catch(() => false);
+      if (present) break;
+      await sleep(DEEPLINK_POLL_MS);
+    }
+  }
 }
 
 /**
@@ -55,10 +163,26 @@ export async function needsLogin(page: Page): Promise<boolean> {
   return count > 0;
 }
 
+/** How long to wait for the post's action bar (the like button) to paint. */
+const LIKE_BUTTON_TIMEOUT_MS = 8_000;
+
 /** Like the post and confirm the button state actually flipped. */
 export async function likePost(d: DomDeps): Promise<AdapterResult> {
   const { page, sel } = d;
   if (!sel.likeButton) return { ok: false, error: 'no like selector pinned' };
+
+  // The action bar can paint a beat after openPost returns: IG returns as soon
+  // as the URL carries the post shortcode (openPost does NOT wait, so the IG
+  // composer path is not blocked), which is before the like button mounts. A
+  // single state read here would race that paint and misreport "button not
+  // found", so wait (bounded) for the button to be present first.
+  const present = await pollUntil(
+    async () => (await page.locator(sel.likeButton!).first().count().catch(() => 0)) > 0,
+    d.pollMs ?? POLL_MS,
+    LIKE_BUTTON_TIMEOUT_MS,
+    d.now,
+  );
+  if (!present) return failShot(d, 'like button not found on the post');
 
   const before = await likeState(d);
   if (before === undefined) return failShot(d, 'like button not found on the post');
@@ -80,6 +204,8 @@ export async function likePost(d: DomDeps): Promise<AdapterResult> {
 const COMPOSER_OPEN_TIMEOUT_MS = 8_000;
 /** A quick first look: on a permalink the composer is usually already mounted. */
 const COMPOSER_PROBE_MS = 1_000;
+/** How long to wait for IG to pre-fill the "@mention" after opening a reply. */
+const MENTION_TIMEOUT_MS = 5_000;
 
 /**
  * Submit a comment and verify it rendered (§7.4). The flow is defensive because
@@ -178,20 +304,114 @@ export async function replyToComment(d: DomDeps, text: string): Promise<AdapterR
 
   // Scroll first so a lazily-hydrated reply composer mounts (ref: jg/automation).
   await scrollToLoadComposer(page);
-  // The composer is sometimes already open on a comment permalink; if not, click
-  // the reply affordance (reply-specific when pinned, else the generic one).
-  let box = await findComposer(d, candidates, COMPOSER_PROBE_MS);
+
+  // A reply threads under a comment ONLY if we open that comment's reply box:
+  // clicking its Reply affordance focuses the composer. On IG this also pre-fills
+  // the "@username" mention that anchors the reply. Always click it — a top-level
+  // composer that happens to be mounted would post a top-level comment instead.
   const replyAffordance = sel.replyButton ?? sel.commentButton;
-  if (!box && replyAffordance) {
+  if (replyAffordance) {
     await page
       .locator(replyAffordance)
       .first()
       .click({ timeout: 5_000 })
       .catch(() => undefined);
-    box = await findComposer(d, candidates, COMPOSER_OPEN_TIMEOUT_MS);
   }
-  if (!box) return failShot(d, 'reply composer not found (even after opening it)');
-  return fillAndSubmit(d, box, text);
+  const box = await findComposer(d, candidates, COMPOSER_OPEN_TIMEOUT_MS);
+  if (!box) return failShot(d, 'reply composer not found (after clicking Reply)');
+
+  await box.click({ timeout: 3_000 }).catch(() => undefined);
+
+  // Two threading models, keyed by the platform selector flag (no platform
+  // branch in this DIP-neutral helper):
+  //
+  //   • MENTION model (IG, replyPrefillsMention): the reply box pre-fills an
+  //     "@username" that anchors the thread. Require it (its absence proves we
+  //     opened the top-level composer, not the comment's reply box), then APPEND
+  //     the text so the mention is preserved (fill() would wipe it → unthreaded).
+  //
+  //   • PERMALINK model (Threads): the reply is threaded by the comment permalink
+  //     it is posted from — the composer holds NO mention (verified live: empty
+  //     box, placeholder "Reply to <user>..."). Fill directly; requiring a
+  //     mention here would fail every Threads reply.
+  if (sel.replyPrefillsMention) {
+    // Require the "@username" mention IG pre-fills when a COMMENT's reply box opens.
+    // Its presence is the proof we opened a threaded reply and not the top-level
+    // composer — without it a submit posts a plain top-level comment (the bug: the
+    // reply landed unthreaded with no tag). No mention → fail loudly and iterate
+    // the reply affordance rather than silently posting to the wrong place.
+    const mention = await waitForMention(box, MENTION_TIMEOUT_MS);
+    if (!mention) {
+      return failShot(
+        d,
+        'reply did not open a threaded composer (no @mention prefilled — the reply affordance is not the target comment)',
+      );
+    }
+    await box.press('End').catch(() => undefined);
+    const sep = mention.endsWith(' ') ? '' : ' ';
+    const full = `${mention}${sep}${text}`;
+    // Append after the mention (never fill(): that would wipe the mention).
+    await box.pressSequentially(`${sep}${text}`, { timeout: 5_000 }).catch(() => box.fill(full));
+    return submitReply(d, box, text, full);
+  }
+
+  // PERMALINK model: fill the reply text directly (no mention to preserve).
+  await box.fill(text, { timeout: 5_000 });
+  return submitReply(d, box, text, text);
+}
+
+/**
+ * Submit a filled reply composer and confirm it cleared. Composer-clearing is
+ * the "reply sent" signal (not feed body-text, which would false-positive on a
+ * pre-existing identical comment). Shared by both threading models above.
+ */
+async function submitReply(
+  d: DomDeps,
+  box: Locator,
+  text: string,
+  rendered: string,
+): Promise<AdapterResult> {
+  const { page, sel } = d;
+  await box.press('Enter').catch(() => undefined);
+  let sent = await composerCleared(box, text, 3_000);
+  if (!sent && sel.submitButton) {
+    await page
+      .locator(sel.submitButton)
+      .first()
+      .click({ timeout: 5_000 })
+      .catch(() => undefined);
+    sent = await composerCleared(box, text, VERIFY_TIMEOUT_MS);
+  }
+  if (!sent) return failShot(d, 'reply not submitted (composer still holds the text)');
+  return { ok: true, renderedText: rendered };
+}
+
+/** Poll the composer until it holds an "@mention" prefill, or the bound expires. */
+async function waitForMention(box: Locator, timeoutMs: number): Promise<string | undefined> {
+  const started = Date.now();
+  for (;;) {
+    const v = (await composerValue(box)).trim();
+    if (v.startsWith('@') && v.length > 1) return v;
+    if (Date.now() - started >= timeoutMs) return undefined;
+    await sleep(POLL_MS);
+  }
+}
+
+/** Current composer contents (textarea value or contenteditable text). */
+async function composerValue(box: Locator): Promise<string> {
+  const val = await box.inputValue().catch(() => null);
+  if (val !== null) return val;
+  return await box.innerText().catch(() => '');
+}
+
+/** Poll until the composer no longer holds `text` (i.e. the submit landed). */
+async function composerCleared(box: Locator, text: string, timeoutMs: number): Promise<boolean> {
+  const started = Date.now();
+  for (;;) {
+    if (!(await composerStillHas(box, text))) return true;
+    if (Date.now() - started >= timeoutMs) return false;
+    await sleep(POLL_MS);
+  }
 }
 
 /**

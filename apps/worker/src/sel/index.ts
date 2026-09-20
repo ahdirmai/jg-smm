@@ -26,6 +26,14 @@ export interface SelectorSet {
    * to `commentButton`.
    */
   replyButton?: string;
+  /**
+   * True when opening a comment's reply box PRE-FILLS an "@username" mention that
+   * anchors the reply to that comment (Instagram). The reply flow then requires
+   * and preserves that mention (append, never fill). False/absent when the
+   * platform threads a reply by the comment PERMALINK it is posted from, with no
+   * mention in the body (Threads) — the flow fills the composer directly.
+   */
+  replyPrefillsMention?: boolean;
   /** The composer text box a comment is typed into. */
   composerInput?: string;
   /**
@@ -39,13 +47,33 @@ export interface SelectorSet {
   submitButton?: string;
 }
 
+/**
+ * The target-post scope on Threads. A permalink view keeps the entire home feed
+ * mounted behind it, so an unscoped action selector matches dozens of feed rows.
+ * The post under the permalink is the single pressable container that also holds
+ * the reply composer (the feed rows have none), so this anchors every Threads
+ * action selector to exactly that post. (Verified live: count 1.)
+ */
+const THREADS_TARGET =
+  'div[data-pressable-container="true"]:has(div[contenteditable="true"][role="textbox"])';
+
 const SELECTORS: Partial<Record<Platform, SelectorSet>> = {
   instagram: {
     // The main column is the feed landmark on a post permalink.
     feed: 'main [role=feed], main section',
     // A rendered comment is an <article> sibling of the post, or a list item.
     commentItem: 'article, li[role=menuitem], div[role=button] > span',
-    likeButton: 'svg[aria-label="Like"], svg[aria-label="Unlike"], section button svg',
+    // MUST match BOTH Like+Unlike (state flips on like) so likeState can read
+    // the flip. The old `section button svg` fallback was a trap: Playwright
+    // returns comma-separated matches in DOM ORDER, not selector order, and the
+    // comments section's `<svg aria-label="Load more comments">` sits in a
+    // `section button` that PRECEDES the action-bar like svg — so `.first()`
+    // resolved to "Load more comments" and every state read + click hit the
+    // wrong element (click then timed out, a comment div intercepting the
+    // pointer). Verified live: the aria-labelled svg is always present on the
+    // post, so the fallback only ever polluted `.first()`. Pinned to the two
+    // aria-label states only.
+    likeButton: 'svg[aria-label="Like"], svg[aria-label="Unlike"]',
     // aria-pressed is the accessibility state Meta flips when a like lands.
     likeButtonActive: 'svg[aria-label="Unlike"], button[aria-pressed="true"] svg',
     // The affordance that reveals/focuses the composer when it is not already
@@ -53,8 +81,23 @@ const SELECTORS: Partial<Record<Platform, SelectorSet>> = {
     commentButton:
       'svg[aria-label="Comment"], svg[aria-label="Reply"], button:has(svg[aria-label="Comment"]), [aria-label="Comment"]',
     // Per-comment Reply affordance. On a /c/<id>/ permalink the target comment
-    // is first, so the first match threads to it. Best-effort — iterate live.
-    replyButton: 'div[role="button"]:has-text("Reply"), button:has-text("Reply")',
+    // is first, so the first "Reply" match threads to it. IG ships this as a
+    // bare `<button class="_a9ze"><span>Reply</span></button>` — NO role
+    // attribute. Two traps, both verified live:
+    //   • a `[role=button]`/`span[role=button]`-led selector matched ZERO (the
+    //     leaf has no role), so the flow never opened the threaded box; and
+    //   • `button:has(span:text-is("Reply"))` ALSO matches the ANCESTOR comment
+    //     -row button (it too contains the Reply span), and `.first()` in DOM
+    //     order is that ancestor — clicking it opens nothing and the mention
+    //     never prefills.
+    // Match only the LEAF: `:text-is("Reply")` on the element's OWN text excludes
+    // every ancestor (their text is the whole comment, not "Reply"). Lead with
+    // the bare button, then role/span shapes for other rollouts.
+    replyButton:
+      'button:text-is("Reply"), [role="button"]:text-is("Reply"), span:text-is("Reply")',
+    // IG pre-fills "@username" when a comment's reply box opens; that mention is
+    // what threads the reply, so the flow requires and preserves it.
+    replyPrefillsMention: true,
     // The composer is a contenteditable on IG, not a textarea.
     composerInput: 'div[contenteditable="true"][role="textbox"]',
     // Tried in order: aria-labelled textarea, the contenteditable box, then a
@@ -70,22 +113,35 @@ const SELECTORS: Partial<Record<Platform, SelectorSet>> = {
       'button[type="button"] > div:has-text("Post"), div[role="button"]:has-text("Post")',
   },
   threads: {
+    // The permalink post view keeps the whole home feed mounted behind it, so
+    // every "first" match on a bare action selector hits a hidden FEED row, not
+    // the target post (26+ like buttons on one page). The target post is the one
+    // pressable container that also holds the reply composer — anchor every
+    // action selector to `TARGET` so `.first()` resolves to the post under the
+    // permalink, never a feed row. (Verified against live threads.com markup.)
     feed: 'div[role=feed], main',
     commentItem: 'div[role="article"], article',
-    likeButton: 'div[role="button"] svg, button[aria-label*="ike"]',
-    likeButtonActive: 'div[role="button"][aria-pressed="true"] svg, button[aria-label*="nlike"]',
-    commentButton: 'div[role="button"][aria-label*="eply"], button[aria-label*="eply"]',
-    composerInput: 'div[contenteditable="true"][role="textbox"], textarea',
-    // Lead with the aria-labelled Reply composer (ref: jg/automation worker);
-    // the composer only hydrates after a scroll-to-bottom (dom.ts handles that).
+    // Threads labels action icons with `<svg><title>`, NOT aria-label. Match
+    // BOTH states in one selector so the button stays findable AFTER a like
+    // flips Like→Unlike — otherwise the post-click verification poll can never
+    // re-locate it and a landed like reads as a failure.
+    likeButton: `${THREADS_TARGET} div[role="button"]:has(svg title:text-is("Like")), ${THREADS_TARGET} div[role="button"]:has(svg title:text-is("Unlike"))`,
+    // Pressed state is the `Unlike` title (Meta ships no aria-pressed here).
+    likeButtonActive: `${THREADS_TARGET} div[role="button"]:has(svg title:text-is("Unlike"))`,
+    commentButton: `${THREADS_TARGET} div[role="button"]:has(svg title:text-is("Reply"))`,
+    composerInput: 'div[contenteditable="true"][role="textbox"]',
+    // The composer is a Lexical contenteditable whose aria-label is a generic
+    // "Empty text field…", so the reply box is identified by role/placeholder,
+    // not an aria-label containing "reply". It is unique on the post view
+    // (count 1), so it needs no target scope.
     composerInputs: [
-      '[contenteditable="true"][aria-label*="Reply" i]',
+      '[contenteditable="true"][aria-placeholder*="Repl" i]',
       'div[contenteditable="true"][role="textbox"]',
-      'textarea[aria-label*="reply" i]',
       'textarea',
     ],
-    submitButton:
-      'div[role="button"]:has-text("Post"), button[aria-label="Post"], button:has-text("Post")',
+    // Scope submit to the composer's container so a feed row's "Post" affordance
+    // is never clicked; keyboard submit (Enter) is tried first in dom.ts anyway.
+    submitButton: `${THREADS_TARGET} div[role="button"]:has-text("Post"), div[role="dialog"] div[role="button"]:has-text("Post")`,
   },
 };
 

@@ -182,6 +182,36 @@ async function probeComposer(
 
 // --- commands ---------------------------------------------------------------
 
+/** Auto-save poll bound: how long to wait for the operator to finish logging in. */
+const LOGIN_POLL_TIMEOUT_MS = 10 * 60_000;
+const LOGIN_POLL_MS = 2_000;
+/** Once proof cookies appear, wait this long so late cookies (rur, csrftoken) settle. */
+const LOGIN_SETTLE_MS = 2_500;
+
+/**
+ * Poll the live context until the adapter's proof cookies are all present, or
+ * the bound expires. This is what makes login work when the harness is
+ * backgrounded (no TTY to press ENTER against): the session is detected and
+ * saved automatically the moment the operator finishes logging in.
+ */
+async function waitForProofCookies(
+  ctx: BrowserContext,
+  proof: readonly string[],
+  timeoutMs: number,
+): Promise<boolean> {
+  const started = Date.now();
+  for (;;) {
+    const have = new Set((await ctx.cookies()).map((c) => c.name));
+    if (proof.every((n) => have.has(n))) return true;
+    if (Date.now() - started >= timeoutMs) return false;
+    await sleep(LOGIN_POLL_MS);
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
 async function cmdLogin(args: Args): Promise<void> {
   const adapter = adapterFor(args.platform);
   const outPath = sessionPath(args.session);
@@ -195,8 +225,26 @@ async function cmdLogin(args: Args): Promise<void> {
   await page.goto(adapter.loginUrl, { waitUntil: 'domcontentloaded' });
   log(`[login] opened ${adapter.loginUrl}`);
   log('[login] Log in (and complete OTP/checkpoint) IN THE BROWSER window now.');
+  log(`[login] Auto-saves as soon as proof cookies (${adapter.sessionCookies.join(', ')}) appear.`);
+  log(`[login] No ENTER needed (${Math.round(LOGIN_POLL_TIMEOUT_MS / 60_000)} min budget). On a TTY, ENTER saves immediately.`);
 
-  await pressEnter('[login] Press ENTER here once you are fully logged in to save the session... ');
+  // Race the cookie poll against an optional manual ENTER. On a backgrounded
+  // run stdin is detached, so `pressEnter` never resolves and the cookie poll
+  // is the only trigger — which is exactly what we want for automation.
+  const cookiePoll = waitForProofCookies(ctx, adapter.sessionCookies, LOGIN_POLL_TIMEOUT_MS).then(
+    (ok) => (ok ? 'cookies' : 'timeout'),
+  );
+  const manual = stdin.isTTY
+    ? pressEnter('[login] ...or press ENTER here once logged in to save now. ').then(() => 'enter')
+    : new Promise<string>(() => {}); // never resolves off-TTY
+  const trigger = await Promise.race([cookiePoll, manual]);
+
+  if (trigger === 'cookies') {
+    log('[login] proof cookies detected — letting late cookies settle...');
+    await sleep(LOGIN_SETTLE_MS);
+  } else if (trigger === 'timeout') {
+    log(`[login] WARNING proof-cookie timeout after ${Math.round(LOGIN_POLL_TIMEOUT_MS / 60_000)} min — saving whatever is present.`);
+  }
 
   const state = await ctx.storageState();
   const cookieNames = new Set(state.cookies.map((c) => c.name));
