@@ -68,6 +68,12 @@ type Config struct {
 	// the same account may not act on the same target twice inside this window.
 	// The ticket's contract is 60s; 0 disables the gate only for local play.
 	ActionCooldownSeconds int
+	// ActionAccountPaceSeconds is the minimum spacing between ANY two actions on
+	// the same account, regardless of target or action type (anti-detection).
+	// The per-target cooldown does not bound a like+comment+reply burst on one
+	// account within minutes — the pattern that gets a fresh account flagged. A
+	// real deployment spaces actions out (default 480s / 8 min); 0 disables it.
+	ActionAccountPaceSeconds int
 	// ActionRateLimits is the per-platform hourly action budget (P3-10) the BE
 	// enforces before publishing. A platform absent from the map or set to 0 is
 	// treated as disabled (no budget), never unlimited: the defaults are the
@@ -182,6 +188,7 @@ func Load() (Config, error) {
 		ActionIntervalSeconds:    envInt("ACTION_INTERVAL_SECONDS", 0),
 		RedisURL:                 os.Getenv("REDIS_URL"),
 		ActionCooldownSeconds:    envInt("ACTION_COOLDOWN_SECONDS", 60),
+		ActionAccountPaceSeconds: envInt("ACTION_ACCOUNT_PACE_SECONDS", 480),
 		ActionRateLimits: map[string]int{
 			"instagram": envInt("ACTION_RATE_LIMIT_INSTAGRAM", 30),
 			"threads":   envInt("ACTION_RATE_LIMIT_THREADS", 15),

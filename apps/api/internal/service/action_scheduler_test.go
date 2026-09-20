@@ -46,10 +46,21 @@ type schedCooldown struct {
 	allow bool
 	err   error
 	calls int
+	// denyPace refuses only the per-account pacing slot (targetKey ==
+	// accountPaceKey) while letting the per-target cooldown pass, so a test can
+	// isolate Gate 3 from Gate 1.
+	denyPace  bool
+	paceCalls int
 }
 
 func (c *schedCooldown) Acquire(_ context.Context, accountID, targetKey string, window time.Duration) (bool, error) {
 	c.calls++
+	if targetKey == accountPaceKey {
+		c.paceCalls++
+		if c.denyPace {
+			return false, nil
+		}
+	}
 	if c.err != nil {
 		return false, c.err
 	}
@@ -170,6 +181,80 @@ func TestActionSchedulerPublishes(t *testing.T) {
 	}
 	if got.TargetURL != "https://instagram.com/p/x" {
 		t.Fatalf("the target URL must be resolved, got %q", got.TargetURL)
+	}
+}
+
+// Per-account pacing (Gate 3) refuses: a second action on the account inside
+// the pace window is held back even though the per-target cooldown passed. This
+// is the burst-velocity bound that keeps an account from machine-gunning a
+// platform (the pattern that got a fresh account suspended).
+func TestActionSchedulerAccountPaceBlocks(t *testing.T) {
+	store := newFakeActionStore()
+	store.logByAttempt = map[string]domain.ActionLog{}
+	cd := &schedCooldown{allow: true, denyPace: true}
+	lm := &schedLimits{allow: true}
+	tr := &schedTransport{}
+	now := time.Unix(2_000_000, 0).UTC()
+	s := NewActionScheduler(
+		store,
+		&schedAccounts{workerID: "worker-1"},
+		&schedTargets{url: "https://instagram.com/p/x"},
+		nil, cd, lm, tr,
+		ActionSchedulerConfig{
+			TickBudget:  5,
+			Cooldown:    60 * time.Second,
+			AccountPace: 8 * time.Minute,
+			RateWindow:  time.Hour,
+			RateLimits:  map[string]int{"instagram": 30, "threads": 15},
+			Clock:       func() time.Time { return now },
+		},
+	)
+	seedPending(store, "job-pace")
+
+	if err := s.Tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if len(tr.jobs) != 0 {
+		t.Fatalf("a paced account must not publish, got %d jobs", len(tr.jobs))
+	}
+	if cd.paceCalls == 0 {
+		t.Fatal("the pace gate must have been consulted")
+	}
+}
+
+// With pacing enabled and the slot free, the job still publishes: the gate only
+// blocks a burst, never a first action.
+func TestActionSchedulerAccountPaceAllowsWhenFree(t *testing.T) {
+	store := newFakeActionStore()
+	store.logByAttempt = map[string]domain.ActionLog{}
+	cd := &schedCooldown{allow: true, denyPace: false}
+	lm := &schedLimits{allow: true}
+	tr := &schedTransport{}
+	now := time.Unix(2_000_000, 0).UTC()
+	s := NewActionScheduler(
+		store,
+		&schedAccounts{workerID: "worker-1"},
+		&schedTargets{url: "https://instagram.com/p/x"},
+		nil, cd, lm, tr,
+		ActionSchedulerConfig{
+			TickBudget:  5,
+			Cooldown:    60 * time.Second,
+			AccountPace: 8 * time.Minute,
+			RateWindow:  time.Hour,
+			RateLimits:  map[string]int{"instagram": 30, "threads": 15},
+			Clock:       func() time.Time { return now },
+		},
+	)
+	seedPending(store, "job-pace-ok")
+
+	if err := s.Tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if len(tr.jobs) != 1 {
+		t.Fatalf("a free pace slot must publish, got %d jobs", len(tr.jobs))
+	}
+	if cd.paceCalls != 1 {
+		t.Fatalf("the pace gate must be claimed exactly once, got %d", cd.paceCalls)
 	}
 }
 

@@ -127,6 +127,10 @@ services:
       ACTION_DRY_RUN: ${ACTION_DRY_RUN:-true}
       PROVISION_AUTO_CREATE: ${PROVISION_AUTO_CREATE:-true}
       ACTION_BATCH_PARALLELISM: ${ACTION_BATCH_PARALLELISM:-2}
+      # Anti-detection: min seconds between ANY two actions on one account
+      # (per-account velocity gate; 0 disables). Bounds a like+comment+reply
+      # burst that a per-target cooldown alone cannot.
+      ACTION_ACCOUNT_PACE_SECONDS: ${ACTION_ACCOUNT_PACE_SECONDS:-480}
       JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-me-0123456789}
       JWT_ISSUER: ${JWT_ISSUER:-smm-api}
       CREDENTIAL_KEY: ${CREDENTIAL_KEY:-v0k2nMVGJAq5Ta69vg36gcxNB4wiClCeOFMC6WBemH8=}

@@ -68,6 +68,13 @@ type ActionSchedulerConfig struct {
 	TickBudget int
 	// Cooldown is the per-(account, target) gate window (P3-09).
 	Cooldown time.Duration
+	// AccountPace is the minimum spacing between ANY two actions on the same
+	// account, regardless of target or action type. The per-target Cooldown does
+	// not bound burst velocity across a like+comment+reply on one account within
+	// minutes — the exact pattern that gets a fresh account flagged/suspended by
+	// Meta. This gate does. Zero disables it (local play); a real deployment
+	// spaces actions out (minutes), so an account never machine-guns a platform.
+	AccountPace time.Duration
 	// RateWindow is the platform budget window (P3-10), an hour by contract.
 	RateWindow time.Duration
 	// RateLimits is the per-platform hourly cap (IG 30, Threads 15). A platform
@@ -258,6 +265,24 @@ func (s *ActionScheduler) dispatchOne(ctx context.Context, job domain.ActionJob)
 		}
 	}
 
+	// Gate 3: per-account pacing. Claimed LAST, just before publish, so a job
+	// that fails an earlier gate never burns this account's pacing slot. Keyed
+	// on the account with a fixed sentinel (not the target), so it fires whether
+	// the last action was a like, a comment or a reply — the burst-velocity
+	// bound the per-target cooldown cannot give. Refused -> reschedule past the
+	// window rather than loop.
+	if s.cooldown != nil && s.cfg.AccountPace > 0 {
+		ok, err := s.cooldown.Acquire(ctx, job.AccountID, accountPaceKey, s.cfg.AccountPace)
+		if err != nil {
+			s.reschedule(ctx, job, s.cfg.AccountPace, fmt.Sprintf("account pace gate: %v", err))
+			return
+		}
+		if !ok {
+			s.reschedule(ctx, job, s.cfg.AccountPace, "account is pacing (a recent action is still within the per-account window)")
+			return
+		}
+	}
+
 	if err := s.publish(ctx, job, acc, workerID, tgt.URL, text); err != nil {
 		// Transport down: the job was NOT delivered, so release the cooldown
 		// slot by simply letting it lapse (TTL is short) and requeue the job.
@@ -344,6 +369,12 @@ type workerActionJob struct {
 	Attempt   int    `json:"attempt"`
 }
 
+// accountPaceKey is the fixed sentinel "target" the per-account pacing gate
+// (Gate 3) claims its slot under. It is not a URL, so it can never collide with
+// a real target's cooldown slot; combined with the account id in the gate's
+// keyspace it yields one pacing slot per account.
+const accountPaceKey = "__account_pace__"
+
 // actionName maps the queue's JobType to the action verb the worker dispatches
 // on. The worker's switch is over these strings, so a new action is one case
 // here and one case there.
@@ -353,6 +384,8 @@ func actionName(t domain.JobType) string {
 		return "comment"
 	case domain.JobTypeActionReplyComment:
 		return "reply_comment"
+	case domain.JobTypeActionLikeComment:
+		return "like_comment"
 	case domain.JobTypeActionLike:
 		return "like"
 	default:

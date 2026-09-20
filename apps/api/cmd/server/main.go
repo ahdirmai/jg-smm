@@ -329,12 +329,13 @@ func main() {
 				adapter.NewRateLimiter(redisClient, "smm:ratelimit"),
 				publisher,
 				service.ActionSchedulerConfig{
-					TickBudget: cfg.ActionBatchParallelism * 10,
-					Cooldown:   time.Duration(cfg.ActionCooldownSeconds) * time.Second,
-					RateWindow: time.Hour,
-					RateLimits: cfg.ActionRateLimits,
-					Clock:      time.Now,
-					Logger:     logger,
+					TickBudget:  cfg.ActionBatchParallelism * 10,
+					Cooldown:    time.Duration(cfg.ActionCooldownSeconds) * time.Second,
+					AccountPace: time.Duration(cfg.ActionAccountPaceSeconds) * time.Second,
+					RateWindow:  time.Hour,
+					RateLimits:  cfg.ActionRateLimits,
+					Clock:       time.Now,
+					Logger:      logger,
 				},
 			)
 			go actionSched.Run(ctx, time.Duration(cfg.ActionIntervalSeconds)*time.Second)
