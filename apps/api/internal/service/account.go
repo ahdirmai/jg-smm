@@ -107,8 +107,28 @@ func (s *AccountService) Create(ctx context.Context, in AccountInput) (AccountSu
 
 	// No packer (DB-only wiring) or nothing to pack into: leave it unassigned.
 	if s.packer == nil {
+		if in.WorkerID != nil {
+			return AccountSummary{}, nil, fmt.Errorf("%w: container pick requested but packer is not configured", domain.ErrUnavailable)
+		}
 		s.publishAccount(ctx, toAccountView(account))
 		return toAccountView(account), nil, nil
+	}
+	// An operator-picked container is validated BEFORE the row is written: a
+	// bad pick fails the request outright, never a half-created account to
+	// roll back. PackInto re-checks; UNIQUE(worker_id, platform) is the
+	// authority under concurrency.
+	if in.WorkerID != nil {
+		if _, cerr := s.packer.ResolveContainer(ctx, *in.WorkerID, in.Platform); cerr != nil {
+			return AccountSummary{}, nil, cerr
+		}
+		packed, worker, perr := s.packer.PackInto(ctx, account.ID, account.Platform, *in.WorkerID)
+		if perr != nil {
+			s.logger.Warn("account created but picked container rejected", "accountId", account.ID, "workerId", *in.WorkerID, "err", perr)
+			s.publishAccount(ctx, toAccountView(account))
+			return toAccountView(account), nil, nil
+		}
+		s.publishAccount(ctx, toAccountView(packed))
+		return toAccountView(packed), &worker, nil
 	}
 	packed, worker, err := s.packer.Pack(ctx, account.ID, account.Platform)
 	if err != nil {
@@ -146,11 +166,12 @@ type RegionGroup struct {
 // worker at all. It sorts last so a real region is never hidden behind it.
 const UnassignedRegion = "unassigned"
 
-// AccountsByRegion groups every account by the region of the worker it runs on
-// (account.worker_id -> worker.region). An account with no worker, or a worker
-// with a blank region, lands in UnassignedRegion. Composed from the existing
-// account + worker lists (no new query): the fleet is small, so a per-worker
-// region map is cheap and keeps this off the sqlc path.
+// AccountsByRegion groups every account by the LOCATION (city) of the worker
+// it runs on (account.worker_id -> worker.location, falling back to
+// worker.region when the city is unset). An account with no worker, or a
+// worker with neither a location nor a region, lands in UnassignedRegion.
+// Composed from the existing account + worker lists (no new query): the fleet
+// is small, so a per-worker map is cheap and keeps this off the sqlc path.
 func (s *AccountService) AccountsByRegion(ctx context.Context) ([]RegionGroup, error) {
 	accounts, err := s.accounts.List(ctx, port.AccountFilter{Limit: 200})
 	if err != nil {
@@ -163,7 +184,12 @@ func (s *AccountService) AccountsByRegion(ctx context.Context) ([]RegionGroup, e
 			return nil, fmt.Errorf("account service: by-region: list workers: %w", err)
 		}
 		for _, w := range workers {
-			regionByWorker[w.ID] = strings.TrimSpace(w.Region)
+			// City first (the operator's grouping unit); region as fallback.
+			key := strings.TrimSpace(w.Region)
+			if w.Location != nil && strings.TrimSpace(*w.Location) != "" {
+				key = strings.TrimSpace(*w.Location)
+			}
+			regionByWorker[w.ID] = key
 		}
 	}
 
@@ -519,7 +545,10 @@ type AccountInput struct {
 	Username     string
 	Password     string
 	ProxyGroupID *string
-	Tags         []string
+	// WorkerID pins the container to pack into instead of letting the packer
+	// walk the fleet. Nil keeps the auto-pack behaviour.
+	WorkerID *string
+	Tags     []string
 }
 
 // Validate rejects input before any crypto or DB work.

@@ -116,12 +116,18 @@ func (h *AccountHandler) create(c echo.Context) error {
 		p := req.ProxyGroupId.MustGet()
 		proxyID = &p
 	}
+	var workerID *string
+	if req.WorkerId.IsSpecified() && !req.WorkerId.IsNull() {
+		w := req.WorkerId.MustGet()
+		workerID = &w
+	}
 
 	account, _, err := h.accounts.Create(c.Request().Context(), service.AccountInput{
 		Platform:     domain.Platform(req.Platform),
 		Username:     req.Username,
 		Password:     req.Password,
 		ProxyGroupID: proxyID,
+		WorkerID:     workerID,
 		Tags:         tags,
 	})
 	if err != nil {
