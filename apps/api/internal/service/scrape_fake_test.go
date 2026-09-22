@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"sort"
 	"sync"
 	"time"
 
@@ -149,6 +150,21 @@ func (f *fakeScrapeStore) ListPosts(ctx context.Context, limit, offset *int) ([]
 func (f *fakeScrapeStore) ListTopPosts(ctx context.Context, p domain.Platform, metric string, limit int) ([]domain.Post, error) {
 	return f.ListPosts(ctx, nil, nil)
 }
+func (f *fakeScrapeStore) ListRecentPosts(ctx context.Context, p domain.Platform, limit int) ([]domain.Post, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]domain.Post, 0, len(f.posts))
+	for _, post := range f.posts {
+		if post.Platform == p {
+			out = append(out, post)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ScrapedAt.After(out[j].ScrapedAt) })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
 func (f *fakeScrapeStore) UpsertComment(ctx context.Context, c domain.Comment) (domain.Comment, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -291,6 +307,11 @@ func (f *fakeScrapeStore) CompleteScrapeJob(ctx context.Context, id string, stat
 	return domain.ScrapeJob{}, domain.ErrNotFound
 }
 func (f *fakeScrapeStore) CreateApifyRun(ctx context.Context, r domain.ApifyRun) (domain.ApifyRun, error) {
+	// Postgres generates the id (gen_random_uuid()); the fake mirrors that so
+	// the keyword service's ingest keyed off run.ID lands under a real key.
+	if r.ID == "" {
+		r.ID = fakeID("run", r.ActorID+":"+r.RunID+":"+r.Status)
+	}
 	return r, nil
 }
 func (f *fakeScrapeStore) UpdateApifyRun(ctx context.Context, r domain.ApifyRun, finished bool) (domain.ApifyRun, error) {
