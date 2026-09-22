@@ -156,7 +156,7 @@ export function RegionCommentWizard() {
     setSubmitting(true);
     try {
       await enqueue(items);
-      setResult(`Queued ${items.length} comment${items.length === 1 ? '' : 's'} across ${activeRegions.length} region(s).`);
+      setResult(`Queued ${items.length} comment${items.length === 1 ? '' : 's'} across ${activeRegions.length} location(s).`);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'enqueue failed');
     } finally {
@@ -168,10 +168,10 @@ export function RegionCommentWizard() {
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <MapPin className="h-4 w-4" /> Comment by region
+          <MapPin className="h-4 w-4" /> Comment by location
         </CardTitle>
         <CardDescription>
-          Paste a target link, pick regions and accounts, then write a comment per account. Leave a comment
+          Paste a target link, pick cities and accounts, then write a comment per account. Leave a comment
           blank to fall back to the template pool.
         </CardDescription>
       </CardHeader>
@@ -190,7 +190,7 @@ export function RegionCommentWizard() {
         {/* Step 2+3: regions and account selection */}
         {loading ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading regions…
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading locations…
           </div>
         ) : loadError ? (
           <p className="text-sm text-destructive">{loadError}</p>
@@ -198,7 +198,7 @@ export function RegionCommentWizard() {
           <p className="text-sm text-muted-foreground">No usable accounts found.</p>
         ) : (
           <div className="space-y-3">
-            <Label>Regions</Label>
+            <Label>Locations (cities)</Label>
             <div className="flex flex-wrap gap-2">
               {groups.map((g) => (
                 <Button

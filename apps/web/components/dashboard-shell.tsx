@@ -54,6 +54,7 @@ const NAV: (Leaf | Group)[] = [
   { href: '/workers', label: 'Workers', icon: MonitorSmartphone, perm: 'act' },
   { href: '/accounts', label: 'Accounts', icon: Users, perm: 'act' },
   { href: '/actions', label: 'Actions', icon: Activity, perm: 'act' },
+  { href: '/scrape', label: 'Scrape', icon: Search, perm: 'act' },
   { href: '/templates', label: 'Templates', icon: MessageSquareText, perm: 'act' },
   {
     label: 'Monitoring',
@@ -81,6 +82,7 @@ const TITLES: Record<string, { title: string; subtitle: string }> = {
   '/workers': { title: 'Workers', subtitle: 'Containers, health, and anchored location' },
   '/accounts': { title: 'Accounts', subtitle: 'One credential set per platform per worker' },
   '/actions': { title: 'Actions', subtitle: 'Targeted like, comment, and report jobs' },
+  '/scrape': { title: 'Scrape', subtitle: 'Keyword search over Instagram and Threads posts' },
   '/templates': { title: 'Templates', subtitle: 'Comment pool per platform' },
   '/monitoring': { title: 'Monitoring', subtitle: 'Official-account reach across platforms' },
   '/reports': { title: 'Reports', subtitle: 'Read-only pivots over executed work' },

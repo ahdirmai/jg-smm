@@ -134,6 +134,50 @@ func (p *Packer) Pack(ctx context.Context, accountID string, platform domain.Pla
 	return updated, w, nil
 }
 
+// ResolveContainer reports whether the named container can host the platform,
+// so an operator-picked container is validated BEFORE the account row is
+// written — a bad pick fails the request outright instead of leaving a
+// half-created account to roll back. PackInto re-checks; the store's
+// UNIQUE(worker_id, platform) stays the authority under concurrency.
+func (p *Packer) ResolveContainer(ctx context.Context, workerID string, platform domain.Platform) (domain.Worker, error) {
+	w, err := p.workers.GetByID(ctx, workerID)
+	if err != nil {
+		return domain.Worker{}, fmt.Errorf("packer: get container: %w", err)
+	}
+	if !p.hasFreeSlot(ctx, w, platform) {
+		return domain.Worker{}, fmt.Errorf("%w: container %s cannot host %s (already hosted or full)", domain.ErrConflict, w.Name, platform)
+	}
+	return w, nil
+}
+
+// PackInto packs the account into the named container, overriding the packer's
+// own choice. The container must exist, be desired-running, and have a free slot
+// for the platform — the operator picked it deliberately, so a full or
+// platform-taken container is an error (ErrConflict / ErrNoSlot), never a
+// silent fallback to another container.
+func (p *Packer) PackInto(ctx context.Context, accountID string, platform domain.Platform, workerID string) (domain.Account, domain.Worker, error) {
+	account, err := p.accounts.GetByID(ctx, accountID)
+	if err != nil {
+		return domain.Account{}, domain.Worker{}, fmt.Errorf("packer: get account: %w", err)
+	}
+	if !account.IsPackable() {
+		return domain.Account{}, domain.Worker{}, fmt.Errorf("%w: account status %q is not packable", domain.ErrValidation, account.Status)
+	}
+	if account.WorkerID != nil {
+		return domain.Account{}, domain.Worker{}, fmt.Errorf("%w: account already on container %s", domain.ErrConflict, *account.WorkerID)
+	}
+
+	w, err := p.ResolveContainer(ctx, workerID, platform)
+	if err != nil {
+		return domain.Account{}, domain.Worker{}, err
+	}
+	updated, err := p.assign(ctx, account, w)
+	if err != nil {
+		return domain.Account{}, domain.Worker{}, err
+	}
+	return updated, w, nil
+}
+
 // hasFreeSlot reports whether a container may host the platform: it is under
 // the account cap and does not already host that platform.
 func (p *Packer) hasFreeSlot(ctx context.Context, w domain.Worker, platform domain.Platform) bool {

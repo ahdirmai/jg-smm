@@ -1,11 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Check, ChevronRight, Loader2 } from 'lucide-react';
 
 import { Button, Card, CardContent, Input, Label } from '@smm/ui';
-import { api } from '@/lib/api';
+import { api, type Container } from '@/lib/api';
 import type { ApiSchemas } from '@smm/shared';
 
 type Platform = ApiSchemas['CreateAccountRequest']['platform'];
@@ -23,18 +23,25 @@ const PLATFORMS: { id: Platform; label: string }[] = [
   { id: 'tiktok', label: 'TikTok' },
 ];
 
-const STEPS = ['Platform', 'Credentials', 'Review'] as const;
+const STEPS = ['Container', 'Platform', 'Credentials', 'Review'] as const;
 
 /**
  * Add-account wizard (P6-07, mirrors docs/prototype/add-account.html).
  *
- * Three steps: pick platform → credentials → review. The final submit is the
- * only write; earlier steps are local state only, so backing out costs nothing.
- * The quick path on the Accounts list stays the AddAccountDialog.
+ * Four steps: pick container → pick platform → credentials → review. The
+ * platform step disables every platform the container already holds an account
+ * for (one credential set per platform per worker — a duplicate is rejected,
+ * never overwritten), so the operator sees the constraint before typing.
+ * The final submit is the only write; earlier steps are local state only, so
+ * backing out costs nothing. The quick path on the Accounts list stays the
+ * AddAccountDialog.
  */
 export default function AddAccountPage() {
   const router = useRouter();
   const [step, setStep] = useState(0);
+  const [containers, setContainers] = useState<Container[]>([]);
+  const [containersLoading, setContainersLoading] = useState(true);
+  const [containerId, setContainerId] = useState<string | null>(null);
   const [platform, setPlatform] = useState<Platform | null>(null);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -42,16 +49,54 @@ export default function AddAccountPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const canNext = step === 0 ? platform !== null : username.trim() !== '' && password !== '';
+  // Platforms the selected container already has an account for — those are
+  // disabled in step 1 (a duplicate would be rejected server-side anyway).
+  const takenPlatforms = new Set(
+    containers
+      .find((c) => c.id === containerId)
+      ?.accounts?.map((a) => a.platform as Platform) ?? [],
+  );
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .listContainers()
+      .then((res) => {
+        if (alive) setContainers(res.containers ?? []);
+      })
+      .catch(() => {
+        if (alive) setError('Failed to load containers');
+      })
+      .finally(() => {
+        if (alive) setContainersLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // A platform change invalidates nothing else, but a container change may
+  // make the chosen platform unavailable — clear it when that happens.
+  useEffect(() => {
+    if (platform && takenPlatforms.has(platform)) setPlatform(null);
+  }, [containerId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const canNext =
+    step === 0
+      ? containerId !== null
+      : step === 1
+        ? platform !== null
+        : username.trim() !== '' && password !== '';
 
   const submit = async () => {
-    if (!platform) return;
+    if (!platform || !containerId) return;
     setSubmitting(true);
     setError(null);
     const body: CreateAccountRequest = {
       platform,
       username: username.trim(),
       password,
+      workerId: containerId,
       tags: tags
         .split(',')
         .map((t) => t.trim())
@@ -68,14 +113,14 @@ export default function AddAccountPage() {
   };
 
   return (
-    <div className="mx-auto max-w-2xl space-y-4">
+    <div className="mx-auto max-w-xl space-y-3">
       <Button variant="ghost" size="sm" onClick={() => router.back()} className="-ml-2">
         <ArrowLeft />
         Back to accounts
       </Button>
 
-      {/* Stepper: Platform → Credentials → Review */}
-      <div className="flex items-center justify-center gap-2">
+      {/* Stepper: Container → Platform → Credentials → Review */}
+      <div className="flex items-center justify-center gap-1.5">
         {STEPS.map((label, i) => (
           <div key={label} className="flex items-center gap-2">
             <div
@@ -103,38 +148,91 @@ export default function AddAccountPage() {
       </div>
 
       <Card>
-        <CardContent className="space-y-4 p-6">
+        <CardContent className="space-y-3 p-5">
           {step === 0 ? (
-            <div className="space-y-4">
+            <div className="space-y-3">
               <div>
-                <h2 className="text-sm font-semibold">Pick a platform</h2>
+                <h2 className="text-sm font-semibold">Pick a container</h2>
                 <p className="text-xs text-muted-foreground">
-                  One credential set per platform per worker — a duplicate is rejected, never
-                  overwritten.
+                  The worker container the account will be packed into. Its region decides where
+                  the account browses from.
                 </p>
               </div>
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                {PLATFORMS.map((p) => (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onClick={() => setPlatform(p.id)}
-                    className={
-                      'rounded-lg border p-4 text-left text-sm transition-colors ' +
-                      (platform === p.id
-                        ? 'border-primary bg-primary/5 ring-1 ring-primary'
-                        : 'hover:bg-accent')
-                    }
-                  >
-                    {p.label}
-                  </button>
-                ))}
-              </div>
+              {containersLoading ? (
+                <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="size-4 animate-spin" /> Loading containers…
+                </p>
+              ) : containers.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No containers yet — create one on the Workers page first.
+                </p>
+              ) : (
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {containers.map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => setContainerId(c.id)}
+                      className={
+                        'rounded-lg border px-3 py-2.5 text-left text-sm transition-colors ' +
+                        (containerId === c.id
+                          ? 'border-primary bg-primary/5 ring-1 ring-primary'
+                          : 'hover:bg-accent')
+                      }
+                    >
+                      <span className="font-medium">{c.name}</span>
+                      <span className="mt-0.5 block text-xs text-muted-foreground">
+                        {c.region}
+                        {c.location ? ` · ${c.location}` : ''} · {c.status}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           ) : null}
 
           {step === 1 ? (
-            <div className="space-y-4">
+            <div className="space-y-3">
+              <div>
+                <h2 className="text-sm font-semibold">Pick a platform</h2>
+                <p className="text-xs text-muted-foreground">
+                  One credential set per platform per container — platforms this container already
+                  has an account for are disabled.
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {PLATFORMS.map((p) => {
+                  const taken = takenPlatforms.has(p.id);
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      disabled={taken}
+                      onClick={() => setPlatform(p.id)}
+                      className={
+                        'rounded-lg border px-3 py-2.5 text-left text-sm transition-colors ' +
+                        (platform === p.id
+                          ? 'border-primary bg-primary/5 ring-1 ring-primary'
+                          : 'hover:bg-accent') +
+                        (taken ? ' cursor-not-allowed opacity-40 hover:bg-transparent' : '')
+                      }
+                    >
+                      {p.label}
+                      {taken ? (
+                        <span className="mt-0.5 block text-xs text-muted-foreground">
+                          Already added
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+
+          {step === 2 ? (
+            <div className="space-y-3">
               <div>
                 <h2 className="text-sm font-semibold">Credentials</h2>
                 <p className="text-xs text-muted-foreground">
@@ -177,8 +275,8 @@ export default function AddAccountPage() {
             </div>
           ) : null}
 
-          {step === 2 ? (
-            <div className="space-y-4">
+          {step === 3 ? (
+            <div className="space-y-3">
               <div>
                 <h2 className="text-sm font-semibold">Review</h2>
                 <p className="text-xs text-muted-foreground">
@@ -186,7 +284,13 @@ export default function AddAccountPage() {
                   into a container.
                 </p>
               </div>
-              <dl className="space-y-2 text-sm">
+              <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                <div className="flex justify-between gap-4">
+                  <dt className="text-muted-foreground">Container</dt>
+                  <dd className="font-medium">
+                    {containers.find((c) => c.id === containerId)?.name ?? '—'}
+                  </dd>
+                </div>
                 <div className="flex justify-between gap-4">
                   <dt className="text-muted-foreground">Platform</dt>
                   <dd className="font-medium">
@@ -203,11 +307,11 @@ export default function AddAccountPage() {
                     {'•'.repeat(Math.min(password.length, 12))}
                   </dd>
                 </div>
-                <div className="flex justify-between gap-4">
+                <div className="col-span-full flex justify-between gap-4">
                   <dt className="text-muted-foreground">Tags</dt>
                   <dd className="font-medium">{tags ? tags : '—'}</dd>
                 </div>
-              </dl>
+              </div>
             </div>
           ) : null}
 

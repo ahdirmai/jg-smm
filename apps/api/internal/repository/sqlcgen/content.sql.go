@@ -224,6 +224,53 @@ func (q *Queries) ListPosts(ctx context.Context, arg ListPostsParams) ([]Post, e
 	return items, nil
 }
 
+const listRecentPostsByPlatform = `-- name: ListRecentPostsByPlatform :many
+SELECT id, platform, external_id, author_handle, author_id, text, media_urls,
+       metrics, scraped_at, author_account_id
+FROM post
+WHERE platform = $1
+ORDER BY scraped_at DESC
+LIMIT $2
+`
+
+type ListRecentPostsByPlatformParams struct {
+	Platform Platform `json:"platform"`
+	Limit    int32    `json:"limit"`
+}
+
+// Posts on a platform, newest scrape first. The keyword-scrape read-back uses
+// it (this run's rows just got the freshest scraped_at), not a metric ranking.
+func (q *Queries) ListRecentPostsByPlatform(ctx context.Context, arg ListRecentPostsByPlatformParams) ([]Post, error) {
+	rows, err := q.db.Query(ctx, listRecentPostsByPlatform, arg.Platform, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Post{}
+	for rows.Next() {
+		var i Post
+		if err := rows.Scan(
+			&i.ID,
+			&i.Platform,
+			&i.ExternalID,
+			&i.AuthorHandle,
+			&i.AuthorID,
+			&i.Text,
+			&i.MediaUrls,
+			&i.Metrics,
+			&i.ScrapedAt,
+			&i.AuthorAccountID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTopPostsByPlatform = `-- name: ListTopPostsByPlatform :many
 SELECT id, platform, external_id, author_handle, author_id, text, media_urls,
        metrics, scraped_at, author_account_id

@@ -14,28 +14,22 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  Label,
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-  Textarea,
 } from '@smm/ui';
-import { AlertCircle, Flag, Heart, Loader2, MessageSquare, Reply } from 'lucide-react';
+import { AlertCircle } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
-import { RegionCommentWizard } from './region-comment-wizard';
+import { NewActionForm } from './new-action-form';
 import { useAccounts } from '@/lib/hooks/use-accounts';
 import { useActions } from '@/lib/hooks/use-actions';
 import { useVirtualRowWindow } from '@/lib/hooks/use-virtual-window';
-import { PLATFORM_LABEL } from '@/lib/platforms';
-import type { ActionItem, ActionJob, JobStatus } from '@/lib/api';
-import { useSession } from '@/lib/auth/session-context';
-import { can } from '@/lib/auth/permissions';
+import type { ActionJob, JobStatus } from '@/lib/api';
 
 const STATUSES: JobStatus[] = ['PENDING', 'RUNNING', 'SUCCESS', 'FAILED', 'CANCELLED'];
-const MAX_BATCH = 50;
 // Uniform row height: group headers and job rows share it so the window math
 // stays fixed-height (see useVirtualRowWindow).
 const ROW_HEIGHT = 44;
@@ -74,23 +68,9 @@ function stageReached(status: JobStatus): number {
 
 export default function ActionsPage() {
   const { accounts } = useAccounts();
-  const { actions, loading, error, enqueue } = useActions();
-  const session = useSession();
-  const role = session.status === 'authenticated' ? session.role : undefined;
-  const canAct = can(role, 'act');
+  const { actions, loading, error } = useActions();
 
-  const [accountId, setAccountId] = useState<string>('');
-  const [urls, setUrls] = useState<string>('');
   const [status, setStatusFilter] = useState<string>('all');
-  const [busy, setBusy] = useState(false);
-  const [formError, setFormError] = useState<string | null>(null);
-
-  // Only accounts that can actually be dispatched: the enqueue rejects anything
-  // not packable, so the dropdown must not offer them.
-  const usable = useMemo(
-    () => accounts.filter((a) => a.status === 'ACTIVE' || a.status === 'PAUSED'),
-    [accounts],
-  );
 
   const inFlight = useMemo(
     () => actions.filter((a) => a.status === 'PENDING' || a.status === 'RUNNING').length,
@@ -124,157 +104,10 @@ export default function ActionsPage() {
   const win = virtual.slice(rows.length);
   const [selected, setSelected] = useState<ActionJob | null>(null);
 
-  const submit = async (
-    type: 'action_like' | 'action_comment' | 'action_report' | 'action_reply_comment',
-  ) => {
-    setFormError(null);
-
-    if (!accountId) {
-      setFormError('Pick an account first.');
-      return;
-    }
-    const list = urls
-      .split('\n')
-      .map((l) => l.trim())
-      .filter(Boolean);
-    if (list.length === 0) {
-      setFormError('Paste at least one post URL.');
-      return;
-    }
-    if (list.length > MAX_BATCH) {
-      setFormError(`A batch is capped at ${MAX_BATCH} actions; you pasted ${list.length}.`);
-      return;
-    }
-
-    const items: ActionItem[] = list.map((targetUrl) => ({
-      accountId,
-      targetUrl,
-      actionType: type,
-    }));
-
-    setBusy(true);
-    try {
-      await enqueue(items);
-      setUrls('');
-    } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Enqueue failed');
-    } finally {
-      setBusy(false);
-    }
-  };
-
   return (
     <div className="mx-auto max-w-6xl space-y-4">
-      {/* Region-select comment flow: target link → regions → N accounts → per-account comment. */}
-      <RegionCommentWizard />
-      {/* Action to target: pick account + target, then trigger the worker. */}
-      <Card>
-        <CardHeader className="flex-row items-center justify-between space-y-0">
-          <div>
-            <CardTitle>Action to target</CardTitle>
-            <CardDescription>
-              Executed by the owning worker via Playwright · sequential (1 action/container).
-            </CardDescription>
-          </div>
-          <Badge variant="info">Live queue</Badge>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-[200px_1fr]">
-            <div className="space-y-2">
-              <Label htmlFor="account">Account (worker)</Label>
-              <Select value={accountId} onValueChange={setAccountId}>
-                <SelectTrigger id="account">
-                  <SelectValue placeholder="Select an account" />
-                </SelectTrigger>
-                <SelectContent>
-                  {usable.map((a) => (
-                    <SelectItem key={a.id} value={a.id}>
-                      @{a.username} · {PLATFORM_LABEL[a.platform] ?? a.platform}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="urls">Target URL</Label>
-              <Textarea
-                id="urls"
-                value={urls}
-                onChange={(e) => setUrls(e.target.value)}
-                placeholder={
-                  'https://instagram.com/p/Cx1a2b3c\n—one URL per line, up to 50 per batch'
-                }
-                rows={2}
-                className="font-mono text-xs"
-                disabled={busy || !canAct}
-              />
-              <p className="text-xs text-muted-foreground">
-                Validated by BE before publish (SSRF guard). One URL per line, up to {MAX_BATCH} per
-                batch.
-              </p>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              type="button"
-              onClick={() => void submit('action_comment')}
-              disabled={busy || !canAct}
-            >
-              {busy ? <Loader2 className="animate-spin" /> : <MessageSquare />}
-              Comment
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => void submit('action_like')}
-              disabled={busy || !canAct}
-            >
-              <Heart />
-              Like
-            </Button>
-
-            {/* The queue now knows like, comment, report and reply — each maps
-                to a real job type the worker dispatches on. */}
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => void submit('action_report')}
-              disabled={busy || !canAct}
-            >
-              <Flag />
-              Report post
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => void submit('action_reply_comment')}
-              disabled={busy || !canAct}
-            >
-              <Reply />
-              Reply comment
-            </Button>
-            <span className="text-xs text-muted-foreground">
-              Comment text is composed from templates — never typed here.
-            </span>
-          </div>
-
-          <p className="text-xs text-muted-foreground">
-            Comment text is composed from templates and screened before dispatch — never typed here.
-          </p>
-
-          {formError ? (
-            <div className="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
-              <AlertCircle className="size-4" />
-              {formError}
-            </div>
-          ) : null}
-
-          {inFlight > 0 ? (
-            <p className="text-sm text-muted-foreground">{inFlight} in flight</p>
-          ) : null}
-        </CardContent>
-      </Card>
+      {/* New Action: platform → link → scrape → action → per-account comment → submit. */}
+      <NewActionForm />
 
       <Card>
         <CardHeader className="flex-row items-center justify-between space-y-0">

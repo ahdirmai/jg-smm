@@ -171,16 +171,16 @@ type Querier interface {
 	// Every attempt of a job, newest first: the dashboard drawer that debugs one
 	// action (P4-02) reads this.
 	ListActionLogsByJob(ctx context.Context, actionJobID pgtype.UUID) ([]ActionLog, error)
-	ListAnalyticsIngestRuns(ctx context.Context, arg ListAnalyticsIngestRunsParams) ([]AnalyticsIngestRun, error)
-	ListAnalyticsMentionsByAccount(ctx context.Context, arg ListAnalyticsMentionsByAccountParams) ([]AnalyticsMention, error)
-	ListAnalyticsMentionsByPlatform(ctx context.Context, arg ListAnalyticsMentionsByPlatformParams) ([]AnalyticsMention, error)
-	ListAnalyticsSnapshotsByAccount(ctx context.Context, arg ListAnalyticsSnapshotsByAccountParams) ([]AnalyticsSnapshot, error)
-	ListAuditLogsFiltered(ctx context.Context, arg ListAuditLogsFilteredParams) ([]ListAuditLogsFilteredRow, error)
 	// The pool view across EVERY platform. The composer's pick is platform-scoped
 	// (see PickForTarget), but the dashboard listing needs to show all variants
 	// when no platform filter is applied — otherwise non-Instagram variants are
 	// invisible and the platform filter has nothing to filter.
 	ListAllCommentTemplates(ctx context.Context, arg ListAllCommentTemplatesParams) ([]CommentTemplate, error)
+	ListAnalyticsIngestRuns(ctx context.Context, arg ListAnalyticsIngestRunsParams) ([]AnalyticsIngestRun, error)
+	ListAnalyticsMentionsByAccount(ctx context.Context, arg ListAnalyticsMentionsByAccountParams) ([]AnalyticsMention, error)
+	ListAnalyticsMentionsByPlatform(ctx context.Context, arg ListAnalyticsMentionsByPlatformParams) ([]AnalyticsMention, error)
+	ListAnalyticsSnapshotsByAccount(ctx context.Context, arg ListAnalyticsSnapshotsByAccountParams) ([]AnalyticsSnapshot, error)
+	ListAuditLogsFiltered(ctx context.Context, arg ListAuditLogsFilteredParams) ([]ListAuditLogsFilteredRow, error)
 	// The pool view for one platform. include_inactive is the dashboard's
 	// "show paused variants" toggle; the pool a pick draws from is always active-only
 	// (see PickForTarget).
@@ -196,6 +196,9 @@ type Querier interface {
 	ListProvisionLogsByWorker(ctx context.Context, arg ListProvisionLogsByWorkerParams) ([]ProvisionLog, error)
 	ListProxyGroups(ctx context.Context) ([]ProxyGroup, error)
 	ListRawPayloadsByRun(ctx context.Context, apifyRunID pgtype.UUID) ([]string, error)
+	// Posts on a platform, newest scrape first. The keyword-scrape read-back uses
+	// it (this run's rows just got the freshest scraped_at), not a metric ranking.
+	ListRecentPostsByPlatform(ctx context.Context, arg ListRecentPostsByPlatformParams) ([]Post, error)
 	ListScrapeJobs(ctx context.Context, arg ListScrapeJobsParams) ([]ScrapeJob, error)
 	ListScrapeJobsByStatus(ctx context.Context, arg ListScrapeJobsByStatusParams) ([]ScrapeJob, error)
 	ListTargets(ctx context.Context, arg ListTargetsParams) ([]Target, error)

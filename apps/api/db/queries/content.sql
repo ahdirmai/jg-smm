@@ -46,6 +46,16 @@ WHERE platform = $1
 ORDER BY (metrics->>$2::text)::bigint DESC NULLS LAST
 LIMIT $3;
 
+-- name: ListRecentPostsByPlatform :many
+-- Posts on a platform, newest scrape first. The keyword-scrape read-back uses
+-- it (this run's rows just got the freshest scraped_at), not a metric ranking.
+SELECT id, platform, external_id, author_handle, author_id, text, media_urls,
+       metrics, scraped_at, author_account_id
+FROM post
+WHERE platform = $1
+ORDER BY scraped_at DESC
+LIMIT $2;
+
 -- name: GetCommentByID :one
 SELECT id, post_id, platform, external_id, author_handle, text, metrics,
        scraped_at, parent_id

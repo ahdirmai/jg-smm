@@ -92,32 +92,26 @@ func (q *Queries) GetCommentTemplateByID(ctx context.Context, id pgtype.UUID) (C
 	return i, err
 }
 
-const listCommentTemplates = `-- name: ListCommentTemplates :many
+const listAllCommentTemplates = `-- name: ListAllCommentTemplates :many
 SELECT id, platform, text, vars, weight, banned_words, is_active, created_at
 FROM comment_template
-WHERE platform = $1
-  AND ($2::boolean OR is_active = TRUE)
+WHERE ($1::boolean OR is_active = TRUE)
 ORDER BY created_at DESC
-LIMIT $3 OFFSET $4
+LIMIT $2 OFFSET $3
 `
 
-type ListCommentTemplatesParams struct {
-	Platform Platform `json:"platform"`
-	Column2  bool     `json:"column_2"`
-	Limit    int32    `json:"limit"`
-	Offset   int32    `json:"offset"`
+type ListAllCommentTemplatesParams struct {
+	Column1 bool  `json:"column_1"`
+	Limit   int32 `json:"limit"`
+	Offset  int32 `json:"offset"`
 }
 
-// The pool view for one platform. include_inactive is the dashboard's
-// "show paused variants" toggle; the pool a pick draws from is always active-only
-// (see PickForTarget).
-func (q *Queries) ListCommentTemplates(ctx context.Context, arg ListCommentTemplatesParams) ([]CommentTemplate, error) {
-	rows, err := q.db.Query(ctx, listCommentTemplates,
-		arg.Platform,
-		arg.Column2,
-		arg.Limit,
-		arg.Offset,
-	)
+// The pool view across EVERY platform. The composer's pick is platform-scoped
+// (see PickForTarget), but the dashboard listing needs to show all variants
+// when no platform filter is applied — otherwise non-Instagram variants are
+// invisible and the platform filter has nothing to filter.
+func (q *Queries) ListAllCommentTemplates(ctx context.Context, arg ListAllCommentTemplatesParams) ([]CommentTemplate, error) {
+	rows, err := q.db.Query(ctx, listAllCommentTemplates, arg.Column1, arg.Limit, arg.Offset)
 	if err != nil {
 		return nil, err
 	}
@@ -145,27 +139,29 @@ func (q *Queries) ListCommentTemplates(ctx context.Context, arg ListCommentTempl
 	return items, nil
 }
 
-const listAllCommentTemplates = `-- name: ListAllCommentTemplates :many
+const listCommentTemplates = `-- name: ListCommentTemplates :many
 SELECT id, platform, text, vars, weight, banned_words, is_active, created_at
 FROM comment_template
-WHERE ($1::boolean OR is_active = TRUE)
+WHERE platform = $1
+  AND ($2::boolean OR is_active = TRUE)
 ORDER BY created_at DESC
-LIMIT $2 OFFSET $3
+LIMIT $3 OFFSET $4
 `
 
-type ListAllCommentTemplatesParams struct {
-	Column1 bool  `json:"column_1"`
-	Limit   int32 `json:"limit"`
-	Offset  int32 `json:"offset"`
+type ListCommentTemplatesParams struct {
+	Platform Platform `json:"platform"`
+	Column2  bool     `json:"column_2"`
+	Limit    int32    `json:"limit"`
+	Offset   int32    `json:"offset"`
 }
 
-// The pool view across EVERY platform. The composer's pick is platform-scoped
-// (see PickForTarget), but the dashboard listing needs to show all variants
-// when no platform filter is applied — otherwise non-Instagram variants are
-// invisible and the platform filter has nothing to filter.
-func (q *Queries) ListAllCommentTemplates(ctx context.Context, arg ListAllCommentTemplatesParams) ([]CommentTemplate, error) {
-	rows, err := q.db.Query(ctx, listAllCommentTemplates,
-		arg.Column1,
+// The pool view for one platform. include_inactive is the dashboard's
+// "show paused variants" toggle; the pool a pick draws from is always active-only
+// (see PickForTarget).
+func (q *Queries) ListCommentTemplates(ctx context.Context, arg ListCommentTemplatesParams) ([]CommentTemplate, error) {
+	rows, err := q.db.Query(ctx, listCommentTemplates,
+		arg.Platform,
+		arg.Column2,
 		arg.Limit,
 		arg.Offset,
 	)

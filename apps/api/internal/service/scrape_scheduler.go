@@ -27,12 +27,13 @@ import (
 //     back with an exponential delay (attempt * base) instead of failing.
 //   - one bad account never aborts the loop.
 type ScrapeScheduler struct {
-	scrapes port.ScrapeStore
-	runner  port.ApifyRunner
-	clock   func() time.Time
-	jitter  func() time.Duration
-	cfg     ScrapeSchedulerConfig
-	log     *slog.Logger
+	scrapes  port.ScrapeStore
+	runner   port.ApifyRunner
+	actorFor func(domain.Platform) string
+	clock    func() time.Time
+	jitter   func() time.Duration
+	cfg      ScrapeSchedulerConfig
+	log      *slog.Logger
 }
 
 // ScrapeSchedulerConfig bounds the loop.
@@ -56,6 +57,13 @@ type ScrapeSchedulerConfig struct {
 // scheduler still claims and requeues (useful for smoke-testing the queue), but
 // a nil runner is a misconfiguration in every real deployment.
 func NewScrapeScheduler(store port.ScrapeStore, runner port.ApifyRunner, cfg ScrapeSchedulerConfig) *ScrapeScheduler {
+	return NewScrapeSchedulerWithActor(store, runner, nil, cfg)
+}
+
+// NewScrapeSchedulerWithActor is NewScrapeScheduler plus the platform→actor
+// mapping; the runner needs it to pick the per-platform payload. nil falls
+// back to the runner's own actor resolution.
+func NewScrapeSchedulerWithActor(store port.ScrapeStore, runner port.ApifyRunner, actorFor func(domain.Platform) string, cfg ScrapeSchedulerConfig) *ScrapeScheduler {
 	if cfg.JitterMin <= 0 {
 		cfg.JitterMin = 5 * time.Second
 	}
@@ -81,12 +89,13 @@ func NewScrapeScheduler(store port.ScrapeStore, runner port.ApifyRunner, cfg Scr
 		return cfg.JitterMin + time.Duration(rand.Int64N(int64(cfg.JitterMax-cfg.JitterMin)+1))
 	}
 	return &ScrapeScheduler{
-		scrapes: store,
-		runner:  runner,
-		clock:   cfg.Clock,
-		jitter:  jitter,
-		cfg:     cfg,
-		log:     cfg.Logger,
+		scrapes:  store,
+		runner:   runner,
+		actorFor: actorFor,
+		clock:    cfg.Clock,
+		jitter:   jitter,
+		cfg:      cfg,
+		log:      cfg.Logger,
 	}
 }
 
@@ -180,6 +189,7 @@ func (s *ScrapeScheduler) runOne(ctx context.Context, job domain.ScrapeJob) {
 
 	out, err := s.runner.Run(ctx, port.ApifyInput{
 		ScrapeJobID: job.ID,
+		Platform:    tgt.Platform,
 		TargetURL:   tgt.URL,
 		MaxItems:    100,
 	})

@@ -140,6 +140,16 @@ services:
       # set them in production so the 90% alert has a real number to divide.
       APIFY_BUDGET_USD: ${APIFY_BUDGET_USD:-0}
       PROXY_BUDGET_GB: ${PROXY_BUDGET_GB:-0}
+      # Scrape: sync on-demand runs from the dashboard need the token. The
+      # background scheduler stays off unless SCRAPE_INTERVAL_SECONDS is set.
+      APIFY_TOKEN: ${APIFY_TOKEN:-}
+      APIFY_BASE_URL: ${APIFY_BASE_URL:-https://api.apify.com/v2}
+      APIFY_ACTOR_PREFIX: ${APIFY_ACTOR_PREFIX:-~smm}
+      # LLM (OpenAI-compatible) for AI comment generation. Empty key disables
+      # the endpoint (503), never a request with a blank credential.
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
       # P4-06 weekly report digest. Off by default; bring the `mail` profile up
       # (`COMPOSE_PROFILES=mail make up`) and set the interval to run it.
       SMTP_ADDR: ${SMTP_ADDR:-}

@@ -13,6 +13,7 @@ import (
 // returns whatever outcome the test dialed in.
 type fakeRunner struct {
 	runs   []port.ApifyInput
+	search []port.ApifySearchInput
 	out    port.ApifyOutput
 	outErr error
 }
@@ -21,6 +22,14 @@ var _ port.ApifyRunner = (*fakeRunner)(nil)
 
 func (r *fakeRunner) Run(ctx context.Context, in port.ApifyInput) (port.ApifyOutput, error) {
 	r.runs = append(r.runs, in)
+	if r.outErr != nil {
+		return port.ApifyOutput{}, r.outErr
+	}
+	return r.out, nil
+}
+
+func (r *fakeRunner) RunSearch(ctx context.Context, in port.ApifySearchInput) (port.ApifyOutput, error) {
+	r.search = append(r.search, in)
 	if r.outErr != nil {
 		return port.ApifyOutput{}, r.outErr
 	}
