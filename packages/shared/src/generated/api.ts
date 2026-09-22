@@ -1092,6 +1092,8 @@ export interface components {
              * @description Sealed at rest; never returned or logged.
              */
             password: string;
+            /** @description Pack into this specific container instead of letting the packer choose. The container must exist and not already host the platform. */
+            workerId?: string | null;
             proxyGroupId?: string | null;
             tags?: string[];
         };

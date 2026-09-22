@@ -10,6 +10,7 @@ import (
 
 	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
 	"github.com/ahdirmai/jg-smm/apps/api/internal/http/oapigen"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/port"
 	"github.com/ahdirmai/jg-smm/apps/api/internal/service"
 )
 
@@ -31,6 +32,9 @@ func NewActionHandler(actions *service.ActionService) *ActionHandler {
 func (h *ActionHandler) Register(g *echo.Group) {
 	g.POST("/actions", h.enqueue, RequirePermission(domain.PermAct))
 	g.GET("/actions", h.list)
+	// Batch monitoring: each enqueue call is recorded as a unit.
+	g.GET("/actions/batches", h.listBatches)
+	g.GET("/actions/batches/:batchId", h.getBatch)
 }
 
 // enqueue turns a batch of intents into PENDING jobs.
@@ -106,6 +110,40 @@ func (h *ActionHandler) list(c echo.Context) error {
 		out = append(out, row)
 	}
 	return c.JSON(http.StatusOK, oapigen.ActionJobList{Actions: out})
+}
+
+// listBatches returns recent enqueue batches (monitoring), newest first. Shape
+// is hand-rolled (not oapigen): batches live outside the OpenAPI contract.
+func (h *ActionHandler) listBatches(c echo.Context) error {
+	if h.actions == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "action service unavailable")
+	}
+	limit := 50
+	if raw := c.QueryParam("limit"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	batches, err := h.actions.ListBatches(c.Request().Context(), limit)
+	if err != nil {
+		return actionError(err)
+	}
+	if batches == nil {
+		batches = []port.ActionBatch{}
+	}
+	return c.JSON(http.StatusOK, map[string]any{"batches": batches})
+}
+
+// getBatch returns one batch with a live rollup of its jobs' current statuses.
+func (h *ActionHandler) getBatch(c echo.Context) error {
+	if h.actions == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "action service unavailable")
+	}
+	st, err := h.actions.GetBatchStatus(c.Request().Context(), c.Param("batchId"))
+	if err != nil {
+		return actionError(err)
+	}
+	return c.JSON(http.StatusOK, st)
 }
 
 // jobToDTO maps the domain job to the wire shape. Nullable fields are omitted

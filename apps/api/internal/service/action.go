@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
 	"github.com/ahdirmai/jg-smm/apps/api/internal/port"
 )
@@ -33,6 +35,9 @@ type ActionService struct {
 	// custom comment is unavailable and every comment falls back to the template
 	// pool (local play / no Redis).
 	texts port.ActionTextStore
+	// batches records each enqueue call as a unit for monitoring. Optional and
+	// best-effort: nil (or a store failure) never blocks an enqueue.
+	batches port.ActionBatchStore
 }
 
 // ActionTextTTL bounds how long a per-account comment body waits for dispatch.
@@ -83,6 +88,7 @@ func NewActionService(
 	clock port.Clock,
 	logger *slog.Logger,
 	texts port.ActionTextStore,
+	batches port.ActionBatchStore,
 ) *ActionService {
 	if logger == nil {
 		logger = slog.Default()
@@ -90,7 +96,7 @@ func NewActionService(
 	if clock == nil {
 		clock = systemClock{}
 	}
-	return &ActionService{actions: actions, accounts: accounts, scrapes: scrapes, clock: clock, log: logger, texts: texts}
+	return &ActionService{actions: actions, accounts: accounts, scrapes: scrapes, clock: clock, log: logger, texts: texts, batches: batches}
 }
 
 // Enqueue turns a batch of intents into PENDING jobs. Every item is validated
@@ -184,8 +190,92 @@ func (s *ActionService) Enqueue(ctx context.Context, items []ActionItem) ([]doma
 		}
 		created = append(created, row)
 	}
-	s.log.Info("actions enqueued", "count", len(created))
+
+	// Record the batch as a monitoring unit so a fan-out (region-select flow) is
+	// traceable together, not just as N unrelated jobs. Best-effort: a store
+	// failure is logged, never fatal — the jobs are already enqueued and visible
+	// per-job. The per-job structured logs also carry the batch id for log
+	// correlation.
+	batchID := uuid.NewString()
+	if s.batches != nil && len(created) > 0 {
+		typeSet := map[string]struct{}{}
+		urlSet := map[string]struct{}{}
+		jobIDs := make([]string, 0, len(created))
+		types := make([]string, 0, 4)
+		urls := make([]string, 0, len(created))
+		for i, j := range created {
+			jobIDs = append(jobIDs, j.ID)
+			if _, ok := typeSet[string(j.Type)]; !ok {
+				typeSet[string(j.Type)] = struct{}{}
+				types = append(types, string(j.Type))
+			}
+			// items[i] is the source of created[i] (same order); record distinct
+			// targets, capped so a 50-item batch record stays small.
+			if u := items[i].TargetURL; u != "" {
+				if _, ok := urlSet[u]; !ok && len(urls) < 20 {
+					urlSet[u] = struct{}{}
+					urls = append(urls, u)
+				}
+			}
+		}
+		batch := port.ActionBatch{
+			ID:          batchID,
+			CreatedAt:   now,
+			ActionTypes: types,
+			Count:       len(created),
+			TargetURLs:  urls,
+			JobIDs:      jobIDs,
+		}
+		if err := s.batches.Create(ctx, batch); err != nil {
+			s.log.Warn("record action batch failed (monitoring only)", "batch", batchID, "err", err)
+		}
+	}
+	s.log.Info("actions enqueued", "batch", batchID, "count", len(created))
 	return created, nil
+}
+
+// ListBatches returns recent enqueue batches (monitoring), newest first. Nil
+// batch store (no Redis) yields an empty list, never an error.
+func (s *ActionService) ListBatches(ctx context.Context, limit int) ([]port.ActionBatch, error) {
+	if s.batches == nil {
+		return nil, nil
+	}
+	return s.batches.List(ctx, limit)
+}
+
+// BatchStatus is a batch plus a live rollup of its jobs' current statuses, the
+// unit an operator monitors after a fan-out.
+type BatchStatus struct {
+	Batch    port.ActionBatch       `json:"batch"`
+	ByStatus map[domain.JobStatus]int `json:"byStatus"`
+	Missing  int                    `json:"missing"` // job ids no longer found (e.g. purged)
+}
+
+// GetBatchStatus fetches a batch and rolls up its jobs' current statuses by
+// reading each job. Bounded by the batch size (<=50). Returns ErrNotFound when
+// the batch id is unknown (or no batch store is wired).
+func (s *ActionService) GetBatchStatus(ctx context.Context, id string) (BatchStatus, error) {
+	if s.batches == nil {
+		return BatchStatus{}, domain.ErrNotFound
+	}
+	b, ok, err := s.batches.Get(ctx, id)
+	if err != nil {
+		return BatchStatus{}, fmt.Errorf("get batch: %w", err)
+	}
+	if !ok {
+		return BatchStatus{}, domain.ErrNotFound
+	}
+	byStatus := map[domain.JobStatus]int{}
+	missing := 0
+	for _, jobID := range b.JobIDs {
+		job, err := s.actions.GetActionJob(ctx, jobID)
+		if err != nil {
+			missing++
+			continue
+		}
+		byStatus[job.Status]++
+	}
+	return BatchStatus{Batch: b, ByStatus: byStatus, Missing: missing}, nil
 }
 
 // List returns the queue newest-first with each job's latest attempt verdict.

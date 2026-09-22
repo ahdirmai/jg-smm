@@ -55,7 +55,6 @@ const (
 const (
 	ActionJobActionTypeActionComment      ActionJobActionType = "action_comment"
 	ActionJobActionTypeActionLike         ActionJobActionType = "action_like"
-	ActionJobActionTypeActionLikeComment  ActionJobActionType = "action_like_comment"
 	ActionJobActionTypeActionReplyComment ActionJobActionType = "action_reply_comment"
 	ActionJobActionTypeActionReport       ActionJobActionType = "action_report"
 )
@@ -64,7 +63,6 @@ const (
 const (
 	ActionReportRowActionTypeActionComment      ActionReportRowActionType = "action_comment"
 	ActionReportRowActionTypeActionLike         ActionReportRowActionType = "action_like"
-	ActionReportRowActionTypeActionLikeComment  ActionReportRowActionType = "action_like_comment"
 	ActionReportRowActionTypeActionReplyComment ActionReportRowActionType = "action_reply_comment"
 	ActionReportRowActionTypeActionReport       ActionReportRowActionType = "action_report"
 )
@@ -321,9 +319,7 @@ type ActionItem struct {
 	// TargetUrl Permalink of the post to act on. SSRF-guarded server-side.
 	TargetUrl string `json:"targetUrl"`
 
-	// Text Optional operator-supplied comment body (region-select flow's
-	// per-account comment). Empty/omitted → composed from the template pool.
-	// Only valid for a comment or reply action.
+	// Text Optional operator-supplied comment body (region-select flow's per-account comment). Omitted → composed from the template pool at dispatch. Only valid for action_comment / action_reply_comment.
 	Text *string `json:"text,omitempty"`
 }
 
@@ -555,6 +551,9 @@ type CreateAccountRequest struct {
 	ProxyGroupId nullable.Nullable[string]    `json:"proxyGroupId,omitempty"`
 	Tags         *[]string                    `json:"tags,omitempty"`
 	Username     string                       `json:"username"`
+
+	// WorkerId Pack into this specific container instead of letting the packer choose. The container must exist and not already host the platform.
+	WorkerId nullable.Nullable[string] `json:"workerId,omitempty"`
 }
 
 // CreateAccountRequestPlatform defines model for CreateAccountRequest.Platform.

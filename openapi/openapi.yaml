@@ -1764,6 +1764,12 @@ components:
           minLength: 1
           format: password
           description: Sealed at rest; never returned or logged.
+        workerId:
+          type: string
+          nullable: true
+          description: >-
+            Pack into this specific container instead of letting the packer
+            choose. The container must exist and not already host the platform.
         proxyGroupId:
           type: string
           nullable: true

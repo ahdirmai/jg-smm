@@ -32,7 +32,7 @@ func TestActionEnqueueStoresPerAccountText(t *testing.T) {
 	store := newActionStore()
 	accs := &actionAccounts{}
 	texts := newFakeActionText()
-	svc := NewActionService(store, accs, &actionTargets{ups: targetUpsert{id: "tgt-1"}}, fixedClock{}, nil, texts)
+	svc := NewActionService(store, accs, &actionTargets{ups: targetUpsert{id: "tgt-1"}}, fixedClock{}, nil, texts, nil)
 
 	jobs, err := svc.Enqueue(context.Background(), []ActionItem{
 		{AccountID: "acct-1", TargetURL: "https://instagram.com/p/abc", Type: domain.JobTypeActionComment, Text: "halo dunia"},
@@ -52,7 +52,7 @@ func TestActionEnqueueStoresPerAccountText(t *testing.T) {
 func TestActionEnqueueRejectsTextOnLike(t *testing.T) {
 	store := newActionStore()
 	texts := newFakeActionText()
-	svc := NewActionService(store, &actionAccounts{}, &actionTargets{ups: targetUpsert{id: "tgt-1"}}, fixedClock{}, nil, texts)
+	svc := NewActionService(store, &actionAccounts{}, &actionTargets{ups: targetUpsert{id: "tgt-1"}}, fixedClock{}, nil, texts, nil)
 
 	_, err := svc.Enqueue(context.Background(), []ActionItem{
 		{AccountID: "acct-1", TargetURL: "https://instagram.com/p/abc", Type: domain.JobTypeActionLike, Text: "nope"},
@@ -65,7 +65,7 @@ func TestActionEnqueueRejectsTextOnLike(t *testing.T) {
 // Text with no store wired is rejected rather than silently dropped.
 func TestActionEnqueueRejectsTextWithoutStore(t *testing.T) {
 	store := newActionStore()
-	svc := NewActionService(store, &actionAccounts{}, &actionTargets{ups: targetUpsert{id: "tgt-1"}}, fixedClock{}, nil, nil)
+	svc := NewActionService(store, &actionAccounts{}, &actionTargets{ups: targetUpsert{id: "tgt-1"}}, fixedClock{}, nil, nil, nil)
 
 	_, err := svc.Enqueue(context.Background(), []ActionItem{
 		{AccountID: "acct-1", TargetURL: "https://instagram.com/p/abc", Type: domain.JobTypeActionComment, Text: "x"},
@@ -78,7 +78,7 @@ func TestActionEnqueueRejectsTextWithoutStore(t *testing.T) {
 // An over-long body is rejected before it reaches the store.
 func TestActionEnqueueRejectsTooLongText(t *testing.T) {
 	store := newActionStore()
-	svc := NewActionService(store, &actionAccounts{}, &actionTargets{ups: targetUpsert{id: "tgt-1"}}, fixedClock{}, nil, newFakeActionText())
+	svc := NewActionService(store, &actionAccounts{}, &actionTargets{ups: targetUpsert{id: "tgt-1"}}, fixedClock{}, nil, newFakeActionText(), nil)
 
 	_, err := svc.Enqueue(context.Background(), []ActionItem{
 		{AccountID: "acct-1", TargetURL: "https://instagram.com/p/abc", Type: domain.JobTypeActionComment, Text: strings.Repeat("a", MaxCommentTextLen+1)},

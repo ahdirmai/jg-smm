@@ -102,7 +102,7 @@ func (t *actionTargets) UpsertTarget(_ context.Context, tg domain.Target) (domai
 }
 
 func newActionService(store *actionStore, accs *actionAccounts, tgts *actionTargets) *ActionService {
-	return NewActionService(store, accs, tgts, fixedClock{}, nil, nil)
+	return NewActionService(store, accs, tgts, fixedClock{}, nil, nil, nil)
 }
 
 // itoa keeps the test free of strconv import noise.
