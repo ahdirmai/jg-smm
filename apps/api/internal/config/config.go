@@ -129,6 +129,14 @@ type Config struct {
 	// 0 publishes no ceiling, same semantics.
 	ProxyBudgetGB float64
 
+	// LLM (OpenAI-compatible) for AI comment generation. An empty base URL,
+	// key or model disables the generator: the endpoint returns 503 and the
+	// dashboard hides the button, rather than firing requests with blank
+	// credentials.
+	LLMBaseURL string
+	LLMModel   string
+	LLMAPIKey  string
+
 	// AnalyticsIngestIntervalSeconds runs the official-account ingest cron
 	// (P2-12). 0 disables it.
 	AnalyticsIngestIntervalSeconds int
@@ -214,6 +222,10 @@ func Load() (Config, error) {
 		ApifyActorPrefix: env("APIFY_ACTOR_PREFIX", "~smm"),
 		ApifyBudgetUSD:   envFloat("APIFY_BUDGET_USD", 0),
 		ProxyBudgetGB:    envFloat("PROXY_BUDGET_GB", 0),
+
+		LLMBaseURL: env("LLM_BASE_URL", ""),
+		LLMModel:   env("LLM_MODEL", ""),
+		LLMAPIKey:  os.Getenv("LLM_API_KEY"),
 
 		AnalyticsIngestIntervalSeconds: envInt("ANALYTICS_INGEST_INTERVAL_SECONDS", 0),
 		AlertIntervalSeconds:           envInt("ALERT_INTERVAL_SECONDS", 0),

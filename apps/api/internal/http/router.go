@@ -26,6 +26,7 @@ type Dependencies struct {
 	ProxyGroups *ProxyGroupHandler
 	Analytics   *AnalyticsHandler
 	Actions     *ActionHandler
+	Scrapes     *ScrapeHandler
 	Templates   *TemplateHandler
 	Reports     *ReportHandler
 	Users       *UserHandler
@@ -122,6 +123,9 @@ func NewRouter(deps Dependencies) *echo.Echo {
 		}
 		if deps.Actions != nil {
 			deps.Actions.Register(api)
+		}
+		if deps.Scrapes != nil {
+			deps.Scrapes.Register(api)
 		}
 		if deps.Templates != nil {
 			deps.Templates.Register(api)

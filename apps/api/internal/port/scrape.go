@@ -31,6 +31,7 @@ type ScrapeStore interface {
 	GetPostByExternalID(ctx context.Context, p domain.Platform, externalID string) (domain.Post, error)
 	ListPosts(ctx context.Context, limit, offset *int) ([]domain.Post, error)
 	ListTopPosts(ctx context.Context, p domain.Platform, metric string, limit int) ([]domain.Post, error)
+	ListRecentPosts(ctx context.Context, p domain.Platform, limit int) ([]domain.Post, error)
 	UpsertComment(ctx context.Context, c domain.Comment) (domain.Comment, error)
 	GetComment(ctx context.Context, id string) (domain.Comment, error)
 	ListCommentsByPost(ctx context.Context, postID string, limit, offset *int) ([]domain.Comment, error)

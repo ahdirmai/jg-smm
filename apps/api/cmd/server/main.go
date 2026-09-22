@@ -22,6 +22,7 @@ import (
 	"github.com/ahdirmai/jg-smm/apps/api/internal/adapter/crypto"
 	"github.com/ahdirmai/jg-smm/apps/api/internal/adapter/dockerprovisioner"
 	"github.com/ahdirmai/jg-smm/apps/api/internal/adapter/k8s"
+	llmadapter "github.com/ahdirmai/jg-smm/apps/api/internal/adapter/llm"
 	smtpadapter "github.com/ahdirmai/jg-smm/apps/api/internal/adapter/smtp"
 	storageadapter "github.com/ahdirmai/jg-smm/apps/api/internal/adapter/storage"
 	"github.com/ahdirmai/jg-smm/apps/api/internal/adapter/transport"
@@ -289,13 +290,19 @@ func main() {
 		// the scheduler is the same instance this CRUD handler serves, so a
 		// template edit is visible to dispatch without a restart.
 		templateSvc := service.NewTemplateService(repository.NewTemplateRepo(pg.Queries()), nil, nil, logger)
-		actionSvc := service.NewActionService(actionRepo, accountRepo, scrapeRepo, nil, logger, actionTexts)
+		var actionBatches port.ActionBatchStore
+		if redisClient != nil {
+			actionBatches = adapter.NewActionBatchStore(redisClient, "smm:actionbatch")
+		}
+		actionSvc := service.NewActionService(actionRepo, accountRepo, scrapeRepo, nil, logger, actionTexts, actionBatches)
 		deps.Actions = apihttp.NewActionHandler(actionSvc)
 		deps.Templates = apihttp.NewTemplateHandler(templateSvc)
 
 		// Scrape scheduler (P2-02): claims due jobs FIFO, runs the Apify actor,
-		// records the outcome with jitter + rate-limit backoff.
-		if cfg.ScrapeIntervalSeconds > 0 && cfg.ApifyToken != "" {
+		// records the outcome with jitter + rate-limit backoff. The same runner
+		// backs the dashboard's on-demand scrape, so it is built whenever the
+		// token exists — not only when the background loop is enabled.
+		if cfg.ApifyToken != "" && rawStorage != nil {
 			runner, err := apifyadapter.New(apifyadapter.Config{
 				BaseURL:  cfg.ApifyBaseURL,
 				Token:    cfg.ApifyToken,
@@ -307,15 +314,30 @@ func main() {
 				logger.Error("apify runner init failed", "err", err)
 				os.Exit(1)
 			}
-			scheduler := service.NewScrapeScheduler(scrapeRepo, runner, service.ScrapeSchedulerConfig{
-				JitterMin:   time.Duration(cfg.ScrapeJitterMinSeconds) * time.Second,
-				JitterMax:   time.Duration(cfg.ScrapeJitterMaxSeconds) * time.Second,
-				MaxAttempts: cfg.ScrapeMaxAttempts,
-				TickBudget:  cfg.ActionBatchParallelism * 10,
-				Clock:       time.Now,
-				Logger:      logger,
-			})
-			go scheduler.Run(ctx, time.Duration(cfg.ScrapeIntervalSeconds)*time.Second)
+			// On-demand scrape (dashboard: paste a URL, get post + comments) and
+			// the AI comment generator that drafts from what it read. Both
+			// degrade to 503 routes when their config is absent.
+			gen := service.NewCommentGenerator(
+				llmadapter.New(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel),
+				nil, // no platform-wide denylist yet; template-level screening stays the enforcement point
+				logger,
+			)
+			deps.Scrapes = apihttp.NewScrapeHandler(
+				service.NewScrapeService(scrapeRepo, runner, actorForPlatform(cfg), rawStorage, logger),
+				service.NewKeywordScrapeService(scrapeRepo, runner, searchActorForPlatform(cfg), rawStorage, logger),
+				gen,
+			)
+			if cfg.ScrapeIntervalSeconds > 0 {
+				scheduler := service.NewScrapeScheduler(scrapeRepo, runner, service.ScrapeSchedulerConfig{
+					JitterMin:   time.Duration(cfg.ScrapeJitterMinSeconds) * time.Second,
+					JitterMax:   time.Duration(cfg.ScrapeJitterMaxSeconds) * time.Second,
+					MaxAttempts: cfg.ScrapeMaxAttempts,
+					TickBudget:  cfg.ActionBatchParallelism * 10,
+					Clock:       time.Now,
+					Logger:      logger,
+				})
+				go scheduler.Run(ctx, time.Duration(cfg.ScrapeIntervalSeconds)*time.Second)
+			}
 		}
 
 		// Action scheduler (P3-07): claims due action jobs, enforces the
@@ -502,13 +524,35 @@ func provisionDriver(ctx context.Context, cfg config.Config, workers port.Worker
 // are derived from the actor prefix in config so an actor change ships without
 // a rebuild. The MVP enables Instagram + Threads only; every other platform
 // returns empty and the runner rejects the job up front.
+//
+// Actor picks (verified against the Apify store, 2026-09):
+//   - instagram-post-scraper takes a post permalink in its `username` field
+//     and returns that exact post with comments (the old apify/instagram-
+//     scraper build dropped per-post scraping).
+//   - threads: the prefix holds the meta-threads-scraper (user-posts mode;
+//     the runner resolves the username from the permalink itself).
 func actorForPlatform(cfg config.Config) func(domain.Platform) string {
 	return func(p domain.Platform) string {
 		switch p {
 		case domain.PlatformInstagram:
-			return cfg.ApifyActorPrefix + "/instagram-scraper"
+			return cfg.ApifyActorPrefix + "/instagram-post-scraper"
 		case domain.PlatformThreads:
-			return cfg.ApifyActorPrefix + "/threads-scraper"
+			return cfg.ApifyActorPrefix + "/meta-threads-scraper"
+		}
+		return ""
+	}
+}
+
+// searchActorForPlatform maps a platform to its SEARCH actor. The search
+// actors live under the same prefix; empty → keyword scrape is off for that
+// platform (the handler 400s).
+func searchActorForPlatform(cfg config.Config) func(domain.Platform) string {
+	return func(p domain.Platform) string {
+		switch p {
+		case domain.PlatformInstagram:
+			return cfg.ApifyActorPrefix + "/instagram-search-scraper"
+		case domain.PlatformThreads:
+			return cfg.ApifyActorPrefix + "/meta-threads-scraper"
 		}
 		return ""
 	}

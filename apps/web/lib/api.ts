@@ -146,6 +146,51 @@ export interface AccountsByRegionResponse {
   regions: RegionGroup[];
 }
 
+// --- On-demand scrape + AI generation (hand-rolled, not in the contract) ----
+
+// ScrapedComment mirrors domain.Comment on the wire (the scrape detail returns
+// domain rows directly).
+export interface ScrapedComment {
+  id: string;
+  postId: string;
+  platform: string;
+  externalId: string;
+  authorHandle: string;
+  text: string;
+  scrapedAt: string;
+}
+
+export interface ScrapedPost {
+  id: string;
+  platform: string;
+  externalId: string;
+  authorHandle: string;
+  text: string | null;
+  mediaUrls: string[] | null;
+  metrics: Record<string, number> | null;
+  scrapedAt: string;
+}
+
+export interface ScrapeTargetResponse {
+  post: ScrapedPost;
+  comments: ScrapedComment[];
+}
+
+export interface GenerateCommentResponse {
+  comments: string[];
+}
+
+// Keyword search scrape (hand-rolled, not in the contract). The result rows are
+// the same ScrapedPost shape the on-demand scrape returns.
+export interface KeywordScrapeResult {
+  posts: ScrapedPost[];
+  comments: number;
+  keywords: string[];
+  platform: string;
+  actorId: string;
+  itemsRead: number;
+}
+
 export const api = {
   listAccounts: (signal?: AbortSignal) =>
     request<AccountList>('/api/accounts', signal ? { signal } : undefined),
@@ -187,6 +232,39 @@ export const api = {
 
   listContainers: (signal?: AbortSignal) =>
     request<ContainerList>('/api/containers', signal ? { signal } : undefined),
+  // On-demand scrape: run the platform actor synchronously for one post URL.
+  // Long request (the actor run lasts tens of seconds); the caller shows a loader.
+  scrapeTarget: (platform: string, url: string) =>
+    request<ScrapeTargetResponse>('/api/scrape/target', {
+      method: 'POST',
+      body: JSON.stringify({ platform, url }),
+    }),
+  // Keyword search scrape: 1-5 keywords over a time window. Synchronous like
+  // scrapeTarget; the caller shows a loader while Apify runs.
+  scrapeKeywords: (body: {
+    platform: string;
+    keywords: string[];
+    from?: string | undefined;
+    to?: string | undefined;
+    maxPosts?: number | undefined;
+  }) =>
+    request<KeywordScrapeResult>('/api/scrape/keywords', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  // AI comment candidates from a scraped post's context.
+  generateComment: (body: {
+    postText: string;
+    authorHandle?: string;
+    existingComments?: string[];
+    mode: 'support' | 'counter';
+    count?: number;
+    language?: string;
+  }) =>
+    request<GenerateCommentResponse>('/api/comments/generate', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
   createContainer: (
     name: string,
     region: string,

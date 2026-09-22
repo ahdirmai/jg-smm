@@ -187,6 +187,23 @@ func (r *ScrapeRepo) ListTopPosts(ctx context.Context, p domain.Platform, metric
 	return out, nil
 }
 
+// ListRecentPosts returns posts on a platform ordered by scraped_at DESC —
+// the keyword-scrape read-back (this run's rows are the freshest).
+func (r *ScrapeRepo) ListRecentPosts(ctx context.Context, p domain.Platform, limit int) ([]domain.Post, error) {
+	rows, err := r.q.ListRecentPostsByPlatform(ctx, sqlcgen.ListRecentPostsByPlatformParams{
+		Platform: platformEnum(p),
+		Limit:    clampLimit(limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("repository.scrape.ListRecentPosts: %w", err)
+	}
+	out := make([]domain.Post, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, toPost(row))
+	}
+	return out, nil
+}
+
 func (r *ScrapeRepo) UpsertComment(ctx context.Context, c domain.Comment) (domain.Comment, error) {
 	row, err := r.q.UpsertComment(ctx, sqlcgen.UpsertCommentParams{
 		PostID:       uuidValue(c.PostID),
