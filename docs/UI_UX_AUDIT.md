@@ -71,6 +71,29 @@ Sidebar active item used `bg-primary/12 text-primary` (a faint yellow tint). It 
 **Fix applied:** active nav leaf and nested group item are now `bg-foreground text-background`
 (solid ink pill). Settings tab active state follows the same rule.
 
+### A-01 Account rows had no direct action — only a menu
+
+`/accounts` rows offered a kebab menu (Log in / Pause / Remove) and nothing else. The two things
+an operator actually wants per row depend on login state, and neither was surfaced: during a login
+the noVNC live view (to watch or drive the challenge), and once authenticated the public profile.
+Both required knowing the container, the port, and navigating away.
+
+**Fix applied:** the row's primary cell is now state-driven.
+
+- `AUTHENTICATING` / `NEEDS_INPUT` → **Live view** button opening `LiveBrowserModal` on that
+  account's worker noVNC URL. The URL is resolved through the containers list
+  (`novncByWorker`, keyed by `Container.id` == the account's packed `workerId`), never guessed;
+  a worker that has not published a heartbeat renders a disabled button with a tooltip naming the
+  reason instead of a dead link.
+- `AUTHENTICATED` (and every other state) → **Profile** link to the derived public profile URL.
+  Worker accounts carry no `profileUrl` in the contract (that field is official-account analytics
+  only), so the URL is derived from `platform` + `handle || username`.
+- The menu keeps its ops, and additionally exposes **Live view** for an authenticated account, so
+  an operator can still watch a running session without starting a new login.
+
+This also lands the same realtime screen viewing `/workers` already had (per-container
+`LiveBrowserModal`) onto `/accounts`.
+
 ## 2. Component-level changes
 
 | File | Change |
@@ -87,7 +110,7 @@ Sidebar active item used `bg-primary/12 text-primary` (a faint yellow tint). It 
 | --- | --- |
 | `/` | KPI hero cards + icon squares; getting-started step chips → soft square; trend/empty boxes hairline |
 | `/workers` | stat cards → hero; provision log + session dialogs hairline; live dot `bg-success`; raw `<select>` → `rounded-lg` |
-| `/accounts` | bulk bar + table wrap + error banner hairline radius |
+| `/accounts` | bulk bar + table wrap + error banner hairline radius; row action is now one-click by login state (see A-01) |
 | `/actions` | queue table hairline + uppercase group headers; dialog comment/error boxes; dashed empty state |
 | `/actions` (new-action-form) | scrape preview → `bg-secondary/30` panel; error/result radius |
 | `/actions` (scrape-history) | card-title icon in soft square; thumbnails `rounded-lg`; rows hairline |

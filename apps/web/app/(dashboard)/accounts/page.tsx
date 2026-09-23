@@ -26,16 +26,29 @@ import {
   TableHeader,
   TableRow,
 } from '@smm/ui';
-import { AlertCircle, KeyRound, MoreVertical, Pause, Play, Trash2, Upload, UserPlus } from 'lucide-react';
+import {
+  AlertCircle,
+  ExternalLink,
+  KeyRound,
+  MonitorPlay,
+  MoreVertical,
+  Pause,
+  Play,
+  Trash2,
+  Upload,
+  UserPlus,
+} from 'lucide-react';
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
 
 import { api } from '@/lib/api';
 
 import { useAccounts } from '@/lib/hooks/use-accounts';
+import { useContainers } from '@/lib/hooks/use-containers';
 import type { Account } from '@/lib/api';
 import { AddAccountDialog } from '@/components/add-account-dialog';
 import { ImportAccountsDialog } from '@/components/import-accounts-dialog';
+import { LiveBrowserModal } from '@/components/live-browser-modal';
 import { useSession } from '@/lib/auth/session-context';
 import { can } from '@/lib/auth/permissions';
 
@@ -91,6 +104,9 @@ function authTone(status: Account['authStatus']): 'success' | 'outline' | 'destr
 
 export default function AccountsPage() {
   const { accounts, loading, error, setStatus, remove, refresh } = useAccounts();
+  // The live view lives on the account's worker container, so this page needs
+  // the fleet to resolve an account → its noVNC URL.
+  const { containers } = useContainers();
   const session = useSession();
   const role = session.status === 'authenticated' ? session.role : undefined;
   const canAct = can(role, 'act');
@@ -99,9 +115,23 @@ export default function AccountsPage() {
   const [platform, setPlatform] = useState<string>('all');
   const [status, setStatusFilter] = useState<string>('all');
   const [busy, setBusy] = useState<string | null>(null);
+  // The live-view modal is shared by the row action and the dropdown item.
+  const [live, setLive] = useState<{ name: string; url: string } | null>(null);
   // P6 parity: bulk select over the filtered set. Ops pause/resume/remove
   // many accounts at once; each call hits the real per-id endpoints.
   const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  // account id → its worker's noVNC URL. Workers without a heartbeat publish
+  // nothing, so absent means "no live view yet", not a broken link.
+  const novncByWorker = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const c of containers) {
+      if (c.novncUrl) m.set(c.id, c.novncUrl as string);
+    }
+    return m;
+  }, [containers]);
+
+  const novncFor = (a: Account): string | null => (a.workerId ? novncByWorker.get(a.workerId) ?? null : null);
 
   const filtered = useMemo(() => {
     return accounts.filter((a) => {
@@ -170,6 +200,14 @@ export default function AccountsPage() {
     await api.submitAccountInput(id, value);
     refresh();
   };
+
+  // The primary row action depends on where the account is in its login life:
+  // an account that needs the operator (challenge in progress, or a live
+  // session they want to watch) opens the worker's live browser; an already
+  // authenticated account opens its public profile instead — the two things an
+  // operator actually wants one click away from this list.
+  const needsLiveView = (a: Account): boolean =>
+    a.authStatus === 'AUTHENTICATING' || a.authStatus === 'NEEDS_INPUT';
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
@@ -351,29 +389,77 @@ export default function AccountsPage() {
                         <Badge variant={statusTone(a.status)}>{a.status}</Badge>
                       </TableCell>
                       <TableCell>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" aria-label="Open account menu" disabled={busy === a.id || !canAct}>
-                              <MoreVertical />
+                        <div className="flex items-center justify-end gap-1">
+                          {/*
+                            One-click primary action by login state: a login in
+                            progress (or a challenge needing the operator) opens
+                            the worker's live browser; an authenticated account
+                            opens its public profile. The button names the reason
+                            when there is nothing to open yet.
+                          */}
+                          {needsLiveView(a) ? (
+                            (() => {
+                              const url = novncFor(a);
+                              return url ? (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-8"
+                                  onClick={() =>
+                                    setLive({ name: a.username, url })
+                                  }
+                                >
+                                  <MonitorPlay className="size-3.5" />
+                                  Live view
+                                </Button>
+                              ) : (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-8"
+                                  disabled
+                                  title="The live view is published when the worker reports its noVNC URL. Flips to a working button on the first heartbeat."
+                                >
+                                  <MonitorPlay className="size-3.5" />
+                                  Live view
+                                </Button>
+                              );
+                            })()
+                          ) : (
+                            <Button asChild variant="ghost" size="sm" className="h-8">
+                              <a
+                                href={profileUrlFor(a)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              >
+                                <ExternalLink className="size-3.5" />
+                                Profile
+                              </a>
                             </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuLabel>Account ops</DropdownMenuLabel>
-                            <DropdownMenuSeparator />
-                            {a.status === 'PAUSED' ? (
-                              <DropdownMenuItem
-                                onClick={() => void onAct(a.id, (id) => setStatus(id, 'ACTIVE'))}
-                              >
-                                <Play />
-                                Resume
-                              </DropdownMenuItem>
-                            ) : (
-                              <DropdownMenuItem
-                                onClick={() => void onAct(a.id, (id) => setStatus(id, 'PAUSED'))}
-                              >
-                                <Pause />
-                                Pause
-                              </DropdownMenuItem>
+                          )}
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon" aria-label="Open account menu" disabled={busy === a.id || !canAct}>
+                                <MoreVertical />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuLabel>Account ops</DropdownMenuLabel>
+                              <DropdownMenuSeparator />
+                              {a.status === 'PAUSED' ? (
+                                <DropdownMenuItem
+                                  onClick={() => void onAct(a.id, (id) => setStatus(id, 'ACTIVE'))}
+                                >
+                                  <Play />
+                                  Resume
+                                </DropdownMenuItem>
+                              ) : (
+                                <DropdownMenuItem
+                                  onClick={() => void onAct(a.id, (id) => setStatus(id, 'PAUSED'))}
+                                >
+                                  <Pause />
+                                  Pause
+                                </DropdownMenuItem>
                             )}
                             <DropdownMenuSeparator />
                             <DropdownMenuItem
@@ -390,6 +476,21 @@ export default function AccountsPage() {
                                 Enter code
                               </DropdownMenuItem>
                             ) : null}
+                            {/*
+                              The live view is also reachable from the menu for an
+                              authenticated account, so an operator can still
+                              watch a running session without starting a login.
+                            */}
+                            {a.authStatus === 'AUTHENTICATED' && novncFor(a) ? (
+                              <DropdownMenuItem
+                                onClick={() =>
+                                  setLive({ name: a.username, url: novncFor(a) as string })
+                                }
+                              >
+                                <MonitorPlay />
+                                Live view
+                              </DropdownMenuItem>
+                            ) : null}
                             <DropdownMenuSeparator />
                             <DropdownMenuItem
                               className="text-destructive focus:text-destructive"
@@ -400,6 +501,7 @@ export default function AccountsPage() {
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))
@@ -411,6 +513,45 @@ export default function AccountsPage() {
       </Card>
 
       <AddAccountDialog open={addOpen} onOpenChange={setAddOpen} />
+
+      <LiveBrowserModal
+        open={live !== null}
+        onOpenChange={(open) => {
+          if (!open) setLive(null);
+        }}
+        url={live?.url ?? ''}
+        workerName={live?.name ?? ''}
+      />
     </div>
   );
+}
+
+/**
+ * The public profile URL for a worker account. Worker accounts carry no
+ * profileUrl in the contract (that field is official-account analytics only),
+ * so the URL is derived from platform + handle/username — the same link the
+ * worker itself would open.
+ */
+function profileUrlFor(a: Account): string {
+  // Prefer the handle (canonical, may differ from the login username); fall
+  // back to it when the platform never reported one.
+  const handle = a.handle || a.username;
+  switch (a.platform) {
+    case 'instagram':
+      return `https://www.instagram.com/${handle}/`;
+    case 'threads':
+      return `https://www.threads.net/@${handle}`;
+    case 'tiktok':
+      return `https://www.tiktok.com/@${handle}`;
+    case 'linkedin':
+      return `https://www.linkedin.com/in/${handle}`;
+    case 'x':
+      return `https://x.com/${handle}`;
+    case 'youtube':
+      return `https://www.youtube.com/@${handle}`;
+    case 'facebook':
+      return `https://www.facebook.com/${handle}`;
+    default:
+      return `https://${handle}`;
+  }
 }
