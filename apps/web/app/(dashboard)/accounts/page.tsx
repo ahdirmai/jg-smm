@@ -209,6 +209,20 @@ export default function AccountsPage() {
   const needsLiveView = (a: Account): boolean =>
     a.authStatus === 'AUTHENTICATING' || a.authStatus === 'NEEDS_INPUT';
 
+  const openAccount = (a: Account) => {
+    // During a login the only useful destination is the worker's screen —
+    // watching or driving the challenge. Once authenticated the account's
+    // public profile is the destination.
+    if (needsLiveView(a)) {
+      const url = novncFor(a);
+      if (url) setLive({ name: a.username, url });
+      return;
+    }
+    if (a.authStatus === 'AUTHENTICATED') {
+      window.open(profileUrlFor(a), '_blank', 'noopener,noreferrer');
+    }
+  };
+
   return (
     <div className="mx-auto max-w-6xl space-y-6">
       {/* Page-level actions. The title/subtitle live in the shell header (h-14),
@@ -350,29 +364,40 @@ export default function AccountsPage() {
                   </TableRow>
                 ) : (
                   filtered.map((a) => (
-                    <TableRow key={a.id}>
+                    <TableRow
+                      key={a.id}
+                      // The row is the primary action: one click opens the live
+                      // view during a login, or the profile once authenticated.
+                      // Controls inside stopPropagation so they keep working.
+                      // (role/tabIndex stay off a <tr> — ARIA forbids it — and
+                      // the icon buttons in the last cell are real buttons, so
+                      // keyboard users have the same actions one Tab away.)
+                      className="cursor-pointer transition-colors hover:bg-accent/60"
+                      onClick={() => openAccount(a)}
+                    >
                       <TableCell>
                         <input
                           type="checkbox"
                           className="size-4 rounded border-input"
                           aria-label={`Select @${a.username}`}
                           checked={selected.has(a.id)}
-                          onChange={() =>
+                          onChange={(e) => {
+                            e.stopPropagation();
                             setSelected((prev) => {
                               const next = new Set(prev);
                               if (next.has(a.id)) next.delete(a.id);
                               else next.add(a.id);
                               return next;
-                            })
-                          }
+                            });
+                          }}
                           disabled={!canAct}
                         />
                       </TableCell>
                       <TableCell>
                         <div className="font-medium">@{a.username}</div>
-                        {a.handle ? (
-                          <div className="text-xs text-muted-foreground">{a.handle}</div>
-                        ) : null}
+                        <div className="text-xs text-muted-foreground">
+                          {a.handle && a.handle !== a.username ? a.handle : a.workerId ? a.workerId.slice(0, 12) : 'unassigned'}
+                        </div>
                       </TableCell>
                       <TableCell>
                         <Badge variant="outline">
@@ -391,55 +416,54 @@ export default function AccountsPage() {
                       <TableCell>
                         <div className="flex items-center justify-end gap-1">
                           {/*
-                            One-click primary action by login state: a login in
-                            progress (or a challenge needing the operator) opens
-                            the worker's live browser; an authenticated account
-                            opens its public profile. The button names the reason
-                            when there is nothing to open yet.
+                            The row click is the primary action now; these are
+                            affordances, not the only path. An icon button is
+                            shown only when there is something to open — a
+                            login with a published noVNC URL, or an authenticated
+                            account.
                           */}
-                          {needsLiveView(a) ? (
-                            (() => {
-                              const url = novncFor(a);
-                              return url ? (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  className="h-8"
-                                  onClick={() =>
-                                    setLive({ name: a.username, url })
-                                  }
-                                >
-                                  <MonitorPlay className="size-3.5" />
-                                  Live view
-                                </Button>
-                              ) : (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  className="h-8"
-                                  disabled
-                                  title="The live view is published when the worker reports its noVNC URL. Flips to a working button on the first heartbeat."
-                                >
-                                  <MonitorPlay className="size-3.5" />
-                                  Live view
-                                </Button>
-                              );
-                            })()
-                          ) : (
-                            <Button asChild variant="ghost" size="sm" className="h-8">
+                          {needsLiveView(a) && novncFor(a) ? (
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              className="h-8 w-8"
+                              aria-label="Live view"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const url = novncFor(a);
+                                if (url) setLive({ name: a.username, url });
+                              }}
+                            >
+                              <MonitorPlay className="size-3.5" />
+                            </Button>
+                          ) : null}
+                          {a.authStatus === 'AUTHENTICATED' ? (
+                            <Button
+                              asChild
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              aria-label="Open profile"
+                            >
                               <a
                                 href={profileUrlFor(a)}
                                 target="_blank"
                                 rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
                               >
                                 <ExternalLink className="size-3.5" />
-                                Profile
                               </a>
                             </Button>
-                          )}
+                          ) : null}
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
-                              <Button variant="ghost" size="icon" aria-label="Open account menu" disabled={busy === a.id || !canAct}>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                aria-label="Open account menu"
+                                disabled={busy === a.id || !canAct}
+                                onClick={(e) => e.stopPropagation()}
+                              >
                                 <MoreVertical />
                               </Button>
                             </DropdownMenuTrigger>

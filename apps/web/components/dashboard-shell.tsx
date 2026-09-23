@@ -82,7 +82,7 @@ const NAV: (Leaf | Group)[] = [
 const TITLES: Record<string, { title: string; subtitle: string }> = {
   '/': { title: 'Dashboard', subtitle: 'Overview · last 30 days · official accounts' },
   '/workers': { title: 'Workers', subtitle: 'Containers, health, and anchored location' },
-  '/accounts': { title: 'Accounts', subtitle: 'One credential set per platform per worker' },
+  '/accounts': { title: 'Accounts', subtitle: 'Click a row: live view during login, profile once authenticated' },
   '/actions': { title: 'Actions', subtitle: 'Targeted like, comment, and report jobs' },
   '/scrape': { title: 'Scrape', subtitle: 'Keyword search over Instagram and Threads posts' },
   '/templates': { title: 'Templates', subtitle: 'Comment pool per platform' },

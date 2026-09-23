@@ -94,6 +94,15 @@ Both required knowing the container, the port, and navigating away.
 This also lands the same realtime screen viewing `/workers` already had (per-container
 `LiveBrowserModal`) onto `/accounts`.
 
+**Refined (A-01b):** the buttons were still an extra hop — a click on a button in a cell, not the
+row. The row itself is now the action. Anywhere on the row opens the live view or profile, per
+login state; the icon buttons are kept only as affordances (and stop propagation so they do not
+double-fire). A worker with no published heartbeat shows no disabled button at all — there is
+nothing to open, so the row does nothing rather than presenting a dead control. Secondary line of
+the Account cell now carries the handle, or the container when the handle equals the username
+(previously the container id repeated identically in two columns). Header subtitle states the
+click affordance.
+
 ## 2. Component-level changes
 
 | File | Change |
