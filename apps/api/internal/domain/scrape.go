@@ -158,31 +158,34 @@ type Target struct {
 }
 
 // Post is a scraped post. Deduped by (Platform, ExternalID) so a re-scrape
-// refreshes Metrics instead of inserting a duplicate.
+// refreshes Metrics instead of inserting a duplicate. JSON tags: the scrape
+// handler serializes this struct straight to the dashboard (hand-rolled shape,
+// outside the OpenAPI contract), and the web client reads camelCase.
 type Post struct {
-	ID              string
-	Platform        Platform
-	ExternalID      string
-	AuthorHandle    string
-	AuthorID        string
-	Text            *string
-	MediaURLs       []string
-	Metrics         json.RawMessage
-	ScrapedAt       time.Time
-	AuthorAccountID *string
+	ID              string          `json:"id"`
+	Platform        Platform        `json:"platform"`
+	ExternalID      string          `json:"externalId"`
+	AuthorHandle    string          `json:"authorHandle"`
+	AuthorID        string          `json:"authorId"`
+	Text            *string         `json:"text"`
+	MediaURLs       []string        `json:"mediaUrls"`
+	Metrics         json.RawMessage `json:"metrics"`
+	ScrapedAt       time.Time       `json:"scrapedAt"`
+	AuthorAccountID *string         `json:"authorAccountId"`
 }
 
-// Comment is a scraped comment, optionally a reply (ParentID chain).
+// Comment is a scraped comment, optionally a reply (ParentID chain). JSON tags
+// for the same reason as Post: served straight to the dashboard.
 type Comment struct {
-	ID           string
-	PostID       string
-	Platform     Platform
-	ExternalID   string
-	AuthorHandle string
-	Text         string
-	Metrics      json.RawMessage
-	ScrapedAt    time.Time
-	ParentID     *string
+	ID           string          `json:"id"`
+	PostID       string          `json:"postId"`
+	Platform     Platform        `json:"platform"`
+	ExternalID   string          `json:"externalId"`
+	AuthorHandle string          `json:"authorHandle"`
+	Text         string          `json:"text"`
+	Metrics      json.RawMessage `json:"metrics"`
+	ScrapedAt    time.Time       `json:"scrapedAt"`
+	ParentID     *string         `json:"parentId"`
 }
 
 // MetricSnapshot is one time-series sample of a post's metrics. History table;
