@@ -97,10 +97,8 @@ export default function HomePage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-end gap-2">
-        <Button variant="outline" size="sm">
-          Last 30 days
-        </Button>
+      <div className="flex items-center justify-end gap-3">
+        <span className="text-xs text-muted-foreground">Last 30 days</span>
         <Button asChild size="sm">
           <Link href="/reports">Export CSV</Link>
         </Button>

@@ -183,18 +183,6 @@ export default function SettingsPage() {
                   screen.
                 </p>
               </div>
-              <div className="space-y-2">
-                <span className="text-sm text-muted-foreground">Density</span>
-                <div className="flex gap-2">
-                  <Button variant="outline" disabled title="Single density in the MVP">
-                    Comfortable
-                  </Button>
-                  <Button variant="outline" disabled title="Single density in the MVP">
-                    Compact
-                  </Button>
-                </div>
-                <p className="text-xs text-muted-foreground">One density in the MVP.</p>
-              </div>
             </CardContent>
           </Card>
         ) : null}

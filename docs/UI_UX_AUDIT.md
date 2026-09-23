@@ -100,22 +100,22 @@ Sidebar active item used `bg-primary/12 text-primary` (a faint yellow tint). It 
 | `/settings` | tab active = solid ink (principle 5); already token-clean |
 | `/login` | logo mark already `rounded-lg`; unchanged (token-driven) |
 
-## 4. Remaining plan (not done — deferred)
+## 4. Remaining plan
 
-Ordered by impact. Each is independently shippable.
+Ordered by impact. Each is independently shippable. ✅ = done in the follow-up commit.
 
 | # | Item | Why | Where |
 | --- | --- | --- | --- |
 | P-01 | **Pill tab switcher primitive** | Reference uses a segmented pill control for views; settings tabs + report-kind selector + platform switcher are all button-rows today. A `Tabs`-based pill in `packages/ui` unifies them and gives the reference's inset active pill. | `packages/ui/src/components/tabs.tsx` (new); settings, reports, monitoring/[platform] |
 | P-02 | **Bar chart with rounded-top bars** | Reference's "Employment Status" chart has rounded-top bars + floating percentage chips. `TrendPlaceholder`/`TrendChart` are sparklines only — no categorical bar chart exists. | `components/trend-chart.tsx` or new `components/bar-chart.tsx` |
-| P-03 | **Density toggle is a dead control** | Settings → Appearance shows two disabled "Comfortable/Compact" buttons. Either wire it (Zustand + cookie, per old §3.7) or remove it — a permanently disabled control reads as unfinished. | settings page |
-| P-04 | **⌘K search box is a dummy** | Header search field renders a static span ("Search accounts, jobs… ⌘K") with no handler and no `Command` component behind it. Remove or wire to a real filter. | dashboard-shell |
-| P-05 | **`Filter` buttons are inert** | Dashboard "Filter" and platform-analytics "Filter" render disabled with a title — fine as documented intent, but they should either land or be dropped once review is over. | page.tsx, monitoring/[platform] |
+| P-03 ✅ | **Density toggle was a dead control** | Settings → Appearance showed two permanently-disabled "Comfortable/Compact" buttons. Removed (no write surface, no request) rather than left as a fake control. | settings page |
+| P-04 ✅ | **⌘K search box was a dummy** | Header search field was a static span ("Search accounts, jobs… ⌘K") with no handler and no `Command` behind it. Removed. | dashboard-shell |
+| P-05 ✅ | **`Filter` buttons were inert** | Dashboard "Last 30 days" button and platform-analytics "Filter" rendered as buttons with no handler; the latter needs a per-post endpoint that does not exist. "Last 30 days" is now a plain muted label; the analytics Filter button is removed. | page.tsx, monitoring/[platform] |
 | P-06 | **Bounce/skeleton loading** | Most pages render "Loading…" text or `—` placeholders. Reference polish level wants `Skeleton` cards (shadcn `Skeleton`) matching the card grid, so load states do not jump layout. | packages/ui + all list pages |
 | P-07 | **Toast/feedback layer missing** | `docs/DESIGN_SYSTEM.md §5.1` documents sonner toasts (default/warning/critical); nothing is installed. Enqueue success/failure currently renders an inline `<span>`. Adds a real feedback channel for the scrape + queue flows. | packages/ui + actions pages |
-| P-08 | **Mobile nav absent** | Sidebar is `hidden md:flex`; below `md` there is **no navigation at all** (no hamburger, no drawer). Mobile users cannot reach any page. | dashboard-shell (add `Sheet` drawer) |
+| P-08 ✅ | **Mobile nav absent** | Sidebar was `hidden md:flex`; below `md` there was **no navigation at all**. Added a hamburger in the header that opens a fixed overlay drawer reusing the same `NavTree` (closes on navigation). Desktop sidebar untouched. | dashboard-shell |
 | P-09 | **Status = dot + label pairing** | Principle 7: status should be icon+label+dot. `Badge` now has `gap-1.5` ready for it, but no `StatusDot` component is wired into tables yet. | packages/ui |
-| P-10 | **Audience mix is sample data** | `monitoring/[platform]` renders a hardcoded `AUDIENCE_MIX` with a `sample` tag. Tagged honestly, but it should hide entirely until the endpoint exists rather than show labeled-but-fake bars. | monitoring/[platform] |
+| P-10 ✅ | **Audience mix was sample data** | `monitoring/[platform]` rendered a hardcoded `AUDIENCE_MIX` with a `sample` tag. Panel + constant removed — the geo split endpoint does not exist, and no example numbers are shown as data of any kind. | monitoring/[platform] |
 
 ## 5. Verification
 

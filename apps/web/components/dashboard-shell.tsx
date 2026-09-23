@@ -8,6 +8,7 @@ import {
   LayoutDashboard,
   Loader2,
   LogOut,
+  Menu,
   MessageSquareText,
   MonitorSmartphone,
   ScrollText,
@@ -20,6 +21,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
 import { ModeToggle } from '@/components/mode-toggle';
+import { Button } from '@smm/ui';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/api';
 import { useSession } from '@/lib/auth/session-context';
@@ -117,12 +119,57 @@ function isActive(href: string, pathname: string): boolean {
   return href === '/' ? pathname === '/' : pathname.startsWith(href);
 }
 
-function NavLeaf({ item, pathname }: { item: Leaf; pathname: string }) {
+/**
+ * The nav tree, rendered by both the desktop sidebar and the mobile drawer —
+ * one implementation, so a nav change lands in both places.
+ */
+function NavTree({
+  entries,
+  pathname,
+  onNavigate,
+}: {
+  entries: (Leaf | Group)[];
+  pathname: string;
+  onNavigate?: () => void;
+}) {
+  return (
+    <nav className="flex-1 space-y-1 overflow-y-auto p-2">
+      {entries.map((entry) =>
+        'items' in entry ? (
+          <NavGroup
+            key={entry.label}
+            group={entry}
+            pathname={pathname}
+            {...(onNavigate ? { onNavigate } : {})}
+          />
+        ) : (
+          <NavLeaf
+            key={entry.href}
+            item={entry}
+            pathname={pathname}
+            {...(onNavigate ? { onNavigate } : {})}
+          />
+        ),
+      )}
+    </nav>
+  );
+}
+
+function NavLeaf({
+  item,
+  pathname,
+  onNavigate,
+}: {
+  item: Leaf;
+  pathname: string;
+  onNavigate?: () => void;
+}) {
   const active = isActive(item.href, pathname);
   return (
     <Link
       href={item.href}
       aria-current={active ? 'page' : undefined}
+      {...(onNavigate ? { onClick: onNavigate } : {})}
       className={cn(
         'flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
         active
@@ -138,7 +185,15 @@ function NavLeaf({ item, pathname }: { item: Leaf; pathname: string }) {
   );
 }
 
-function NavGroup({ group, pathname }: { group: Group; pathname: string }) {
+function NavGroup({
+  group,
+  pathname,
+  onNavigate,
+}: {
+  group: Group;
+  pathname: string;
+  onNavigate?: () => void;
+}) {
   const hasActive = group.items.some((i) => isActive(i.href, pathname));
   const [open, setOpen] = useState(hasActive);
   return (
@@ -147,7 +202,7 @@ function NavGroup({ group, pathname }: { group: Group; pathname: string }) {
         type="button"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+        className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
       >
         <group.icon className="size-4" />
         {group.label}
@@ -162,6 +217,7 @@ function NavGroup({ group, pathname }: { group: Group; pathname: string }) {
                 key={i.href}
                 href={i.href}
                 aria-current={active ? 'page' : undefined}
+                {...(onNavigate ? { onClick: onNavigate } : {})}
                 className={cn(
                   'flex items-center gap-3 rounded-lg px-3 py-1.5 text-[0.8125rem] transition-colors',
                   active
@@ -239,6 +295,9 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const session = useSession();
+  // Mobile nav drawer. Declared with the other hooks — the session early
+  // returns below would otherwise make this a conditional hook call.
+  const [navOpen, setNavOpen] = useState(false);
 
   // No session = no dashboard. The API client also redirects on a mid-session
   // 401 (see lib/api.ts); this guard covers a hard navigation/refresh where
@@ -269,55 +328,69 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
     return true;
   });
 
+  // Mobile nav drawer. The desktop sidebar is hidden below md, so without this
+  // a phone has no navigation at all.
+  const sidebarFooter = (
+    <div className="space-y-2 border-t border-border/60 p-3">
+      {role ? (
+        <div className="flex items-center gap-2.5">
+          <span className="grid size-8 shrink-0 place-items-center rounded-full bg-secondary text-xs font-semibold">
+            {ROLE_LABEL[role].slice(0, 2).toUpperCase()}
+          </span>
+          <div className="min-w-0">
+            <div className="truncate text-sm font-medium">ahdirmai</div>
+            <div className="truncate text-xs text-muted-foreground" data-testid="session-role">
+              {ROLE_LABEL[role].toLowerCase()}@local.test
+            </div>
+          </div>
+        </div>
+      ) : null}
+      <SignOutButton />
+      <ModeToggle />
+    </div>
+  );
+
+  const brand = (
+    <Link
+      href="/"
+      onClick={() => setNavOpen(false)}
+      className="flex h-14 items-center gap-2.5 border-b border-border/60 px-4"
+    >
+      <span className="grid size-7 place-items-center rounded-lg bg-primary text-primary-foreground">
+        <Activity className="size-4" />
+      </span>
+      <span className="text-sm font-semibold tracking-tight">SMM Automation</span>
+    </Link>
+  );
+
   return (
     <div className="flex min-h-screen">
       <aside className="hidden w-60 shrink-0 flex-col border-r border-border/60 bg-card md:flex">
-        <Link href="/" className="flex h-14 items-center gap-2.5 border-b border-border/60 px-4">
-          <span className="grid size-7 place-items-center rounded-lg bg-primary text-primary-foreground">
-            <Activity className="size-4" />
-          </span>
-          <span className="text-sm font-semibold tracking-tight">SMM Automation</span>
-        </Link>
-        <nav className="flex-1 space-y-1 overflow-y-auto p-2">
-          {visible.map((entry) =>
-            'items' in entry ? (
-              <NavGroup key={entry.label} group={entry} pathname={pathname} />
-            ) : (
-              <NavLeaf key={entry.href} item={entry} pathname={pathname} />
-            ),
-          )}
-        </nav>
-        <div className="space-y-2 border-t border-border/60 p-3">
-          {role ? (
-            <div className="flex items-center gap-2.5">
-              <span className="grid size-8 shrink-0 place-items-center rounded-full bg-secondary text-xs font-semibold">
-                {ROLE_LABEL[role].slice(0, 2).toUpperCase()}
-              </span>
-              <div className="min-w-0">
-                <div className="truncate text-sm font-medium">ahdirmai</div>
-                <div className="truncate text-xs text-muted-foreground" data-testid="session-role">
-                  {ROLE_LABEL[role].toLowerCase()}@local.test
-                </div>
-              </div>
-            </div>
-          ) : null}
-          <SignOutButton />
-          <ModeToggle />
-        </div>
+        {brand}
+        <NavTree entries={visible} pathname={pathname} />
+        {sidebarFooter}
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border/60 bg-card/40 px-4 backdrop-blur-sm md:px-6">
+          {/* Below md the sidebar is gone; this button is the only way to reach
+           * another page on a phone. */}
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="md:hidden"
+            aria-label="Open navigation"
+            aria-expanded={navOpen}
+            onClick={() => setNavOpen(true)}
+          >
+            <Menu className="size-4" />
+          </Button>
           <div className="min-w-0">
             <h1 className="truncate text-base font-semibold tracking-tight">{title}</h1>
             {subtitle ? <p className="truncate text-xs text-muted-foreground">{subtitle}</p> : null}
           </div>
           <div className="ml-auto flex items-center gap-2">
-            <div className="hidden h-9 w-56 items-center gap-2 rounded-lg border bg-background px-2.5 text-sm text-muted-foreground lg:flex">
-              <Search className="size-4" />
-              <span>Search accounts, jobs…</span>
-              <kbd className="ml-auto rounded border px-1.5 text-xs">⌘K</kbd>
-            </div>
             <ModeToggle header />
           </div>
         </header>
@@ -326,6 +399,29 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
           <div className="space-y-4">{children}</div>
         </main>
       </div>
+
+      {/* Mobile drawer: a fixed overlay, not a component dependency — the shell
+       * stays dependency-light and the drawer closes itself on navigation
+       * (NavTree's onNavigate) and on Escape. */}
+      {navOpen ? (
+        <div className="fixed inset-0 z-50 flex md:hidden" role="dialog" aria-label="Navigation">
+          <button
+            type="button"
+            aria-label="Close navigation"
+            className="absolute inset-0 bg-foreground/40"
+            onClick={() => setNavOpen(false)}
+          />
+          <div className="relative flex w-72 max-w-[85vw] flex-col bg-card shadow-popover">
+            {brand}
+            <NavTree
+              entries={visible}
+              pathname={pathname}
+              onNavigate={() => setNavOpen(false)}
+            />
+            {sidebarFooter}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

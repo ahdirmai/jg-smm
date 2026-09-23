@@ -20,7 +20,7 @@ import {
   TableHeader,
   TableRow,
 } from '@smm/ui';
-import { Filter, RefreshCw } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import Link from 'next/link';
 import { use, useMemo, useState } from 'react';
 
@@ -219,34 +219,9 @@ export default function PlatformAnalyticsPage({
           </CardContent>
         </Card>
 
-        {/* Audience mix: read-only geo split from the ingestion layer. */}
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div>
-                <CardTitle>Audience</CardTitle>
-                <CardDescription>Follower mix</CardDescription>
-              </div>
-              <Badge variant="outline">sample</Badge>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {AUDIENCE_MIX.map((row) => (
-              <div key={row.region} className="space-y-1.5">
-                <div className="flex justify-between text-sm">
-                  <span>{row.region}</span>
-                  <span className="font-mono text-xs">{row.pct}%</span>
-                </div>
-                <div className="h-1.5 rounded-full bg-secondary">
-                  <div
-                    className="h-full rounded-full bg-primary"
-                    style={{ width: `${row.pct}%` }}
-                  />
-                </div>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
+        {/* Audience mix: the 3rd-party ingestion does not expose a geo split
+         * yet. The panel is hidden rather than shown with labelled-but-fake
+         * bars — no example numbers presented as data of any kind. */}
       </section>
 
       <Card>
@@ -296,15 +271,11 @@ export default function PlatformAnalyticsPage({
           per-post rows have no source yet. Structure matches the prototype,
           rows are never fabricated. */}
       <Card>
-        <CardHeader className="flex-row items-center justify-between space-y-0">
+        <CardHeader>
           <div>
             <CardTitle>Top posts</CardTitle>
             <CardDescription>{label} · last 30 days</CardDescription>
           </div>
-          <Button variant="outline" size="sm" disabled title="Filter needs a per-post endpoint">
-            <Filter className="size-3.5" />
-            Filter
-          </Button>
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto rounded-lg border border-border/60">
@@ -343,16 +314,3 @@ function kpisForAccount(
   const k = kpis.find((x) => x.officialAccountId === id && x.metric === metric);
   return k?.value != null ? k.value.toLocaleString() : '—';
 }
-
-/**
- * Audience geo split. The prototype shows this panel on every platform; the
- * real split comes from the 3rd-party ingestion and is not yet exposed by the
- * API. The panel renders with a clear `sample` tag until the endpoint lands —
- * never present example numbers as live.
- */
-const AUDIENCE_MIX: { region: string; pct: number }[] = [
-  { region: 'Indonesia', pct: 48 },
-  { region: 'Singapore', pct: 21 },
-  { region: 'Malaysia', pct: 12 },
-  { region: 'Other', pct: 19 },
-];
