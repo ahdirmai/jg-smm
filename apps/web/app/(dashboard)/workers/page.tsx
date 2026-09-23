@@ -18,8 +18,6 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-  Input,
-  Label,
   Select,
   SelectContent,
   SelectItem,
@@ -34,7 +32,6 @@ import {
   MonitorPlay,
   Pause,
   Play,
-  Plus,
   Server,
   Trash2,
 } from 'lucide-react';
@@ -46,9 +43,11 @@ import { useLiveTicker } from '@/lib/hooks/use-live-ticker';
 import { LiveBrowserModal } from '@/components/live-browser-modal';
 import { PLATFORM_LABEL } from '@/lib/platforms';
 import { api } from '@/lib/api';
-import type { Container, LogEntry } from '@/lib/api';
+import type { Account, Container, LogEntry } from '@/lib/api';
 import { useSession } from '@/lib/auth/session-context';
 import { can } from '@/lib/auth/permissions';
+
+import { AddContainerForm } from './add-container-form';
 
 function containerTone(
   status: Container['status'],
@@ -77,8 +76,21 @@ function isStarting(status: Container['status']): boolean {
   return status === 'PENDING';
 }
 
+// Auth status is the row's failure signal: FAILED/NEEDS_INPUT get the
+// destructive tone so an operator's eye lands on the account that needs a
+// login; authenticated stays neutral.
+function authToneColor(status: Account['authStatus']): string {
+  switch (status) {
+    case 'FAILED':
+    case 'NEEDS_INPUT':
+      return 'font-medium text-destructive';
+    default:
+      return '';
+  }
+}
+
 export default function WorkersPage() {
-  const { containers, locations, loading, error, create, remove } = useContainers();
+  const { containers, locations, loading, error, remove } = useContainers();
   const { setStatus, remove: removeAccount } = useAccounts();
   const ticker = useLiveTicker();
   const session = useSession();
@@ -96,15 +108,9 @@ export default function WorkersPage() {
   const [sessionBusy, setSessionBusy] = useState(false);
   const [sessionError, setSessionError] = useState<string | null>(null);
 
-  const [name, setName] = useState('');
-  const [location, setLocation] = useState('');
-  // P4-08: the operator may pin the live-view host port; empty lets the API
-  // allocate one. The hint mirrors the server's NOVNC_PORT_MIN..MAX range.
-  const [novncPort, setNovncPort] = useState('');
   // P6-05: group the fleet by city. "all" keeps every container in one grid.
   const [city, setCity] = useState('all');
   const [busy, setBusy] = useState<string | null>(null);
-  const [formError, setFormError] = useState<string | null>(null);
   // F-07: a card whose provisioning looks stuck can be expanded to show the
   // provisioner's own audit trail, fetched on demand rather than per render.
   const [logFor, setLogFor] = useState<string | null>(null);
@@ -147,47 +153,6 @@ export default function WorkersPage() {
     }
     return [...byCity.entries()].map(([name, items]) => ({ city: name, items }));
   }, [visible, city]);
-
-  const onCreate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setFormError(null);
-    if (!name.trim()) {
-      setFormError('A container needs a name.');
-      return;
-    }
-    if (!location) {
-      setFormError('Pick the city the worker operates from.');
-      return;
-    }
-    setBusy('__create__');
-    try {
-      // Region is constant for the MVP (Indonesia only); the city is what
-      // varies and what the GPS spoof anchors to.
-      const port = novncPort.trim() ? Number.parseInt(novncPort.trim(), 10) : undefined;
-      if (novncPort.trim() && !Number.isFinite(port)) {
-        setFormError('noVNC port must be a number, or empty to let the API pick one.');
-        return;
-      }
-      await create(name.trim(), 'ID', location, port);
-      setName('');
-      setLocation('');
-      setNovncPort('');
-    } catch (err) {
-      // A dropped connection surfaces from fetch as a TypeError 'Failed to
-      // fetch'; that is the symptom the retry layer is built for, so name it
-      // instead of echoing the browser's generic string.
-      const isNetwork = err instanceof TypeError;
-      setFormError(
-        isNetwork
-          ? 'Create failed: the network dropped the request. Check the connection and try again.'
-          : err instanceof Error
-            ? err.message
-            : 'Create failed',
-      );
-    } finally {
-      setBusy(null);
-    }
-  };
 
   const onAct = async (id: string, fn: (id: string) => Promise<void>) => {
     setBusy(id);
@@ -308,6 +273,10 @@ export default function WorkersPage() {
         </div>
       ) : null}
 
+      {/* Create sits above the list: it is the page's primary action (the fleet
+       * grows only by manual creation), not a footnote under it. */}
+      <AddContainerForm />
+
       <LiveTicker ticker={ticker} />
 
       <section className="grid grid-cols-2 gap-4 lg:grid-cols-5">
@@ -395,21 +364,22 @@ export default function WorkersPage() {
 
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {g.items.map((c) => (
-                <Card key={c.id}>
+                <Card key={c.id} className="flex flex-col">
                   <CardHeader>
-                    <div className="flex items-start justify-between">
-                      <div className="space-y-1">
-                        <CardTitle className="text-base">{c.name}</CardTitle>
-                        <CardDescription className="font-mono text-xs">
-                          {c.id.slice(0, 8)} · {c.region}
-                          {c.location ? ` · ${c.location}` : null}
-                          {c.latitude != null && c.longitude != null
-                            ? ` · ${c.latitude.toFixed(4)}, ${c.longitude.toFixed(4)}`
-                            : null}
-                          {c.novncUrl ? ` · noVNC ${novncPortOf(c.novncUrl)}` : null}
-                        </CardDescription>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex min-w-0 items-center gap-2.5">
+                        {/* Principle 6: small monochrome icon in a soft square. */}
+                        <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-secondary text-muted-foreground">
+                          <Server className="size-4" />
+                        </span>
+                        <div className="min-w-0 space-y-0.5">
+                          <CardTitle className="truncate text-base">{c.name}</CardTitle>
+                          <CardDescription className="font-mono text-[11px]">
+                            {c.id.slice(0, 8)}
+                          </CardDescription>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-1">
+                      <div className="flex shrink-0 items-center gap-1">
                         {/*
                           The button is always rendered (REMEDIATION_PLAN R-04): a
                           missing control reads as "this build has no live view",
@@ -465,6 +435,33 @@ export default function WorkersPage() {
                         </DropdownMenu>
                       </div>
                     </div>
+
+                    {/* Meta row: label + value pairs instead of one long mono
+                     * string, so an operator scans anchor/region/port at a
+                     * glance instead of parsing a delimited line. */}
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 pt-1 text-xs text-muted-foreground">
+                      <span>
+                        <span className="text-foreground/70">region </span>
+                        <span className="font-medium">{c.region}</span>
+                      </span>
+                      {c.location ? (
+                        <span>
+                          <span className="text-foreground/70">anchor </span>
+                          <span className="font-mono">
+                            {c.latitude != null && c.longitude != null
+                              ? `${c.latitude.toFixed(3)}, ${c.longitude.toFixed(3)}`
+                              : c.location}
+                          </span>
+                        </span>
+                      ) : null}
+                      {c.novncUrl ? (
+                        <span>
+                          <span className="text-foreground/70">noVNC </span>
+                          <span className="font-mono">{novncPortOf(c.novncUrl)}</span>
+                        </span>
+                      ) : null}
+                    </div>
+
                     <div className="flex flex-wrap items-center gap-2 pt-1">
                       <Badge
                         variant={containerTone(c.status)}
@@ -472,8 +469,11 @@ export default function WorkersPage() {
                       >
                         {isStarting(c.status) ? `${c.status} · starting…` : c.status}
                       </Badge>
-                      <Badge variant="outline">{c.source}</Badge>
-                      <Badge variant="outline">{c.desiredState}</Badge>
+                      {/* A stopped container is the one desired-state an operator
+                       * acts on; running is the norm and stays unstated. */}
+                      {c.desiredState === 'STOPPED' ? (
+                        <Badge variant="secondary">paused</Badge>
+                      ) : null}
                       {c.observedGeneration !== c.generation ? (
                         <Badge variant="outline" className="text-muted-foreground">
                           reconciling
@@ -513,13 +513,13 @@ export default function WorkersPage() {
                       </div>
                     ) : null}
                   </CardHeader>
-                  <CardContent>
+                  <CardContent className="mt-auto pt-0">
                     {(c.accounts?.length ?? 0) === 0 ? (
-                      <p className="py-4 text-center text-sm text-muted-foreground">
+                      <p className="rounded-lg border border-dashed border-border/60 py-6 text-center text-sm text-muted-foreground">
                         No accounts packed.
                       </p>
                     ) : (
-                      <div className="divide-y">
+                      <div className="divide-y divide-border/60">
                         {c.accounts?.map((a) => (
                           <div
                             key={a.id}
@@ -527,15 +527,14 @@ export default function WorkersPage() {
                           >
                             <div className="min-w-0">
                               <div className="truncate text-sm font-medium">@{a.username}</div>
-                              <div className="text-xs text-muted-foreground">
-                                {PLATFORM_LABEL[a.platform] ?? a.platform} · {a.authStatus}
+                              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                <span>{PLATFORM_LABEL[a.platform] ?? a.platform}</span>
+                                <span aria-hidden>·</span>
+                                <span className={authToneColor(a.authStatus)}>{a.authStatus}</span>
                               </div>
                             </div>
                             <div className="flex items-center gap-1">
-                              <Badge
-                                variant={a.status === 'ACTIVE' ? 'success' : 'secondary'}
-                                className="mr-1"
-                              >
+                              <Badge variant={a.status === 'ACTIVE' ? 'success' : 'secondary'}>
                                 {a.status}
                               </Badge>
                               {a.status === 'ACTIVE' ? (
@@ -583,67 +582,6 @@ export default function WorkersPage() {
           </section>
         ))
       )}
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Add container</CardTitle>
-          <CardDescription>
-            Manual containers are the only way the fleet grows (empty-by-default design).
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={onCreate} className="flex flex-wrap items-end gap-3">
-            <div className="grid w-full max-w-xs gap-2">
-              <Label htmlFor="c-name">Name</Label>
-              <Input
-                id="c-name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="worker-us-01"
-                disabled={busy === '__create__' || !canAct}
-              />
-            </div>
-            <div className="grid w-full max-w-xs gap-2">
-              <Label htmlFor="c-location">Location</Label>
-              <select
-                id="c-location"
-                className="h-9 rounded-lg border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                value={location}
-                onChange={(e) => setLocation(e.target.value)}
-                disabled={busy === '__create__' || !canAct}
-              >
-                <option value="">Select a city…</option>
-                {locations.map((c) => (
-                  <option key={c.name} value={c.name}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="grid w-full max-w-[8rem] gap-2">
-              <Label htmlFor="c-novnc">noVNC port</Label>
-              <Input
-                id="c-novnc"
-                inputMode="numeric"
-                value={novncPort}
-                onChange={(e) => setNovncPort(e.target.value)}
-                placeholder="24100–24299"
-                disabled={busy === '__create__' || !canAct}
-              />
-            </div>
-            {formError ? (
-              <div className="flex items-center gap-2 text-sm text-destructive">
-                <AlertCircle className="size-4" />
-                {formError}
-              </div>
-            ) : null}
-            <Button type="submit" disabled={busy === '__create__' || !canAct}>
-              {busy === '__create__' ? <Loader2 className="animate-spin" /> : <Plus />}
-              {busy === '__create__' ? 'Creating…' : 'Create'}
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
 
       <LiveBrowserModal
         open={live !== null}
