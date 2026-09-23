@@ -129,10 +129,10 @@ func mkIGSearchPage(term string, posts ...map[string]any) map[string]any {
 func mkIGSearchPost(code string, takenAt int64, inWindow bool) map[string]any {
 	media := "https://scontent.cdn.instagram.com/" + code + ".jpg"
 	return map[string]any{
-		"code": code,
-		"pk":   "99" + code[len(code)-3:],
-		"taken_at": takenAt,
-		"caption": map[string]any{"text": code + " caption", "created_at": takenAt},
+		"code":          code,
+		"pk":            "99" + code[len(code)-3:],
+		"taken_at":      takenAt,
+		"caption":       map[string]any{"text": code + " caption", "created_at": takenAt},
 		"like_count":    10,
 		"comment_count": 2,
 		"play_count":    77,
@@ -218,7 +218,7 @@ func TestScrapeKeywordsRunsAndIngests(t *testing.T) {
 func TestScrapeKeywordsFiltersByWindow(t *testing.T) {
 	svc, _, _, _ := keywordRun(t,
 		mkIGSearchPage("kopi susu",
-			mkIGSearchPost("Cin", 1789063634, true),  // 2026-09-10
+			mkIGSearchPost("Cin", 1789063634, true),   // 2026-09-10
 			mkIGSearchPost("Cout", 1785607634, false), // 2026-08-01
 		),
 	)
@@ -262,11 +262,11 @@ func TestScrapeKeywordsCarouselMedia(t *testing.T) {
 	store := newFakeScrapeStore()
 	storage := &fakeRawStorage{items: map[string][]byte{}}
 	page := mkIGSearchPage("kopi", map[string]any{
-		"code":      "Ccar",
-		"pk":        "1",
-		"taken_at":  1789063634,
-		"caption":   map[string]any{"text": "carousel"},
-		"user":      map[string]any{"username": "car", "pk": "7"},
+		"code":            "Ccar",
+		"pk":              "1",
+		"taken_at":        1789063634,
+		"caption":         map[string]any{"text": "carousel"},
+		"user":            map[string]any{"username": "car", "pk": "7"},
 		"image_versions2": map[string]any{"candidates": []map[string]any{{"url": "https://x/cover.jpg"}}},
 		"carousel_media": []map[string]any{
 			{"image_versions2": map[string]any{"candidates": []map[string]any{{"url": "https://x/a.jpg"}}}},

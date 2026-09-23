@@ -16,6 +16,11 @@ export default tseslint.config(
       '**/node_modules/**',
       '**/src/generated/**',
       '**/*.config.*',
+      // Generated artifacts (gitignored): Playwright trace reports and the
+      // prototype sandbox. ESLint flat config does not read .gitignore, so name
+      // them here or lint drowns in minified-vendor output.
+      '**/e2e/report/**',
+      'docs/prototype/**',
     ],
   },
   js.configs.recommended,

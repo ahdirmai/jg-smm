@@ -140,9 +140,9 @@ func (s *ScrapeService) ScrapeTarget(ctx context.Context, platform domain.Platfo
 	// Record the run id + dataset keys, then normalize the payload into
 	// posts/comments/metric snapshots (idempotent upserts).
 	if _, err := s.scrapes.UpdateApifyRun(ctx, domain.ApifyRun{
-		ID:      run.ID,
-		RunID:   out.RunID,
-		Status:  out.Status,
+		ID:     run.ID,
+		RunID:  out.RunID,
+		Status: out.Status,
 	}, true); err != nil {
 		s.log.Warn("scrape: update run failed", "run", run.ID, "err", err)
 	}

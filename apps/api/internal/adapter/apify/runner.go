@@ -307,7 +307,7 @@ func (r *Runner) pollRunDataset(ctx context.Context, runID string) ([]json.RawMe
 		resp.Body.Close()
 		var st struct {
 			Data struct {
-				Status   string `json:"status"`
+				Status    string `json:"status"`
 				DatasetID string `json:"defaultDatasetId"`
 			} `json:"data"`
 		}

@@ -391,12 +391,12 @@ func parseIGSearchPost(raw []byte) (igSearchPost, error) {
 			Text      string `json:"text"`
 			CreatedAt int64  `json:"created_at"`
 		} `json:"caption"`
-		TakenAt       int64 `json:"taken_at"`
-		LikeCount     *int64 `json:"like_count"`
-		CommentCount  *int64 `json:"comment_count"`
-		ViewCount     *int64 `json:"view_count"`
-		PlayCount     *int64 `json:"play_count"`
-		User          struct {
+		TakenAt      int64  `json:"taken_at"`
+		LikeCount    *int64 `json:"like_count"`
+		CommentCount *int64 `json:"comment_count"`
+		ViewCount    *int64 `json:"view_count"`
+		PlayCount    *int64 `json:"play_count"`
+		User         struct {
 			Username string `json:"username"`
 			Pk       any    `json:"pk"`
 		} `json:"user"`
@@ -507,22 +507,22 @@ func parseIGComments(platform domain.Platform, post scrapeItem, comments []igCom
 // parseThreadsItem maps futurizerush/meta-threads-scraper's post row.
 func parseThreadsItem(raw []byte) (scrapeItem, error) {
 	var src struct {
-		PostCode   string `json:"post_code"`
-		PostURL    string `json:"post_url"`
-		Username   string `json:"username"`
-		UserID     any    `json:"user_id"`
-		Text       string `json:"text_content"`
-		MediaURLs  []string `json:"media_urls"`
-		MediaType  string `json:"media_type"`
-		CreatedAt  string `json:"created_at"`
-		LikeCount  *int64 `json:"like_count"`
-		ReplyCount *int64 `json:"reply_count"`
-		RepostCount *int64 `json:"repost_count"`
-		QuoteCount *int64 `json:"quote_count"`
-		ShareCount *int64 `json:"share_count"`
-		ViewCount  *int64 `json:"view_count"`
-		IsReply    bool   `json:"is_reply"`
-		Error      string `json:"error"`
+		PostCode    string   `json:"post_code"`
+		PostURL     string   `json:"post_url"`
+		Username    string   `json:"username"`
+		UserID      any      `json:"user_id"`
+		Text        string   `json:"text_content"`
+		MediaURLs   []string `json:"media_urls"`
+		MediaType   string   `json:"media_type"`
+		CreatedAt   string   `json:"created_at"`
+		LikeCount   *int64   `json:"like_count"`
+		ReplyCount  *int64   `json:"reply_count"`
+		RepostCount *int64   `json:"repost_count"`
+		QuoteCount  *int64   `json:"quote_count"`
+		ShareCount  *int64   `json:"share_count"`
+		ViewCount   *int64   `json:"view_count"`
+		IsReply     bool     `json:"is_reply"`
+		Error       string   `json:"error"`
 	}
 	if err := json.Unmarshal(raw, &src); err != nil {
 		return scrapeItem{}, err

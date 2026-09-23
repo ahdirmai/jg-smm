@@ -26,9 +26,13 @@ def collect():
     out = []
     for d in SCAN_DIRS:
         base = os.path.join(ROOT, d)
-        for dirpath, _dirs, files in os.walk(base):
+        for dirpath, dirs, files in os.walk(base):
             if "prototype" in dirpath:
                 continue
+            # Never descend into vendored deps: their READMEs link to their own
+            # repo layout, which does not exist here (and node_modules is
+            # gitignored — not our corpus to validate).
+            dirs[:] = [d for d in dirs if d != "node_modules"]
             for f in files:
                 if f.endswith(".md"):
                     out.append(os.path.join(dirpath, f))

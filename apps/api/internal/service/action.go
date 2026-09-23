@@ -246,9 +246,9 @@ func (s *ActionService) ListBatches(ctx context.Context, limit int) ([]port.Acti
 // BatchStatus is a batch plus a live rollup of its jobs' current statuses, the
 // unit an operator monitors after a fan-out.
 type BatchStatus struct {
-	Batch    port.ActionBatch       `json:"batch"`
+	Batch    port.ActionBatch         `json:"batch"`
 	ByStatus map[domain.JobStatus]int `json:"byStatus"`
-	Missing  int                    `json:"missing"` // job ids no longer found (e.g. purged)
+	Missing  int                      `json:"missing"` // job ids no longer found (e.g. purged)
 }
 
 // GetBatchStatus fetches a batch and rolls up its jobs' current statuses by
