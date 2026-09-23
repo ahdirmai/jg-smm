@@ -11,12 +11,40 @@ import { ExternalLink, MonitorPlay } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 /**
+ * Turn a heartbeat URL into a noVNC client page the iframe can load directly.
+ *
+ * The heartbeat reports host:port (or a bare root), and noVNC serves a
+ * directory listing there. `vnc.html` is the client; `autoconnect=1` skips the
+ * Connect dialog so the screen streams immediately. A URL already pointing at
+ * the client is left alone — only its query params are merged.
+ */
+function novncClientUrl(url: string): string {
+  const cleaned = url.trim().replace(/\/+$/, '');
+  const qIndex = cleaned.indexOf('?');
+  const path = qIndex === -1 ? cleaned : cleaned.slice(0, qIndex);
+  const query = qIndex === -1 ? '' : cleaned.slice(qIndex + 1);
+  const params = new URLSearchParams(query);
+  params.set('autoconnect', '1');
+  if (!path.endsWith('vnc.html')) {
+    return `${path}/vnc.html?${params.toString()}`;
+  }
+  return `${path}?${params.toString()}`;
+}
+
+/**
  * LiveBrowserModal (P4-08). Embeds a worker's noVNC view in an iframe so an
  * operator can watch (or drive) the headful browser during a login.
  *
  * The URL comes from the worker's heartbeat (`novncUrl`), never guessed: an
  * unpublished worker has no live view, and the button that opens this modal is
  * hidden rather than linking to a dead URL.
+ *
+ * The heartbeat publishes the *host:port*, not a path. noVNC's root is a
+ * directory listing, so the client page is appended here (`vnc.html`) — one
+ * normalization point, and the operator lands on the screen instead of a file
+ * index they then have to click into. `autoconnect=1` takes it the rest of the
+ * way: no "Connect" button, the framebuffer streams as soon as the socket is
+ * up.
  *
  * The iframe is only mounted while the modal is open — a hidden noVNC client
  * still holds a websocket open and would pin a worker display forever.
@@ -36,7 +64,7 @@ export function LiveBrowserModal({
   // opens a websocket to the worker.
   const [src, setSrc] = useState<string | null>(null);
   useEffect(() => {
-    if (open) setSrc(url);
+    if (open) setSrc(url ? novncClientUrl(url) : null);
     else setSrc(null);
   }, [open, url]);
 
