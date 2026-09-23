@@ -179,19 +179,56 @@ func (s *ScrapeService) fail(ctx context.Context, jobID, reason string) {
 	}
 }
 
-// readBack resolves the target's linked post and loads its comments. Not found
-// until the first successful ingest links the post.
+// readBack resolves the target's post and loads its comments. On the first
+// scrape the target is keyed by the raw URL while the post is keyed by its
+// shortcode, and LinkTargetPost has not run yet — so fall back to a
+// shortcode-from-URL lookup when the target carries no post link.
 func (s *ScrapeService) readBack(ctx context.Context, tgt domain.Target) (PostDetail, error) {
-	if tgt.PostID == nil {
-		return PostDetail{}, errors.New("target has no linked post")
-	}
-	post, err := s.scrapes.GetPost(ctx, *tgt.PostID)
+	post, err := s.resolvePost(ctx, tgt)
 	if err != nil {
-		return PostDetail{}, fmt.Errorf("get post: %w", err)
+		return PostDetail{}, err
 	}
 	comments, err := s.scrapes.ListCommentsByPost(ctx, post.ID, nil, nil)
 	if err != nil {
 		return PostDetail{}, fmt.Errorf("list comments: %w", err)
 	}
 	return PostDetail{Post: post, Comments: comments}, nil
+}
+
+// resolvePost finds the target's post: the linked id when one exists, else the
+// post the just-completed ingest stored under the URL's shortcode.
+func (s *ScrapeService) resolvePost(ctx context.Context, tgt domain.Target) (domain.Post, error) {
+	if tgt.PostID != nil {
+		return s.scrapes.GetPost(ctx, *tgt.PostID)
+	}
+	code := postExternalIDFromURL(tgt.Platform, tgt.URL)
+	if code == "" {
+		return domain.Post{}, errors.New("target has no linked post")
+	}
+	return s.scrapes.GetPostByExternalID(ctx, tgt.Platform, code)
+}
+
+// postExternalIDFromURL pulls the post's external id (its shortcode) out of a
+// permalink — the id the ingestor keys the stored post on. IG permalinks put
+// the code after /p/, /reel(s)/ or /tv/; Threads puts it after /post/. Query
+// and fragment are dropped (…/p/CODE/?img_index=1 → CODE).
+func postExternalIDFromURL(p domain.Platform, rawURL string) string {
+	u := rawURL
+	if i := strings.IndexAny(u, "?#"); i >= 0 {
+		u = u[:i]
+	}
+	segs := strings.Split(strings.Trim(u, "/"), "/")
+	markers := map[string]struct{}{}
+	switch p {
+	case domain.PlatformInstagram:
+		markers = map[string]struct{}{"p": {}, "reel": {}, "reels": {}, "tv": {}}
+	case domain.PlatformThreads:
+		markers = map[string]struct{}{"post": {}}
+	}
+	for i := 0; i+1 < len(segs); i++ {
+		if _, ok := markers[segs[i]]; ok {
+			return segs[i+1]
+		}
+	}
+	return ""
 }

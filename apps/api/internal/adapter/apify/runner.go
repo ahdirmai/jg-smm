@@ -447,9 +447,13 @@ type RunError struct {
 
 func (e *RunError) Error() string { return e.Message }
 
-// pathSegment keeps an actor id ("~user/name") a single path segment by
-// trimming surrounding slashes; Apify accepts the tilde literally.
-func pathSegment(actorID string) string { return strings.Trim(actorID, "/") }
+// pathSegment turns an actor id into the single URL path segment Apify's API
+// expects: the store id "user/name" must travel as "user~name" (a literal "/"
+// makes Apify read "acts/user" as the actor and 404 on the rest). Ids already
+// written with "~" pass through unchanged.
+func pathSegment(actorID string) string {
+	return strings.ReplaceAll(strings.Trim(actorID, "/"), "/", "~")
+}
 
 func maxItemsOr(n int) int {
 	if n <= 0 || n > defaultMaxItems {

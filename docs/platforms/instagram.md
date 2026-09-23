@@ -1,6 +1,6 @@
 # Platform Brief — Instagram
 
-> **Platform:** Instagram (`INSTAGRAM`) · **Status:** AKTIF (MVP) · **Brief versi:** `v0.1` · **Update:** 2026-09-23
+> **Platform:** Instagram (`INSTAGRAM`) · **Status:** AKTIF (MVP) · **Brief versi:** `v0.2` · **Update:** 2026-09-23
 >
 > Panduan: isi tiap bagian saat platform diaktifkan. Sinkronkan kapabilitas dengan `../PLATFORM_MATRIX.md` §2. **Semua action via Playwright** (bukan API/OAuth).
 
@@ -88,3 +88,4 @@
 | --- | --- | --- |
 | v0.0 | | Stub dibuat |
 | v0.1 | 2026-09-23 | §4.1–4.2: scrape brief on-demand (`instagram-post-scraper`) + keyword search (`instagram-search-scraper`) sesuai output asli actor; catat bahwa actor search mengabaikan since/until (filter di ingestor) dan row page kosong bukan error |
+| v0.2 | 2026-09-23 | Fix Bad Gateway saat scrape post: (1) actor id ke Apify pakai `~` bukan `/` (`apify/instagram-post-scraper` → 404, `apify~instagram-post-scraper` → 200); (2) read-back post pertama kali via shortcode-dari-URL karena target di-key by URL sedangkan post di-key by shortCode dan LinkTargetPost belum jalan |
