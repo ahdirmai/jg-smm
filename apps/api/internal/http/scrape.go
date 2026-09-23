@@ -3,6 +3,7 @@ package http
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,6 +37,7 @@ func (h *ScrapeHandler) Register(g *echo.Group) {
 	g.POST("/scrape/target", h.scrapeTarget, RequirePermission(domain.PermAct))
 	g.POST("/scrape/keywords", h.scrapeKeywords, RequirePermission(domain.PermAct))
 	g.POST("/comments/generate", h.generateComment, RequirePermission(domain.PermAct))
+	g.GET("/scrape/recent", h.listRecent, RequirePermission(domain.PermAct))
 }
 
 // scrapeTargetRequest is the on-demand scrape body.
@@ -105,6 +107,25 @@ func (h *ScrapeHandler) scrapeKeywords(c echo.Context) error {
 		return scrapeError(err)
 	}
 	return c.JSON(http.StatusOK, res)
+}
+
+// listRecent returns stored posts newest-scrape-first — the "already scraped"
+// history for the dashboard.
+func (h *ScrapeHandler) listRecent(c echo.Context) error {
+	if h.scrapes == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "scrape is not configured")
+	}
+	limit := 20
+	if raw := c.QueryParam("limit"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	posts, err := h.scrapes.ListRecentPosts(c.Request().Context(), limit)
+	if err != nil {
+		return scrapeError(err)
+	}
+	return c.JSON(http.StatusOK, map[string]any{"posts": posts})
 }
 
 // parseWindowDate accepts RFC3339 or a bare YYYY-MM-DD (dashboard date input).

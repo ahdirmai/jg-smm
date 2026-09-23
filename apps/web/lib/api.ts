@@ -191,6 +191,11 @@ export interface KeywordScrapeResult {
   itemsRead: number;
 }
 
+// Already-scraped history (the "recent posts" card on /actions).
+export interface RecentPostsResponse {
+  posts: ScrapedPost[];
+}
+
 export const api = {
   listAccounts: (signal?: AbortSignal) =>
     request<AccountList>('/api/accounts', signal ? { signal } : undefined),
@@ -232,6 +237,12 @@ export const api = {
 
   listContainers: (signal?: AbortSignal) =>
     request<ContainerList>('/api/containers', signal ? { signal } : undefined),
+  // Already-scraped posts, newest first (the "recent" history card).
+  listRecentPosts: (signal?: AbortSignal) =>
+    request<RecentPostsResponse>(
+      '/api/scrape/recent',
+      signal ? { signal } : undefined,
+    ),
   // On-demand scrape: run the platform actor synchronously for one post URL.
   // Long request (the actor run lasts tens of seconds); the caller shows a loader.
   scrapeTarget: (platform: string, url: string) =>

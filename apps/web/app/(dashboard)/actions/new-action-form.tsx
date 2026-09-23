@@ -27,7 +27,7 @@ import {
   Textarea,
 } from '@smm/ui';
 import { AlertCircle, Heart, Loader2, MessageSquare, Search, Sparkles } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { forwardRef, useCallback, useImperativeHandle, useMemo, useState } from 'react';
 
 import { api, type ScrapeTargetResponse } from '@/lib/api';
 import { useAccounts } from '@/lib/hooks/use-accounts';
@@ -36,6 +36,7 @@ import { PLATFORM_LABEL } from '@/lib/platforms';
 import type { ActionItem } from '@/lib/api';
 import { useSession } from '@/lib/auth/session-context';
 import { can } from '@/lib/auth/permissions';
+import { PostMedia } from '@/components/post-media';
 
 const MAX_BATCH = 50;
 
@@ -50,7 +51,15 @@ function metricsLine(m: Record<string, number> | null): string {
   return parts.join(' · ');
 }
 
-export function NewActionForm() {
+export type NewActionFormHandle = {
+  /** Fill the form with a platform + permalink and run the scrape (6h cache = instant for a stored post). */
+  loadPost: (platform: 'instagram' | 'threads', url: string) => void;
+};
+
+export const NewActionForm = forwardRef<
+  NewActionFormHandle,
+  { onScraped?: () => void }
+>(function NewActionForm({ onScraped }, ref) {
   const { accounts } = useAccounts();
   const { enqueue } = useActions();
   const session = useSession();
@@ -94,26 +103,36 @@ export function NewActionForm() {
     [platformAccounts, selected],
   );
 
-  async function runScrape() {
-    setScrapeError(null);
-    setScrape(null);
-    setFlow(null);
-    if (!url.trim()) {
-      setScrapeError('Paste a post link first.');
-      return;
-    }
-    setScraping(true);
-    try {
-      const res = await api.scrapeTarget(platform, url.trim());
-      setScrape(res);
-      // A fresh target resets per-account selections.
-      setSelected({});
-      setText({});
-    } catch (e) {
-      setScrapeError(e instanceof Error ? e.message : 'Scrape failed');
-    } finally {
-      setScraping(false);
-    }
+  // One scrape runner: explicit args so a history pick (platform/url set in
+  // the same tick) scrapes the right post, not the previous state values.
+  const runScrapeWith = useCallback(
+    async (p: 'instagram' | 'threads', u: string) => {
+      setScrapeError(null);
+      setScrape(null);
+      setFlow(null);
+      if (!u.trim()) {
+        setScrapeError('Paste a post link first.');
+        return;
+      }
+      setScraping(true);
+      try {
+        const res = await api.scrapeTarget(p, u.trim());
+        setScrape(res);
+        onScraped?.();
+        // A fresh target resets per-account selections.
+        setSelected({});
+        setText({});
+      } catch (e) {
+        setScrapeError(e instanceof Error ? e.message : 'Scrape failed');
+      } finally {
+        setScraping(false);
+      }
+    },
+    [onScraped],
+  );
+
+  function runScrape() {
+    void runScrapeWith(platform, url);
   }
 
   async function generateAI() {
@@ -145,6 +164,18 @@ export function NewActionForm() {
       setAiBusy(false);
     }
   }
+
+  // History card hands a stored post back: fill platform + link, scrape to
+  // refresh the preview (instant — 6h cache), bump the history list.
+  const loadPost = useCallback(
+    (p: 'instagram' | 'threads', u: string) => {
+      setPlatform(p);
+      setUrl(u);
+      void runScrapeWith(p, u);
+    },
+    [runScrapeWith],
+  );
+  useImperativeHandle(ref, () => ({ loadPost }), [loadPost]);
 
   const canSubmit = flow !== null && selectedAccounts.length > 0 && selectedAccounts.length <= MAX_BATCH && !submitting;
 
@@ -236,6 +267,11 @@ export function NewActionForm() {
             ) : (
               <p className="text-xs text-muted-foreground">(no caption)</p>
             )}
+            {scrape.post.mediaUrls && scrape.post.mediaUrls.length > 0 ? (
+              <div className="pt-1">
+                <PostMedia urls={scrape.post.mediaUrls} />
+              </div>
+            ) : null}
             {scrape.comments.length > 0 ? (
               <p className="text-xs text-muted-foreground">
                 {scrape.comments.length} existing comment{scrape.comments.length === 1 ? '' : 's'} loaded
@@ -355,4 +391,4 @@ export function NewActionForm() {
       </CardContent>
     </Card>
   );
-}
+});

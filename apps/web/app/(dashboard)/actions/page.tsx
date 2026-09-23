@@ -21,9 +21,10 @@ import {
   SelectValue,
 } from '@smm/ui';
 import { AlertCircle } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 
-import { NewActionForm } from './new-action-form';
+import { NewActionForm, type NewActionFormHandle } from './new-action-form';
+import { ScrapeHistory } from './scrape-history';
 import { useAccounts } from '@/lib/hooks/use-accounts';
 import { useActions } from '@/lib/hooks/use-actions';
 import { useVirtualRowWindow } from '@/lib/hooks/use-virtual-window';
@@ -70,6 +71,10 @@ export default function ActionsPage() {
   const { accounts } = useAccounts();
   const { actions, loading, error } = useActions();
 
+  const formRef = useRef<NewActionFormHandle>(null);
+  // Bumped after a fresh scrape so the history card re-reads the stored list.
+  const [historyRefresh, setHistoryRefresh] = useState(0);
+
   const [status, setStatusFilter] = useState<string>('all');
 
   const inFlight = useMemo(
@@ -107,7 +112,17 @@ export default function ActionsPage() {
   return (
     <div className="mx-auto max-w-6xl space-y-4">
       {/* New Action: platform → link → scrape → action → per-account comment → submit. */}
-      <NewActionForm />
+      <NewActionForm
+        ref={formRef}
+        onScraped={() => setHistoryRefresh((n) => n + 1)}
+      />
+
+      <ScrapeHistory
+        onPickPostAction={(platform, url) =>
+          formRef.current?.loadPost(platform as 'instagram' | 'threads', url)
+        }
+        refreshKey={historyRefresh}
+      />
 
       <Card>
         <CardHeader className="flex-row items-center justify-between space-y-0">

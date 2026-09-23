@@ -179,6 +179,19 @@ func (s *ScrapeService) fail(ctx context.Context, jobID, reason string) {
 	}
 }
 
+// ListRecentPosts returns stored posts newest-scrape-first — the dashboard's
+// "already scraped" history. Capped so a stray ?limit=999999 can't dump the
+// whole table.
+func (s *ScrapeService) ListRecentPosts(ctx context.Context, limit int) ([]domain.Post, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	return s.scrapes.ListPosts(ctx, &limit, nil)
+}
+
 // readBack resolves the target's post and loads its comments. On the first
 // scrape the target is keyed by the raw URL while the post is keyed by its
 // shortcode, and LinkTargetPost has not run yet — so fall back to a
