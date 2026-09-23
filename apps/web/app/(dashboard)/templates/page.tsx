@@ -158,14 +158,9 @@ export default function TemplatesPage() {
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
-      <header className="flex items-end justify-between gap-4">
-        <div className="space-y-1">
-          <h1 className="text-3xl font-semibold tracking-tight">Templates</h1>
-          <p className="text-sm text-muted-foreground">
-            The comment pool. Text is composed from these variants and denylist-screened before a
-            comment is queued.
-          </p>
-        </div>
+      {/* Page-level actions. The title/subtitle live in the shell header (h-14),
+          so this row carries only the write control. */}
+      <div className="flex items-center justify-end gap-2">
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild>
             <Button onClick={startCreate} disabled={!canAct}>
@@ -267,7 +262,7 @@ export default function TemplatesPage() {
               </div>
 
               {formError ? (
-                <div className="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+                <div className="flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
                   <AlertCircle className="size-4" />
                   {formError}
                 </div>
@@ -281,7 +276,7 @@ export default function TemplatesPage() {
             </form>
           </DialogContent>
         </Dialog>
-      </header>
+      </div>
 
       <Card>
         <CardHeader>
@@ -308,13 +303,13 @@ export default function TemplatesPage() {
           </section>
 
           {error ? (
-            <div className="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+            <div className="flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
               <AlertCircle className="size-4" />
               {error}
             </div>
           ) : null}
 
-          <div className="overflow-hidden rounded-md border">
+          <div className="overflow-hidden rounded-lg border border-border/60">
             <Table>
               <TableHeader>
                 <TableRow>

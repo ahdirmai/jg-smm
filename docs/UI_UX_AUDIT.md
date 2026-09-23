@@ -1,0 +1,134 @@
+# UI/UX Audit + Improvement Plan
+
+> Audit date: 2026-09-23 · Scope: semua page dashboard (`/`, workers, accounts, actions, scrape,
+> templates, monitoring + per-platform, reports, audit, settings, login) + shared shell + `packages/ui`.
+> Reference: Homies Lab design system (cream canvas, single yellow accent, ink as second accent,
+> generous radius, hero numbers, soft shadows).
+
+## 1. Findings (before redesign)
+
+### F-01 Duplicate page titles — inconsistency, double hierarchy
+
+`/templates`, `/reports`, `/monitoring`, `/monitoring/[platform]` each render their own `<h1>` +
+subtitle, while the shell header (`h-14`, `TITLES` map) already renders title + subtitle for every
+route. Result: two titles stacked, inconsistent sizing (`text-3xl` on templates/reports vs
+`text-2xl` on monitoring), and a subtitle that can drift from the shell's.
+
+**Fix applied:** removed the in-page header from all four; the shell header is the single source
+of page copy. Each page now opens with an actions row (buttons only) or straight into content.
+
+### F-02 KPI cards had no hierarchy
+
+`KpiCard` variants across pages put the label above the value, both small, icon floating
+top-right. Numbers were not heroes — nothing led the eye.
+
+**Fix applied:** value is now the hero (`text-2xl/3xl font-semibold tabular-nums`), label is a
+small muted line beneath it, and the icon sits in a soft rounded square (`bg-secondary`,
+principle 6). Applied to: `/`, `/workers`, `/monitoring`, `/monitoring/[platform]`.
+
+### F-03 Status badges fought the accent
+
+`Badge` variants `success`/`warning`/`info`/`destructive` used **saturated fills** (solid green,
+solid yellow, solid red). On a page with a yellow primary CTA, a solid-yellow "warning" pill and a
+solid-green "ACTIVE" pill compete with the brand accent — principle 1 (one saturated hue) violated
+on nearly every table row.
+
+**Fix applied:** status pills are now soft-tinted (`bg-<status>/12`–`/16`) with an ink or
+destructive label. Yellow stays reserved for primary actions.
+
+### F-04 Hardcoded colors broke theming
+
+`text-emerald-600 dark:text-emerald-400` was sprinkled across workers, reports, actions, and the
+wizard — green that does not track `--success` and would not follow a palette change.
+
+**Fix applied:** replaced with `text-success` (workers live ticker + provision log + reports
+Succeeded columns + action result spans).
+
+### F-05 Inconsistent radius scale
+
+Mixed `rounded-md` (6px default) on cards, tables, inputs, thumbnails, dialogs — no scale, and
+nothing matched the reference's generous corners. `--radius` was `0.5rem` with no xl step.
+
+**Fix applied:** token scale `--radius-sm 8 / md 12 / lg 16 / xl 24`; `Card` → `rounded-lg` +
+`shadow-card`; tables/thumbnails/previews → `rounded-lg`; empty states → dashed
+`rounded-lg border`. Control-internal radius (buttons, mode-toggle) left at `rounded-md` for
+small-control density.
+
+### F-06 Old palette (indigo on charcoal)
+
+Light theme was off-white + indigo; dark was indigo on charcoal — no relation to the reference.
+`.dark` held a completely different hue family from `.light`.
+
+**Fix applied:** both themes are now Homies Lab — warm cream light / warm near-black dark, single
+yellow accent in both, ink-on-yellow text preserved. `docs/DESIGN_SYSTEM.md` §3/§4 updated to match
+shipped tokens.
+
+### F-07 Active nav state was gray-tinted
+
+Sidebar active item used `bg-primary/12 text-primary` (a faint yellow tint). It did not read as
+"selected" — principle 5 says active/selected is solid ink (black), never gray.
+
+**Fix applied:** active nav leaf and nested group item are now `bg-foreground text-background`
+(solid ink pill). Settings tab active state follows the same rule.
+
+## 2. Component-level changes
+
+| File | Change |
+| --- | --- |
+| `packages/ui/src/components/card.tsx` | `rounded-lg border-border/60 shadow-card` (float, no harsh border) |
+| `packages/ui/src/components/badge.tsx` | status variants → soft tint + ink label; added `gap-1.5` for status-dot pairing |
+| `packages/ui/src/components/table.tsx` | `TableHead` → `text-[11px] uppercase tracking-wider h-11`; row border `border-border/60`; hover `bg-secondary/60` |
+| `apps/web/app/globals.css` | Homies Lab `.light` + `.dark` tokens; radius scale + `--shadow-card` / `--shadow-popover` |
+| `apps/web/components/dashboard-shell.tsx` | active nav = solid ink pill; logo mark `rounded-lg`; header hairline + subtle blur; sidebar/hairline borders `border-border/60` |
+
+## 3. Page-by-page
+
+| Page | Change |
+| --- | --- |
+| `/` | KPI hero cards + icon squares; getting-started step chips → soft square; trend/empty boxes hairline |
+| `/workers` | stat cards → hero; provision log + session dialogs hairline; live dot `bg-success`; raw `<select>` → `rounded-lg` |
+| `/accounts` | bulk bar + table wrap + error banner hairline radius |
+| `/actions` | queue table hairline + uppercase group headers; dialog comment/error boxes; dashed empty state |
+| `/actions` (new-action-form) | scrape preview → `bg-secondary/30` panel; error/result radius |
+| `/actions` (scrape-history) | card-title icon in soft square; thumbnails `rounded-lg`; rows hairline |
+| `/scrape` | keyword result rows hairline; raw `<select>` → `rounded-lg` |
+| `/templates` | removed duplicate h1; error + table wrap hairline |
+| `/monitoring` | removed duplicate h1; KPI hero; table wrapped |
+| `/monitoring/[platform]` | removed duplicate h1; platform pill switcher kept; KPI hero + icon squares; monitored list hairline dividers; table wrapped |
+| `/reports` | removed duplicate h1; error banner radius; `text-emerald` → `text-success` |
+| `/audit` | empty-state icon → soft rounded square (`rounded-xl bg-secondary`) |
+| `/settings` | tab active = solid ink (principle 5); already token-clean |
+| `/login` | logo mark already `rounded-lg`; unchanged (token-driven) |
+
+## 4. Remaining plan (not done — deferred)
+
+Ordered by impact. Each is independently shippable.
+
+| # | Item | Why | Where |
+| --- | --- | --- | --- |
+| P-01 | **Pill tab switcher primitive** | Reference uses a segmented pill control for views; settings tabs + report-kind selector + platform switcher are all button-rows today. A `Tabs`-based pill in `packages/ui` unifies them and gives the reference's inset active pill. | `packages/ui/src/components/tabs.tsx` (new); settings, reports, monitoring/[platform] |
+| P-02 | **Bar chart with rounded-top bars** | Reference's "Employment Status" chart has rounded-top bars + floating percentage chips. `TrendPlaceholder`/`TrendChart` are sparklines only — no categorical bar chart exists. | `components/trend-chart.tsx` or new `components/bar-chart.tsx` |
+| P-03 | **Density toggle is a dead control** | Settings → Appearance shows two disabled "Comfortable/Compact" buttons. Either wire it (Zustand + cookie, per old §3.7) or remove it — a permanently disabled control reads as unfinished. | settings page |
+| P-04 | **⌘K search box is a dummy** | Header search field renders a static span ("Search accounts, jobs… ⌘K") with no handler and no `Command` component behind it. Remove or wire to a real filter. | dashboard-shell |
+| P-05 | **`Filter` buttons are inert** | Dashboard "Filter" and platform-analytics "Filter" render disabled with a title — fine as documented intent, but they should either land or be dropped once review is over. | page.tsx, monitoring/[platform] |
+| P-06 | **Bounce/skeleton loading** | Most pages render "Loading…" text or `—` placeholders. Reference polish level wants `Skeleton` cards (shadcn `Skeleton`) matching the card grid, so load states do not jump layout. | packages/ui + all list pages |
+| P-07 | **Toast/feedback layer missing** | `docs/DESIGN_SYSTEM.md §5.1` documents sonner toasts (default/warning/critical); nothing is installed. Enqueue success/failure currently renders an inline `<span>`. Adds a real feedback channel for the scrape + queue flows. | packages/ui + actions pages |
+| P-08 | **Mobile nav absent** | Sidebar is `hidden md:flex`; below `md` there is **no navigation at all** (no hamburger, no drawer). Mobile users cannot reach any page. | dashboard-shell (add `Sheet` drawer) |
+| P-09 | **Status = dot + label pairing** | Principle 7: status should be icon+label+dot. `Badge` now has `gap-1.5` ready for it, but no `StatusDot` component is wired into tables yet. | packages/ui |
+| P-10 | **Audience mix is sample data** | `monitoring/[platform]` renders a hardcoded `AUDIENCE_MIX` with a `sample` tag. Tagged honestly, but it should hide entirely until the endpoint exists rather than show labeled-but-fake bars. | monitoring/[platform] |
+
+## 5. Verification
+
+- `pnpm --filter @smm/web exec tsc --noEmit` — clean
+- `pnpm --filter @smm/web exec eslint app components` — clean
+- `pnpm --filter @smm/web build` — all 15 routes build
+- `python3 scripts/check_docs_links.py` — all 828 cross-references resolve
+
+## 6. Design principles honored
+
+1. Warm cream base + single yellow accent — no second saturated hue (status pills are tints now).
+2. Generous radius — 16px cards, 24px container, 12px inputs, 8px pills.
+3. High whitespace, soft shadow cards, hairline borders.
+4. Numbers are heroes — big, bold, ink, label below.
+5. Ink (black) is the second accent — active nav, active settings tab.
+6. Small monochrome icons in soft rounded squares.

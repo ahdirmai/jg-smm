@@ -150,7 +150,10 @@ export default function AuditPage() {
         </div>
         {filtered.length === 0 ? (
           <div className="flex flex-col items-center gap-3 py-16 text-center">
-            <ScrollText className="size-8 text-muted-foreground" />
+            {/* Principle 6: icon in a soft rounded square. */}
+            <span className="grid size-12 place-items-center rounded-xl bg-secondary text-muted-foreground">
+              <ScrollText className="size-6" />
+            </span>
             <div>
               <p className="text-sm font-medium">No audit entries yet</p>
               <p className="text-xs text-muted-foreground">

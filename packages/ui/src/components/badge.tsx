@@ -5,18 +5,22 @@ import { cn } from '../lib/utils';
 
 // DESIGN_SYSTEM §5.1: only success | warning | destructive | info | outline
 // beyond the base default/secondary variants.
+// Homies Lab: status pills are soft-tinted with a dark label, not a saturated
+// fill (design principle 1 — one saturated hue, reserved for primary actions;
+// a solid status fill would compete with the yellow accent).
 const badgeVariants = cva(
-  'inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2',
+  'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2',
   {
     variants: {
       variant: {
         default: 'border-transparent bg-primary text-primary-foreground',
         secondary: 'border-transparent bg-secondary text-secondary-foreground',
         outline: 'text-foreground',
-        success: 'border-transparent bg-[hsl(var(--success))] text-white',
-        warning: 'border-transparent bg-[hsl(var(--warning))] text-black',
-        info: 'border-transparent bg-[hsl(var(--info))] text-white',
-        destructive: 'border-transparent bg-destructive text-destructive-foreground',
+        success:
+          'border-transparent bg-[hsl(var(--success))]/12 text-[hsl(var(--success))]',
+        warning: 'border-transparent bg-[hsl(var(--warning))]/16 text-foreground',
+        info: 'border-transparent bg-[hsl(var(--info))]/12 text-foreground',
+        destructive: 'border-transparent bg-destructive/12 text-destructive',
       },
     },
     defaultVariants: {

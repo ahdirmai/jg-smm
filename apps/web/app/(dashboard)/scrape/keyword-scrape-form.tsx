@@ -85,7 +85,7 @@ export function KeywordScrapeForm() {
               id="ks-platform"
               value={platform}
               onChange={(e) => setPlatform(e.target.value as 'instagram' | 'threads')}
-              className="h-9 w-full rounded-md border bg-transparent px-3 text-sm"
+              className="h-9 w-full rounded-lg border border-input bg-transparent px-3 text-sm"
             >
               <option value="instagram">Instagram</option>
               <option value="threads">Threads</option>
@@ -139,7 +139,7 @@ export function KeywordScrapeForm() {
         </div>
 
         {error ? (
-          <div className="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+          <div className="flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
             <AlertCircle className="size-4" />
             {error}
           </div>
@@ -154,14 +154,14 @@ export function KeywordScrapeForm() {
               <span>· {result.itemsRead} items read</span>
               <span className="font-mono">{result.actorId}</span>
             </div>
-            <div className="max-h-[360px] overflow-y-auto rounded-md border">
+            <div className="max-h-[360px] overflow-y-auto rounded-lg border border-border/60">
               {result.posts.length === 0 ? (
                 <div className="flex items-center justify-center py-10 text-sm text-muted-foreground">
                   No posts found for these keywords.
                 </div>
               ) : (
                 result.posts.map((p: ScrapedPost) => (
-                  <div key={p.id} className="border-b px-3 py-2 last:border-b-0">
+                  <div key={p.id} className="border-b border-border/60 px-3 py-2 last:border-b-0">
                     <div className="flex items-center gap-2 text-xs text-muted-foreground">
                       <span className="font-medium text-foreground">@{p.authorHandle || 'unknown'}</span>
                       <span>{new Date(p.scrapedAt).toLocaleDateString()}</span>

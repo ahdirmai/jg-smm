@@ -159,14 +159,14 @@ export default function ActionsPage() {
           </section>
 
           {error ? (
-            <div className="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+            <div className="flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
               <AlertCircle className="size-4" />
               {error}
             </div>
           ) : null}
 
           {rows.length === 0 && !loading ? (
-            <div className="flex items-center justify-center rounded-md border py-10 text-sm text-muted-foreground">
+            <div className="flex items-center justify-center rounded-lg border border-dashed py-10 text-sm text-muted-foreground">
               The queue is empty. Enqueue above.
             </div>
           ) : (
@@ -175,7 +175,7 @@ export default function ActionsPage() {
             // before/after spacers keep the scrollbar proportional.
             <div
               ref={virtual.ref}
-              className="max-h-[480px] overflow-y-auto rounded-md border"
+              className="max-h-[480px] overflow-y-auto rounded-lg border border-border/60"
               role="table"
               aria-label="Action queue"
             >
@@ -185,7 +185,7 @@ export default function ActionsPage() {
                     row.kind === 'group' ? (
                       <div
                         key={`g-${row.accountId}`}
-                        className="flex items-center border-b bg-muted/40 px-3 text-xs font-medium text-muted-foreground"
+                        className="flex items-center border-b border-border/60 bg-secondary/50 px-3 text-xs font-medium uppercase tracking-wide text-muted-foreground"
                         style={{ height: ROW_HEIGHT }}
                       >
                         Account {accountLabel(accounts, row.accountId)}
@@ -195,7 +195,7 @@ export default function ActionsPage() {
                         key={row.job.id}
                         type="button"
                         onClick={() => setSelected(row.job)}
-                        className="flex w-full items-center gap-4 border-b px-3 text-left transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        className="flex w-full items-center gap-4 border-b border-border/60 px-3 text-left transition-colors hover:bg-secondary/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                         style={{ height: ROW_HEIGHT }}
                       >
                         <Badge variant={statusTone(row.job.status)}>{row.job.status}</Badge>
@@ -267,13 +267,13 @@ export default function ActionsPage() {
               {selected.renderedText ? (
                 <div className="space-y-1">
                   <div className="text-xs text-muted-foreground">Composed comment</div>
-                  <div className="rounded-md border bg-muted/40 p-3 text-sm">
+                  <div className="rounded-lg border border-border/60 bg-secondary/40 p-3 text-sm">
                     {selected.renderedText}
                   </div>
                 </div>
               ) : null}
               {selected.error ? (
-                <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+                <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
                   <AlertCircle className="mt-0.5 size-4" />
                   <span className="whitespace-pre-wrap">{selected.error}</span>
                 </div>

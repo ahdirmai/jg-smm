@@ -214,7 +214,7 @@ export function RegionCommentWizard() {
             </div>
 
             {activeRegions.map((g) => (
-              <div key={g.region} className="rounded-md border p-3 space-y-3">
+              <div key={g.region} className="rounded-lg border border-border/60 p-3 space-y-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-sm font-medium">{g.region}</span>
                   <Button type="button" variant="outline" size="sm" onClick={() => selectAll(g.accounts, true)}>
@@ -286,7 +286,7 @@ export function RegionCommentWizard() {
           {selectedAccounts.length > MAX_BATCH && (
             <span className="text-sm text-destructive">Over the {MAX_BATCH} batch cap.</span>
           )}
-          {result && <span className="text-sm text-emerald-600">{result}</span>}
+          {result && <span className="text-sm text-success">{result}</span>}
           {error && <span className="text-sm text-destructive">{error}</span>}
         </div>
       </CardContent>

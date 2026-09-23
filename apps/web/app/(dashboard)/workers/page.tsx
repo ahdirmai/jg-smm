@@ -302,7 +302,7 @@ export default function WorkersPage() {
   return (
     <div className="mx-auto max-w-6xl space-y-4">
       {error ? (
-        <div className="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+        <div className="flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
           <AlertCircle className="size-4" />
           {error}
         </div>
@@ -324,9 +324,9 @@ export default function WorkersPage() {
           ] as [string, number][]
         ).map(([label, value]) => (
           <Card key={label}>
-            <CardContent className="space-y-1 p-4">
-              <span className="text-xs uppercase tracking-wide text-muted-foreground">{label}</span>
+            <CardContent className="space-y-2 p-5">
               <div className="text-2xl font-semibold tracking-tight tabular-nums">{value}</div>
+              <div className="text-xs uppercase tracking-wide text-muted-foreground">{label}</div>
             </CardContent>
           </Card>
         ))}
@@ -488,7 +488,7 @@ export default function WorkersPage() {
                       </button>
                     </div>
                     {logFor === c.id ? (
-                      <div className="mt-2 rounded-md border bg-muted/30 p-2 text-xs">
+                      <div className="mt-2 rounded-lg border border-border/60 bg-secondary/30 p-2 text-xs">
                         {logs === null ? (
                           <p className="text-muted-foreground">loading…</p>
                         ) : logs.length === 0 ? (
@@ -502,7 +502,7 @@ export default function WorkersPage() {
                                 </span>
                                 <span>{l.op}</span>
                                 <span>gen {l.generation}</span>
-                                <span className={l.status === 'FAILED' ? 'text-destructive' : 'text-emerald-600 dark:text-emerald-400'}>
+                                <span className={l.status === 'FAILED' ? 'text-destructive' : 'text-success'}>
                                   {l.status}
                                 </span>
                                 {l.error ? <span className="truncate text-destructive">{l.error}</span> : null}
@@ -607,7 +607,7 @@ export default function WorkersPage() {
               <Label htmlFor="c-location">Location</Label>
               <select
                 id="c-location"
-                className="h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                className="h-9 rounded-lg border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                 value={location}
                 onChange={(e) => setLocation(e.target.value)}
                 disabled={busy === '__create__' || !canAct}
@@ -675,7 +675,7 @@ export default function WorkersPage() {
           </DialogHeader>
 
           {deleteTarget?.accounts && deleteTarget.accounts.length > 0 ? (
-            <ul className="max-h-40 space-y-1 overflow-auto rounded-md border bg-muted/30 p-2 text-sm">
+            <ul className="max-h-40 space-y-1 overflow-auto rounded-lg border border-border/60 bg-secondary/30 p-2 text-sm">
               {deleteTarget.accounts.map((a) => (
                 <li key={a.id} className="flex items-center justify-between gap-2">
                   <span className="truncate">@{a.username}</span>
@@ -695,7 +695,7 @@ export default function WorkersPage() {
           ) : null}
 
           {sessionError ? (
-            <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+            <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
               <AlertCircle className="mt-0.5 size-4 shrink-0" />
               <span>{sessionError}</span>
             </div>
@@ -739,10 +739,10 @@ function novncPortOf(url: string): string {
 function LiveTicker({ ticker }: { ticker: ReturnType<typeof useLiveTicker> }) {
   const { items, connected } = ticker;
   return (
-    <div className="rounded-md border bg-card/60 p-3">
+    <div className="rounded-lg border border-border/60 bg-card/60 p-3">
       <div className="mb-2 flex items-center gap-2">
         <span
-          className={`inline-block size-2 rounded-full ${connected ? 'bg-emerald-500' : 'bg-muted-foreground/40'}`}
+          className={`inline-block size-2 rounded-full ${connected ? 'bg-success' : 'bg-muted-foreground/40'}`}
           aria-hidden
         />
         <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">

@@ -1,6 +1,6 @@
 # Design System
 
-> Base: **shadcn/ui** (Radix + Tailwind + CSS variables). Theme: **dark default, indigo accent**. Gaya: **minimalis profesional** — restrained palette, generous whitespace, hierarki via size/weight bukan warna.
+> Base: **shadcn/ui** (Radix + Tailwind + CSS variables). Theme: **light default (warm cream), single yellow accent, ink as the second accent**. Gaya: **Homies Lab** — warm neutral canvas, generous radius, cards float on soft shadow, hero numbers. Hierarki via size/weight bukan warna.
 
 ## 1. Stack
 
@@ -42,16 +42,16 @@ Tambah manual (tidak ada di registry default):
 - `LiveBrowserModal` — iframe noVNC (live screen browser worker) untuk selesaikan challenge; hanya muncul saat `authStatus=NEEDS_INPUT`.
 - `ChallengeDialog` — input kode OTP/checkpoint + screenshot challenge → `POST /accounts/{id}/input`.
 
-## 3. Prinsip Minimalis Profesional
+## 3. Prinsip Homies Lab
 
-1. **Hierarki via size & weight, bukan warna.** Hindari >2 warna status di satu view.
-2. **Whitespace = luxury.** Padding default card `p-6`; section gap `gap-6`.
-3. **Border tipis 1px**, warna `--border`. Hindari shadow berlebihan.
-4. **Restrained accent.** `--primary` hanya untuk CTA primer + brand. Tidak untuk data viz (pakai chart palette).
-5. **Status = ikon + label + dot warna.** Tidak warna saja.
-6. **Typography tegas.** Inter Variable UI, JetBrains Mono untuk ID/angka/log.
-7. **Density toggle**: `compact` (default operator, h-8 row) vs `comfortable` (strategist, h-12 row). Disimpan di Zustand + cookie.
-8. **No gradient, no glassmorphism.** Flat dengan elevasi 1px border.
+1. **Warm neutral cream base + single strong yellow accent.** Satu hue jenuh saja (`--primary` #F5B700); tidak pernah hue jenuh kedua.
+2. **Generous rounded corners.** Min 8px; card 16px (`--radius`); outer container 24px (`--radius-xl`).
+3. **High whitespace density.** Card float di soft shadow (`--shadow-card`), border hairline (`border-border/60`), bukan border tebal.
+4. **Numbers are heroes.** Bold, besar, ink; label kecil muted di bawahnya — bukan di sebelahnya.
+5. **Black (`--foreground`) sebagai "second accent"** untuk state active/selected, bukan abu-abu.
+6. **Icons kecil, monochrome**, duduk di soft rounded square (`bg-secondary`).
+7. **Hierarki via size & weight, bukan warna.** Status = soft-tinted pill + label, bukan fill jenuh.
+8. **No gradient, no glassmorphism.** Flat dengan soft shadow.
 
 ## 4. Tokens
 
@@ -62,76 +62,89 @@ shadcn convention: HSL disimpan di CSS variables, dipanggil via Tailwind.
 ```css
 /* globals.css */
 @layer base {
-  :root {
-    --background: 0 0% 100%;
-    --foreground: 222 47% 11%;
+  :root,
+  .light {
+    /* Homies Lab: warm cream canvas, white cards, yellow accent, ink as the
+     * second accent for active states. */
+    --background: 42 60% 87%; /* #F4E9CE page */
+    --foreground: 0 0% 10%; /* #1A1A1A */
     --card: 0 0% 100%;
-    --card-foreground: 222 47% 11%;
+    --card-foreground: 0 0% 10%;
     --popover: 0 0% 100%;
-    --popover-foreground: 222 47% 11%;
-    --primary: 238 84% 67%; /* indigo-500, brand */
-    --primary-foreground: 0 0% 100%;
-    --secondary: 220 14% 96%;
-    --secondary-foreground: 222 47% 11%;
-    --muted: 220 14% 96%;
-    --muted-foreground: 220 9% 46%;
-    --accent: 220 14% 96%;
-    --accent-foreground: 222 47% 11%;
-    --destructive: 0 84% 60%;
+    --popover-foreground: 0 0% 10%;
+    --primary: 41 100% 48%; /* #F5B700; ink text on it */
+    --primary-foreground: 0 0% 10%;
+    --secondary: 42 55% 92%; /* #FBF3DE */
+    --secondary-foreground: 0 0% 10%;
+    --muted: 42 55% 92%;
+    --muted-foreground: 0 0% 42%; /* #6B6B6B */
+    --accent: 42 60% 94%; /* #FFF3CE */
+    --accent-foreground: 0 0% 10%;
+    --destructive: 2 76% 62%; /* #E85454 */
     --destructive-foreground: 0 0% 100%;
-    --success: 142 71% 45%;
-    --warning: 38 92% 50%;
-    --info: 199 89% 60%;
-    --border: 220 13% 91%;
-    --input: 220 13% 91%;
-    --ring: 238 84% 67%;
-    --status-cold: 220 9% 46%;
-    --status-ready: 142 71% 45%;
-    --status-busy: 238 84% 67%;
-    --status-error: 0 84% 60%;
-    --chart-1: 238 84% 67%;
-    --chart-2: 0 0% 9%;
-    --chart-3: 0 84% 60%;
-    --chart-4: 38 92% 50%;
-    --chart-5: 199 89% 60%;
-    --chart-6: 142 71% 45%;
-    --radius: 0.5rem;
+    --success: 122 48% 50%; /* #4CAF50 */
+    --warning: 41 100% 48%;
+    --info: 41 100% 48%;
+    --border: 40 35% 89%; /* #ECE5D3 */
+    --input: 0 0% 91%;
+    --ring: 41 100% 48%;
+    --status-cold: 0 0% 61%;
+    --status-ready: 122 48% 50%;
+    --status-busy: 41 100% 48%;
+    --status-error: 2 76% 62%;
+    --chart-1: 41 100% 48%;
+    --chart-2: 0 0% 10%;
+    --chart-3: 0 0% 61%;
+    --chart-4: 41 100% 65%;
+    --chart-5: 122 48% 50%;
+    --chart-6: 2 76% 62%;
+    --radius: 1rem; /* 16px cards */
   }
 
   .dark {
-    --background: 222 47% 5%; /* lebih pekat dari default shadcn */
-    --foreground: 220 13% 95%;
-    --card: 222 47% 7%;
-    --card-foreground: 220 13% 95%;
-    --popover: 222 47% 7%;
-    --popover-foreground: 220 13% 95%;
-    --primary: 238 84% 67%;
-    --primary-foreground: 222 47% 5%;
-    --secondary: 222 30% 12%;
-    --secondary-foreground: 220 13% 95%;
-    --muted: 222 30% 10%;
-    --muted-foreground: 220 9% 60%;
-    --accent: 222 30% 12%;
-    --accent-foreground: 220 13% 95%;
-    --destructive: 0 72% 51%;
+    /* Homies Lab, dark: warm near-black canvas, same single yellow accent. */
+    --background: 36 8% 9%;
+    --foreground: 40 22% 92%;
+    --card: 34 8% 13%;
+    --card-foreground: 40 22% 92%;
+    --popover: 34 8% 13%;
+    --popover-foreground: 40 22% 92%;
+    --primary: 41 100% 52%;
+    --primary-foreground: 0 0% 10%;
+    --secondary: 34 7% 17%;
+    --secondary-foreground: 40 22% 92%;
+    --muted: 34 7% 17%;
+    --muted-foreground: 40 8% 64%;
+    --accent: 34 8% 20%;
+    --accent-foreground: 40 22% 94%;
+    --destructive: 2 72% 60%;
     --destructive-foreground: 0 0% 100%;
-    --success: 142 71% 45%;
-    --warning: 38 92% 50%;
-    --info: 199 89% 60%;
-    --border: 222 30% 14%;
-    --input: 222 30% 14%;
-    --ring: 238 84% 67%;
-    --status-cold: 220 9% 46%;
-    --status-ready: 142 71% 45%;
-    --status-busy: 238 84% 67%;
-    --status-error: 0 72% 51%;
-    --chart-1: 238 84% 67%;
-    --chart-2: 0 0% 85%;
-    --chart-3: 0 72% 51%;
-    --chart-4: 38 92% 50%;
-    --chart-5: 199 89% 60%;
-    --chart-6: 142 71% 45%;
+    --success: 122 40% 52%;
+    --warning: 41 100% 52%;
+    --info: 41 100% 52%;
+    --border: 34 6% 22%;
+    --input: 34 6% 24%;
+    --ring: 41 100% 52%;
+    --status-cold: 0 0% 55%;
+    --status-ready: 122 40% 52%;
+    --status-busy: 41 100% 52%;
+    --status-error: 2 72% 60%;
+    --chart-1: 41 100% 52%;
+    --chart-2: 40 22% 92%;
+    --chart-3: 0 0% 55%;
+    --chart-4: 41 100% 68%;
+    --chart-5: 122 40% 52%;
+    --chart-6: 2 72% 60%;
   }
+}
+
+@theme inline {
+  --radius-xl: 24px; /* outer app container */
+  --radius-lg: var(--radius); /* 16px cards */
+  --radius-md: 12px; /* inputs, small cards */
+  --radius-sm: 8px; /* pills, tags, avatars */
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.04), 0 8px 24px rgb(0 0 0 / 0.06);
+  --shadow-popover: 0 4px 12px rgb(0 0 0 / 0.08), 0 16px 40px rgb(0 0 0 / 0.12);
 }
 ```
 
@@ -150,8 +163,9 @@ Font: `Inter Variable` (UI), `JetBrains Mono` (mono). Load via `next/font`.
 
 ### 4.3 Spacing & Radius
 
-- Spacing: Tailwind default (4-base). Container padding `p-4` / `p-6`. Section `space-y-6`.
-- Radius: `--radius: 0.5rem` (8 px). Card `rounded-lg`. Pill `rounded-full`.
+- Spacing: Tailwind default (4-base). Card padding `p-5`–`p-6`; KPI card `p-5`; section `space-y-4`/`space-y-6`.
+- Radius: `--radius: 1rem` (16px) untuk card (`Card` default `rounded-lg` = 16px). Container luar `rounded-xl` (24px). Input/small card `rounded-md` (12px). Pill `rounded-full`.
+- Shadow: card pakai `shadow-card` (soft, dua lapis); popover/modal `shadow-popover`. Border hairline `border-border/60`.
 
 ### 4.4 Breakpoints
 
@@ -170,13 +184,13 @@ Font: `Inter Variable` (UI), `JetBrains Mono` (mono). Load via `next/font`.
 | Komponen           | Customization                                                                      |
 | ------------------ | ---------------------------------------------------------------------------------- |
 | `Button`           | Tambah variant `destructive` (sudah ada di shadcn) untuk kill container.           |
-| `Card`             | Default pattern: header + content + footer.                                        |
-| `Table`            | Wrap dengan `@tanstack/react-virtual` untuk `JobQueue`.                            |
+| `Card`             | Default pattern: header + content + footer. Homies Lab: `rounded-lg` (16px) + `shadow-card`, border hairline `border-border/60` — float, bukan outline tebal. |
+| `Table`            | Wrap dengan `@tanstack/react-virtual` untuk `JobQueue`. Homies Lab: `TableHead` uppercase `text-[11px] tracking-wider`; row border `border-border/60`, baris terakhir tanpa border. Tabel selalu di-wrap `rounded-lg border border-border/60`. |
 | `Dialog`/`Sheet`   | Drawer default pakai `Sheet` (kanan). Modal pakai `Dialog`.                        |
 | `Input`/`Textarea` | Label via `Label`, helper via `text-xs text-muted-foreground`.                     |
 | `Select`           | Single + multi via Radix. Async via TanStack Query di handler.                     |
 | `Tabs`             | Untuk switch platform IG/Threads.                                                  |
-| `Badge`            | Variant `success` `warning` `destructive` `info` `outline` saja.                   |
+| `Badge`            | Variant `success` `warning` `destructive` `info` `outline` saja. Homies Lab: status pill = soft tinted (`bg-<status>/12`) + label ink/destructive, **bukan** fill jenuh — hue jenuh cuma untuk `--primary`. |
 | `Toast` (sonner)   | 3 level: `default` (top-right, 4 dtk), `warning`, `critical` (top-center, sticky). |
 | `Tooltip`          | Delay 300 ms.                                                                      |
 | `Command` (cmdk)   | ⌘K command bar.                                                                    |

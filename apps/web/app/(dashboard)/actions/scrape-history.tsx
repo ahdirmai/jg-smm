@@ -41,7 +41,10 @@ export function ScrapeHistory({
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <History className="size-4" /> Scrape history
+          <span className="grid size-7 place-items-center rounded-lg bg-secondary text-muted-foreground">
+            <History className="size-4" />
+          </span>
+          Scrape history
         </CardTitle>
         <CardDescription>
           Posts stored from earlier scrapes, newest first. Click a row to open it in the form
@@ -54,25 +57,25 @@ export function ScrapeHistory({
         ) : posts === null ? (
           <p className="text-sm text-muted-foreground">Loading…</p>
         ) : posts.length === 0 ? (
-          <div className="flex items-center justify-center rounded-md border py-10 text-sm text-muted-foreground">
+          <div className="flex items-center justify-center rounded-lg border border-dashed py-10 text-sm text-muted-foreground">
             Nothing scraped yet. Paste a link above to add the first post.
           </div>
         ) : (
-          <div className="max-h-[420px] overflow-y-auto rounded-md border">
+          <div className="max-h-[420px] overflow-y-auto rounded-lg border border-border/60">
             {posts.map((p) => (
               <button
                 key={p.id}
                 type="button"
                 onClick={() => onPickPostAction(p.platform, permalinkFor(p))}
-                className="flex w-full items-center gap-3 border-b px-3 py-2 text-left transition-colors last:border-b-0 hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                className="flex w-full items-center gap-3 border-b border-border/60 px-3 py-2 text-left transition-colors last:border-b-0 hover:bg-secondary/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
               >
                 {p.mediaUrls && p.mediaUrls.length > 0 ? (
-                  <span className="size-11 shrink-0 overflow-hidden rounded-md bg-muted/40">
+                  <span className="size-11 shrink-0 overflow-hidden rounded-lg bg-secondary">
                     {/* eslint-disable-next-line @next/next/no-img-element -- remote user content */}
                     <img src={p.mediaUrls[0]} alt="" loading="lazy" className="size-full object-cover" />
                   </span>
                 ) : (
-                  <span className="size-11 shrink-0 rounded-md bg-muted/40" />
+                  <span className="size-11 shrink-0 rounded-lg bg-secondary" />
                 )}
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-2 text-sm">

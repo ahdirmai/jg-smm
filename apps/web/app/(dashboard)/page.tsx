@@ -65,7 +65,7 @@ export default function HomePage() {
                 ] as const
               ).map(([title, href, desc]) => (
                 <li key={title} className="flex items-start gap-3">
-                  <span className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-full bg-primary/10 text-xs font-medium text-primary">
+                  <span className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-lg bg-secondary text-xs font-medium text-foreground">
                     {title[0]}
                   </span>
                   <div className="min-w-0">
@@ -131,7 +131,7 @@ export default function HomePage() {
               <h2 className="text-sm font-semibold">Engagement trend</h2>
               <p className="text-xs text-muted-foreground">Reach · Likes · Comments · daily</p>
             </div>
-            <div className="flex h-56 w-full items-center justify-center rounded-md border bg-background/40 p-2">
+            <div className="flex h-56 w-full items-center justify-center rounded-lg border border-border/60 bg-background/40 p-2">
               {overview.loading ? (
                 <p className="text-xs text-muted-foreground">Loading trend…</p>
               ) : overview.error ? (
@@ -203,14 +203,17 @@ function KpiCard({
 }) {
   return (
     <Card>
-      <CardContent className="space-y-2 p-4">
-        <div className="flex items-center justify-between">
-          <span className="text-xs uppercase tracking-wide text-muted-foreground">{label}</span>
-          <Icon className="size-4 text-muted-foreground" />
-        </div>
-        <div className="text-2xl font-semibold tracking-tight tabular-nums">
+      <CardContent className="space-y-3 p-5">
+        {/* Principle 6: small monochrome icon in a soft rounded square. */}
+        <span className="grid size-9 place-items-center rounded-lg bg-secondary text-muted-foreground">
+          <Icon className="size-4" />
+        </span>
+        {/* Principle 4: the number is the hero — bold, large, dark; the label
+         * is a small muted line beneath it, not beside it. */}
+        <div className="text-3xl font-semibold tracking-tight tabular-nums">
           {loading || value == null ? '—' : value.toLocaleString()}
         </div>
+        <div className="text-xs uppercase tracking-wide text-muted-foreground">{label}</div>
       </CardContent>
     </Card>
   );

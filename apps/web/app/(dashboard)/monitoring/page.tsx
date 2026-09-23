@@ -50,20 +50,14 @@ export default function MonitoringPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Monitoring</h1>
-          <p className="text-sm text-muted-foreground">
-            Official account reach and engagement across every platform.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <FreshnessBadge freshness={overview.data?.freshness} />
-          <Button variant="outline" size="sm" onClick={onSync} disabled={syncing}>
-            <RefreshCw className={syncing ? 'mr-2 h-4 w-4 animate-spin' : 'mr-2 h-4 w-4'} />
-            {syncing ? 'Syncing…' : 'Sync now'}
-          </Button>
-        </div>
+      {/* Page-level actions. The title/subtitle live in the shell header (h-14),
+          so this row carries only the sync controls. */}
+      <div className="flex items-center justify-end gap-2">
+        <FreshnessBadge freshness={overview.data?.freshness} />
+        <Button variant="outline" size="sm" onClick={onSync} disabled={syncing}>
+          <RefreshCw className={syncing ? 'mr-2 h-4 w-4 animate-spin' : 'mr-2 h-4 w-4'} />
+          {syncing ? 'Syncing…' : 'Sync now'}
+        </Button>
       </div>
 
       {overview.error || accounts.error ? (
@@ -107,6 +101,7 @@ export default function MonitoringPage() {
               </p>
             </div>
           ) : (
+            <div className="overflow-hidden rounded-lg border border-border/60">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -151,6 +146,7 @@ export default function MonitoringPage() {
                 })}
               </TableBody>
             </Table>
+            </div>
           )}
         </CardContent>
       </Card>
@@ -171,12 +167,17 @@ function KpiCard({
 }) {
   return (
     <Card>
-      <CardHeader className="pb-2">
-        <CardDescription>{label}</CardDescription>
-        <CardTitle className={`text-2xl tabular-nums ${tone === 'warn' && value > 0 ? 'text-destructive' : ''}`}>
+      <CardContent className="space-y-2 p-5">
+        {/* Principle 4: hero number, small muted label beneath. */}
+        <div
+          className={`text-2xl font-semibold tracking-tight tabular-nums ${
+            tone === 'warn' && value > 0 ? 'text-destructive' : ''
+          }`}
+        >
           {loading ? '—' : value.toLocaleString()}
-        </CardTitle>
-      </CardHeader>
+        </div>
+        <div className="text-xs uppercase tracking-wide text-muted-foreground">{label}</div>
+      </CardContent>
     </Card>
   );
 }

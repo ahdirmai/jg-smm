@@ -115,23 +115,17 @@ export default function PlatformAnalyticsPage({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">{label} analytics</h1>
-          <p className="text-sm text-muted-foreground">
-            Official accounts (monitored) · {label} · data via 3rd-party analytics
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <FreshnessBadge freshness={analytics.data?.freshness} />
-          <Button variant="outline" size="sm" onClick={onSync} disabled={syncing}>
-            <RefreshCw className={syncing ? 'mr-2 size-4 animate-spin' : 'mr-2 size-4'} />
-            {syncing ? 'Syncing…' : 'Sync now'}
-          </Button>
-        </div>
+      {/* Page-level actions. The title/subtitle live in the shell header (h-14),
+          so this row carries only the sync controls. */}
+      <div className="flex items-center justify-end gap-2">
+        <FreshnessBadge freshness={analytics.data?.freshness} />
+        <Button variant="outline" size="sm" onClick={onSync} disabled={syncing}>
+          <RefreshCw className={syncing ? 'mr-2 size-4 animate-spin' : 'mr-2 size-4'} />
+          {syncing ? 'Syncing…' : 'Sync now'}
+        </Button>
       </div>
 
-      {/* Platform switcher: one analytics page per platform (prototype §analytics). */}
+      {/* Platform switcher (design system: pill tab switcher). */}
       <section className="flex flex-wrap items-center gap-2">
         <span className="mr-1 text-xs text-muted-foreground">Per platform:</span>
         {PLATFORMS.map((p) => (
@@ -183,15 +177,16 @@ export default function PlatformAnalyticsPage({
           const Icon = k.icon;
           return (
             <Card key={k.metric}>
-              <CardContent className="space-y-2 p-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs uppercase tracking-wide text-muted-foreground">
-                    {k.label}
-                  </span>
-                  <Icon className="size-4 text-muted-foreground" />
-                </div>
+              <CardContent className="space-y-3 p-5">
+                {/* Principle 6: small monochrome icon in a soft rounded square. */}
+                <span className="grid size-9 place-items-center rounded-lg bg-secondary text-muted-foreground">
+                  <Icon className="size-4" />
+                </span>
                 <div className="text-2xl font-semibold tracking-tight tabular-nums">
                   {analytics.loading || value == null ? '—' : value.toLocaleString()}
+                </div>
+                <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                  {k.label}
                 </div>
               </CardContent>
             </Card>
@@ -272,7 +267,7 @@ export default function PlatformAnalyticsPage({
               </p>
             </div>
           ) : (
-            <ul className="divide-y">
+            <ul className="divide-y divide-border/60">
               {accountRows.map((a) => (
                 <li key={a.id} className="flex items-center justify-between py-3">
                   <div className="flex flex-col">
@@ -312,7 +307,7 @@ export default function PlatformAnalyticsPage({
           </Button>
         </CardHeader>
         <CardContent>
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto rounded-lg border border-border/60">
             <Table>
               <TableHeader>
                 <TableRow>

@@ -121,7 +121,7 @@ export default function SettingsPage() {
               <Button
                 key={t.id}
                 variant={tab === t.id ? 'secondary' : 'ghost'}
-                className={`justify-start ${t.destructive ? 'text-destructive' : ''}`}
+                className={`justify-start ${tab === t.id ? 'bg-foreground text-background hover:bg-foreground hover:text-background' : ''} ${t.destructive ? 'text-destructive' : ''}`}
                 onClick={() => setTab(t.id)}
               >
                 <Icon className="size-4" />

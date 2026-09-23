@@ -48,7 +48,7 @@ export function PostMedia({ urls }: { urls: string[] | null }) {
             key={i}
             type="button"
             onClick={() => setOpen(i)}
-            className="block aspect-square w-full overflow-hidden rounded-md border bg-muted/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            className="block aspect-square w-full overflow-hidden rounded-lg border border-border/60 bg-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             aria-label={`Open media ${i + 1} of ${items.length}`}
           >
             {/* eslint-disable-next-line @next/next/no-img-element -- remote user content, rotating CDN hosts */}

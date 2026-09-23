@@ -124,9 +124,11 @@ function NavLeaf({ item, pathname }: { item: Leaf; pathname: string }) {
       href={item.href}
       aria-current={active ? 'page' : undefined}
       className={cn(
-        'flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors',
+        'flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
         active
-          ? 'bg-primary/12 font-medium text-primary'
+          ? // Homies Lab principle 5: active/selected is solid ink (black),
+            // never gray — it is the "second accent".
+            'bg-foreground font-medium text-background'
           : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
       )}
     >
@@ -161,9 +163,9 @@ function NavGroup({ group, pathname }: { group: Group; pathname: string }) {
                 href={i.href}
                 aria-current={active ? 'page' : undefined}
                 className={cn(
-                  'flex items-center gap-3 rounded-md px-3 py-1.5 text-[0.8125rem] transition-colors',
+                  'flex items-center gap-3 rounded-lg px-3 py-1.5 text-[0.8125rem] transition-colors',
                   active
-                    ? 'bg-primary/12 font-medium text-primary'
+                    ? 'bg-foreground font-medium text-background'
                     : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
                 )}
               >
@@ -225,7 +227,7 @@ function SignOutButton() {
       onClick={signOut}
       disabled={busy}
       data-testid="sign-out"
-      className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
+      className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
     >
       {busy ? <Loader2 className="size-4 animate-spin" /> : <LogOut className="size-4" />}
       Sign out
@@ -269,9 +271,9 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex min-h-screen">
-      <aside className="hidden w-60 shrink-0 flex-col border-r bg-card md:flex">
-        <Link href="/" className="flex h-14 items-center gap-2 border-b px-4">
-          <span className="grid size-7 place-items-center rounded-md bg-primary text-primary-foreground">
+      <aside className="hidden w-60 shrink-0 flex-col border-r border-border/60 bg-card md:flex">
+        <Link href="/" className="flex h-14 items-center gap-2.5 border-b border-border/60 px-4">
+          <span className="grid size-7 place-items-center rounded-lg bg-primary text-primary-foreground">
             <Activity className="size-4" />
           </span>
           <span className="text-sm font-semibold tracking-tight">SMM Automation</span>
@@ -285,7 +287,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             ),
           )}
         </nav>
-        <div className="space-y-2 border-t p-3">
+        <div className="space-y-2 border-t border-border/60 p-3">
           {role ? (
             <div className="flex items-center gap-2.5">
               <span className="grid size-8 shrink-0 place-items-center rounded-full bg-secondary text-xs font-semibold">
@@ -305,13 +307,13 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-14 shrink-0 items-center gap-3 border-b px-4 md:px-6">
+        <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border/60 bg-card/40 px-4 backdrop-blur-sm md:px-6">
           <div className="min-w-0">
             <h1 className="truncate text-base font-semibold tracking-tight">{title}</h1>
             {subtitle ? <p className="truncate text-xs text-muted-foreground">{subtitle}</p> : null}
           </div>
           <div className="ml-auto flex items-center gap-2">
-            <div className="hidden h-9 w-56 items-center gap-2 rounded-md border bg-background px-2.5 text-sm text-muted-foreground lg:flex">
+            <div className="hidden h-9 w-56 items-center gap-2 rounded-lg border bg-background px-2.5 text-sm text-muted-foreground lg:flex">
               <Search className="size-4" />
               <span>Search accounts, jobs…</span>
               <kbd className="ml-auto rounded border px-1.5 text-xs">⌘K</kbd>

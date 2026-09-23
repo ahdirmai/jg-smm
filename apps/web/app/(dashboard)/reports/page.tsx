@@ -87,14 +87,6 @@ export default function ReportsPage() {
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
-      <header className="space-y-1">
-        <h1 className="text-3xl font-semibold tracking-tight">Reports</h1>
-        <p className="text-sm text-muted-foreground">
-          Pivot the action history and the monitored-account metrics by window, platform and
-          account.
-        </p>
-      </header>
-
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Filters</CardTitle>
@@ -194,7 +186,7 @@ export default function ReportsPage() {
           ) : null}
 
           {error ? (
-            <div className="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+            <div className="flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
               <AlertCircle className="size-4" />
               {error}
             </div>
@@ -269,7 +261,7 @@ function ReportBody({ kind, result }: { kind: ReportKind; result: ReportResult }
                         </TableCell>
                         <TableCell>{r.actionType === 'action_like' ? 'Like' : 'Comment'}</TableCell>
                         <TableCell className="text-right">{r.total}</TableCell>
-                        <TableCell className="text-right text-emerald-600 dark:text-emerald-400">
+                        <TableCell className="text-right text-success">
                           {r.succeeded}
                         </TableCell>
                         <TableCell className="text-right text-destructive">{r.failed}</TableCell>
@@ -320,7 +312,7 @@ function ReportBody({ kind, result }: { kind: ReportKind; result: ReportResult }
                         <Badge variant="outline">{PLATFORM_LABEL[r.platform] ?? r.platform}</Badge>
                       </TableCell>
                       <TableCell className="text-right">{r.total}</TableCell>
-                      <TableCell className="text-right text-emerald-600 dark:text-emerald-400">
+                      <TableCell className="text-right text-success">
                         {r.succeeded}
                       </TableCell>
                       <TableCell className="text-right text-destructive">{r.failed}</TableCell>

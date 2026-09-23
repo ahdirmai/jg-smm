@@ -233,7 +233,7 @@ export default function AccountsPage() {
           </section>
 
           {effective.length > 0 ? (
-            <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 p-3">
+            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border/60 bg-secondary/40 p-3">
               <span className="text-sm font-medium">{effective.length} selected</span>
               <Button
                 variant="outline"
@@ -275,13 +275,13 @@ export default function AccountsPage() {
           ) : null}
 
           {error ? (
-            <div className="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+            <div className="flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
               <AlertCircle className="size-4" />
               {error}
             </div>
           ) : null}
 
-          <div className="overflow-hidden rounded-md border">
+          <div className="overflow-hidden rounded-lg border border-border/60">
             <Table>
               <TableHeader>
                 <TableRow>

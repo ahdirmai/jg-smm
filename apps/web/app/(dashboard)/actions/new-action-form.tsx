@@ -248,7 +248,7 @@ export const NewActionForm = forwardRef<
         </div>
 
         {scrapeError ? (
-          <div className="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+          <div className="flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
             <AlertCircle className="size-4" />
             {scrapeError}
           </div>
@@ -256,7 +256,7 @@ export const NewActionForm = forwardRef<
 
         {/* 2. Scraped post preview */}
         {scrape ? (
-          <div className="rounded-md border p-3 space-y-1.5">
+          <div className="rounded-lg border border-border/60 bg-secondary/30 p-3 space-y-1.5">
             <div className="flex items-center gap-2">
               <Badge variant="outline">{PLATFORM_LABEL[scrape.post.platform] ?? scrape.post.platform}</Badge>
               <span className="text-sm font-medium">@{scrape.post.authorHandle}</span>
@@ -384,7 +384,7 @@ export const NewActionForm = forwardRef<
             {selectedAccounts.length > MAX_BATCH ? (
               <span className="text-sm text-destructive">Over the {MAX_BATCH} batch cap.</span>
             ) : null}
-            {result ? <span className="text-sm text-emerald-600">{result}</span> : null}
+            {result ? <span className="text-sm text-success">{result}</span> : null}
             {error ? <span className="text-sm text-destructive">{error}</span> : null}
           </div>
         ) : null}

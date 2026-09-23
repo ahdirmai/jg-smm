@@ -53,7 +53,7 @@ export function TrendChart({ points, compare, className }: Props) {
 
   return (
     <div
-      className={cn('h-56 w-full rounded-md border bg-background/40 p-2', className)}
+      className={cn('h-56 w-full rounded-lg border border-border/60 bg-background/40 p-2', className)}
       aria-hidden="true"
     >
       {empty ? (

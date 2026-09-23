@@ -123,7 +123,7 @@ export function ImportAccountsDialog({
               ) : null}
             </div>
             {result.invalid.length > 0 ? (
-              <div className="max-h-48 overflow-y-auto rounded-md border">
+              <div className="max-h-48 overflow-y-auto rounded-lg border border-border/60">
                 {result.invalid.map((e, i) => (
                   <div
                     key={i}
@@ -147,7 +147,7 @@ export function ImportAccountsDialog({
               disabled={busy}
             />
             {error ? (
-              <div className="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+              <div className="flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
                 <AlertCircle className="size-4" />
                 {error}
               </div>

@@ -18,78 +18,81 @@
 @layer base {
   :root,
   .light {
-    /* Surfaces: soft off-white so long sessions are not glaring. */
-    --background: 220 20% 97%;
-    --foreground: 222 25% 16%;
+    /* Homies Lab: warm cream canvas, white cards, yellow accent, black as the
+     * second accent for active states. One saturated hue, generous radius. */
+    --background: 42 60% 87%; /* #F4E9CE page */
+    --foreground: 0 0% 10%; /* #1A1A1A */
     --card: 0 0% 100%;
-    --card-foreground: 222 25% 16%;
+    --card-foreground: 0 0% 10%;
     --popover: 0 0% 100%;
-    --popover-foreground: 222 25% 16%;
-    /* Accent: muted indigo — brand without neon. */
-    --primary: 230 45% 48%;
-    --primary-foreground: 0 0% 100%;
-    --secondary: 220 16% 94%;
-    --secondary-foreground: 222 25% 16%;
-    --muted: 220 16% 94%;
-    --muted-foreground: 220 9% 42%;
-    --accent: 220 16% 93%;
-    --accent-foreground: 222 25% 16%;
-    --destructive: 0 58% 48%;
+    --popover-foreground: 0 0% 10%;
+    /* Primary = brand yellow #F5B700; ink text on it (design principle 5). */
+    --primary: 41 100% 48%;
+    --primary-foreground: 0 0% 10%;
+    --secondary: 42 55% 92%; /* #FBF3DE soft cream */
+    --secondary-foreground: 0 0% 10%;
+    --muted: 42 55% 92%;
+    --muted-foreground: 0 0% 42%; /* #6B6B6B */
+    --accent: 42 60% 94%; /* #FFF3CE */
+    --accent-foreground: 0 0% 10%;
+    --destructive: 2 76% 62%; /* #E85454 */
     --destructive-foreground: 0 0% 100%;
-    --success: 152 40% 36%;
-    --warning: 32 68% 44%;
-    --info: 205 52% 44%;
-    --border: 220 14% 88%;
-    --input: 220 14% 86%;
-    --ring: 230 45% 48%;
-    --status-cold: 220 9% 48%;
-    --status-ready: 152 40% 36%;
-    --status-busy: 230 45% 48%;
-    --status-error: 0 58% 48%;
-    --chart-1: 230 45% 48%;
-    --chart-2: 220 9% 46%;
-    --chart-3: 0 58% 48%;
-    --chart-4: 32 68% 44%;
-    --chart-5: 205 52% 44%;
-    --chart-6: 152 40% 36%;
-    --radius: 0.5rem;
+    --success: 122 48% 50%; /* #4CAF50 */
+    --warning: 41 100% 48%;
+    --info: 41 100% 48%;
+    --border: 40 35% 89%; /* #ECE5D3 */
+    --input: 0 0% 91%; /* #EFEFEF */
+    --ring: 41 100% 48%;
+    --status-cold: 0 0% 61%; /* #9C9C9C */
+    --status-ready: 122 48% 50%;
+    --status-busy: 41 100% 48%;
+    --status-error: 2 76% 62%;
+    --chart-1: 41 100% 48%;
+    --chart-2: 0 0% 10%;
+    --chart-3: 0 0% 61%;
+    --chart-4: 41 100% 65%;
+    --chart-5: 122 48% 50%;
+    --chart-6: 2 76% 62%;
+    --radius: 1rem; /* 16px cards */
   }
 
   .dark {
-    /* Surfaces: soft charcoal, not pure black — reduces eye strain and glare. */
-    --background: 222 20% 10%;
-    --foreground: 220 14% 92%;
-    --card: 222 18% 13%;
-    --card-foreground: 220 14% 92%;
-    --popover: 222 18% 14%;
-    --popover-foreground: 220 14% 92%;
-    /* Accent: lifted indigo so it reads on dark without glowing. */
-    --primary: 230 52% 66%;
-    --primary-foreground: 222 25% 11%;
-    --secondary: 222 16% 18%;
-    --secondary-foreground: 220 14% 92%;
-    --muted: 222 16% 16%;
-    --muted-foreground: 220 10% 64%;
-    --accent: 222 16% 20%;
-    --accent-foreground: 220 14% 94%;
-    --destructive: 0 62% 62%;
-    --destructive-foreground: 222 25% 11%;
-    --success: 152 38% 56%;
-    --warning: 36 62% 58%;
-    --info: 205 54% 62%;
-    --border: 222 14% 22%;
-    --input: 222 14% 24%;
-    --ring: 230 52% 66%;
-    --status-cold: 220 9% 56%;
-    --status-ready: 152 38% 56%;
-    --status-busy: 230 52% 66%;
-    --status-error: 0 62% 62%;
-    --chart-1: 230 52% 66%;
-    --chart-2: 220 10% 64%;
-    --chart-3: 0 62% 62%;
-    --chart-4: 36 62% 58%;
-    --chart-5: 205 54% 62%;
-    --chart-6: 152 38% 56%;
+    /* Homies Lab, dark: warm near-black canvas (not indigo, not pure black),
+     * same single yellow accent. Cream surfaces invert to warm charcoal; ink
+     * text on yellow is preserved (design principle 5). */
+    --background: 36 8% 9%; /* warm near-black */
+    --foreground: 40 22% 92%;
+    --card: 34 8% 13%;
+    --card-foreground: 40 22% 92%;
+    --popover: 34 8% 13%;
+    --popover-foreground: 40 22% 92%;
+    /* Accent stays brand yellow; ink text on it. */
+    --primary: 41 100% 52%;
+    --primary-foreground: 0 0% 10%;
+    --secondary: 34 7% 17%;
+    --secondary-foreground: 40 22% 92%;
+    --muted: 34 7% 17%;
+    --muted-foreground: 40 8% 64%;
+    --accent: 34 8% 20%;
+    --accent-foreground: 40 22% 94%;
+    --destructive: 2 72% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 122 40% 52%;
+    --warning: 41 100% 52%;
+    --info: 41 100% 52%;
+    --border: 34 6% 22%;
+    --input: 34 6% 24%;
+    --ring: 41 100% 52%;
+    --status-cold: 0 0% 55%;
+    --status-ready: 122 40% 52%;
+    --status-busy: 41 100% 52%;
+    --status-error: 2 72% 60%;
+    --chart-1: 41 100% 52%;
+    --chart-2: 40 22% 92%;
+    --chart-3: 0 0% 55%;
+    --chart-4: 41 100% 68%;
+    --chart-5: 122 40% 52%;
+    --chart-6: 2 72% 60%;
   }
 }
 
@@ -127,9 +130,14 @@
   --color-chart-5: hsl(var(--chart-5));
   --color-chart-6: hsl(var(--chart-6));
 
-  --radius-lg: var(--radius);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-sm: calc(var(--radius) - 4px);
+  --radius-xl: 24px; /* outer app container */
+  --radius-lg: var(--radius); /* 16px cards */
+  --radius-md: 12px; /* inputs, small cards */
+  --radius-sm: 8px; /* pills, tags, avatars */
+
+  /* Homies Lab: cards float on soft shadow, no harsh borders (principle 3). */
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.04), 0 8px 24px rgb(0 0 0 / 0.06);
+  --shadow-popover: 0 4px 12px rgb(0 0 0 / 0.08), 0 16px 40px rgb(0 0 0 / 0.12);
 }
 
 @layer base {
