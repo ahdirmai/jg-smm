@@ -168,18 +168,6 @@ func main() {
 		}
 		driver := service.NewLoggingDriver(raw, logRepo, adapter.SystemClock{}, logger)
 
-		// Container API (P1-19): create/list/delete MANUAL containers. The
-		// reconciler provisions the pod from the row this service writes.
-		containerSvc := service.NewContainerService(workerRepo, accountRepo, packer, service.ContainerConfig{
-			Clock:  adapter.SystemClock{},
-			Logger: logger,
-			Stream: hub,
-			Logs:   logRepo,
-			Driver: driver,
-			Novnc:  novnc,
-		})
-		deps.Containers = apihttp.NewContainerHandler(containerSvc)
-
 		// Redis is the transport for action queues and worker control
 		// channels. It is optional: an unset URL leaves both the action
 		// scheduler and the operator login flow off, but the dashboard still
@@ -197,6 +185,19 @@ func main() {
 			redisClient = rc.Client()
 			publisher = transport.NewPublisher(redisClient)
 		}
+
+		// Container API (P1-19): create/list/delete MANUAL containers. The
+		// reconciler provisions the pod from the row this service writes.
+		containerSvc := service.NewContainerService(workerRepo, accountRepo, packer, service.ContainerConfig{
+			Clock:   adapter.SystemClock{},
+			Logger:  logger,
+			Stream:  hub,
+			Logs:    logRepo,
+			Driver:  driver,
+			Novnc:   novnc,
+			Control: publisher,
+		})
+		deps.Containers = apihttp.NewContainerHandler(containerSvc)
 
 		// Per-account comment bodies (region-select flow) live in Redis between
 		// enqueue and dispatch. Shared by the enqueue service and the scheduler;

@@ -392,7 +392,10 @@ export default function WorkersPage() {
                             variant="outline"
                             size="sm"
                             className="h-8"
-                            onClick={() => setLive({ name: c.name, url: c.novncUrl as string })}
+                            onClick={async () => {
+                              try { await api.openBrowser(c.id); } catch { /* best-effort: browser may already be open */ }
+                              setLive({ name: c.name, url: c.novncUrl as string });
+                            }}
                           >
                             <MonitorPlay className="size-3.5" />
                             Live view

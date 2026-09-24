@@ -32,6 +32,7 @@ func (h *ContainerHandler) Register(g *echo.Group) {
 	g.GET("/containers", h.list)
 	g.GET("/containers/:containerId", h.listLogs)
 	g.DELETE("/containers/:containerId", h.delete, RequirePermission(domain.PermAct))
+	g.POST("/containers/:containerId/browser", h.openBrowser, RequirePermission(domain.PermAct))
 	// The city dropdown sits on the same page as the create form.
 	g.GET("/locations", h.listLocations)
 }
@@ -132,6 +133,30 @@ func (h *ContainerHandler) listLogs(c echo.Context) error {
 		items = append(items, entry)
 	}
 	return c.JSON(http.StatusOK, oapigen.ProvisionLogList{Logs: items})
+}
+
+// openBrowser asks the worker to launch Chrome on its Xvfb display so the
+// noVNC view shows a real browser immediately for manual testing.
+func (h *ContainerHandler) openBrowser(c echo.Context) error {
+	if h.containers == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "container service unavailable")
+	}
+	id := c.Param("containerId")
+	if id == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "containerId is required")
+	}
+	var body struct {
+		URL *string `json:"url"`
+	}
+	_ = c.Bind(&body)
+	url := ""
+	if body.URL != nil {
+		url = *body.URL
+	}
+	if err := h.containers.OpenBrowser(c.Request().Context(), id, url); err != nil {
+		return translateContainerError(err)
+	}
+	return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
 }
 
 // translateContainerError maps domain errors to HTTP statuses.

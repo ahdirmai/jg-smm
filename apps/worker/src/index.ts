@@ -213,6 +213,23 @@ void control
         });
         break;
       }
+      case 'browser-open': {
+        // Manual testing: open Chrome on the Xvfb display so the noVNC view
+        // shows a live browser immediately. One context, one page; the surface
+        // stays up because the browser process is kept alive.
+        const url = typeof message.payload?.url === 'string' ? message.payload.url : '';
+        const target = url || 'about:blank';
+        try {
+          const b = await browser();
+          const ctx = await b.newContext({ viewport: { width: 1280, height: 800 } });
+          const page = await ctx.newPage();
+          await page.goto(target, { waitUntil: 'domcontentloaded' }).catch(() => undefined);
+          logger.info('browser-open: Chrome opened', { url: target });
+        } catch (err) {
+          logger.warn('browser-open failed', { error: (err as Error).message, url: target });
+        }
+        break;
+      }
       default:
         logger.warn('unknown control type', { type: message.type });
     }

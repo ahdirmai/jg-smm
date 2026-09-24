@@ -39,7 +39,11 @@ type ContainerService struct {
 	// has to poll. Create/Delete publish so every open tab sees the fleet change
 	// in real time instead of on its next refresh.
 	stream port.StreamPublisher
-	logger *slog.Logger
+	// control publishes ephemeral browser-open instructions to a worker's
+	// noVNC display so an operator can drive Chrome manually without a login
+	// flow.
+	control port.Publisher
+	logger  *slog.Logger
 }
 
 // ContainerConfig tunes the container service.
@@ -57,6 +61,8 @@ type ContainerConfig struct {
 	// is valid: novnc_service stays empty and the dashboard shows a disabled
 	// Live view button instead of a dead link.
 	Novnc *NovncAllocator
+	// Control publishes ephemeral manual-browser messages to workers.
+	Control port.Publisher
 }
 
 // NewContainerService wires the service. packer may be nil; deletion then only
@@ -77,6 +83,7 @@ func NewContainerService(workers port.WorkerStore, accounts port.AccountStore, p
 		logs:     cfg.Logs,
 		driver:   cfg.Driver,
 		stream:   cfg.Stream,
+		control:  cfg.Control,
 		novnc:    cfg.Novnc,
 		// Per-worker coordinates are chosen once; a fresh source per service is
 		// fine because stability is per-worker, not per-process.
@@ -327,6 +334,40 @@ func toContainerView(w domain.Worker, accounts []domain.Account) ContainerView {
 // of driver types.
 func isDomainConflict(err error) bool {
 	return err == domain.ErrConflict
+}
+
+// OpenBrowser asks the worker to launch Chrome on its Xvfb display and open
+// a page, so the noVNC view shows a real browser immediately for manual
+// testing. url may be empty (about:blank). Requires a published noVNC URL.
+func (s *ContainerService) OpenBrowser(ctx context.Context, workerID string, url string) error {
+	if s.control == nil {
+		return fmt.Errorf("%w: control channel is not configured", domain.ErrUnavailable)
+	}
+	w, err := s.workers.GetByID(ctx, workerID)
+	if err != nil {
+		return fmt.Errorf("container service: get: %w", err)
+	}
+	if w.NoVNCService == nil || *w.NoVNCService == "" {
+		return fmt.Errorf("%w: worker has no live view to open a browser on", domain.ErrConflict)
+	}
+	payload := map[string]string{}
+	if url != "" {
+		payload["url"] = url
+	}
+	msg, err := json.Marshal(map[string]any{
+		"type":      "browser-open",
+		"accountId": workerID,
+		"platform":  "instagram",
+		"payload":   payload,
+	})
+	if err != nil {
+		return fmt.Errorf("container service: marshal control: %w", err)
+	}
+	if err := s.control.PublishControl(ctx, w.ID, msg); err != nil {
+		return fmt.Errorf("container service: publish browser-open: %w", err)
+	}
+	s.logger.Info("browser-open dispatched", "workerId", w.ID, "url", url)
+	return nil
 }
 
 // publishContainer fans the container out to dashboards as a provision-updated
