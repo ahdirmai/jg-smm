@@ -48,6 +48,8 @@ interface Story {
   likeStuck: boolean;
   /** Text the feed currently renders. */
   feedText: string;
+  /** Rendered `body` innerText (pageUnavailable reads this). */
+  bodyText: string;
   /** A 2FA/checkpoint field is present (needsLogin). */
   verificationField: boolean;
   /** When true, the target URL redirects to a login wall. */
@@ -68,6 +70,8 @@ function makeStory(over: Partial<Story> = {}): Story {
     likeLabel: 'Like',
     likeStuck: false,
     feedText: '',
+    // A normal post renders its caption, never the "page isn't available" copy.
+    bodyText: 'a caption\n3 likes',
     verificationField: false,
     loginRedirect: false,
     pressLands: true,
@@ -190,7 +194,27 @@ function fakePage(story: Story, sel: SelectorSet): Page {
     return loc;
   };
 
+  // The document body. Its rendered text is the page chrome plus whatever the
+  // feed currently shows — the same relationship the real DOM has, so
+  // `pageUnavailable` (reads body) and `waitForCommentText` (also reads body)
+  // see one consistent surface instead of two divergent fakes.
+  const body = (): Locator => {
+    const loc: Locator = {
+      count: async () => 1,
+      click: async () => undefined,
+      getAttribute: async () => null,
+      fill: async () => undefined,
+      press: async () => undefined,
+      innerText: async () => `${story.bodyText}\n${story.feedText}`,
+      first: () => loc,
+      last: () => loc,
+      filter: () => loc,
+    } as unknown as Locator;
+    return loc;
+  };
+
   const resolveLocator = (selector: string): Locator => {
+    if (selector === 'body') return body();
     if (selector === sel.likeButton) return likeButton();
     if (selector === sel.likeButtonActive) return plain(activeCount(story));
     if (selector === sel.commentButton) return commentButton();
@@ -454,4 +478,46 @@ test('runAction: an exception becomes a screenshot-bearing failure, never a thro
   assert.equal(result.ok, false);
   assert.match(result.error ?? '', /net timeout/, 'the original message is preserved');
   assert.ok(result.screenshot);
+});
+
+test('runAction: a "page isn\'t available" permalink fails fast, naming the target not a selector', async () => {
+  // The blocked/deleted-post screen: a 200 whose body carries Meta's copy. No
+  // login route, no login field — only the rendered text distinguishes it, so
+  // this is the one gate that catches it before the action burns its timeout.
+  const story = makeStory({
+    bodyText: "Sorry, this page isn't available.\nThe link you followed may be broken.",
+  });
+  const ctx = fakeContext(story, IG);
+  let actionRan = false;
+  const result = await runAction(ctx, 'instagram', job({ action: 'like' }), async () => {
+    actionRan = true;
+    return { ok: true };
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.error ?? '', /target unavailable/, 'names the target, not a selector');
+  assert.equal(actionRan, false, 'the action never runs against a dead target');
+  assert.ok(result.screenshot);
+  // The BE classifier has no needle for this class on purpose: a deleted/private
+  // post is not retryable, and the message must not be mistaken for AUTH.
+  assert.doesNotMatch(result.error ?? '', /login|session/i);
+});
+
+test('runAction: the typographic apostrophe in Meta copy still matches (both spellings)', async () => {
+  const story = makeStory({ bodyText: 'Sorry, this page isn’t available.' });
+  const result = await runAction(fakeContext(story, IG), 'instagram', job({ action: 'like' }), async () => ({
+    ok: true,
+  }));
+  assert.equal(result.ok, false);
+  assert.match(result.error ?? '', /target unavailable/);
+});
+
+test('runAction: a post whose body merely contains similar words is NOT gated', async () => {
+  // A caption quoting the copy must not fail the job — only the screen does.
+  // "page not found" is the second needle, so the guard is a real substring
+  // test on rendered text, not a loose guess at the page's purpose.
+  const story = makeStory({ bodyText: 'caption: "this page is not available for sponsorship"' });
+  const ctx = fakeContext(story, IG);
+  const result = await runAction(ctx, 'instagram', job({ action: 'like' }), async () => ({ ok: true }));
+  assert.equal(result.ok, true, 'a normal post still runs the action');
 });

@@ -163,6 +163,42 @@ export async function needsLogin(page: Page): Promise<boolean> {
   return count > 0;
 }
 
+/**
+ * The failure text for a permalink that resolved to Meta's "page isn't
+ * available" screen. Exported so the BE classifier contract is asserted against
+ * the same string the worker sends (it matches no classify.go needle: the
+ * target is gone, not the session, so the job is UNKNOWN — not retryable).
+ */
+export const TARGET_UNAVAILABLE_ERROR =
+  'target unavailable: the post is deleted, private, or hidden from this account';
+
+/**
+ * True when the permalink rendered Meta's "page isn't available" screen — the
+ * post is deleted, private, or this account cannot see it (e.g. it is blocked
+ * by the author).
+ *
+ * This is a 200 with a full HTML shell, so nothing else catches it: the URL is
+ * still the permalink (needsLogin sees no login route) and there is no login
+ * field. Without this gate every action burns its own timeout and then reports
+ * a SELECTOR failure ("like button not found on the post"), which names the
+ * wrong cause — the account did nothing wrong and no retry can help.
+ *
+ * Ground truth is RENDERED text (`innerText`, never `textContent`): Meta inlines
+ * large JSON payloads carrying these strings, and only a visible occurrence
+ * means the screen is actually up. English copy only — verified live. A rollout
+ * that localises the screen needs its string added here (the fake-page tests
+ * pin the contract).
+ */
+export async function pageUnavailable(page: Page): Promise<boolean> {
+  const body = await page
+    .locator('body')
+    .innerText()
+    .catch(() => '');
+  // Normalise the typographic apostrophe so both spellings match.
+  const text = body.toLowerCase().replace(/’/g, "'");
+  return text.includes("this page isn't available") || text.includes('page not found');
+}
+
 /** How long to wait for the post's action bar (the like button) to paint. */
 const LIKE_BUTTON_TIMEOUT_MS = 8_000;
 
@@ -671,6 +707,14 @@ export async function runAction(
       // "login required" + "session expired" are the AUTH needles (P3-12), so
       // this lands as non-retryable no matter which the classifier hits first.
       return await failShot(d, 'auth: login required (session expired or login wall)');
+    }
+    // The permalink resolved to Meta's "page isn't available" screen: the target
+    // is gone (or hidden from this account). Fail HERE rather than letting the
+    // action burn its timeout and report a selector miss — the like/comment
+    // flows would each poll their full bound on a page that can never satisfy
+    // them, and the operator would be told to fix a selector that is fine.
+    if (await pageUnavailable(page)) {
+      return await failShot(d, TARGET_UNAVAILABLE_ERROR);
     }
     return await fn(d);
   } catch (err) {

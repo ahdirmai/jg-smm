@@ -281,18 +281,36 @@ async function cmdLike(args: Args): Promise<void> {
 
     if (!args.commit) {
       // DRY: locate the like affordance, report, do NOT click.
-      const found = sel.likeButton
-        ? await page
+      //
+      // Poll, don't take one look. The worker's likePost polls for up to 8s
+      // because IG returns from openPost as soon as the URL carries the
+      // shortcode — before the action bar paints. A single immediate count here
+      // races that paint and reported "NOT FOUND" on a post whose like button
+      // appears ~1s later, which is exactly what the worker's own poll absorbs.
+      // Mirror the worker: same scope resolution (likeButtonScope `.last()`),
+      // same bounded poll, so a dry run reports what the real action would see.
+      let found = false;
+      if (sel.likeButton) {
+        const root =
+          sel.likeButtonScope && (await page.locator(sel.likeButtonScope).count().catch(() => 0)) > 0
+            ? page.locator(sel.likeButtonScope).last()
+            : page;
+        const deadline = Date.now() + 8_000;
+        for (;;) {
+          found = await root
             .locator(sel.likeButton)
             .first()
             .count()
             .then((n) => n > 0)
-            .catch(() => false)
-        : false;
+            .catch(() => false);
+          if (found || Date.now() >= deadline) break;
+          await sleep(500);
+        }
+      }
       log(
         found
           ? `[like] DRY RUN — like button located via: ${sel.likeButton} (NOT clicked)`
-          : `[like] DRY RUN — like button NOT FOUND via: ${sel.likeButton}`,
+          : `[like] DRY RUN — like button NOT FOUND via: ${sel.likeButton} (8s poll exhausted)`,
       );
       log('[like] dry run complete (no like submitted).');
     } else {
