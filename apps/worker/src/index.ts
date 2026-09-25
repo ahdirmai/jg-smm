@@ -13,7 +13,7 @@ import { createHeartbeat, type HeartbeatPayload } from './core/heartbeat.js';
 import { claimRow } from './core/claim.js';
 import { createController } from './core/controller.js';
 import { clearAuthContext, runLogin, submitAuthInput } from './core/auth.js';
-import { launchBrowser, newAccountContext, type BrowserHandle } from './core/browser.js';
+import { launchBrowser, newAccountContext, pinGeolocation, type BrowserHandle } from './core/browser.js';
 import { createGeolocation } from './core/geolocation.js';
 import { readSession, writeSession } from './core/session.js';
 import { createCallback } from './transport/callback.js';
@@ -134,6 +134,7 @@ setInterval(async () => {
 // Shared by auth-login and auth-input: one browser, one screenshot dir.
 const authDeps = {
   browser,
+  geolocation: () => geolocation.get(),
   workerId: config.workerId,
   ...(process.env.SCREENSHOT_DIR ? { screenshotDir: process.env.SCREENSHOT_DIR } : {}),
 };
@@ -222,6 +223,10 @@ void control
         try {
           const b = await browser();
           const ctx = await b.newContext({ viewport: { width: 1280, height: 800 } });
+          // Pin the live view to the same frozen point the action contexts use:
+          // the operator opens this to verify the setup, so a datacentre
+          // position here would contradict what the actions report.
+          await pinGeolocation(ctx, await geolocation.get());
           const page = await ctx.newPage();
           await page.goto(target, { waitUntil: 'domcontentloaded' }).catch(() => undefined);
           logger.info('browser-open: Chrome opened', { url: target });

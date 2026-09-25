@@ -9,6 +9,9 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 
+import type { Browser, BrowserContext } from 'playwright';
+
+import { newAccountContext, pinGeolocation } from '../core/browser.js';
 import { createGeolocation } from '../core/geolocation.js';
 
 const silentLogger = {
@@ -88,4 +91,51 @@ test('a body missing coordinates degrades to null', async () => {
   } finally {
     await geo[Symbol.asyncDispose]();
   }
+});
+
+/**
+ * Every context the worker opens must be pinned, not just the action one. The
+ * bug this guards: login and the manual live-view browser each called
+ * newContext directly, so the operator checking "where is this container?" in
+ * noVNC saw the datacentre's position while the actions ran from Jakarta.
+ */
+function recordingContext() {
+  const calls: Array<{ lat: number; lng: number }> = [];
+  let granted = 0;
+  const ctx = {
+    setGeolocation: async (p: { latitude: number; longitude: number }) => {
+      calls.push({ lat: p.latitude, lng: p.longitude });
+    },
+    grantPermissions: async () => {
+      granted += 1;
+    },
+  } as unknown as BrowserContext;
+  return { ctx, calls, granted: () => granted };
+}
+
+test('pinGeolocation sets the frozen point and grants the permission', async () => {
+  const { ctx, calls, granted } = recordingContext();
+  await pinGeolocation(ctx, { latitude: -6.05949, longitude: 106.7524 });
+  assert.deepEqual(calls, [{ lat: -6.05949, lng: 106.7524 }]);
+  assert.equal(granted(), 1, 'without the grant a geolocation read stays blocked');
+});
+
+test('pinGeolocation is a no-op when the worker has no location', async () => {
+  const { ctx, calls, granted } = recordingContext();
+  await pinGeolocation(ctx, null);
+  await pinGeolocation(ctx, undefined);
+  assert.deepEqual(calls, [], 'an unpinned context must keep the real position');
+  assert.equal(granted(), 0);
+});
+
+test('newAccountContext pins the action context too', async () => {
+  const { ctx, calls } = recordingContext();
+  const browser = {
+    newContext: async () => ctx,
+  } as unknown as Browser;
+  await newAccountContext(browser, 'instagram', undefined, {
+    latitude: -6.2,
+    longitude: 106.8,
+  });
+  assert.deepEqual(calls, [{ lat: -6.2, lng: 106.8 }]);
 });

@@ -17,7 +17,8 @@ import {
   detectAuthInputWith,
   submitAuthInputWith,
 } from '../platforms/otp.js';
-import { FIXED_VIEWPORT } from './browser.js';
+import { FIXED_VIEWPORT, pinGeolocation } from './browser.js';
+import type { Geolocation } from './geolocation.js';
 import { captureScreenshot } from './screenshot.js';
 import { readSession, writeSession } from './session.js';
 
@@ -37,6 +38,9 @@ export interface LoginResult {
 export interface AuthDeps {
   /** Resolve the browser the login runs in. */
   browser: () => Promise<Browser>;
+  /** The worker's frozen GPS point, so the login context reports the same
+   * position the action contexts will. Null/absent leaves the real one. */
+  geolocation?: (() => Promise<Geolocation | null>) | undefined;
   /** Where screenshots land (basename only in the result). */
   screenshotDir?: string;
   /** Worker id, for the deterministic screenshot name (§7.3). */
@@ -132,6 +136,10 @@ export async function runLogin(
 ): Promise<LoginResult> {
   const browser = await deps.browser();
   const ctx = await browser.newContext({ viewport: FIXED_VIEWPORT });
+  // The operator confirms the login in the noVNC view, where a localised page
+  // may show "current location" — pin it to the worker's frozen point so what
+  // they see matches what the action contexts will report.
+  await pinGeolocation(ctx, await deps.geolocation?.().catch(() => null));
   authContexts.set(accountId, ctx);
 
   const page = await ctx.newPage();

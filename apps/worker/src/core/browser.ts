@@ -56,14 +56,31 @@ export async function launchBrowser(options: LaunchOptions = {}): Promise<Browse
 }
 
 /**
+ * Pin a context to the worker's frozen coordinate (see geolocation.ts) so
+ * Playwright reports that position to any page that asks, instead of the
+ * datacentre's real one. Set on the context, not per-page, so every navigation
+ * in the session stays put. A null/absent point is a no-op: the browser then
+ * reports its true position (a worker with no assigned location).
+ *
+ * Exported because every context the worker opens must be pinned, not just the
+ * action one — login and the manual live-view browser are read by the operator
+ * to confirm the setup, and a login context left unpinned would report a
+ * datacentre position that contradicts the action context.
+ */
+export async function pinGeolocation(
+  ctx: BrowserContext,
+  geo?: Geolocation | null,
+): Promise<void> {
+  if (!geo) return;
+  await ctx.setGeolocation({ latitude: geo.latitude, longitude: geo.longitude });
+  // Grant the permission so a page reading geolocation is not prompted.
+  await ctx.grantPermissions(['geolocation']).catch(() => undefined);
+}
+
+/**
  * Create an isolated context for one account, hydrating a stored session. A
  * fresh context per account is the isolation boundary: cookies never cross
  * accounts inside one container.
- *
- * When geolocation is known, the context is pinned to the worker's frozen
- * coordinate (see geolocation.ts): Playwright then reports that position to
- * any page that asks, instead of the datacentre's real one. It is set on the
- * context, not per-page, so every navigation in the session stays put.
  */
 export async function newAccountContext(
   browser: Browser,
@@ -78,11 +95,7 @@ export async function newAccountContext(
     userAgent: agentFor(platform),
     ...(storageState ? { storageState: storageState as never } : {}),
   });
-  if (geo) {
-    await ctx.setGeolocation({ latitude: geo.latitude, longitude: geo.longitude });
-    // Grant the permission so a page reading geolocation is not prompted.
-    await ctx.grantPermissions(['geolocation']).catch(() => undefined);
-  }
+  await pinGeolocation(ctx, geo);
   return ctx;
 }
 
