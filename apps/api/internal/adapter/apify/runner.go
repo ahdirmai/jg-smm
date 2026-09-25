@@ -79,6 +79,49 @@ func New(cfg Config) (*Runner, error) {
 
 var _ port.ApifyRunner = (*Runner)(nil)
 
+// searchInput builds the actor input for a keyword search. Each search actor
+// has its own field names and its own idea of a date filter, so the payload is
+// per-platform:
+//
+//   - Instagram (apify/instagram-scraper): `search` is a COMMA-SEPARATED string
+//     of terms, `searchType:hashtag` + `resultsType:posts` make it return posts
+//     rather than page metadata, and `onlyPostsNewerThan` is the only date
+//     bound it supports (no upper bound — the ingestor drops the tail).
+//   - Threads (futurizerush/meta-threads-scraper): `mode:search` with a
+//     `keywords[]` array, and both `start_date`/`end_date` bounds.
+//
+// A wrong field name is silent here: the actor falls back to its own default
+// (instagram-scraper defaults to "restaurant, restaurant prague") and returns
+// unrelated posts, so these names are pinned against the live input schemas.
+func (r *Runner) searchInput(in port.ApifySearchInput, maxItems int) map[string]any {
+	if in.Platform == domain.PlatformThreads {
+		payload := map[string]any{
+			"mode":          "search",
+			"keywords":      in.Keywords,
+			"max_posts":     maxItems,
+			"search_filter": "recent",
+		}
+		if !in.Window.From.IsZero() {
+			payload["start_date"] = in.Window.From.UTC().Format("2006-01-02")
+		}
+		if !in.Window.To.IsZero() {
+			payload["end_date"] = in.Window.To.UTC().Format("2006-01-02")
+		}
+		return payload
+	}
+	payload := map[string]any{
+		"search":       strings.Join(in.Keywords, ","),
+		"searchType":   "hashtag",
+		"resultsType":  "posts",
+		"resultsLimit": maxItems,
+		"searchLimit":  1,
+	}
+	if !in.Window.From.IsZero() {
+		payload["onlyPostsNewerThan"] = in.Window.From.UTC().Format("2006-01-02")
+	}
+	return payload
+}
+
 // RunSearch drives the platform's search actor: keywords + window instead of
 // one permalink. The payload shape is the union of what the IG/Threads search
 // actors accept; a field the actor ignores is harmless, a field it needs and
@@ -93,24 +136,15 @@ func (r *Runner) RunSearch(ctx context.Context, in port.ApifySearchInput) (port.
 	if maxItems <= 0 {
 		maxItems = 50
 	}
-	url := fmt.Sprintf("%s/acts/%s/run-sync-get-dataset-items?token=%s&maxItems=%d",
-		r.baseURL, pathSegment(actorID), r.token, maxItems)
+	// No maxItems query param: on a pay-per-result actor it caps the run's
+	// charge, and too low a cap ABORTS the run ("max charge limit was too low to
+	// deliver any posts") before the payload is even read — which is what the
+	// Threads search actor did. The payload bounds the result count itself
+	// (resultsLimit / max_posts), so the cap adds nothing here.
+	url := fmt.Sprintf("%s/acts/%s/run-sync-get-dataset-items?token=%s",
+		r.baseURL, pathSegment(actorID), r.token)
 
-	searchTerms := make([]string, len(in.Keywords))
-	copy(searchTerms, in.Keywords)
-	payload := map[string]any{
-		"searchTerms": searchTerms,
-		"maxItems":    maxItems,
-		"proxyGroups": []string{"RESIDENTIAL"},
-	}
-	// The window fields the actors read; actors without date filtering ignore
-	// them. RFC3339 dates, zero times omitted.
-	if !in.Window.From.IsZero() {
-		payload["since"] = in.Window.From.UTC().Format("2006-01-02")
-	}
-	if !in.Window.To.IsZero() {
-		payload["until"] = in.Window.To.UTC().Format("2006-01-02")
-	}
+	payload := r.searchInput(in, maxItems)
 
 	body, _ := json.Marshal(payload)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
@@ -159,7 +193,7 @@ func (r *Runner) RunSearch(ctx context.Context, in port.ApifySearchInput) (port.
 		total += n
 		keys = append(keys, key)
 	}
-	r.log("apify: search complete", "run", in.RunID, "keywords", searchTerms, "items", len(items), "bytes", total)
+	r.log("apify: search complete", "run", in.RunID, "keywords", in.Keywords, "items", len(items), "bytes", total)
 	return port.ApifyOutput{
 		RunID:    runID,
 		Status:   statusSucceeded,

@@ -52,10 +52,21 @@
 
 ## 4. Scrape Brief (Apify)
 
-- **Actor:** `<nama actor>`
+### 4.1 On-demand post scrape — `apify/meta-threads-scraper`
+
+- **Actor:** `apify/meta-threads-scraper` (mode user-posts; runner me-resolve username dari permalink).
 - **Input:** `<url | handle | hashtag | mention>`
 - **Output field:** `<...>`
 - **Normalisasi → DB:** `<Post / Comment / MetricSnapshot mapping>`
+
+### 4.2 Keyword search scrape — `futurizerush/meta-threads-scraper` (`mode:search`)
+
+- **Input:** `mode:"search"`, `keywords[]` (array — beda dari IG yang string koma), `max_posts`, `search_filter:"recent"`, `start_date`, `end_date`.
+- **Run mode:** sync (`run-sync-get-dataset-items`).
+- **Window:** kedua batas didukung actor (`start_date`/`end_date`, inklusif) — beda dari IG. Ingestor tetap menerapkan `inWindow` sebagai jaring pengaman.
+- **Output row:** satu row flat per post — `record_type`, `post_code`, `post_url`, `text_content`, `created_at` (RFC3339), `like_count`, `reply_count`, `repost_count`, `quote_count`, `share_count`, `view_count`, `username`, `user_id`, `media_urls[]`, `search_keyword`.
+- **Normalisasi → DB:** `post_code`→`Post.external_id`, `username`→`author_handle`, `text_content`→`text`, `media_urls[]`→`media_urls`, metrics `like_count`/`reply_count`/`view_count`/`share_count` (fallback `repost_count`→`quote_count`).
+- **Catatan:** `mode` default actor adalah `user` (user-posts). Tanpa `mode:"search"` keyword diabaikan.
 
 ## 5. Live Brief (bila ada)
 

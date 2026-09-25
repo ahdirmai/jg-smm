@@ -419,3 +419,103 @@ func stableHex(seed string) string {
 }
 
 var _ = sqlcgen.Platform("")
+
+// fakeKeywordBatchStore is in-memory KeywordBatchStore for keyword batch tests.
+type fakeKeywordBatchStore struct {
+	mu      sync.Mutex
+	batches map[string]domain.KeywordBatch
+	posts   map[string][]string // batchID -> postIDs
+}
+
+func newFakeKeywordBatchStore() *fakeKeywordBatchStore {
+	return &fakeKeywordBatchStore{batches: map[string]domain.KeywordBatch{}, posts: map[string][]string{}}
+}
+
+var _ port.KeywordBatchStore = (*fakeKeywordBatchStore)(nil)
+
+func (f *fakeKeywordBatchStore) CreateKeywordBatch(_ context.Context, b domain.KeywordBatch) (domain.KeywordBatch, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if b.ID == "" {
+		b.ID = fakeID("kwb", b.ActorID+":"+string(b.Platform)+":"+b.CreatedAt.String())
+	}
+	if b.Status == "" {
+		b.Status = domain.KeywordBatchPending
+	}
+	if b.CreatedAt.IsZero() {
+		b.CreatedAt = time.Now().UTC()
+	}
+	f.batches[b.ID] = b
+	return b, nil
+}
+func (f *fakeKeywordBatchStore) GetKeywordBatch(_ context.Context, id string) (domain.KeywordBatch, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	b, ok := f.batches[id]
+	if !ok {
+		return domain.KeywordBatch{}, domain.ErrNotFound
+	}
+	return b, nil
+}
+func (f *fakeKeywordBatchStore) ListKeywordBatches(_ context.Context, limit, offset *int) ([]domain.KeywordBatch, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]domain.KeywordBatch, 0, len(f.batches))
+	for _, b := range f.batches {
+		out = append(out, b)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	l, o := 100, 0
+	if limit != nil {
+		l = *limit
+	}
+	if offset != nil {
+		o = *offset
+	}
+	if o > len(out) {
+		return nil, nil
+	}
+	end := o + l
+	if end > len(out) {
+		end = len(out)
+	}
+	return out[o:end], nil
+}
+func (f *fakeKeywordBatchStore) UpdateKeywordBatch(_ context.Context, b domain.KeywordBatch) (domain.KeywordBatch, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	cur, ok := f.batches[b.ID]
+	if !ok {
+		return domain.KeywordBatch{}, domain.ErrNotFound
+	}
+	if b.Status != "" {
+		cur.Status = b.Status
+	}
+	if b.ApifyRunID != nil {
+		cur.ApifyRunID = b.ApifyRunID
+	}
+	cur.ItemsRead = b.ItemsRead
+	cur.PostsCount = b.PostsCount
+	cur.CommentsCount = b.CommentsCount
+	if b.Error != nil {
+		cur.Error = b.Error
+	}
+	if b.FinishedAt != nil {
+		cur.FinishedAt = b.FinishedAt
+	} else if b.Status.IsTerminal() && cur.FinishedAt == nil {
+		n := time.Now().UTC()
+		cur.FinishedAt = &n
+	}
+	f.batches[b.ID] = cur
+	return cur, nil
+}
+func (f *fakeKeywordBatchStore) CreateKeywordBatchPost(_ context.Context, batchID, postID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.posts[batchID] = append(f.posts[batchID], postID)
+	return nil
+}
+func (f *fakeKeywordBatchStore) ListKeywordBatchPosts(ctx context.Context, batchID string, limit, offset *int) ([]domain.Post, error) {
+	// not used directly — service reads via batches+scrapes; keep stub
+	return nil, nil
+}

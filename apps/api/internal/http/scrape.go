@@ -33,9 +33,13 @@ func NewScrapeHandler(scrapes *service.ScrapeService, keywords *service.KeywordS
 }
 
 // Register mounts the routes on the /api group.
+// scrape/target is single post (satuan) — sync. scrape/keywords is batch (keyword) — async 202 + batch endpoints.
 func (h *ScrapeHandler) Register(g *echo.Group) {
 	g.POST("/scrape/target", h.scrapeTarget, RequirePermission(domain.PermAct))
 	g.POST("/scrape/keywords", h.scrapeKeywords, RequirePermission(domain.PermAct))
+	g.GET("/scrape/batches", h.listBatches, RequirePermission(domain.PermAct))
+	g.GET("/scrape/batches/:id", h.getBatch, RequirePermission(domain.PermAct))
+	g.GET("/scrape/batches/:id/posts", h.listBatchPosts, RequirePermission(domain.PermAct))
 	g.POST("/comments/generate", h.generateComment, RequirePermission(domain.PermAct))
 	g.GET("/scrape/recent", h.listRecent, RequirePermission(domain.PermAct))
 }
@@ -73,8 +77,8 @@ type scrapeKeywordsRequest struct {
 	MaxPosts int    `json:"maxPosts"`
 }
 
-// scrapeKeywords runs the search actor synchronously (same contract as
-// scrapeTarget: one long request, loader in the UI).
+// scrapeKeywords enqueues a keyword batch in background and returns 202.
+// Batch scrape (keyword → many posts) vs post scrape (satuan → 1 URL) are distinct dashboards.
 func (h *ScrapeHandler) scrapeKeywords(c echo.Context) error {
 	if h.keywords == nil {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "keyword scrape is not configured")
@@ -102,11 +106,72 @@ func (h *ScrapeHandler) scrapeKeywords(c echo.Context) error {
 		}
 		*pair.dst = t
 	}
-	res, err := h.keywords.ScrapeKeywords(c.Request().Context(), in)
+	if claims, ok := ClaimsFrom(c); ok && claims.UserID != "" {
+		s := claims.UserID
+		in.CreatedBy = &s
+	}
+	batch, err := h.keywords.CreateBatch(c.Request().Context(), in)
 	if err != nil {
 		return scrapeError(err)
 	}
-	return c.JSON(http.StatusOK, res)
+	return c.JSON(http.StatusAccepted, map[string]any{"batch": batch})
+}
+
+func (h *ScrapeHandler) listBatches(c echo.Context) error {
+	if h.keywords == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "keyword scrape is not configured")
+	}
+	limit, offset := parseLimitOffset(c, 20, 0)
+	batches, err := h.keywords.ListBatches(c.Request().Context(), &limit, &offset)
+	if err != nil {
+		return scrapeError(err)
+	}
+	if batches == nil {
+		batches = []domain.KeywordBatch{}
+	}
+	return c.JSON(http.StatusOK, map[string]any{"batches": batches})
+}
+
+func (h *ScrapeHandler) getBatch(c echo.Context) error {
+	if h.keywords == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "keyword scrape is not configured")
+	}
+	b, err := h.keywords.GetBatch(c.Request().Context(), c.Param("id"))
+	if err != nil {
+		return scrapeError(err)
+	}
+	return c.JSON(http.StatusOK, map[string]any{"batch": b})
+}
+
+func (h *ScrapeHandler) listBatchPosts(c echo.Context) error {
+	if h.keywords == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "keyword scrape is not configured")
+	}
+	limit, offset := parseLimitOffset(c, 50, 0)
+	posts, err := h.keywords.ListBatchPosts(c.Request().Context(), c.Param("id"), &limit, &offset)
+	if err != nil {
+		return scrapeError(err)
+	}
+	if posts == nil {
+		posts = []domain.Post{}
+	}
+	return c.JSON(http.StatusOK, map[string]any{"posts": posts})
+}
+
+func parseLimitOffset(c echo.Context, defLimit, defOffset int) (int, int) {
+	limit := defLimit
+	offset := defOffset
+	if raw := c.QueryParam("limit"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	if raw := c.QueryParam("offset"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n >= 0 {
+			offset = n
+		}
+	}
+	return limit, offset
 }
 
 // listRecent returns stored posts newest-scrape-first — the "already scraped"

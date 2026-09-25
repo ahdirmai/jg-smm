@@ -820,7 +820,8 @@ type AnalyticsSnapshot struct {
 }
 
 type ApifyRun struct {
-	ID          pgtype.UUID        `json:"id"`
+	ID pgtype.UUID `json:"id"`
+	// nullable: keyword search inserts no scrape_job (ad-hoc multi-post search); scheduled/on-demand runs remain 1:1 via UNIQUE where non-null
 	ScrapeJobID pgtype.UUID        `json:"scrape_job_id"`
 	ActorID     string             `json:"actor_id"`
 	RunID       string             `json:"run_id"`
@@ -893,6 +894,30 @@ type Heartbeat struct {
 	Cpu      float64            `json:"cpu"`
 	Mem      float64            `json:"mem"`
 	JobsDone int32              `json:"jobs_done"`
+}
+
+type KeywordBatch struct {
+	ID            pgtype.UUID        `json:"id"`
+	Platform      Platform           `json:"platform"`
+	Keywords      []string           `json:"keywords"`
+	WindowFrom    pgtype.Timestamptz `json:"window_from"`
+	WindowTo      pgtype.Timestamptz `json:"window_to"`
+	MaxPosts      int32              `json:"max_posts"`
+	ActorID       string             `json:"actor_id"`
+	Status        string             `json:"status"`
+	ApifyRunID    pgtype.UUID        `json:"apify_run_id"`
+	ItemsRead     int32              `json:"items_read"`
+	PostsCount    int32              `json:"posts_count"`
+	CommentsCount int32              `json:"comments_count"`
+	Error         *string            `json:"error"`
+	CreatedBy     pgtype.UUID        `json:"created_by"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	FinishedAt    pgtype.Timestamptz `json:"finished_at"`
+}
+
+type KeywordBatchPost struct {
+	KeywordBatchID pgtype.UUID `json:"keyword_batch_id"`
+	PostID         pgtype.UUID `json:"post_id"`
 }
 
 type MetricSnapshot struct {

@@ -97,6 +97,11 @@ type ScrapeIngestResult struct {
 	CommentsUpserted int
 	SnapshotsWritten int
 	BytesIngested    int64
+	// PostIDs are the id of every post this run created or refreshed, in ingest
+	// order. The keyword batch joins its result rows on exactly these, so a
+	// batch's dashboard shows what the batch scraped rather than whatever
+	// happens to be the newest post on the platform.
+	PostIDs []string
 }
 
 // AnalyticsProvider is the 3rd-party source of official-account metrics (PRD

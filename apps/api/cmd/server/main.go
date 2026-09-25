@@ -323,9 +323,11 @@ func main() {
 				nil, // no platform-wide denylist yet; template-level screening stays the enforcement point
 				logger,
 			)
+			kwSvc := service.NewKeywordScrapeService(scrapeRepo, runner, searchActorForPlatform(cfg), rawStorage, logger)
+			kwSvc.SetBatchStore(repository.NewKeywordBatchRepo(pg.Queries()))
 			deps.Scrapes = apihttp.NewScrapeHandler(
 				service.NewScrapeService(scrapeRepo, runner, actorForPlatform(cfg), rawStorage, logger),
-				service.NewKeywordScrapeService(scrapeRepo, runner, searchActorForPlatform(cfg), rawStorage, logger),
+				kwSvc,
 				gen,
 			)
 			if cfg.ScrapeIntervalSeconds > 0 {
@@ -544,16 +546,29 @@ func actorForPlatform(cfg config.Config) func(domain.Platform) string {
 	}
 }
 
-// searchActorForPlatform maps a platform to its SEARCH actor. The search
-// actors live under the same prefix; empty → keyword scrape is off for that
-// platform (the handler 400s).
+// searchActorForPlatform maps a platform to its SEARCH actor. Empty → keyword
+// scrape is off for that platform (the handler 400s).
+//
+// These are full actor ids, not prefix-derived: the two search actors live
+// under different Apify namespaces (apify/… for Instagram, a third-party
+// publisher for Threads), so one prefix cannot express both.
+//
+// Actor picks (verified against the live input schemas, 2026-09):
+//   - Instagram: apify/instagram-scraper. `searchType:hashtag` +
+//     `resultsType:posts` returns posts for the keyword. NOT
+//     apify/instagram-search-scraper, which resolves a keyword to a *place or
+//     hashtag page* and returns that entity's own top posts (2018-era posts
+//     for a live keyword) — it ignores the keyword unless the field is named
+//     `search`, and its posts are not date-filterable.
+//   - Threads: futurizerush/meta-threads-scraper in `mode:search`, which takes
+//     keywords[] plus start_date/end_date.
 func searchActorForPlatform(cfg config.Config) func(domain.Platform) string {
 	return func(p domain.Platform) string {
 		switch p {
 		case domain.PlatformInstagram:
-			return cfg.ApifyActorPrefix + "/instagram-search-scraper"
+			return cfg.ApifySearchActorInstagram
 		case domain.PlatformThreads:
-			return cfg.ApifyActorPrefix + "/meta-threads-scraper"
+			return cfg.ApifySearchActorThreads
 		}
 		return ""
 	}

@@ -180,6 +180,25 @@ export interface GenerateCommentResponse {
   comments: string[];
 }
 
+export interface KeywordBatch {
+  id: string;
+  platform: string;
+  keywords: string[];
+  windowFrom: string | null;
+  windowTo: string | null;
+  maxPosts: number;
+  actorId: string;
+  status: 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED';
+  apifyRunId: string | null;
+  itemsRead: number;
+  postsCount: number;
+  commentsCount: number;
+  error: string | null;
+  createdBy: string | null;
+  createdAt: string;
+  finishedAt: string | null;
+}
+
 // Keyword search scrape (hand-rolled, not in the contract). The result rows are
 // the same ScrapedPost shape the on-demand scrape returns.
 export interface KeywordScrapeResult {
@@ -250,8 +269,7 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ platform, url }),
     }),
-  // Keyword search scrape: 1-5 keywords over a time window. Synchronous like
-  // scrapeTarget; the caller shows a loader while Apify runs.
+  // Keyword search: batch (keyword → many posts) is async 202 batch, vs post satuan (1 URL) sync.
   scrapeKeywords: (body: {
     platform: string;
     keywords: string[];
@@ -259,10 +277,25 @@ export const api = {
     to?: string | undefined;
     maxPosts?: number | undefined;
   }) =>
-    request<KeywordScrapeResult>('/api/scrape/keywords', {
+    request<{ batch: KeywordBatch }>('/api/scrape/keywords', {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+  listKeywordBatches: (params?: { limit?: number; offset?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.limit) qs.set('limit', String(params.limit));
+    if (params?.offset) qs.set('offset', String(params.offset));
+    const q = qs.toString() ? `?${qs}` : '';
+    return request<{ batches: KeywordBatch[] }>(`/api/scrape/batches${q}`);
+  },
+  getKeywordBatch: (id: string) => request<{ batch: KeywordBatch }>(`/api/scrape/batches/${id}`),
+  listKeywordBatchPosts: (id: string, params?: { limit?: number; offset?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.limit) qs.set('limit', String(params.limit));
+    if (params?.offset) qs.set('offset', String(params.offset));
+    const q = qs.toString() ? `?${qs}` : '';
+    return request<{ posts: ScrapedPost[] }>(`/api/scrape/batches/${id}/posts${q}`);
+  },
   // AI comment candidates from a scraped post's context.
   generateComment: (body: {
     postText: string;

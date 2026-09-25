@@ -37,13 +37,14 @@ func keywordSvcFor(t *testing.T, storage port.RawStorage) (*KeywordScrapeService
 		runner,
 		func(p domain.Platform) string {
 			if p == domain.PlatformInstagram {
-				return "~smm/instagram-search-scraper"
+				return "apify/instagram-scraper"
 			}
 			return ""
 		},
 		storage,
 		nil,
 	)
+	svc.SetBatchStore(newFakeKeywordBatchStore())
 	return svc, store, runner
 }
 
@@ -96,18 +97,83 @@ func TestScrapeKeywordsDedupesAndCaps(t *testing.T) {
 	if err != nil {
 		t.Fatalf("scrape: %v", err)
 	}
-	if len(runner.search) != 1 {
-		t.Fatalf("want 1 search run, got %d", len(runner.search))
+	if len(runner.search) == 0 {
+		t.Fatal("no search run")
 	}
-	got := runner.search[0].Keywords
+	// Every attempt carries the deduped list (this storage is empty, so the
+	// empty-result retry may add a second attempt — dedupe must hold for all).
 	want := []string{"kamu", "gacor"}
-	if len(got) != len(want) {
-		t.Fatalf("keywords: want %v, got %v", want, got)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("keywords[%d]: want %q, got %q", i, want[i], got[i])
+	for i, run := range runner.search {
+		got := run.Keywords
+		if len(got) != len(want) {
+			t.Fatalf("run %d keywords: want %v, got %v", i, want, got)
 		}
+		for j := range want {
+			if got[j] != want[j] {
+				t.Fatalf("run %d keywords[%d]: want %q, got %q", i, j, want[j], got[j])
+			}
+		}
+	}
+}
+
+// The Instagram hashtag actor intermittently returns a related hashtag's
+// metadata row instead of posts (measured ~1 run in 3), which the ingestor
+// reports as zero posts on a SUCCEEDED run. The batch retries once rather than
+// recording an empty success.
+func TestScrapeKeywordsRetriesEmptyResult(t *testing.T) {
+	store := newFakeScrapeStore()
+	storage := &fakeRawStorage{items: map[string][]byte{}}
+	// Attempt 1's dataset: only a metadata row, no posts.
+	meta, _ := json.Marshal(map[string]any{
+		"searchTerm": "batulicin", "searchSource": "google", "name": "peturing", "posts": "824",
+	})
+	storage.items["run/meta-0.json"] = meta
+	// Attempt 2's dataset: a real post inside the window.
+	post, _ := json.Marshal(mkIGPostRow("Dretry", "2026-09-10T02:28:41.000Z"))
+	storage.items["run/post-0.json"] = post
+
+	runner := &fakeRunner{outs: []port.ApifyOutput{
+		{Status: "SUCCEEDED", RunID: "r1", ItemKeys: []string{"run/meta-0.json"}},
+		{Status: "SUCCEEDED", RunID: "r2", ItemKeys: []string{"run/post-0.json"}},
+	}}
+	svc := NewKeywordScrapeService(store, runner,
+		func(domain.Platform) string { return "apify/instagram-scraper" }, storage, nil)
+	svc.SetBatchStore(newFakeKeywordBatchStore())
+
+	res, err := svc.ScrapeKeywords(context.Background(), KeywordScrapeInput{
+		Platform: domain.PlatformInstagram,
+		Keywords: []string{"batulicin"},
+		Window:   KeywordWindow{From: time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)},
+	})
+	if err != nil {
+		t.Fatalf("scrape: %v", err)
+	}
+	if len(runner.search) != 2 {
+		t.Fatalf("want 2 actor attempts (metadata-only then posts), got %d", len(runner.search))
+	}
+	if res.ItemsRead != 1 || len(res.Posts) != 1 || res.Posts[0].ExternalID != "Dretry" {
+		t.Fatalf("want the Dretry post from the retry, got items=%d posts=%+v", res.ItemsRead, res.Posts)
+	}
+}
+
+// A metadata-only row (a related hashtag's formatted count, no posts[]) must
+// yield zero items instead of failing the whole payload: `posts` is a string
+// there, and unmarshalling it into a slice used to kill the run's ingest.
+func TestScrapeKeywordsMetadataRowIsNotAnError(t *testing.T) {
+	svc, _, _, _ := keywordRun(t, map[string]any{
+		"searchTerm": "batulicin", "searchSource": "google",
+		"name": "peturing", "posts": "824", "postsCount": 824,
+	})
+
+	res, err := svc.ScrapeKeywords(context.Background(), KeywordScrapeInput{
+		Platform: domain.PlatformInstagram,
+		Keywords: []string{"batulicin"},
+	})
+	if err != nil {
+		t.Fatalf("metadata-only row must not error, got %v", err)
+	}
+	if res.ItemsRead != 0 || len(res.Posts) != 0 {
+		t.Fatalf("want 0 items from a metadata row, got %d / %d", res.ItemsRead, len(res.Posts))
 	}
 }
 
@@ -147,6 +213,42 @@ func mkIGSearchPost(code string, takenAt int64, inWindow bool) map[string]any {
 	}
 }
 
+// mkIGPostRow builds one flat post row: apify/instagram-scraper's shape with
+// searchType:hashtag (also apify/instagram-post-scraper's). Field names taken
+// from a live run — shortCode/ownerUsername/timestamp RFC3339.
+func mkIGPostRow(code, timestamp string) map[string]any {
+	return map[string]any{
+		"id":             "31" + code,
+		"shortCode":      code,
+		"type":           "Image",
+		"caption":        code + " caption",
+		"ownerUsername":  "owner_" + code,
+		"ownerId":        "42",
+		"displayUrl":     "https://scontent.cdn.instagram.com/" + code + ".jpg",
+		"likesCount":     11,
+		"commentsCount":  3,
+		"videoViewCount": 88,
+		"timestamp":      timestamp,
+		"hashtags":       []string{"batulicin"},
+	}
+}
+
+// mkThreadsPost builds one futurizerush/meta-threads-scraper row in search mode.
+func mkThreadsPost(code, createdAt string) map[string]any {
+	return map[string]any{
+		"record_type":  "post",
+		"post_code":    code,
+		"post_url":     "https://www.threads.com/@owner_" + code + "/post/" + code,
+		"text_content": code + " text",
+		"created_at":   createdAt,
+		"like_count":   7,
+		"reply_count":  2,
+		"repost_count": 1,
+		"username":     "owner_" + code,
+		"user_id":      "42",
+	}
+}
+
 // keywordRun stores pages under the keys the runner reports and returns the
 // service wired over them.
 func keywordRun(t *testing.T, pages ...map[string]any) (*KeywordScrapeService, *fakeScrapeStore, *fakeRunner, *fakeRawStorage) {
@@ -167,10 +269,19 @@ func keywordRun(t *testing.T, pages ...map[string]any) (*KeywordScrapeService, *
 	svc := NewKeywordScrapeService(
 		store,
 		runner,
-		func(p domain.Platform) string { return "~smm/instagram-search-scraper" },
+		func(p domain.Platform) string {
+			switch p {
+			case domain.PlatformInstagram:
+				return "apify/instagram-scraper"
+			case domain.PlatformThreads:
+				return "futurizerush/meta-threads-scraper"
+			}
+			return ""
+		},
 		storage,
 		nil,
 	)
+	svc.SetBatchStore(newFakeKeywordBatchStore())
 	return svc, store, runner, storage
 }
 
@@ -208,7 +319,7 @@ func TestScrapeKeywordsRunsAndIngests(t *testing.T) {
 	// The first candidate is the largest variant; the ingestor takes that one.
 	checkMetric(t, post.Metrics, "likes", float64(10))
 	checkMetric(t, post.Metrics, "views", float64(77)) // play_count fallback
-	if res.Keywords[0] != "kamu" || res.ActorID != "~smm/instagram-search-scraper" {
+	if res.Keywords[0] != "kamu" || res.ActorID != "apify/instagram-scraper" {
 		t.Fatalf("result meta: %+v", res)
 	}
 }
@@ -235,6 +346,72 @@ func TestScrapeKeywordsFiltersByWindow(t *testing.T) {
 		t.Fatalf("itemsRead: want 1 (window drops Cout), got %d", res.ItemsRead)
 	}
 	if len(res.Posts) != 1 || res.Posts[0].ExternalID != "Cin" {
+		t.Fatalf("posts: got %+v", res.Posts)
+	}
+}
+
+// A hashtag search returns one FLAT post row per post (apify/instagram-scraper
+// with searchType:hashtag) — the post-scraper shape, not the nested search-page
+// row. Those rows carry the only date bound the actor applies as a lower bound,
+// so the window's upper bound is enforced here.
+func TestScrapeKeywordsFlatPostRows(t *testing.T) {
+	svc, _, _, _ := keywordRun(t,
+		mkIGPostRow("Din", "2026-09-10T02:28:41.000Z"),   // in window
+		mkIGPostRow("Dout", "2026-08-01T04:08:08.000Z"),  // before window
+		mkIGPostRow("Dtail", "2026-10-05T09:00:34.000Z"), // after window
+	)
+
+	res, err := svc.ScrapeKeywords(context.Background(), KeywordScrapeInput{
+		Platform: domain.PlatformInstagram,
+		Keywords: []string{"batulicin"},
+		Window: KeywordWindow{
+			From: time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC),
+			To:   time.Date(2026, 9, 24, 0, 0, 0, 0, time.UTC),
+		},
+	})
+	if err != nil {
+		t.Fatalf("scrape: %v", err)
+	}
+	if res.ItemsRead != 1 {
+		t.Fatalf("itemsRead: want 1 (only Din is inside the window), got %d", res.ItemsRead)
+	}
+	if len(res.Posts) != 1 || res.Posts[0].ExternalID != "Din" {
+		t.Fatalf("posts: got %+v", res.Posts)
+	}
+	if h := res.Posts[0].AuthorHandle; h != "owner_Din" {
+		t.Fatalf("author handle: %q", h)
+	}
+}
+
+// The Threads search actor returns a flat post row with an RFC3339 created_at;
+// the window drops the rows outside it.
+func TestScrapeKeywordsThreadsWindow(t *testing.T) {
+	svc, _, _, _ := keywordRun(t,
+		mkThreadsPost("Pin", "2026-09-10T11:30:53+00:00"),  // in window
+		mkThreadsPost("Pout", "2026-08-20T11:11:27+00:00"), // before window
+	)
+	svc.searchActorFor = func(p domain.Platform) string {
+		if p == domain.PlatformThreads {
+			return "futurizerush/meta-threads-scraper"
+		}
+		return ""
+	}
+
+	res, err := svc.ScrapeKeywords(context.Background(), KeywordScrapeInput{
+		Platform: domain.PlatformThreads,
+		Keywords: []string{"batulicin"},
+		Window: KeywordWindow{
+			From: time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC),
+			To:   time.Date(2026, 9, 24, 0, 0, 0, 0, time.UTC),
+		},
+	})
+	if err != nil {
+		t.Fatalf("scrape: %v", err)
+	}
+	if res.ItemsRead != 1 {
+		t.Fatalf("itemsRead: want 1 (window drops Pout), got %d", res.ItemsRead)
+	}
+	if len(res.Posts) != 1 || res.Posts[0].ExternalID != "Pin" {
 		t.Fatalf("posts: got %+v", res.Posts)
 	}
 }
@@ -276,7 +453,8 @@ func TestScrapeKeywordsCarouselMedia(t *testing.T) {
 	body, _ := json.Marshal(page)
 	storage.items["run/page-0.json"] = body
 	runner := &fakeRunner{out: port.ApifyOutput{Status: "SUCCEEDED", RunID: "r1", ItemKeys: []string{"run/page-0.json"}}}
-	svc := NewKeywordScrapeService(store, runner, func(domain.Platform) string { return "~smm/instagram-search-scraper" }, storage, nil)
+	svc := NewKeywordScrapeService(store, runner, func(domain.Platform) string { return "apify/instagram-scraper" }, storage, nil)
+	svc.SetBatchStore(newFakeKeywordBatchStore())
 
 	res, err := svc.ScrapeKeywords(context.Background(), KeywordScrapeInput{
 		Platform: domain.PlatformInstagram,

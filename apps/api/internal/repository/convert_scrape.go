@@ -389,3 +389,24 @@ func aggTime(v interface{}) *time.Time {
 
 // pgIntervalArg is the string form passed for a $n::interval bind parameter.
 func pgIntervalArg(d time.Duration) string { return intervalText(d) }
+
+func toKeywordBatch(row sqlcgen.KeywordBatch) domain.KeywordBatch {
+	return domain.KeywordBatch{
+		ID:            uuidString(row.ID),
+		Platform:      platformDomain(row.Platform),
+		Keywords:      row.Keywords,
+		WindowFrom:    tsTime(row.WindowFrom),
+		WindowTo:      tsTime(row.WindowTo),
+		MaxPosts:      int(row.MaxPosts),
+		ActorID:       row.ActorID,
+		Status:        domain.KeywordBatchStatus(row.Status),
+		ApifyRunID:    uuidStrPtr(row.ApifyRunID),
+		ItemsRead:     int(row.ItemsRead),
+		PostsCount:    int(row.PostsCount),
+		CommentsCount: int(row.CommentsCount),
+		Error:         row.Error,
+		CreatedBy:     uuidStrPtr(row.CreatedBy),
+		CreatedAt:     tsTimeOrZero(row.CreatedAt),
+		FinishedAt:    tsTime(row.FinishedAt),
+	}
+}

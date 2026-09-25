@@ -122,6 +122,11 @@ type Config struct {
 	// ApifyActorPrefix selects the actor id per platform, e.g.
 	// "~smm/instagram-scraper". The concrete ids live in PLATFORM_MATRIX.
 	ApifyActorPrefix string
+	// ApifySearchActorInstagram / ApifySearchActorThreads are the full ids of
+	// the keyword-search actors. They are not prefix-derived: the Instagram and
+	// Threads search actors publish under different Apify namespaces.
+	ApifySearchActorInstagram string
+	ApifySearchActorThreads   string
 	// ApifyBudgetUSD is the monthly Apify spend ceiling (P5-08). 0 publishes no
 	// ceiling, which disables the budget alert rather than making it noisy.
 	ApifyBudgetUSD float64
@@ -220,8 +225,11 @@ func Load() (Config, error) {
 		ApifyBaseURL:     env("APIFY_BASE_URL", "https://api.apify.com/v2"),
 		ApifyToken:       os.Getenv("APIFY_TOKEN"),
 		ApifyActorPrefix: env("APIFY_ACTOR_PREFIX", "~smm"),
-		ApifyBudgetUSD:   envFloat("APIFY_BUDGET_USD", 0),
-		ProxyBudgetGB:    envFloat("PROXY_BUDGET_GB", 0),
+		// Full ids: the search actors live under different Apify namespaces.
+		ApifySearchActorInstagram: env("APIFY_SEARCH_ACTOR_INSTAGRAM", "apify/instagram-scraper"),
+		ApifySearchActorThreads:   env("APIFY_SEARCH_ACTOR_THREADS", "futurizerush/meta-threads-scraper"),
+		ApifyBudgetUSD:            envFloat("APIFY_BUDGET_USD", 0),
+		ProxyBudgetGB:             envFloat("PROXY_BUDGET_GB", 0),
 
 		LLMBaseURL: env("LLM_BASE_URL", ""),
 		LLMModel:   env("LLM_MODEL", ""),

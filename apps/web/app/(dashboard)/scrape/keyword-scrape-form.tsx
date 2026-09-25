@@ -9,22 +9,14 @@
  */
 
 import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Input, Label, Badge } from '@smm/ui';
-import { AlertCircle, Loader2, Search } from 'lucide-react';
-import { useState } from 'react';
+import { AlertCircle, Loader2, Search, ExternalLink } from 'lucide-react';
+import Link from 'next/link';
+import { useEffect, useState } from 'react';
 
-import { api, type KeywordScrapeResult, type ScrapedPost } from '@/lib/api';
+import { api, type KeywordBatch } from '@/lib/api';
 import { PLATFORM_LABEL } from '@/lib/platforms';
 
 const MAX_KEYWORDS = 5;
-
-function metricsLine(m: Record<string, number> | null): string {
-  if (!m) return '';
-  const parts: string[] = [];
-  for (const key of ['likes', 'likeCount', 'comments', 'commentCount', 'views', 'viewCount', 'playCount']) {
-    if (typeof m[key] === 'number') parts.push(`${key}: ${m[key]}`);
-  }
-  return parts.join(' · ');
-}
 
 export function KeywordScrapeForm() {
   const [platform, setPlatform] = useState<'instagram' | 'threads'>('instagram');
@@ -33,19 +25,29 @@ export function KeywordScrapeForm() {
   const [to, setTo] = useState('');
   const [maxPosts, setMaxPosts] = useState('50');
   const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<KeywordScrapeResult | null>(null);
+  const [batches, setBatches] = useState<KeywordBatch[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  const parsed = keywords
-    .split(',')
-    .map((k) => k.trim())
-    .filter(Boolean);
+  const parsed = keywords.split(',').map((k) => k.trim()).filter(Boolean);
   const deduped = Array.from(new Map(parsed.map((k) => [k.toLowerCase(), k])).values());
   const tooMany = deduped.length > MAX_KEYWORDS;
 
+  async function refreshBatches() {
+    try {
+      const res = await api.listKeywordBatches({ limit: 20 });
+      setBatches(res.batches);
+    } catch {
+      // silent — polling
+    }
+  }
+  useEffect(() => {
+    refreshBatches();
+    const id = setInterval(refreshBatches, 4000);
+    return () => clearInterval(id);
+  }, []);
+
   async function runSearch() {
     setError(null);
-    setResult(null);
     if (deduped.length === 0) {
       setError('Type at least one keyword.');
       return;
@@ -53,14 +55,14 @@ export function KeywordScrapeForm() {
     if (tooMany) return;
     setBusy(true);
     try {
-      const res = await api.scrapeKeywords({
+      await api.scrapeKeywords({
         platform,
         keywords: deduped,
         from: from || undefined,
         to: to || undefined,
         maxPosts: Number(maxPosts) || undefined,
       });
-      setResult(res);
+      await refreshBatches();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Keyword scrape failed');
     } finally {
@@ -145,39 +147,36 @@ export function KeywordScrapeForm() {
           </div>
         ) : null}
 
-        {result ? (
-          <div className="space-y-2">
-            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              <Badge variant="secondary">{result.platform}</Badge>
-              <span>{result.posts.length} posts stored</span>
-              <span>· {result.comments} comments</span>
-              <span>· {result.itemsRead} items read</span>
-              <span className="font-mono">{result.actorId}</span>
-            </div>
-            <div className="max-h-[360px] overflow-y-auto rounded-lg border border-border/60">
-              {result.posts.length === 0 ? (
-                <div className="flex items-center justify-center py-10 text-sm text-muted-foreground">
-                  No posts found for these keywords.
-                </div>
-              ) : (
-                result.posts.map((p: ScrapedPost) => (
-                  <div key={p.id} className="border-b border-border/60 px-3 py-2 last:border-b-0">
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <span className="font-medium text-foreground">@{p.authorHandle || 'unknown'}</span>
-                      <span>{new Date(p.scrapedAt).toLocaleDateString()}</span>
-                      {p.metrics ? <span>{metricsLine(p.metrics)}</span> : null}
-                    </div>
-                    {p.text ? (
-                      <p className="mt-1 line-clamp-2 text-sm">{p.text}</p>
-                    ) : (
-                      <p className="mt-1 text-sm italic text-muted-foreground">No text</p>
-                    )}
-                  </div>
-                ))
-              )}
-            </div>
+        {/* Batch list — background scrape. Klik batch → dashboard batch (beda dari satuan post). */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-medium">Batches (background)</h3>
+            <span className="text-xs text-muted-foreground">{batches.length} batch</span>
           </div>
-        ) : null}
+          {batches.length === 0 ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">Belum ada batch. Jalankan search di atas.</p>
+          ) : (
+            <div className="divide-y rounded-lg border">
+              {batches.map((b) => (
+                <Link key={b.id} href={`/scrape/batches/${b.id}`} className="flex items-center justify-between px-3 py-2 hover:bg-muted/50">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant={b.status === 'SUCCEEDED' ? 'default' : b.status === 'FAILED' ? 'destructive' : 'secondary'}>{b.status}</Badge>
+                      <span className="text-sm font-medium">{b.keywords.join(', ')}</span>
+                      <Badge variant="outline">{PLATFORM_LABEL[b.platform as 'instagram' | 'threads'] ?? b.platform}</Badge>
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                      <span>{b.postsCount} posts · {b.commentsCount} comments · {b.itemsRead} items</span>
+                      <span>· {new Date(b.createdAt).toLocaleString()}</span>
+                      {b.error ? <span className="text-destructive">{b.error}</span> : null}
+                    </div>
+                  </div>
+                  <ExternalLink className="ml-2 size-4 shrink-0 text-muted-foreground" />
+                </Link>
+              ))}
+            </div>
+          )}
+        </div>
       </CardContent>
     </Card>
   );

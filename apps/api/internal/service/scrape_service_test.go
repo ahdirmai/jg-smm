@@ -10,22 +10,34 @@ import (
 )
 
 // fakeRunner is a controllable port.ApifyRunner: it records the calls and
-// returns whatever outcome the test dialed in.
+// returns whatever outcome the test dialed in. outs, when set, is consumed one
+// entry per call (so a retry can return a different outcome than the first
+// attempt); once drained, out is returned.
 type fakeRunner struct {
 	runs   []port.ApifyInput
 	search []port.ApifySearchInput
 	out    port.ApifyOutput
+	outs   []port.ApifyOutput
 	outErr error
 }
 
 var _ port.ApifyRunner = (*fakeRunner)(nil)
+
+func (r *fakeRunner) next() port.ApifyOutput {
+	if len(r.outs) > 0 {
+		o := r.outs[0]
+		r.outs = r.outs[1:]
+		return o
+	}
+	return r.out
+}
 
 func (r *fakeRunner) Run(ctx context.Context, in port.ApifyInput) (port.ApifyOutput, error) {
 	r.runs = append(r.runs, in)
 	if r.outErr != nil {
 		return port.ApifyOutput{}, r.outErr
 	}
-	return r.out, nil
+	return r.next(), nil
 }
 
 func (r *fakeRunner) RunSearch(ctx context.Context, in port.ApifySearchInput) (port.ApifyOutput, error) {
@@ -33,7 +45,7 @@ func (r *fakeRunner) RunSearch(ctx context.Context, in port.ApifySearchInput) (p
 	if r.outErr != nil {
 		return port.ApifyOutput{}, r.outErr
 	}
-	return r.out, nil
+	return r.next(), nil
 }
 
 // fakeProvider is a controllable port.AnalyticsProvider for the ingestor tests.

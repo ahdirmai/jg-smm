@@ -77,6 +77,10 @@ type Querier interface {
 	// query, not a constraint: a CHECK cannot express a temporal join, and dedupe
 	// is a pool property (which variants are still fresh), not a row property.
 	CreateCommentTemplate(ctx context.Context, arg CreateCommentTemplateParams) (CommentTemplate, error)
+	// Keyword batch (background scrape): one async run per keyword search.
+	// POST /api/scrape/keywords inserts PENDING then a goroutine drives RUNNING→SUCCEEDED/FAILED.
+	CreateKeywordBatch(ctx context.Context, arg CreateKeywordBatchParams) (KeywordBatch, error)
+	CreateKeywordBatchPost(ctx context.Context, arg CreateKeywordBatchPostParams) error
 	// MetricSnapshot: per-post metric time-series (Timescale hypertable).
 	// PK is (id, ts) because Timescale requires the partition column in every
 	// unique index, so every query filters on `ts` to hit a chunk range.
@@ -108,6 +112,7 @@ type Querier interface {
 	GetCommentByID(ctx context.Context, id pgtype.UUID) (Comment, error)
 	GetCommentByPlatformExternalID(ctx context.Context, arg GetCommentByPlatformExternalIDParams) (Comment, error)
 	GetCommentTemplateByID(ctx context.Context, id pgtype.UUID) (CommentTemplate, error)
+	GetKeywordBatchByID(ctx context.Context, id pgtype.UUID) (KeywordBatch, error)
 	// backs the dashboard's freshness badge: the most recent terminal run tells the
 	// operator whether the analytics view they are reading is current or stale.
 	GetLatestAnalyticsIngestRun(ctx context.Context) (AnalyticsIngestRun, error)
@@ -186,6 +191,8 @@ type Querier interface {
 	// (see PickForTarget).
 	ListCommentTemplates(ctx context.Context, arg ListCommentTemplatesParams) ([]CommentTemplate, error)
 	ListCommentsByPost(ctx context.Context, arg ListCommentsByPostParams) ([]Comment, error)
+	ListKeywordBatchPosts(ctx context.Context, arg ListKeywordBatchPostsParams) ([]Post, error)
+	ListKeywordBatches(ctx context.Context, arg ListKeywordBatchesParams) ([]KeywordBatch, error)
 	ListMetricSnapshotsByPost(ctx context.Context, arg ListMetricSnapshotsByPostParams) ([]MetricSnapshot, error)
 	ListOfficialAccounts(ctx context.Context, arg ListOfficialAccountsParams) ([]OfficialAccount, error)
 	ListOfficialAccountsByPlatform(ctx context.Context, arg ListOfficialAccountsByPlatformParams) ([]OfficialAccount, error)
@@ -239,6 +246,8 @@ type Querier interface {
 	// Full-row update: weight/vars/banned_words/is_active all change together from
 	// the composer, so a partial-update builder would only hide a missed field.
 	UpdateCommentTemplate(ctx context.Context, arg UpdateCommentTemplateParams) (CommentTemplate, error)
+	// Drives PENDING→RUNNING→SUCCEEDED/FAILED. finished_at set only on terminal.
+	UpdateKeywordBatchStatus(ctx context.Context, arg UpdateKeywordBatchStatusParams) (KeywordBatch, error)
 	UpdateOfficialAccount(ctx context.Context, arg UpdateOfficialAccountParams) (OfficialAccount, error)
 	UpdateProxyGroup(ctx context.Context, arg UpdateProxyGroupParams) (ProxyGroup, error)
 	UpdateUser(ctx context.Context, arg UpdateUserParams) (UpdateUserRow, error)

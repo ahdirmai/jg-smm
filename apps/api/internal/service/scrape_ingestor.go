@@ -136,6 +136,7 @@ func (s *ScrapeIngestor) ingestPost(ctx context.Context, p domain.Platform, item
 		return fmt.Errorf("upsert post: %w", err)
 	}
 	res.PostsUpserted++
+	res.PostIDs = append(res.PostIDs, post.ID)
 
 	// A metric sample per ingest keeps the history hypertable fed.
 	if err := s.scrapes.CreateMetricSnapshot(ctx, domain.MetricSnapshot{
@@ -238,7 +239,10 @@ func parseItems(platform domain.Platform, raw []byte, window port.KeywordTimeWin
 		if err != nil {
 			return nil, err
 		}
-		return []scrapeItem{item}, nil
+		if !inWindow(item.takenAt, window) {
+			return nil, nil
+		}
+		return []scrapeItem{item.item}, nil
 	}
 	// Unknown actor shape: keep the legacy self-describing contract.
 	item, err := parseLegacyItem(raw)
@@ -266,24 +270,34 @@ func parseLegacyItem(raw []byte) (scrapeItem, error) {
 // search actor's page row (posts nested under posts[]). A row carrying
 // searchTerm/posts[] is a search page; anything else is a post row.
 func parseIGItems(raw []byte, window port.KeywordTimeWindow) ([]scrapeItem, error) {
+	// Posts is RawMessage, not []RawMessage: a hashtag page row carries `posts`
+	// as a formatted count ("440.01 K"), and unmarshalling that into a slice
+	// fails the WHOLE row. A row that is only page metadata yields zero items.
 	var probe struct {
-		SearchTerm *string           `json:"searchTerm"`
-		Posts      []json.RawMessage `json:"posts"`
+		SearchTerm *string         `json:"searchTerm"`
+		Posts      json.RawMessage `json:"posts"`
 	}
 	if err := json.Unmarshal(raw, &probe); err != nil {
 		return nil, err
 	}
-	if probe.SearchTerm != nil || probe.Posts != nil {
-		return parseIGSearchItems(raw, window)
+	if probe.SearchTerm == nil && len(probe.Posts) == 0 {
+		return parseIGPostItems(raw, window)
 	}
-	return parseIGPostItems(raw)
+	if len(probe.Posts) == 0 || probe.Posts[0] != '[' {
+		return nil, nil
+	}
+	return parseIGSearchItems(raw, window)
 }
 
 // parseIGPostItems maps apify/instagram-post-scraper's post row: the post
 // itself plus the latestComments[] that ride on the same row. Each comment is
 // keyed to the post's shortcode, so the ingestor stores the post first and the
 // comments resolve their parent through it.
-func parseIGPostItems(raw []byte) ([]scrapeItem, error) {
+//
+// This is also the shape a hashtag keyword search returns (apify/instagram-
+// scraper with searchType:hashtag), one flat row per post, so the window is
+// applied here too: that actor's only date bound is a lower one.
+func parseIGPostItems(raw []byte, window port.KeywordTimeWindow) ([]scrapeItem, error) {
 	var src struct {
 		ID             string          `json:"id"`
 		ShortCode      string          `json:"shortCode"`
@@ -315,6 +329,13 @@ func parseIGPostItems(raw []byte) ([]scrapeItem, error) {
 	}
 	if id == "" {
 		return nil, errors.New("item has no shortcode")
+	}
+	// The hashtag search's upper bound has no actor-side equivalent
+	// (onlyPostsNewerThan is a lower bound only), so drop the tail here. The
+	// post-scrape path passes a zero window and is unaffected.
+	takenAt, _ := time.Parse(time.RFC3339, src.Timestamp)
+	if !inWindow(takenAt, window) {
+		return nil, nil
 	}
 	media := src.Images
 	if len(media) == 0 && src.DisplayURL != "" {
@@ -504,8 +525,10 @@ func parseIGComments(platform domain.Platform, post scrapeItem, comments []igCom
 	return items
 }
 
-// parseThreadsItem maps futurizerush/meta-threads-scraper's post row.
-func parseThreadsItem(raw []byte) (scrapeItem, error) {
+// parseThreadsItem maps futurizerush/meta-threads-scraper's post row. created_at
+// arrives as RFC3339; it is parsed so the keyword window can be applied to the
+// same rows the post-scrape path ingests.
+func parseThreadsItem(raw []byte) (threadsItem, error) {
 	var src struct {
 		PostCode    string   `json:"post_code"`
 		PostURL     string   `json:"post_url"`
@@ -525,13 +548,13 @@ func parseThreadsItem(raw []byte) (scrapeItem, error) {
 		Error       string   `json:"error"`
 	}
 	if err := json.Unmarshal(raw, &src); err != nil {
-		return scrapeItem{}, err
+		return threadsItem{}, err
 	}
 	if src.Error != "" {
-		return scrapeItem{}, fmt.Errorf("actor error %q", src.Error)
+		return threadsItem{}, fmt.Errorf("actor error %q", src.Error)
 	}
 	if src.PostCode == "" {
-		return scrapeItem{}, errors.New("item has no post_code")
+		return threadsItem{}, errors.New("item has no post_code")
 	}
 	media := src.MediaURLs
 	metrics := map[string]any{
@@ -542,15 +565,29 @@ func parseThreadsItem(raw []byte) (scrapeItem, error) {
 	if src.ViewCount != nil {
 		metrics["views"] = src.ViewCount
 	}
-	return scrapeItem{
-		Platform:     string(domain.PlatformThreads),
-		ExternalID:   src.PostCode,
-		AuthorHandle: orDefault(src.Username, "unknown"),
-		AuthorID:     anyToString(src.UserID),
-		Text:         src.Text,
-		MediaURLs:    media,
-		Metrics:      metrics,
+	// A row with no parsable timestamp keeps a zero takenAt, which inWindow
+	// treats as "keep" — a missing field is the actor's gap, not a date outside
+	// the operator's window.
+	takenAt, _ := time.Parse(time.RFC3339, src.CreatedAt)
+	return threadsItem{
+		item: scrapeItem{
+			Platform:     string(domain.PlatformThreads),
+			ExternalID:   src.PostCode,
+			AuthorHandle: orDefault(src.Username, "unknown"),
+			AuthorID:     anyToString(src.UserID),
+			Text:         src.Text,
+			MediaURLs:    media,
+			Metrics:      metrics,
+		},
+		takenAt: takenAt,
 	}, nil
+}
+
+// threadsItem is a Threads post row plus its parsed timestamp, so the keyword
+// window can be applied without re-parsing.
+type threadsItem struct {
+	item    scrapeItem
+	takenAt time.Time
 }
 
 // anyToString coerces an actor id that arrives as number-or-string into a
