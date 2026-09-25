@@ -60,7 +60,7 @@ Light theme was off-white + indigo; dark was indigo on charcoal — no relation 
 `.dark` held a completely different hue family from `.light`.
 
 **Fix applied:** both themes are now Homies Lab — warm cream light / warm near-black dark, single
-yellow accent in both, ink-on-yellow text preserved. `docs/DESIGN_SYSTEM.md` §3/§4 updated to match
+yellow accent in both, ink-on-yellow text preserved. `DESIGN_SYSTEM.md` §3/§4 updated to match
 shipped tokens.
 
 ### F-07 Active nav state was gray-tinted
