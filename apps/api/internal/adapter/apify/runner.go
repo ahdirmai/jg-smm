@@ -83,16 +83,17 @@ var _ port.ApifyRunner = (*Runner)(nil)
 // has its own field names and its own idea of a date filter, so the payload is
 // per-platform:
 //
-//   - Instagram (apify/instagram-scraper): `search` is a COMMA-SEPARATED string
-//     of terms, `searchType:hashtag` + `resultsType:posts` make it return posts
-//     rather than page metadata, and `onlyPostsNewerThan` is the only date
-//     bound it supports (no upper bound — the ingestor drops the tail).
+//   - Instagram (crawlerbros/instagram-keyword-search-scraper): `keywords` is an
+//     ARRAY of terms (plain words or #hashtags, mixed freely) and `maxPosts` is
+//     the per-keyword result cap. It has NO date input at all — every field it
+//     accepts is a keyword/limit/cookie — so the window is applied downstream by
+//     the ingestor, not requested here.
 //   - Threads (futurizerush/meta-threads-scraper): `mode:search` with a
 //     `keywords[]` array, and both `start_date`/`end_date` bounds.
 //
 // A wrong field name is silent here: the actor falls back to its own default
-// (instagram-scraper defaults to "restaurant, restaurant prague") and returns
-// unrelated posts, so these names are pinned against the live input schemas.
+// and returns unrelated posts, so these names are pinned against the live input
+// schemas in runner_test.go.
 func (r *Runner) searchInput(in port.ApifySearchInput, maxItems int) map[string]any {
 	if in.Platform == domain.PlatformThreads {
 		payload := map[string]any{
@@ -109,17 +110,14 @@ func (r *Runner) searchInput(in port.ApifySearchInput, maxItems int) map[string]
 		}
 		return payload
 	}
-	payload := map[string]any{
-		"search":       strings.Join(in.Keywords, ","),
-		"searchType":   "hashtag",
-		"resultsType":  "posts",
-		"resultsLimit": maxItems,
-		"searchLimit":  1,
+	// No date keys: the actor's schema has no date field, so sending
+	// onlyPostsNewerThan (the old apify/instagram-scraper spelling) would be
+	// ignored — and an ignored lower bound means the ingestor has to drop
+	// out-of-window posts it already paid to fetch.
+	return map[string]any{
+		"keywords": in.Keywords,
+		"maxPosts": maxItems,
 	}
-	if !in.Window.From.IsZero() {
-		payload["onlyPostsNewerThan"] = in.Window.From.UTC().Format("2006-01-02")
-	}
-	return payload
 }
 
 // RunSearch drives the platform's search actor: keywords + window instead of
@@ -219,11 +217,10 @@ func (r *Runner) Run(ctx context.Context, in port.ApifyInput) (port.ApifyOutput,
 
 	maxItems := maxItemsOr(in.MaxItems)
 
-	// Threads' actor has no single-post mode: it scrapes a user's recent posts,
-	// and the on-demand service matches the target's shortcode among them. The
-	// IG actor takes the permalink directly.
+	// Threads' actor takes the post permalink directly (`action:"post"`). The
+	// IG actor takes the permalink in its `username` field.
 	if in.Platform == domain.PlatformThreads {
-		return r.runThreadsUserPosts(ctx, actorID, in.TargetURL, maxItems)
+		return r.runThreadsPost(ctx, actorID, in.ScrapeJobID, in.TargetURL, maxItems)
 	}
 
 	items, runID, err := r.runSync(ctx, actorID, runInput(in.Platform, in.TargetURL, maxItems), maxItems)
@@ -251,20 +248,50 @@ func runInput(p domain.Platform, targetURL string, maxItems int) map[string]any 
 	}
 }
 
-// runThreadsUserPosts scrapes a Threads user's recent posts and filters them
-// to the target's post code. The futurizerush/meta-threads-scraper actor has
-// no direct-post-URL mode; its run must go through the async API (the sync
-// endpoint's charge cap aborts it), so this helper drives run+poll.
-func (r *Runner) runThreadsUserPosts(ctx context.Context, actorID, targetURL string, maxItems int) (port.ApifyOutput, error) {
-	user := threadsUserFromURL(targetURL)
-	if user == "" {
-		return port.ApifyOutput{}, fmt.Errorf("apify: cannot resolve threads username from %q", targetURL)
+// threadsPostInput builds the per-post payload for themineworks/threads-scraper.
+// Split out from runThreadsPost so runner_test can pin the field names against
+// the actor's live input schema: a wrong name is SILENT here — the actor falls
+// back to its own default and `includeReplies` quietly returns the post with no
+// comments at all, which reads on the dashboard as "this post has no replies".
+//
+// `mode: post` selects the URL mode, `postUrls` carries the permalink, and
+// `includeReplies: true` is what makes reply rows arrive at all (they are
+// excluded by default and are the source of this platform's comments).
+func threadsPostInput(targetURL string, maxItems int) map[string]any {
+	return map[string]any{
+		"mode":           "post",
+		"postUrls":       []string{targetURL},
+		"maxPosts":       maxItems,
+		"includeReplies": true,
 	}
-	payload := map[string]any{
-		"mode":      "user",
-		"usernames": []string{user},
-		"max_posts": maxItems,
+}
+
+// runThreadsPost scrapes one Threads post (and its replies) with
+// themineworks/threads-scraper.
+//
+// This actor REPLACED the prefix-derived futurizerush one, which could not be
+// addressed by a post URL at all: it only has a user-posts mode, so a per-post
+// scrape had to run as "all recent posts by this user" and then match a
+// shortcode — and `apify/meta-threads-scraper` (what APIFY_ACTOR_PREFIX=apify
+// resolves to) 404s outright. It in turn replaced pro100chok/threads-scraper-
+// usage, whose run-sync path aborted on the shared charge cap.
+//
+// `includeReplies: true` is load-bearing, not a preference: this actor emits
+// each reply as its OWN top-level dataset row (flagged `is_reply` and carrying
+// `parent_post_id`), and it excludes them by default. Leaving it off would make
+// every Threads "Fetch comments" click ingest one post and zero comments — the
+// exact dead end the on-demand comment path exists to avoid. Replies arrive
+// ordered after their parent, which the ingestor requires so the parent row
+// exists before a reply resolves it.
+//
+// It runs through the async API rather than run-sync-get-dataset-items: the
+// shared session pool plus pagination regularly exceeds the sync endpoint's
+// charge cap, which aborts the run before any item is delivered.
+func (r *Runner) runThreadsPost(ctx context.Context, actorID, scrapeJobID, targetURL string, maxItems int) (port.ApifyOutput, error) {
+	if strings.TrimSpace(targetURL) == "" {
+		return port.ApifyOutput{}, fmt.Errorf("apify: threads scrape needs a post url")
 	}
+	payload := threadsPostInput(targetURL, maxItems)
 	body, _ := json.Marshal(payload)
 
 	startURL := fmt.Sprintf("%s/acts/%s/runs?token=%s&maxTotalChargeUsd=%s",
@@ -302,7 +329,7 @@ func (r *Runner) runThreadsUserPosts(ctx context.Context, actorID, targetURL str
 		}, nil
 	}
 	runID := started.Data.ID
-	r.log("apify: threads run started", "run", runID, "user", user)
+	r.log("apify: threads run started", "run", runID, "url", targetURL)
 
 	items, runStatus, err := r.pollRunDataset(ctx, runID)
 	if err != nil {
@@ -315,7 +342,10 @@ func (r *Runner) runThreadsUserPosts(ctx context.Context, actorID, targetURL str
 			Error:  truncate("threads actor run: "+runStatus, 500),
 		}, nil
 	}
-	return r.storeItems(ctx, threadsJobKey(targetURL, user), runID, items)
+	// Namespace the stored items by the caller's job id, like the sync path
+	// does. The old user-posts mode derived a key from the @username, which
+	// collided across concurrent scrapes of the same account.
+	return r.storeItems(ctx, scrapeJobID, runID, items)
 }
 
 // pollRunDataset waits for the actor run to reach a terminal status, then
@@ -380,34 +410,6 @@ func (r *Runner) fetchDataset(ctx context.Context, datasetID string) ([]json.Raw
 	return items, nil
 }
 
-// threadsJobKey namespaces the storage keys for a threads user scrape (the
-// caller passes the on-demand job id; the scheduler path passes its own id).
-func threadsJobKey(targetURL, user string) string {
-	if i := strings.Index(targetURL, "/post/"); i > 0 {
-		if s := strings.LastIndex(targetURL[:i], "/@"); s >= 0 && s+2 < i {
-			return strings.Trim(targetURL[s+2:i], "/")
-		}
-	}
-	return "threads-" + user
-}
-
-// threadsUserFromURL extracts the @username from a Threads post permalink
-// (https://www.threads.com/@user/post/ID or threads.net variant).
-func threadsUserFromURL(raw string) string {
-	u := raw
-	if i := strings.Index(u, "://"); i >= 0 {
-		u = u[i+3:]
-	}
-	seg := strings.Split(u, "/")
-	for _, s := range seg {
-		if strings.HasPrefix(s, "@") && len(s) > 1 {
-			return strings.TrimPrefix(s, "@")
-		}
-	}
-	return ""
-}
-
-// storeItems persists dataset items into object storage and returns the output.
 func (r *Runner) storeItems(ctx context.Context, jobKey, runID string, items []json.RawMessage) (port.ApifyOutput, error) {
 	keys := make([]string, 0, len(items))
 	var total int64

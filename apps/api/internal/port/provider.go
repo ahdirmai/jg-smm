@@ -97,6 +97,12 @@ type ScrapeIngestResult struct {
 	CommentsUpserted int
 	SnapshotsWritten int
 	BytesIngested    int64
+	// ItemsRead is every dataset item the run delivered, counted BEFORE the
+	// operator's time window and before dedup. It is the actor's result size —
+	// the number to compare against the actor's own item count — whereas
+	// PostsUpserted is what survived filtering. The two diverge when the window
+	// drops posts, and reporting the stored count as "items read" hid the drop.
+	ItemsRead int
 	// PostIDs are the id of every post this run created or refreshed, in ingest
 	// order. The keyword batch joins its result rows on exactly these, so a
 	// batch's dashboard shows what the batch scraped rather than whatever

@@ -78,6 +78,16 @@ func isUniqueViolation(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
+// isForeignKeyViolation reports whether err is a Postgres foreign-key violation
+// (SQLSTATE 23503). Distinct from isUniqueViolation: it means the row we tried
+// to write references a row that no longer exists, which for created_by means
+// the caller authenticated as a user deleted since their token was issued — a
+// stale session, not a bad request.
+func isForeignKeyViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23503"
+}
+
 // pageBounds clamps limit/offset to sane bounds for list queries.
 func pageBounds(limit, offset int) (int32, int32) {
 	if limit <= 0 || limit > 200 {

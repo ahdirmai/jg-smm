@@ -1,0 +1,93 @@
+package service
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/port"
+)
+
+// Force bypasses the 6h freshness cache. It has to, and the reason is specific
+// enough to be worth pinning: a keyword batch marks every post it ingests as
+// fresh (UpsertPost sets scraped_at = now()) but the search actor returns no
+// comment bodies. So without force, a post the operator just scraped in a batch
+// would answer "no comments" for the next 6 hours, every single time, and the
+// button would look broken rather than cached.
+
+// countingRunner records how many paid actor runs a scrape actually made.
+type countingRunner struct {
+	runs int
+}
+
+func (c *countingRunner) Run(context.Context, port.ApifyInput) (port.ApifyOutput, error) {
+	c.runs++
+	return port.ApifyOutput{RunID: "run-1", Status: "SUCCEEDED"}, nil
+}
+
+func (c *countingRunner) RunSearch(context.Context, port.ApifySearchInput) (port.ApifyOutput, error) {
+	return port.ApifyOutput{}, nil
+}
+
+// freshStore returns a post scraped one minute ago — inside the 6h window.
+func freshStore(t *testing.T) *fakeScrapeStore {
+	t.Helper()
+	store := newFakeScrapeStore()
+	const url = "https://www.instagram.com/p/ABC123/"
+	// fakeScrapeStore keys targets by platform|externalID, like the SQL.
+	store.targets[string(domain.PlatformInstagram)+"|"+url] = domain.Target{
+		ID:         "tgt-1",
+		Kind:       domain.TargetKindPost,
+		Platform:   domain.PlatformInstagram,
+		ExternalID: url,
+		URL:        url,
+		PostID:     strptr("post-1"),
+	}
+	store.posts["post-1"] = domain.Post{
+		ID:         "post-1",
+		Platform:   domain.PlatformInstagram,
+		ExternalID: "ABC123",
+		ScrapedAt:  time.Now().Add(-time.Minute),
+	}
+	return store
+}
+
+func strptr(s string) *string { return &s }
+
+func actorForAny(domain.Platform) string { return "test/actor" }
+
+// A post inside the freshness window is served from cache with force=false —
+// the batch case that makes the button useless.
+func TestScrapeTargetCachesFreshPostWithoutForce(t *testing.T) {
+	store := freshStore(t)
+	runner := &countingRunner{}
+	svc := NewScrapeService(store, runner, actorForAny, nil, nil)
+
+	if _, err := svc.ScrapeTarget(context.Background(), domain.PlatformInstagram,
+		"https://www.instagram.com/p/ABC123/", false); err != nil {
+		t.Fatalf("ScrapeTarget: %v", err)
+	}
+	if runner.runs != 0 {
+		t.Errorf("made %d actor runs, want 0 (a fresh post must be served from cache)", runner.runs)
+	}
+}
+
+// force=true spends a run even on a fresh post. This is the whole point of the
+// flag: the operator pressed the comments button, and a cached "no comments"
+// is indistinguishable from a broken one.
+func TestScrapeTargetForceBypassesFreshCache(t *testing.T) {
+	store := freshStore(t)
+	runner := &countingRunner{}
+	svc := NewScrapeService(store, runner, actorForAny, nil, nil)
+
+	// The fake store has no apify_run/scrape_job rows, so ScrapeTarget fails
+	// after the runner — which is fine: the assertion is that the runner was
+	// reached at all, i.e. the cache did not short-circuit.
+	_, _ = svc.ScrapeTarget(context.Background(), domain.PlatformInstagram,
+		"https://www.instagram.com/p/ABC123/", true)
+
+	if runner.runs == 0 {
+		t.Error("force=true did not reach the actor run; the freshness cache was not bypassed")
+	}
+}

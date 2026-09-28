@@ -724,24 +724,25 @@ func (ns NullWorkerStatus) Value() (driver.Value, error) {
 }
 
 type Account struct {
-	ID             pgtype.UUID        `json:"id"`
-	Platform       Platform           `json:"platform"`
-	Username       string             `json:"username"`
-	PasswordEnc    []byte             `json:"password_enc"`
-	AuthStatus     AuthStatus         `json:"auth_status"`
-	Handle         *string            `json:"handle"`
-	LastVerifiedAt pgtype.Timestamptz `json:"last_verified_at"`
-	Credentials    []byte             `json:"credentials"`
-	CookieExpiryAt pgtype.Timestamptz `json:"cookie_expiry_at"`
-	ProxyGroupID   pgtype.UUID        `json:"proxy_group_id"`
-	HealthScore    int32              `json:"health_score"`
-	Status         AccountStatus      `json:"status"`
-	Tags           []string           `json:"tags"`
-	WorkerID       pgtype.UUID        `json:"worker_id"`
-	LastUsedAt     pgtype.Timestamptz `json:"last_used_at"`
-	LastCheckedAt  pgtype.Timestamptz `json:"last_checked_at"`
-	LastError      *string            `json:"last_error"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	ID              pgtype.UUID        `json:"id"`
+	Platform        Platform           `json:"platform"`
+	Username        string             `json:"username"`
+	PasswordEnc     []byte             `json:"password_enc"`
+	AuthStatus      AuthStatus         `json:"auth_status"`
+	Handle          *string            `json:"handle"`
+	LastVerifiedAt  pgtype.Timestamptz `json:"last_verified_at"`
+	Credentials     []byte             `json:"credentials"`
+	CookieExpiryAt  pgtype.Timestamptz `json:"cookie_expiry_at"`
+	ProxyGroupID    pgtype.UUID        `json:"proxy_group_id"`
+	HealthScore     int32              `json:"health_score"`
+	Status          AccountStatus      `json:"status"`
+	Tags            []string           `json:"tags"`
+	WorkerID        pgtype.UUID        `json:"worker_id"`
+	LastUsedAt      pgtype.Timestamptz `json:"last_used_at"`
+	LastCheckedAt   pgtype.Timestamptz `json:"last_checked_at"`
+	LastError       *string            `json:"last_error"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	RefreshFailures int32              `json:"refresh_failures"`
 }
 
 type ActionJob struct {

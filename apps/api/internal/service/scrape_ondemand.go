@@ -62,10 +62,17 @@ func platformFromURL(raw string) domain.Platform {
 // post with its comments. Synchronous: the HTTP request lasts as long as the
 // actor run (tens of seconds); the dashboard shows a loader for it.
 //
+// force skips the 6h freshness short-circuit. It exists because a keyword batch
+// scrape updates post.scraped_at for every post it ingests (UpsertPost sets it
+// to now()) without ever fetching their comments — the search actor returns no
+// comment bodies. So a post the operator just scraped in a batch looks "fresh"
+// and the button would silently return zero comments forever. The operator
+// asking for comments means a paid run is what they want.
+//
 // Step order mirrors the scheduler path: target upsert (find-or-create, the
 // URL→post join) → scrape_job row (the run's anchor) → apify_run audit row →
 // actor run → ingest → read back through the target's post link.
-func (s *ScrapeService) ScrapeTarget(ctx context.Context, platform domain.Platform, rawURL string) (PostDetail, error) {
+func (s *ScrapeService) ScrapeTarget(ctx context.Context, platform domain.Platform, rawURL string, force bool) (PostDetail, error) {
 	rawURL = strings.TrimSpace(rawURL)
 	if rawURL == "" {
 		return PostDetail{}, fmt.Errorf("%w: url is required", domain.ErrValidation)
@@ -97,9 +104,11 @@ func (s *ScrapeService) ScrapeTarget(ctx context.Context, platform domain.Platfo
 	}
 
 	// Short-circuit cache: a fresh scrape (< 6h) returns the stored post
-	// without spending an actor run.
-	if detail, err := s.readBack(ctx, tgt); err == nil && time.Since(detail.Post.ScrapedAt) < 6*time.Hour {
-		return detail, nil
+	// without spending an actor run. Skipped on force — see the doc comment.
+	if !force {
+		if detail, err := s.readBack(ctx, tgt); err == nil && time.Since(detail.Post.ScrapedAt) < 6*time.Hour {
+			return detail, nil
+		}
 	}
 
 	job, err := s.scrapes.CreateScrapeJob(ctx, domain.ScrapeJob{
@@ -151,7 +160,7 @@ func (s *ScrapeService) ScrapeTarget(ctx context.Context, platform domain.Platfo
 			s.log.Warn("scrape: raw payload pointer failed", "key", key, "err", err)
 		}
 	}
-	ingestor := NewPlatformScrapeIngestor(s.scrapes, s.storageRef, platform, s.log)
+	ingestor := NewPlatformScrapeIngestor(s.scrapes, s.storageRef, platform, postExternalIDFromURL(platform, rawURL), s.log)
 	if _, err := ingestor.IngestRun(ctx, run.ID); err != nil {
 		return PostDetail{}, fmt.Errorf("scrape: ingest: %w", err)
 	}

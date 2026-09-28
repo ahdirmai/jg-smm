@@ -33,7 +33,15 @@ type ScrapeIngestor struct {
 	// search actors ignore the since/until we send, so the ingestor applies the
 	// filter itself. Zero = no filter.
 	window port.KeywordTimeWindow
-	log    *slog.Logger
+	// onlyCode, when set, drops every post whose code is not this one. The
+	// Threads post-actor returns share/quote CONTEXT rows alongside the
+	// requested post — auto-generated "Dengan <name> – Saya baru saja diakui…"
+	// text, `is_reply:false`, `parent_post_id` absent — with no field that
+	// separates them from the post the operator asked for. Without this
+	// allowlist they land in the post table as ordinary posts.
+	// Empty = accept every post (the keyword path).
+	onlyCode string
+	log      *slog.Logger
 }
 
 // NewScrapeIngestor wires the ingestor.
@@ -45,9 +53,12 @@ func NewScrapeIngestor(store port.ScrapeStore, storage port.RawStorage, logger *
 }
 
 // NewPlatformScrapeIngestor wires the ingestor for one actor's wire shape.
-func NewPlatformScrapeIngestor(store port.ScrapeStore, storage port.RawStorage, p domain.Platform, logger *slog.Logger) *ScrapeIngestor {
+// onlyCode, when non-empty, is the one post code a permalink scrape accepts;
+// see the field's comment for why the context rows must be dropped.
+func NewPlatformScrapeIngestor(store port.ScrapeStore, storage port.RawStorage, p domain.Platform, onlyCode string, logger *slog.Logger) *ScrapeIngestor {
 	ing := NewScrapeIngestor(store, storage, logger)
 	ing.platform = p
+	ing.onlyCode = onlyCode
 	return ing
 }
 
@@ -55,7 +66,7 @@ func NewPlatformScrapeIngestor(store port.ScrapeStore, storage port.RawStorage, 
 // platform's actor shape plus the date window the search must be filtered by
 // (the actors ignore since/until, so the ingestor applies it on the posts).
 func NewSearchScrapeIngestor(store port.ScrapeStore, storage port.RawStorage, p domain.Platform, window port.KeywordTimeWindow, logger *slog.Logger) *ScrapeIngestor {
-	ing := NewPlatformScrapeIngestor(store, storage, p, logger)
+	ing := NewPlatformScrapeIngestor(store, storage, p, "", logger)
 	ing.window = window
 	return ing
 }
@@ -76,6 +87,16 @@ func (s *ScrapeIngestor) IngestRun(ctx context.Context, runID string) (port.Scra
 	}
 
 	var res port.ScrapeIngestResult
+	// Threads replies name their parent by post id rather than nesting under it,
+	// so a run-scoped map joins them. Only Threads builds it: the other shapes
+	// are self-contained per row.
+	var run *threadsRun
+	if s.platform == domain.PlatformThreads {
+		run = newThreadsRun()
+	}
+	// Keys arrive in `received_at` order (ListRawPayloadsByRun), and the actor
+	// emits a post before its replies, so a reply's parent is already in `run`
+	// by the time the reply is parsed.
 	for _, key := range keys {
 		if ctx.Err() != nil {
 			return res, ctx.Err()
@@ -87,11 +108,16 @@ func (s *ScrapeIngestor) IngestRun(ctx context.Context, runID string) (port.Scra
 		}
 		res.BytesIngested += int64(len(raw))
 
-		items, err := parseItems(s.platform, raw, s.window)
+		items, err := parseItems(s.platform, raw, s.window, s.onlyCode, run)
 		if err != nil {
 			s.log.Warn("ingestor: payload parse failed", "key", key, "err", err)
 			continue
 		}
+		// Counted after parse, before ingest: this is the actor's delivered
+		// result size for this row. The window and the upsert can both reduce
+		// what is stored, and reporting the stored count as "items read" hid
+		// that drop on the dashboard (a batch reported 31 items read from 50).
+		res.ItemsRead += len(items)
 		for _, item := range items {
 			if err := s.ingestItem(ctx, item, &res); err != nil {
 				s.log.Warn("ingestor: item skipped", "key", key, "err", err)
@@ -230,19 +256,18 @@ type igCommentItem struct {
 // Error rows the actors emit for unreachable targets ({"error": "no_items"},
 // "not_found", "restricted_page") parse to an error here, so the caller skips
 // them instead of storing a junk post keyed by an error message.
-func parseItems(platform domain.Platform, raw []byte, window port.KeywordTimeWindow) ([]scrapeItem, error) {
+//
+// run carries the per-run state the Threads shape needs to link a reply to its
+// parent, and is nil for every other caller. Each dataset item is parsed on its
+// own with no view of its siblings, but a Threads reply references its parent by
+// numeric id while the post row is keyed by shortcode — so the two can only be
+// joined by remembering what the run has already emitted.
+func parseItems(platform domain.Platform, raw []byte, window port.KeywordTimeWindow, onlyCode string, run *threadsRun) ([]scrapeItem, error) {
 	switch platform {
 	case domain.PlatformInstagram:
 		return parseIGItems(raw, window)
 	case domain.PlatformThreads:
-		item, err := parseThreadsItem(raw)
-		if err != nil {
-			return nil, err
-		}
-		if !inWindow(item.takenAt, window) {
-			return nil, nil
-		}
-		return []scrapeItem{item.item}, nil
+		return parseThreadsItem(raw, window, onlyCode, run)
 	}
 	// Unknown actor shape: keep the legacy self-describing contract.
 	item, err := parseLegacyItem(raw)
@@ -265,10 +290,11 @@ func parseLegacyItem(raw []byte) (scrapeItem, error) {
 	return item, nil
 }
 
-// parseIGItems dispatches between the two Instagram wire shapes: the
-// post-scraper's row (one post, comments riding on latestComments[]) and the
-// search actor's page row (posts nested under posts[]). A row carrying
-// searchTerm/posts[] is a search page; anything else is a post row.
+// parseIGItems dispatches between the three Instagram wire shapes: the
+// post-scraper's row (one post, comments riding on latestComments[]), the
+// search actor's page row (posts nested under posts[]), and the
+// crawlerbros keyword-search row (one post, snake_case, no comments). A row
+// carrying searchTerm/posts[] is a search page; anything else is a post row.
 func parseIGItems(raw []byte, window port.KeywordTimeWindow) ([]scrapeItem, error) {
 	// Posts is RawMessage, not []RawMessage: a hashtag page row carries `posts`
 	// as a formatted count ("440.01 K"), and unmarshalling that into a slice
@@ -276,17 +302,107 @@ func parseIGItems(raw []byte, window port.KeywordTimeWindow) ([]scrapeItem, erro
 	var probe struct {
 		SearchTerm *string         `json:"searchTerm"`
 		Posts      json.RawMessage `json:"posts"`
+		// InputKeyword is the flat actor's only mandatory field. It is the probe
+		// because shortCode/shortcode are indistinguishable to Go's
+		// case-insensitive unmarshal — only the underscore separates the two
+		// shapes, and it is exactly the part a camelCase struct cannot read.
+		// Probing on comment_count instead would be fragile: a post with no
+		// comments may omit the key, and the row would fall through to the
+		// wrong parser and come back with null metrics again.
+		InputKeyword *string `json:"input_keyword"`
 	}
 	if err := json.Unmarshal(raw, &probe); err != nil {
 		return nil, err
 	}
 	if probe.SearchTerm == nil && len(probe.Posts) == 0 {
+		if probe.InputKeyword != nil {
+			return parseIGFlatPostItems(raw, window)
+		}
 		return parseIGPostItems(raw, window)
 	}
 	if len(probe.Posts) == 0 || probe.Posts[0] != '[' {
 		return nil, nil
 	}
 	return parseIGSearchItems(raw, window)
+}
+
+// parseIGFlatPostItems maps crawlerbros/instagram-keyword-search-scraper's row:
+// ONE post per dataset item, flat, snake_case. This shape is close enough to the
+// post-scraper's that the dispatch is subtle: it has no searchTerm and no posts[]
+// (so parseIGItems routes it here rather than to the page parser), but its fields
+// are snake_case, and Go's case-insensitive unmarshal cannot bridge `like_count`
+// to `likesCount` — an underscore is not a case difference. Reading this row
+// through the post-scraper struct yields a post with `likes: null, comments: null`
+// and handle `unknown`, which is why the batch dashboard showed a comment count
+// of nothing at all. Hence a separate parser rather than alias fields.
+//
+// The window is applied here for the same reason as everywhere else: this actor
+// accepts no date input, so the operator's filter can only be enforced post-hoc.
+//
+// It returns no comments: the actor exposes comment_count but never the comment
+// bodies, so `Fetch comments` in the dashboard has to run the post scraper.
+func parseIGFlatPostItems(raw []byte, window port.KeywordTimeWindow) ([]scrapeItem, error) {
+	var src struct {
+		Shortcode  string `json:"shortcode"`
+		Username   string `json:"username"`
+		AuthorMeta struct {
+			ID  any    `json:"id"`
+			Bio string `json:"bio"`
+		} `json:"author_meta"`
+		Caption      string `json:"caption"`
+		PubDate      string `json:"pub_date"`
+		LikeCount    *int64 `json:"like_count"`
+		CommentCount *int64 `json:"comment_count"`
+		ViewCount    *int64 `json:"view_count"`
+		PlayCount    *int64 `json:"play_count"`
+		MediaItems   []struct {
+			Type string `json:"type"`
+			URL  string `json:"url"`
+		} `json:"media_items"`
+		ThumbnailURL string `json:"thumbnail_url"`
+		Error        string `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &src); err != nil {
+		return nil, err
+	}
+	if src.Error != "" {
+		return nil, fmt.Errorf("actor error: %s", src.Error)
+	}
+	if src.Shortcode == "" {
+		return nil, errors.New("item has no shortcode")
+	}
+	takenAt := parseActorTime(src.PubDate)
+	if !inWindow(takenAt, window) {
+		return nil, nil
+	}
+	media := make([]string, 0, len(src.MediaItems))
+	for _, m := range src.MediaItems {
+		if m.URL != "" {
+			media = append(media, m.URL)
+		}
+	}
+	if len(media) == 0 && src.ThumbnailURL != "" {
+		media = []string{src.ThumbnailURL}
+	}
+	metrics := map[string]any{
+		"likes":    src.LikeCount,
+		"comments": src.CommentCount,
+	}
+	// Reels report play_count; posts report like_count only. Count either as views.
+	if src.ViewCount != nil {
+		metrics["views"] = src.ViewCount
+	} else if src.PlayCount != nil {
+		metrics["views"] = src.PlayCount
+	}
+	return []scrapeItem{{
+		Platform:     string(domain.PlatformInstagram),
+		ExternalID:   src.Shortcode,
+		AuthorHandle: orDefault(src.Username, "unknown"),
+		AuthorID:     anyToString(src.AuthorMeta.ID),
+		Text:         src.Caption,
+		MediaURLs:    media,
+		Metrics:      metrics,
+	}}, nil
 }
 
 // parseIGPostItems maps apify/instagram-post-scraper's post row: the post
@@ -333,7 +449,7 @@ func parseIGPostItems(raw []byte, window port.KeywordTimeWindow) ([]scrapeItem, 
 	// The hashtag search's upper bound has no actor-side equivalent
 	// (onlyPostsNewerThan is a lower bound only), so drop the tail here. The
 	// post-scrape path passes a zero window and is unaffected.
-	takenAt, _ := time.Parse(time.RFC3339, src.Timestamp)
+	takenAt := parseActorTime(src.Timestamp)
 	if !inWindow(takenAt, window) {
 		return nil, nil
 	}
@@ -504,6 +620,36 @@ func inWindow(t time.Time, w port.KeywordTimeWindow) bool {
 	return true
 }
 
+// parseActorTime reads a timestamp from an actor, accepting the layouts they
+// actually emit and returning the zero time when none fit.
+//
+// The timezone-less case is not hypothetical: crawlerbros/instagram-keyword-
+// search-scraper emits pub_date as "2026-08-03T07:06:51", which RFC3339 rejects
+// (it requires an offset). That parse error was discarded with `_`, so every
+// crawlerbros post had a zero taken_at — and inWindow KEEPS a zero timestamp, so
+// the operator's date filter silently returned the whole result set instead of
+// the window. Timestamps are UTC across these actors, so a missing offset is
+// read as UTC rather than as "unknown".
+func parseActorTime(s string) time.Time {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return time.Time{}
+	}
+	for _, layout := range []string{
+		time.RFC3339,
+		"2006-01-02T15:04:05Z0700",
+		"2006-01-02T15:04:05",
+		"2006-01-02T15:04:05.000Z",
+		"2006-01-02 15:04:05",
+		"2006-01-02",
+	} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t.UTC()
+		}
+	}
+	return time.Time{}
+}
+
 // parseIGComments splits a post row into one scrapeItem per latestComments
 // entry (each keyed to the parent post's shortcode). The post itself is
 // emitted first so the parent row exists when the comments resolve it.
@@ -525,69 +671,176 @@ func parseIGComments(platform domain.Platform, post scrapeItem, comments []igCom
 	return items
 }
 
-// parseThreadsItem maps futurizerush/meta-threads-scraper's post row. created_at
-// arrives as RFC3339; it is parsed so the keyword window can be applied to the
-// same rows the post-scrape path ingests.
-func parseThreadsItem(raw []byte) (threadsItem, error) {
+// threadsRun carries one scrape run's post-id -> shortcode map. A Threads reply
+// arrives as its own top-level dataset row and names its parent only by numeric
+// `parent_post_id`, while post rows are keyed by shortcode; without this map a
+// reply has no way to reach the post it belongs to and would be dropped.
+//
+// ponytail: an in-memory map, correct because the ingestor walks one run's
+// payloads in `received_at` order (ListRawPayloadsByRun orders by it) and the
+// actor emits a parent before its replies. It would not survive a caller that
+// fetched items out of order or in parallel; if that ever happens, resolve
+// through a persisted post_id column instead of this map.
+type threadsRun struct {
+	codes map[string]string
+}
+
+func newThreadsRun() *threadsRun {
+	return &threadsRun{codes: make(map[string]string)}
+}
+
+// code remembers a post's shortcode so a later reply can name its parent.
+func (t *threadsRun) code(postID, code string) {
+	if t != nil && postID != "" && code != "" {
+		t.codes[postID] = code
+	}
+}
+
+// parent resolves a reply's `parent_post_id` to the parent's shortcode, or ""
+// when the run never emitted that post — a reply whose parent fell outside the
+// date window, which is dropped rather than rejected.
+func (t *threadsRun) parent(postID string) string {
+	if t == nil {
+		return ""
+	}
+	return t.codes[postID]
+}
+
+// parseThreadsItem maps one themineworks/threads-scraper row into the canonical
+// items it yields: a post, or a reply to one.
+//
+// This actor (a) replaced pro100chok/threads-scraper-usage and (b) does NOT nest
+// replies under the post the way that one did. Each reply is its own top-level
+// dataset row, flagged `is_reply` and naming its parent through
+// `parent_post_id`, so a reply becomes a comment and is linked back through the
+// run's post-id map. That is why the runner must send `includeReplies: true`:
+// with the actor's default the reply rows never arrive and a Threads post
+// ingests with zero comments.
+//
+// The wire names are raw Threads/snake_case (code / text / posted_at /
+// like_count), matching the documented schema. The earlier actors' spellings
+// (post_code / text_content / created_at / media_urls, and usage's taken_at /
+// images / video_versions / replies[]) are kept as fallbacks: a row from either
+// can still be sitting in object storage from an earlier run and is re-ingested
+// on a forced scrape.
+func parseThreadsItem(raw []byte, window port.KeywordTimeWindow, onlyCode string, run *threadsRun) ([]scrapeItem, error) {
 	var src struct {
-		PostCode    string   `json:"post_code"`
-		PostURL     string   `json:"post_url"`
-		Username    string   `json:"username"`
-		UserID      any      `json:"user_id"`
-		Text        string   `json:"text_content"`
-		MediaURLs   []string `json:"media_urls"`
-		MediaType   string   `json:"media_type"`
-		CreatedAt   string   `json:"created_at"`
-		LikeCount   *int64   `json:"like_count"`
-		ReplyCount  *int64   `json:"reply_count"`
-		RepostCount *int64   `json:"repost_count"`
-		QuoteCount  *int64   `json:"quote_count"`
-		ShareCount  *int64   `json:"share_count"`
-		ViewCount   *int64   `json:"view_count"`
-		IsReply     bool     `json:"is_reply"`
-		Error       string   `json:"error"`
+		// Current actor.
+		PostID       string   `json:"post_id"`
+		Code         string   `json:"code"`
+		Text         string   `json:"text"`
+		PostedAt     string   `json:"posted_at"`
+		LikeCount    *int64   `json:"like_count"`
+		ReplyCount   *int64   `json:"reply_count"`
+		RepostCount  *int64   `json:"repost_count"`
+		QuoteCount   *int64   `json:"quote_count"`
+		MediaURLs    []string `json:"media_urls"`
+		IsReply      bool     `json:"is_reply"`
+		ParentPostID string   `json:"parent_post_id"`
+		Username     string   `json:"username"`
+		// Actor-level failures ("no_items", "not_found", ...) arrive as a row
+		// carrying only this. Type is informational and never billed.
+		Error string `json:"error"`
+		Type  string `json:"_type"`
+
+		// Legacy: pro100chok/threads-scraper-usage.
+		TakenAt string   `json:"taken_at"`
+		Images  []string `json:"images"`
+		// Example: a video post carries its playable file here, not on `images`.
+		VideoVersions []struct {
+			URL string `json:"url"`
+		} `json:"video_versions"`
+		ReshareCt *int64 `json:"reshare_count"`
+
+		// Legacy: futurizerush/meta-threads-scraper.
+		PostCode    string `json:"post_code"`
+		TextContent string `json:"text_content"`
+		CreatedAt   string `json:"created_at"`
 	}
 	if err := json.Unmarshal(raw, &src); err != nil {
-		return threadsItem{}, err
+		return nil, err
 	}
 	if src.Error != "" {
-		return threadsItem{}, fmt.Errorf("actor error %q", src.Error)
+		return nil, fmt.Errorf("actor error %q", src.Error)
 	}
-	if src.PostCode == "" {
-		return threadsItem{}, errors.New("item has no post_code")
+	// The run summary is informational and never billed; storing it as a post
+	// would put an empty row on the dashboard for every scrape.
+	if src.Type == "info" {
+		return nil, nil
 	}
+	code := orDefault(src.Code, src.PostCode)
+	if code == "" {
+		return nil, errors.New("item has no post code")
+	}
+	text := orDefault(src.Text, src.TextContent)
+	// media_items are not a flat list: this actor sends media_urls[], usage sent
+	// images[] for an image post and video_versions[].url for a video one.
 	media := src.MediaURLs
-	metrics := map[string]any{
-		"likes":    src.LikeCount,
-		"comments": src.ReplyCount,
-		"shares":   orInt(src.ShareCount, src.RepostCount, src.QuoteCount),
-	}
-	if src.ViewCount != nil {
-		metrics["views"] = src.ViewCount
+	if len(media) == 0 {
+		media = src.Images
+		for _, v := range src.VideoVersions {
+			if strings.TrimSpace(v.URL) != "" {
+				media = append(media, v.URL)
+			}
+		}
 	}
 	// A row with no parsable timestamp keeps a zero takenAt, which inWindow
 	// treats as "keep" — a missing field is the actor's gap, not a date outside
 	// the operator's window.
-	takenAt, _ := time.Parse(time.RFC3339, src.CreatedAt)
-	return threadsItem{
-		item: scrapeItem{
-			Platform:     string(domain.PlatformThreads),
-			ExternalID:   src.PostCode,
-			AuthorHandle: orDefault(src.Username, "unknown"),
-			AuthorID:     anyToString(src.UserID),
-			Text:         src.Text,
-			MediaURLs:    media,
-			Metrics:      metrics,
-		},
-		takenAt: takenAt,
-	}, nil
-}
+	takenAt := parseActorTime(orDefault(src.PostedAt, orDefault(src.TakenAt, src.CreatedAt)))
+	if !inWindow(takenAt, window) {
+		return nil, nil
+	}
+	handle := orDefault(src.Username, "unknown")
 
-// threadsItem is a Threads post row plus its parsed timestamp, so the keyword
-// window can be applied without re-parsing.
-type threadsItem struct {
-	item    scrapeItem
-	takenAt time.Time
+	// The reply branch: same row shape, linked to its parent through the run's
+	// shortcode map. Resolved before the window check above could drop the
+	// parent, so a reply is kept whenever the parent row was seen.
+	if src.IsReply {
+		parent := run.parent(src.ParentPostID)
+		if parent != "" && text != "" {
+			return []scrapeItem{{
+				Platform:     string(domain.PlatformThreads),
+				ExternalID:   code,
+				CommentOf:    parent,
+				AuthorHandle: handle,
+				Text:         text,
+				Metrics:      map[string]any{"likes": src.LikeCount},
+			}}, nil
+		}
+		// The parent is not in this run. The actor flags `is_reply` on rows
+		// whose parent the scrape never delivered: its keyword mode marks a
+		// reply without fetching the parent post, and `replied_to_post_code`
+		// arrives empty alongside it. Dropping the row here lost 19 of 50
+		// posts on a real batch. Store it as a top-level post instead — the
+		// parent link is genuinely unavailable, but the post and its metrics
+		// are not.
+		//
+		// ponytail: the stored post is then commentless and its `replied_to_*`
+		// context is discarded. If the parent link matters later, resolve it
+		// from `reply_to_username` + `replied_to_post_code` when the latter is
+		// present.
+	}
+
+	run.code(src.PostID, code)
+	// A permalink scrape accepts only the post it asked for: the actor's post
+	// mode also returns share/quote context rows with no distinguishing field,
+	// which would otherwise be stored as ordinary posts.
+	if onlyCode != "" && onlyCode != code {
+		return nil, nil
+	}
+	return []scrapeItem{{
+		Platform:     string(domain.PlatformThreads),
+		ExternalID:   code,
+		AuthorHandle: handle,
+		Text:         text,
+		MediaURLs:    media,
+		Metrics: map[string]any{
+			"likes":    src.LikeCount,
+			"comments": src.ReplyCount,
+			"shares":   orInt(src.RepostCount, src.ReshareCt, src.QuoteCount),
+		},
+	}}, nil
 }
 
 // anyToString coerces an actor id that arrives as number-or-string into a

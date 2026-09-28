@@ -2,10 +2,13 @@ package repository
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
@@ -259,5 +262,45 @@ func TestProvisionLogAppend(t *testing.T) {
 	}
 	if len(rows) != 1 || rows[0].Op != domain.OpCreate || rows[0].Status != domain.ProvisionApplied {
 		t.Fatalf("provision log row wrong: %+v", rows)
+	}
+}
+
+// A batch created with a created_by that no longer exists must surface as
+// ErrUnauthorized, not a raw FK violation leaking through as a 502. This is the
+// stale-session case: the JWT still verifies (it is signed by us) but its user
+// was deleted by a database reset, so the operator must be told to sign in
+// again rather than shown an opaque "Bad Gateway".
+func TestCreateKeywordBatchStaleSessionIsUnauthorized(t *testing.T) {
+	pool := testPool(t)
+	repo := NewKeywordBatchRepo(sqlcgen.New(pool))
+
+	missing := "00000000-0000-0000-0000-000000000000"
+	_, err := repo.CreateKeywordBatch(context.Background(), domain.KeywordBatch{
+		Platform:  domain.PlatformInstagram,
+		Keywords:  []string{"stale-session-test"},
+		MaxPosts:  1,
+		ActorID:   "test/actor",
+		Status:    "PENDING",
+		CreatedBy: &missing,
+	})
+	if !errors.Is(err, domain.ErrUnauthorized) {
+		t.Fatalf("want ErrUnauthorized for a dangling created_by, got %v", err)
+	}
+}
+
+// The raw-error classification the mapping above depends on: 23503 is a foreign
+// key violation, and it must not be confused with the 23505 unique violation
+// the same file already handles.
+func TestForeignKeyViolationClassification(t *testing.T) {
+	pgErr := &pgconn.PgError{Code: "23503"}
+	wrapped := fmt.Errorf("repository.keyword_batch.Create: %w", pgErr)
+	if !isForeignKeyViolation(wrapped) {
+		t.Error("23503 wrapped in fmt.Errorf should still be recognised")
+	}
+	if isUniqueViolation(wrapped) {
+		t.Error("23503 must not match the unique-violation classifier")
+	}
+	if isForeignKeyViolation(errors.New("not a pg error")) {
+		t.Error("a plain error must not classify as an FK violation")
 	}
 }

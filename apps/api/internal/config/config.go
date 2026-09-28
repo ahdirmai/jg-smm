@@ -122,6 +122,11 @@ type Config struct {
 	// ApifyActorPrefix selects the actor id per platform, e.g.
 	// "~smm/instagram-scraper". The concrete ids live in PLATFORM_MATRIX.
 	ApifyActorPrefix string
+	// ApifyPostActorThreads is the full id of the per-POST Threads scraper, and
+	// is not prefix-derived for the same reason as the search actors below: the
+	// actor publishes under a third-party namespace, so "<prefix>/<name>" would
+	// address a store entry that does not exist (404 on every Threads scrape).
+	ApifyPostActorThreads string
 	// ApifySearchActorInstagram / ApifySearchActorThreads are the full ids of
 	// the keyword-search actors. They are not prefix-derived: the Instagram and
 	// Threads search actors publish under different Apify namespaces.
@@ -150,6 +155,13 @@ type Config struct {
 	// AggregateIntervalSeconds runs the top-post metric re-sampler (P2-05).
 	// 0 disables it; the ticket's cadence is 30 minutes (1800s).
 	AggregateIntervalSeconds int
+	// SessionRefreshIntervalSeconds runs the P2-06 session refresher: dispatch
+	// a headful re-login for accounts whose cookie is inside the lead window.
+	// 0 disables it.
+	SessionRefreshIntervalSeconds int
+	// SessionRefreshLeadHours is how far ahead of expiry a refresh is
+	// dispatched (the ticket's "7 hari sebelum expiry").
+	SessionRefreshLeadHours int
 	// AnalyticsProvider selects which 3rd-party provider adapter the ingestor
 	// uses (PRD F5; provider-agnostic by design).
 	AnalyticsProvider string
@@ -226,8 +238,9 @@ func Load() (Config, error) {
 		ApifyToken:       os.Getenv("APIFY_TOKEN"),
 		ApifyActorPrefix: env("APIFY_ACTOR_PREFIX", "~smm"),
 		// Full ids: the search actors live under different Apify namespaces.
-		ApifySearchActorInstagram: env("APIFY_SEARCH_ACTOR_INSTAGRAM", "apify/instagram-scraper"),
+		ApifySearchActorInstagram: env("APIFY_SEARCH_ACTOR_INSTAGRAM", "crawlerbros/instagram-keyword-search-scraper"),
 		ApifySearchActorThreads:   env("APIFY_SEARCH_ACTOR_THREADS", "futurizerush/meta-threads-scraper"),
+		ApifyPostActorThreads:     env("APIFY_POST_ACTOR_THREADS", "themineworks/threads-scraper"),
 		ApifyBudgetUSD:            envFloat("APIFY_BUDGET_USD", 0),
 		ProxyBudgetGB:             envFloat("PROXY_BUDGET_GB", 0),
 
@@ -238,6 +251,8 @@ func Load() (Config, error) {
 		AnalyticsIngestIntervalSeconds: envInt("ANALYTICS_INGEST_INTERVAL_SECONDS", 0),
 		AlertIntervalSeconds:           envInt("ALERT_INTERVAL_SECONDS", 0),
 		AggregateIntervalSeconds:       envInt("AGGREGATE_INTERVAL_SECONDS", 0),
+		SessionRefreshIntervalSeconds:  envInt("SESSION_REFRESH_INTERVAL_SECONDS", 0),
+		SessionRefreshLeadHours:        envInt("SESSION_REFRESH_LEAD_HOURS", 168),
 		AnalyticsProvider:              env("ANALYTICS_PROVIDER", "thirdparty_a"),
 		AnalyticsProviderBaseURL:       env("ANALYTICS_PROVIDER_BASE_URL", "https://provider.example.com/v1"),
 		AnalyticsProviderKey:           os.Getenv("ANALYTICS_PROVIDER_KEY"),
@@ -293,6 +308,12 @@ func Load() (Config, error) {
 	}
 	if cfg.ActionIntervalSeconds < 0 {
 		return Config{}, fmt.Errorf("config: ACTION_INTERVAL_SECONDS must be >= 0, got %d", cfg.ActionIntervalSeconds)
+	}
+	if cfg.SessionRefreshIntervalSeconds < 0 {
+		return Config{}, fmt.Errorf("config: SESSION_REFRESH_INTERVAL_SECONDS must be >= 0, got %d", cfg.SessionRefreshIntervalSeconds)
+	}
+	if cfg.SessionRefreshLeadHours <= 0 {
+		return Config{}, fmt.Errorf("config: SESSION_REFRESH_LEAD_HOURS must be > 0, got %d", cfg.SessionRefreshLeadHours)
 	}
 	if cfg.ActionCooldownSeconds < 0 {
 		return Config{}, fmt.Errorf("config: ACTION_COOLDOWN_SECONDS must be >= 0, got %d", cfg.ActionCooldownSeconds)

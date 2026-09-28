@@ -45,23 +45,29 @@ func TestSearchInputPerActor(t *testing.T) {
 	}
 
 	ig := r.searchInput(in, 30)
-	if got, want := ig["search"], "batulicin,kalsel"; got != want {
-		t.Errorf("instagram search = %v, want comma-joined %q", got, want)
+	igkws, ok := ig["keywords"].([]string)
+	if !ok || len(igkws) != 2 || igkws[0] != "batulicin" {
+		t.Errorf("instagram keywords = %v, want the array %v", ig["keywords"], in.Keywords)
 	}
-	if _, isSlice := ig["search"].([]string); isSlice {
-		t.Error("instagram search must be a comma-joined string, not an array")
+	if ig["maxPosts"] != 30 {
+		t.Errorf("instagram maxPosts = %v, want 30", ig["maxPosts"])
 	}
-	if _, ok := ig["searchTerms"]; ok {
-		t.Error("instagram has no searchTerms field; the actor ignores it and uses its default")
+	// The old apify/instagram-scraper spellings. Sending them to the crawlerbros
+	// actor is not a harmless default: it ignores `search`, so the run would
+	// search for nothing and return an empty dataset.
+	if _, ok := ig["search"]; ok {
+		t.Error("instagram has no comma-joined `search` field; the actor ignores it")
 	}
-	if ig["searchType"] != "hashtag" || ig["resultsType"] != "posts" {
-		t.Errorf("instagram must ask for hashtag posts, got %v/%v", ig["searchType"], ig["resultsType"])
+	if _, ok := ig["resultsLimit"]; ok {
+		t.Error("instagram has no `resultsLimit` field; the cap is `maxPosts`")
 	}
-	if ig["onlyPostsNewerThan"] != "2026-09-01" {
-		t.Errorf("instagram from-bound: got %v", ig["onlyPostsNewerThan"])
-	}
-	if _, ok := ig["end_date"]; ok {
-		t.Error("instagram has no upper date bound; the ingestor applies it")
+	// This actor's input schema has no date field at all. The window is applied
+	// by the ingestor, so sending a bound here would be ignored — and paying for
+	// out-of-window posts we then throw away.
+	for _, key := range []string{"onlyPostsNewerThan", "start_date", "end_date", "since"} {
+		if _, ok := ig[key]; ok {
+			t.Errorf("instagram actor takes no date input; %q must not be sent", key)
+		}
 	}
 
 	in.Platform = domain.PlatformThreads
@@ -82,14 +88,17 @@ func TestSearchInputPerActor(t *testing.T) {
 }
 
 // A zero window omits the date fields entirely rather than sending a zero date,
-// which an actor would read as 0001-01-01.
+// which an actor would read as 0001-01-01. (The Instagram actor takes no date
+// input in any case — this guards against a future edit reintroducing one.)
 func TestSearchInputOmitsZeroWindow(t *testing.T) {
 	r := &Runner{}
 	in := port.ApifySearchInput{Platform: domain.PlatformInstagram, Keywords: []string{"x"}}
 
 	ig := r.searchInput(in, 10)
-	if v, ok := ig["onlyPostsNewerThan"]; ok {
-		t.Errorf("zero window must omit onlyPostsNewerThan, got %v", v)
+	for _, k := range []string{"onlyPostsNewerThan", "start_date", "end_date"} {
+		if v, ok := ig[k]; ok {
+			t.Errorf("instagram must omit %s (the actor has no date input), got %v", k, v)
+		}
 	}
 
 	in.Platform = domain.PlatformThreads
@@ -98,5 +107,43 @@ func TestSearchInputOmitsZeroWindow(t *testing.T) {
 		if v, ok := th[k]; ok {
 			t.Errorf("zero window must omit %s, got %v", k, v)
 		}
+	}
+}
+
+// The per-post Threads payload is pinned against themineworks/threads-scraper's
+// live input schema, because a wrong field name there fails SILENTLY: the actor
+// falls back to its own default and the run succeeds with the wrong data.
+//
+// `includeReplies` is the one that matters most. This actor emits each reply as
+// its own dataset row and EXCLUDES them by default, so dropping the flag does
+// not error — it makes every Threads post ingest with zero comments, which the
+// dashboard renders as a post nobody replied to. Field names verified against
+// the actor's input schema (2026-09).
+func TestThreadsPostInput(t *testing.T) {
+	p := threadsPostInput("https://www.threads.com/@ahdirmai/post/DdGJIzFiWkJ", 25)
+
+	if got := p["mode"]; got != "post" {
+		t.Errorf("mode = %v, want %q (this actor dispatches on mode, default is profile)", got, "post")
+	}
+	urls, ok := p["postUrls"].([]string)
+	if !ok || len(urls) != 1 || urls[0] != "https://www.threads.com/@ahdirmai/post/DdGJIzFiWkJ" {
+		t.Errorf("postUrls = %v, want the permalink in a one-element array", p["postUrls"])
+	}
+	if got := p["maxPosts"]; got != 25 {
+		t.Errorf("maxPosts = %v, want 25", got)
+	}
+	// The load-bearing flag. Without it there are no reply rows and therefore no
+	// comments for any Threads post.
+	if got := p["includeReplies"]; got != true {
+		t.Errorf("includeReplies = %v, want true — without it the actor drops every reply row "+
+			"(excluded by default), so the post ingests with no comments", got)
+	}
+	// This actor's spelling is maxPosts; the previous one took maxItems. Sending
+	// the old name would silently run unbounded (the actor's own default).
+	if _, stale := p["maxItems"]; stale {
+		t.Error("maxItems is the previous actor's field; this one reads maxPosts")
+	}
+	if _, stale := p["targets"]; stale {
+		t.Error("targets/action are the previous actor's fields; this one reads mode/postsUrls")
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -95,18 +96,20 @@ func (r *AccountRepo) Create(ctx context.Context, a domain.Account) (domain.Acco
 // Update persists mutable lifecycle/auth fields. It never touches password_enc.
 func (r *AccountRepo) Update(ctx context.Context, a domain.Account) (domain.Account, error) {
 	row, err := r.q.UpdateAccount(ctx, sqlcgen.UpdateAccountParams{
-		ID:             uuidValue(a.ID),
-		AuthStatus:     sqlcgen.AuthStatus(a.AuthStatus),
-		Handle:         a.Handle,
-		LastVerifiedAt: tsPtr(a.LastVerified),
-		ProxyGroupID:   uuidValuePtr(a.ProxyGroupID),
-		HealthScore:    int32(a.HealthScore),
-		Status:         sqlcgen.AccountStatus(a.Status),
-		Tags:           a.Tags,
-		WorkerID:       uuidValuePtr(a.WorkerID),
-		LastUsedAt:     tsPtr(a.LastUsedAt),
-		LastCheckedAt:  tsPtr(a.LastChecked),
-		LastError:      a.LastError,
+		ID:              uuidValue(a.ID),
+		AuthStatus:      sqlcgen.AuthStatus(a.AuthStatus),
+		Handle:          a.Handle,
+		LastVerifiedAt:  tsPtr(a.LastVerified),
+		ProxyGroupID:    uuidValuePtr(a.ProxyGroupID),
+		HealthScore:     int32(a.HealthScore),
+		Status:          sqlcgen.AccountStatus(a.Status),
+		Tags:            a.Tags,
+		WorkerID:        uuidValuePtr(a.WorkerID),
+		LastUsedAt:      tsPtr(a.LastUsedAt),
+		LastCheckedAt:   tsPtr(a.LastChecked),
+		LastError:       a.LastError,
+		CookieExpiryAt:  tsPtr(a.CookieExpiryAt),
+		RefreshFailures: int32(a.RefreshFailures),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.Account{}, domain.ErrNotFound
@@ -191,41 +194,73 @@ func nonNilTags(tags []string) []string {
 // generated account row type has exactly these fields in this order, so it is
 // convertible with a plain type conversion (see call sites).
 type accountFields struct {
-	ID             pgtype.UUID
-	Platform       sqlcgen.Platform
-	Username       string
-	AuthStatus     sqlcgen.AuthStatus
-	Handle         *string
-	LastVerifiedAt pgtype.Timestamptz
-	ProxyGroupID   pgtype.UUID
-	HealthScore    int32
-	Status         sqlcgen.AccountStatus
-	Tags           []string
-	WorkerID       pgtype.UUID
-	LastUsedAt     pgtype.Timestamptz
-	LastCheckedAt  pgtype.Timestamptz
-	LastError      *string
-	CreatedAt      pgtype.Timestamptz
+	ID              pgtype.UUID
+	Platform        sqlcgen.Platform
+	Username        string
+	AuthStatus      sqlcgen.AuthStatus
+	Handle          *string
+	LastVerifiedAt  pgtype.Timestamptz
+	ProxyGroupID    pgtype.UUID
+	HealthScore     int32
+	Status          sqlcgen.AccountStatus
+	Tags            []string
+	WorkerID        pgtype.UUID
+	LastUsedAt      pgtype.Timestamptz
+	LastCheckedAt   pgtype.Timestamptz
+	LastError       *string
+	CookieExpiryAt  pgtype.Timestamptz
+	RefreshFailures int32
+	CreatedAt       pgtype.Timestamptz
 }
 
 // toAccount maps an account row to the domain entity. It never reads a
 // password column: no account query selects one.
 func toAccount(f accountFields) domain.Account {
 	return domain.Account{
-		ID:           uuidString(f.ID),
-		Platform:     platformDomain(f.Platform),
-		Username:     f.Username,
-		AuthStatus:   domain.AuthStatus(f.AuthStatus),
-		Handle:       f.Handle,
-		LastVerified: tsTime(f.LastVerifiedAt),
-		ProxyGroupID: uuidStrPtr(f.ProxyGroupID),
-		HealthScore:  int(f.HealthScore),
-		Status:       domain.AccountStatus(f.Status),
-		Tags:         f.Tags,
-		WorkerID:     uuidStrPtr(f.WorkerID),
-		LastUsedAt:   tsTime(f.LastUsedAt),
-		LastChecked:  tsTime(f.LastCheckedAt),
-		LastError:    f.LastError,
-		CreatedAt:    tsTimeOrZero(f.CreatedAt),
+		ID:              uuidString(f.ID),
+		Platform:        platformDomain(f.Platform),
+		Username:        f.Username,
+		AuthStatus:      domain.AuthStatus(f.AuthStatus),
+		Handle:          f.Handle,
+		LastVerified:    tsTime(f.LastVerifiedAt),
+		ProxyGroupID:    uuidStrPtr(f.ProxyGroupID),
+		HealthScore:     int(f.HealthScore),
+		Status:          domain.AccountStatus(f.Status),
+		Tags:            f.Tags,
+		WorkerID:        uuidStrPtr(f.WorkerID),
+		LastUsedAt:      tsTime(f.LastUsedAt),
+		LastChecked:     tsTime(f.LastCheckedAt),
+		LastError:       f.LastError,
+		CookieExpiryAt:  tsTime(f.CookieExpiryAt),
+		RefreshFailures: int(f.RefreshFailures),
+		CreatedAt:       tsTimeOrZero(f.CreatedAt),
 	}
+}
+
+// ListDueForRefresh returns accounts whose session cookie expires before
+// `deadline` and that are not already mid-login. `retryAfter` is the earliest
+// dispatch time a previously-failed account may be retried at (P2-06).
+func (r *AccountRepo) ListDueForRefresh(ctx context.Context, deadline, retryAfter time.Time) ([]domain.Account, error) {
+	rows, err := r.q.ListAccountsDueForRefresh(ctx, sqlcgen.ListAccountsDueForRefreshParams{
+		CookieExpiryAt: tsPtr(&deadline),
+		LastCheckedAt:  tsPtr(&retryAfter),
+		Limit:          200,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("repository.account.ListDueForRefresh: %w", err)
+	}
+	out := make([]domain.Account, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, toAccount(accountFields(row)))
+	}
+	return out, nil
+}
+
+// BeginRefresh marks a session refresh in flight, so the next tick does not
+// re-dispatch an account whose worker is still logging in.
+func (r *AccountRepo) BeginRefresh(ctx context.Context, accountID string) error {
+	if err := r.q.BeginSessionRefresh(ctx, uuidValue(accountID)); err != nil {
+		return fmt.Errorf("repository.account.BeginRefresh: %w", err)
+	}
+	return nil
 }

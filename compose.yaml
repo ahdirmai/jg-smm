@@ -114,6 +114,11 @@ services:
       # P3-07 action scheduler: claim due jobs -> cooldown + rate-limit gates ->
       # worker queue. Off by default; enable to run the action engine.
       ACTION_INTERVAL_SECONDS: ${ACTION_INTERVAL_SECONDS:-0}
+      # P2-06 session refresher: re-logins accounts whose platform cookie dies
+      # inside the lead window and quarantines them after repeated failures.
+      # Off by default, like the other loops.
+      SESSION_REFRESH_INTERVAL_SECONDS: ${SESSION_REFRESH_INTERVAL_SECONDS:-0}
+      SESSION_REFRESH_LEAD_HOURS: ${SESSION_REFRESH_LEAD_HOURS:-168}
       PROVISIONER_MODE: ${PROVISIONER_MODE:-docker}
       # The reconciler is what actually provisions a dashboard-created row
       # (F-02): leave it on locally so Create reaches a container.
@@ -145,6 +150,16 @@ services:
       APIFY_TOKEN: ${APIFY_TOKEN:-}
       APIFY_BASE_URL: ${APIFY_BASE_URL:-https://api.apify.com/v2}
       APIFY_ACTOR_PREFIX: ${APIFY_ACTOR_PREFIX:-~smm}
+      # Keyword-search actors are full ids, not prefix-derived: each platform's
+      # search actor lives under a different Apify namespace. Pinned explicitly
+      # so a config default change cannot silently swap the actor out from under
+      # a running stack.
+      APIFY_SEARCH_ACTOR_INSTAGRAM: ${APIFY_SEARCH_ACTOR_INSTAGRAM:-crawlerbros/instagram-keyword-search-scraper}
+      APIFY_SEARCH_ACTOR_THREADS: ${APIFY_SEARCH_ACTOR_THREADS:-futurizerush/meta-threads-scraper}
+      # Per-POST Threads scraper, also a full id: the prefix-derived
+      # "<prefix>/meta-threads-scraper" 404s on every scrape — that build is
+      # user-posts-only (no per-post mode) and has no store entry under apify/.
+      APIFY_POST_ACTOR_THREADS: ${APIFY_POST_ACTOR_THREADS:-themineworks/threads-scraper}
       # LLM (OpenAI-compatible) for AI comment generation. Empty key disables
       # the endpoint (503), never a request with a blank credential.
       LLM_BASE_URL: ${LLM_BASE_URL:-}
@@ -231,6 +246,18 @@ services:
         # below is too late for NEXT_PUBLIC_*.
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:24080}
         NEXT_PUBLIC_SSE_URL: ${NEXT_PUBLIC_SSE_URL:-http://localhost:24080/api/stream}
+    environment:
+      # Next standalone does `const hostname = process.env.HOSTNAME || '0.0.0.0'`
+      # (apps/web/server.js), and Docker sets HOSTNAME to the container id. So
+      # without this the server binds only the container's eth0 address: the
+      # published port works, but nothing *inside* the container can reach it on
+      # loopback — including the image's own healthcheck (apps/web/Dockerfile),
+      # which probes 127.0.0.1. Pinning it to 0.0.0.0 restores the
+      # bind-everywhere default the `|| '0.0.0.0'` fallback was written for.
+      #
+      # This pin is therefore load-bearing for health, not cosmetic: drop it and
+      # the container goes unhealthy while serving fine on its published port.
+      HOSTNAME: '0.0.0.0'
     depends_on:
       api:
         condition: service_started

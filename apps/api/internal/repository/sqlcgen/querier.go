@@ -37,6 +37,14 @@ type Querier interface {
 	AppendProvisionLog(ctx context.Context, arg AppendProvisionLogParams) error
 	ArchiveOfficialAccount(ctx context.Context, id pgtype.UUID) (OfficialAccount, error)
 	AssignAccount(ctx context.Context, arg AssignAccountParams) (AssignAccountRow, error)
+	// Mark a refresh in flight. AUTHENTICATING is the same state an operator login
+	// sets, so the dashboard shows the live view while it runs; the worker reports
+	// the outcome over /internal/account-callback either way.
+	//
+	// last_checked_at is stamped on the way IN, not on the outcome: that is what
+	// the retry backoff above measures from, and it also means a dispatch whose
+	// worker never reports back still ages out instead of pinning the account.
+	BeginSessionRefresh(ctx context.Context, id pgtype.UUID) error
 	// Atomic FIFO claim for one account: PENDING + scheduled_at <= now() ordered by
 	// scheduled_at, bumped to RUNNING, and stamped with the claiming worker. The
 	// worker id is written here (not at enqueue time) because a job is assigned to
@@ -168,6 +176,30 @@ type Querier interface {
 	LinkTargetPost(ctx context.Context, arg LinkTargetPostParams) error
 	ListAccounts(ctx context.Context, arg ListAccountsParams) ([]ListAccountsRow, error)
 	ListAccountsByWorker(ctx context.Context, workerID pgtype.UUID) ([]ListAccountsByWorkerRow, error)
+	// --- P2-06 session refresh -------------------------------------------------
+	// Accounts whose session cookie is about to die and that have a container to
+	// re-login on. `$1` is the caller's lead-time deadline (now + 7 days), so the
+	// scheduler owns the window and SQL only answers "due yet".
+	//
+	// Three gates, each excluding a state where dispatching would be wrong:
+	//   cookie_expiry_at <= deadline — only for accounts a login actually dated.
+	//   auth_status AUTHENTICATED|FAILED — a refresh is due, OR a previous one
+	//     failed. FAILED must stay eligible or the AC ("gagal 3x -> quarantined")
+	//     is unreachable: a failed refresh kills the session, the account never
+	//     returns to AUTHENTICATED by itself, and the streak would stall at 1.
+	//     AUTHENTICATING/NEEDS_INPUT are excluded: a login is already in flight
+	//     or parked for a human, and re-dispatching would close that context.
+	//   status ACTIVE — a QUARANTINED account stays out until an operator resumes
+	//     it, which is also what resets the failure streak.
+	//
+	// `$3` spaces retries: a FAILED account waits out the backoff measured from
+	// last_checked_at (stamped at dispatch) instead of re-firing on every tick.
+	//
+	// These gates MUST stay in sync with the partial predicate of
+	// `account_refresh_due_idx` (000015): Postgres only uses a partial index whose
+	// predicate the query provably implies, so widening one here without the other
+	// silently degrades this query to a seq scan.
+	ListAccountsDueForRefresh(ctx context.Context, arg ListAccountsDueForRefreshParams) ([]ListAccountsDueForRefreshRow, error)
 	ListActionJobs(ctx context.Context, arg ListActionJobsParams) ([]ActionJob, error)
 	ListActionJobsByAccount(ctx context.Context, arg ListActionJobsByAccountParams) ([]ActionJob, error)
 	ListActionJobsByStatus(ctx context.Context, arg ListActionJobsByStatusParams) ([]ActionJob, error)
@@ -242,6 +274,12 @@ type Querier interface {
 	UpdateAnalyticsIngestRun(ctx context.Context, arg UpdateAnalyticsIngestRunParams) (AnalyticsIngestRun, error)
 	// finished_at is passed in (NULL while the run is still in flight) so the caller
 	// controls the terminal stamp without a CASE in SQL.
+	//
+	// run_id is the Apify-side run id, which only exists AFTER the actor is
+	// started: the row is created when the run begins (with an empty id) and this
+	// is the write that fills it in. COALESCE/NULLIF keep that ordering safe — a
+	// caller that does not have the id yet leaves the stored value untouched
+	// instead of blanking it.
 	UpdateApifyRun(ctx context.Context, arg UpdateApifyRunParams) (ApifyRun, error)
 	// Full-row update: weight/vars/banned_words/is_active all change together from
 	// the composer, so a partial-update builder would only hide a missed field.

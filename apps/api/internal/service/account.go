@@ -273,7 +273,12 @@ func (s *AccountService) Resume(ctx context.Context, accountID string) (AccountS
 	}
 	if a.Status == domain.AccountQuarantined {
 		a.HealthScore = DefaultHealthScorePolicy.ScoreMax
-		s.logger.Info("account reset from quarantine", "accountId", accountID, "score", a.HealthScore)
+		// Clear the refresh-failure streak too (P2-06). Without this the count
+		// is still at the threshold, so the next refresh failure — one, not
+		// three — would re-quarantine the account the operator just released.
+		a.RefreshFailures = 0
+		s.logger.Info("account reset from quarantine",
+			"accountId", accountID, "score", a.HealthScore)
 	}
 	a.Status = domain.AccountActive
 	if _, err := s.accounts.Update(ctx, a); err != nil {

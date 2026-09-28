@@ -324,6 +324,34 @@ func TestScrapeKeywordsRunsAndIngests(t *testing.T) {
 	}
 }
 
+// The stored itemsRead must be the count the parser yielded, not the count
+// that survived dedup/upsert — and it must differ visibly from PostsCount when
+// the window drops rows. This pin is what surfaced a real batch reporting
+// "31 items read" from a 50-item dataset: every window drop was invisible
+// because the reported number was the stored count.
+func TestScrapeKeywordsItemsReadCountsParsedItems(t *testing.T) {
+	svc, _, _, _ := keywordRun(t,
+		mkIGPostRow("Din", "2026-09-10T02:28:41.000Z"),  // in window
+		mkIGPostRow("Ddup", "2026-09-12T02:28:41.000Z"), // in window, same batch
+		mkIGPostRow("Dout", "2026-08-01T04:08:08.000Z"), // before window
+	)
+
+	res, err := svc.ScrapeKeywords(context.Background(), KeywordScrapeInput{
+		Platform: domain.PlatformInstagram,
+		Keywords: []string{"batulicin"},
+		Window:   KeywordWindow{From: time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)},
+	})
+	if err != nil {
+		t.Fatalf("scrape: %v", err)
+	}
+	if len(res.Posts) != 2 {
+		t.Fatalf("posts: window should drop only Dout, got %d", len(res.Posts))
+	}
+	if res.ItemsRead != len(res.Posts) {
+		t.Fatalf("itemsRead should equal parsed-and-stored count: got %d, posts %d", res.ItemsRead, len(res.Posts))
+	}
+}
+
 // The search actor ignores the since/until we send, so the ingestor has to drop
 // posts outside the operator's window itself.
 func TestScrapeKeywordsFiltersByWindow(t *testing.T) {
@@ -380,6 +408,73 @@ func TestScrapeKeywordsFlatPostRows(t *testing.T) {
 	}
 	if h := res.Posts[0].AuthorHandle; h != "owner_Din" {
 		t.Fatalf("author handle: %q", h)
+	}
+}
+
+// crawlerbros/instagram-keyword-search-scraper returns a THIRD shape: one flat
+// post row per item, but snake_case. The two IG flat shapes (apify's camelCase
+// post row and this one) are indistinguishable by shortcode alone, because Go's
+// unmarshal is case-insensitive — only the underscore tells them apart, and it is
+// exactly the part a camelCase struct drops. Reading this row through the
+// post-scraper struct yielded `likes: null, comments: null` and author `unknown`,
+// so the batch dashboard showed no counts at all for a scrape that had them.
+//
+// Field names below are copied from a real run of this actor (batch
+// d816d824-875d-4392-a42d-8dd38753fe44), not from its input schema.
+func mkIGCrawlerbrosRow(code, pubDate string) map[string]any {
+	return map[string]any{
+		"post_url":    "https://www.instagram.com/p/" + code + "/",
+		"shortcode":   code,
+		"post_id":     "3" + code,
+		"username":    "owner_" + code,
+		"author_meta": map[string]any{"id": "477269714", "username": "owner_" + code},
+		"caption":     code + " caption",
+		"pub_date":    pubDate,
+		"media_type":  "Reel",
+		"like_count":  73,
+		// The whole point of this fixture: the actor reports a comment COUNT but
+		// never the comment bodies, so the count must survive parsing.
+		"comment_count":       13,
+		"likes_hidden":        false,
+		"comments_disabled":   false,
+		"input_keyword":       "batulicin",
+		"media_items":         []any{map[string]any{"index": 1, "type": "Reel", "url": "https://scontent.cdninstagram.com/" + code + ".mp4"}},
+		"thumbnail_url":       "https://scontent.cdninstagram.com/" + code + ".jpg",
+		"scraped_at":          "2026-08-03T07:06:51",
+		"is_paid_partnership": false,
+	}
+}
+
+func TestScrapeKeywordsCrawlerbrosFlatRows(t *testing.T) {
+	svc, _, _, _ := keywordRun(t,
+		mkIGCrawlerbrosRow("DbkaUUqxYkg", "2026-08-03T07:06:51"), // in window
+		mkIGCrawlerbrosRow("Dout", "2026-07-01T04:08:08"),        // before window
+	)
+
+	res, err := svc.ScrapeKeywords(context.Background(), KeywordScrapeInput{
+		Platform: domain.PlatformInstagram,
+		Keywords: []string{"batulicin"},
+		Window: KeywordWindow{
+			From: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
+			To:   time.Date(2026, 9, 24, 0, 0, 0, 0, time.UTC),
+		},
+	})
+	if err != nil {
+		t.Fatalf("scrape: %v", err)
+	}
+	if len(res.Posts) != 1 || res.Posts[0].ExternalID != "DbkaUUqxYkg" {
+		t.Fatalf("posts: want 1 (only the in-window row), got %+v", res.Posts)
+	}
+	p := res.Posts[0]
+	if p.AuthorHandle != "owner_DbkaUUqxYkg" {
+		t.Errorf("author handle: got %q, want owner_DbkaUUqxYkg (snake_case username)", p.AuthorHandle)
+	}
+	// The regression this pins: these came back as JSON null before the flat
+	// parser existed, and metricsLine skips non-numbers, so the row rendered bare.
+	checkMetric(t, p.Metrics, "likes", float64(73))
+	checkMetric(t, p.Metrics, "comments", float64(13))
+	if len(p.MediaURLs) != 1 || p.MediaURLs[0] != "https://scontent.cdninstagram.com/DbkaUUqxYkg.mp4" {
+		t.Errorf("media: got %v, want the single media_items url", p.MediaURLs)
 	}
 }
 
@@ -485,5 +580,162 @@ func TestScrapeKeywordsFailsOnActorFailure(t *testing.T) {
 		Keywords: []string{"kamu"},
 	}); err == nil {
 		t.Fatal("want error on FAILED actor run")
+	}
+}
+
+// mkThreadsScraperPost builds one themineworks/threads-scraper post row, the
+// actor the per-post and keyword Threads scrapes now point at. Shape copied from
+// the actor's documented output: raw Threads/snake_case field names (code /
+// text / posted_at / media_urls), numeric post_id, and separate reply rows
+// rather than replies[] nested under the post.
+func mkThreadsScraperPost(code, postedAt string) map[string]any {
+	return map[string]any{
+		"post_id":      "3" + code,
+		"code":         code,
+		"text":         code + " text",
+		"posted_at":    postedAt,
+		"username":     "owner_" + code,
+		"like_count":   12,
+		"reply_count":  2,
+		"repost_count": 1,
+		"quote_count":  3,
+		"has_media":    true,
+		"media_urls":   []any{"https://scontent.cdninstagram.com/" + code + ".jpg"},
+		"media_type":   "image",
+		"is_reply":     false,
+		"is_repost":    false,
+	}
+}
+
+// mkThreadsReply builds one reply row for parent. This actor emits replies as
+// their OWN top-level dataset rows, flagged is_reply and naming the parent by
+// numeric parent_post_id — it does not nest them the way the previous actor did.
+// That numeric id is the whole reason the ingestor keeps a per-run post-id map:
+// the parent post row is keyed by shortcode, so the two only join if the run
+// remembered the parent it already emitted.
+func mkThreadsReply(parentCode, code, text, postedAt string) map[string]any {
+	return map[string]any{
+		"post_id":        "3" + code,
+		"code":           code,
+		"text":           text,
+		"posted_at":      postedAt,
+		"username":       "replier_" + code,
+		"like_count":     3,
+		"reply_count":    0,
+		"repost_count":   0,
+		"quote_count":    0,
+		"media_urls":     []any{},
+		"is_reply":       true,
+		"parent_post_id": "3" + parentCode,
+	}
+}
+
+// The current Threads actor reports snake_case names (code, text, posted_at)
+// and emits replies as SEPARATE rows linked by numeric parent_post_id. Neither
+// the field names nor the link shape existed in the legacy fixture, so without
+// this test a shape regression silently yields a post with no text, no media
+// and no comments. The reply rows are passed AFTER the post on purpose: that is
+// the actor's order, and the only order in which the run's post-id map can
+// resolve their parent.
+func TestScrapeKeywordsThreadsShape(t *testing.T) {
+	svc, store, _, _ := keywordRun(t,
+		mkThreadsScraperPost("DdGJIzFiWkJ", "2026-09-10T10:00:00+00:00"),
+		mkThreadsReply("DdGJIzFiWkJ", "RdGJIzFiWk1", "first reply", "2026-09-10T10:05:00+00:00"),
+		mkThreadsReply("DdGJIzFiWkJ", "RdGJIzFiWk2", "second reply", "2026-09-10T10:06:00+00:00"),
+	)
+	svc.searchActorFor = func(p domain.Platform) string {
+		if p == domain.PlatformThreads {
+			return "themineworks/threads-scraper"
+		}
+		return ""
+	}
+
+	res, err := svc.ScrapeKeywords(context.Background(), KeywordScrapeInput{
+		Platform: domain.PlatformThreads,
+		Keywords: []string{"batulicin"},
+		Window: KeywordWindow{
+			From: time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC),
+			To:   time.Date(2026, 9, 24, 0, 0, 0, 0, time.UTC),
+		},
+	})
+	if err != nil {
+		t.Fatalf("scrape: %v", err)
+	}
+	// Only the post is a post: the two reply rows must not become posts of their
+	// own, which is what would happen if the is_reply branch were dropped.
+	if len(res.Posts) != 1 {
+		t.Fatalf("posts: want 1 (replies are comments, not posts), got %+v", res.Posts)
+	}
+	p := res.Posts[0]
+	if p.ExternalID != "DdGJIzFiWkJ" {
+		t.Errorf("external id: got %q, want DdGJIzFiWkJ (parsed from `code`)", p.ExternalID)
+	}
+	if p.AuthorHandle != "owner_DdGJIzFiWkJ" {
+		t.Errorf("author: got %q", p.AuthorHandle)
+	}
+	if p.Text == nil || *p.Text != "DdGJIzFiWkJ text" {
+		t.Errorf("text: got %v, want the `text` field", p.Text)
+	}
+	if len(p.MediaURLs) != 1 {
+		t.Fatalf("media: want 1 url from media_urls[], got %v", p.MediaURLs)
+	}
+	checkMetric(t, p.Metrics, "likes", float64(12))
+	checkMetric(t, p.Metrics, "comments", float64(2))
+
+	// The reply rows must attach to the post as its comments — this is the
+	// behaviour the dashboard's "Fetch comments" button depends on, and it only
+	// works if the run remembered the parent's post_id -> shortcode mapping.
+	if res.Comments != 2 {
+		t.Fatalf("comments: want 2 replies ingested, got %d", res.Comments)
+	}
+	comments, err := store.ListCommentsByPost(context.Background(), p.ID, nil, nil)
+	if err != nil {
+		t.Fatalf("list comments: %v", err)
+	}
+	if len(comments) != 2 {
+		t.Fatalf("stored comments: want 2, got %d", len(comments))
+	}
+	for _, c := range comments {
+		if c.Text != "first reply" && c.Text != "second reply" {
+			t.Errorf("comment text: unexpected %q", c.Text)
+		}
+	}
+}
+
+// A reply whose parent post is not in the run is stored as a top-level post,
+// not dropped and not stored against a guessed parent.
+//
+// The actor's keyword mode flags `is_reply` on a row while leaving
+// `replied_to_post_code` empty and never delivering the parent: a real batch
+// arrived with 19 of 50 rows in exactly this shape. Dropping them silently
+// halved the scrape's value, so the orphan falls back to being a post — its
+// metrics and text survive; only the parent link is lost.
+func TestScrapeKeywordsThreadsReplyWithoutParentFallsBackToPost(t *testing.T) {
+	svc, _, _, _ := keywordRun(t,
+		mkThreadsReply("DdGJIzFiWkJ", "RdGJIzFiWk1", "orphan reply", "2026-09-10T10:05:00+00:00"),
+	)
+	svc.searchActorFor = func(p domain.Platform) string {
+		if p == domain.PlatformThreads {
+			return "themineworks/threads-scraper"
+		}
+		return ""
+	}
+
+	res, err := svc.ScrapeKeywords(context.Background(), KeywordScrapeInput{
+		Platform: domain.PlatformThreads,
+		Keywords: []string{"batulicin"},
+		Window: KeywordWindow{
+			From: time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC),
+			To:   time.Date(2026, 9, 24, 0, 0, 0, 0, time.UTC),
+		},
+	})
+	if err != nil {
+		t.Fatalf("scrape: %v", err)
+	}
+	if len(res.Posts) != 1 || res.Comments != 0 {
+		t.Fatalf("want the orphan reply kept as 1 post / 0 comments, got %d / %d", len(res.Posts), res.Comments)
+	}
+	if res.Posts[0].ExternalID != "RdGJIzFiWk1" {
+		t.Fatalf("post code: want RdGJIzFiWk1, got %q", res.Posts[0].ExternalID)
 	}
 }

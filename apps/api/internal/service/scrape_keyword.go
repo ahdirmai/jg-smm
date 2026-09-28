@@ -218,7 +218,10 @@ func (s *KeywordScrapeService) processBatch(ctx context.Context, batchID string,
 	n := time.Now().UTC()
 	if _, err := s.batches.UpdateKeywordBatch(ctx, domain.KeywordBatch{
 		ID: batchID, Status: domain.KeywordBatchSucceeded, ApifyRunID: &run.ID,
-		ItemsRead: res.PostsUpserted, PostsCount: res.PostsUpserted, CommentsCount: res.CommentsUpserted,
+		// ItemsRead is the actor's delivered item count; PostsCount is what
+		// survived the operator's time window. They differ by design, and the
+		// divergence is how a too-narrow window shows up on the dashboard.
+		ItemsRead: res.ItemsRead, PostsCount: res.PostsUpserted, CommentsCount: res.CommentsUpserted,
 		FinishedAt: &n,
 	}); err != nil {
 		s.log.Warn("keyword batch: mark succeeded failed", "batch", batchID, "err", err)
@@ -322,4 +325,14 @@ func (s *KeywordScrapeService) ListBatchPosts(ctx context.Context, batchID strin
 		return nil, fmt.Errorf("%w: batch store not configured", domain.ErrUnavailable)
 	}
 	return s.batches.ListKeywordBatchPosts(ctx, batchID, limit, offset)
+}
+
+// PostComments returns the comments already stored for one post. Keyword search
+// ingests each item's comment list, so the batch dashboard can show them
+// without a second paid scrape — the point is to read what we already paid for.
+func (s *KeywordScrapeService) PostComments(ctx context.Context, postID string, limit, offset *int) ([]domain.Comment, error) {
+	if s.scrapes == nil {
+		return nil, fmt.Errorf("%w: scrape store not configured", domain.ErrUnavailable)
+	}
+	return s.scrapes.ListCommentsByPost(ctx, postID, limit, offset)
 }

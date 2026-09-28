@@ -19,7 +19,7 @@ WHERE id = $1
 RETURNING
     id, platform, username, auth_status, handle, last_verified_at,
     proxy_group_id, health_score, status, tags, worker_id, last_used_at,
-    last_checked_at, last_error, created_at
+    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at
 `
 
 type AssignAccountParams struct {
@@ -28,21 +28,23 @@ type AssignAccountParams struct {
 }
 
 type AssignAccountRow struct {
-	ID             pgtype.UUID        `json:"id"`
-	Platform       Platform           `json:"platform"`
-	Username       string             `json:"username"`
-	AuthStatus     AuthStatus         `json:"auth_status"`
-	Handle         *string            `json:"handle"`
-	LastVerifiedAt pgtype.Timestamptz `json:"last_verified_at"`
-	ProxyGroupID   pgtype.UUID        `json:"proxy_group_id"`
-	HealthScore    int32              `json:"health_score"`
-	Status         AccountStatus      `json:"status"`
-	Tags           []string           `json:"tags"`
-	WorkerID       pgtype.UUID        `json:"worker_id"`
-	LastUsedAt     pgtype.Timestamptz `json:"last_used_at"`
-	LastCheckedAt  pgtype.Timestamptz `json:"last_checked_at"`
-	LastError      *string            `json:"last_error"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	ID              pgtype.UUID        `json:"id"`
+	Platform        Platform           `json:"platform"`
+	Username        string             `json:"username"`
+	AuthStatus      AuthStatus         `json:"auth_status"`
+	Handle          *string            `json:"handle"`
+	LastVerifiedAt  pgtype.Timestamptz `json:"last_verified_at"`
+	ProxyGroupID    pgtype.UUID        `json:"proxy_group_id"`
+	HealthScore     int32              `json:"health_score"`
+	Status          AccountStatus      `json:"status"`
+	Tags            []string           `json:"tags"`
+	WorkerID        pgtype.UUID        `json:"worker_id"`
+	LastUsedAt      pgtype.Timestamptz `json:"last_used_at"`
+	LastCheckedAt   pgtype.Timestamptz `json:"last_checked_at"`
+	LastError       *string            `json:"last_error"`
+	CookieExpiryAt  pgtype.Timestamptz `json:"cookie_expiry_at"`
+	RefreshFailures int32              `json:"refresh_failures"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 }
 
 func (q *Queries) AssignAccount(ctx context.Context, arg AssignAccountParams) (AssignAccountRow, error) {
@@ -63,9 +65,30 @@ func (q *Queries) AssignAccount(ctx context.Context, arg AssignAccountParams) (A
 		&i.LastUsedAt,
 		&i.LastCheckedAt,
 		&i.LastError,
+		&i.CookieExpiryAt,
+		&i.RefreshFailures,
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const beginSessionRefresh = `-- name: BeginSessionRefresh :exec
+UPDATE account SET
+    auth_status     = 'AUTHENTICATING',
+    last_checked_at = now()
+WHERE id = $1
+`
+
+// Mark a refresh in flight. AUTHENTICATING is the same state an operator login
+// sets, so the dashboard shows the live view while it runs; the worker reports
+// the outcome over /internal/account-callback either way.
+//
+// last_checked_at is stamped on the way IN, not on the outcome: that is what
+// the retry backoff above measures from, and it also means a dispatch whose
+// worker never reports back still ages out instead of pinning the account.
+func (q *Queries) BeginSessionRefresh(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, beginSessionRefresh, id)
+	return err
 }
 
 const countAccountsByWorker = `-- name: CountAccountsByWorker :one
@@ -89,7 +112,7 @@ INSERT INTO account (
 RETURNING
     id, platform, username, auth_status, handle, last_verified_at,
     proxy_group_id, health_score, status, tags, worker_id, last_used_at,
-    last_checked_at, last_error, created_at
+    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at
 `
 
 type CreateAccountParams struct {
@@ -104,21 +127,23 @@ type CreateAccountParams struct {
 }
 
 type CreateAccountRow struct {
-	ID             pgtype.UUID        `json:"id"`
-	Platform       Platform           `json:"platform"`
-	Username       string             `json:"username"`
-	AuthStatus     AuthStatus         `json:"auth_status"`
-	Handle         *string            `json:"handle"`
-	LastVerifiedAt pgtype.Timestamptz `json:"last_verified_at"`
-	ProxyGroupID   pgtype.UUID        `json:"proxy_group_id"`
-	HealthScore    int32              `json:"health_score"`
-	Status         AccountStatus      `json:"status"`
-	Tags           []string           `json:"tags"`
-	WorkerID       pgtype.UUID        `json:"worker_id"`
-	LastUsedAt     pgtype.Timestamptz `json:"last_used_at"`
-	LastCheckedAt  pgtype.Timestamptz `json:"last_checked_at"`
-	LastError      *string            `json:"last_error"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	ID              pgtype.UUID        `json:"id"`
+	Platform        Platform           `json:"platform"`
+	Username        string             `json:"username"`
+	AuthStatus      AuthStatus         `json:"auth_status"`
+	Handle          *string            `json:"handle"`
+	LastVerifiedAt  pgtype.Timestamptz `json:"last_verified_at"`
+	ProxyGroupID    pgtype.UUID        `json:"proxy_group_id"`
+	HealthScore     int32              `json:"health_score"`
+	Status          AccountStatus      `json:"status"`
+	Tags            []string           `json:"tags"`
+	WorkerID        pgtype.UUID        `json:"worker_id"`
+	LastUsedAt      pgtype.Timestamptz `json:"last_used_at"`
+	LastCheckedAt   pgtype.Timestamptz `json:"last_checked_at"`
+	LastError       *string            `json:"last_error"`
+	CookieExpiryAt  pgtype.Timestamptz `json:"cookie_expiry_at"`
+	RefreshFailures int32              `json:"refresh_failures"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 }
 
 func (q *Queries) CreateAccount(ctx context.Context, arg CreateAccountParams) (CreateAccountRow, error) {
@@ -148,6 +173,8 @@ func (q *Queries) CreateAccount(ctx context.Context, arg CreateAccountParams) (C
 		&i.LastUsedAt,
 		&i.LastCheckedAt,
 		&i.LastError,
+		&i.CookieExpiryAt,
+		&i.RefreshFailures,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -167,27 +194,29 @@ const getAccountByID = `-- name: GetAccountByID :one
 SELECT
     id, platform, username, auth_status, handle, last_verified_at,
     proxy_group_id, health_score, status, tags, worker_id, last_used_at,
-    last_checked_at, last_error, created_at
+    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at
 FROM account
 WHERE id = $1
 `
 
 type GetAccountByIDRow struct {
-	ID             pgtype.UUID        `json:"id"`
-	Platform       Platform           `json:"platform"`
-	Username       string             `json:"username"`
-	AuthStatus     AuthStatus         `json:"auth_status"`
-	Handle         *string            `json:"handle"`
-	LastVerifiedAt pgtype.Timestamptz `json:"last_verified_at"`
-	ProxyGroupID   pgtype.UUID        `json:"proxy_group_id"`
-	HealthScore    int32              `json:"health_score"`
-	Status         AccountStatus      `json:"status"`
-	Tags           []string           `json:"tags"`
-	WorkerID       pgtype.UUID        `json:"worker_id"`
-	LastUsedAt     pgtype.Timestamptz `json:"last_used_at"`
-	LastCheckedAt  pgtype.Timestamptz `json:"last_checked_at"`
-	LastError      *string            `json:"last_error"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	ID              pgtype.UUID        `json:"id"`
+	Platform        Platform           `json:"platform"`
+	Username        string             `json:"username"`
+	AuthStatus      AuthStatus         `json:"auth_status"`
+	Handle          *string            `json:"handle"`
+	LastVerifiedAt  pgtype.Timestamptz `json:"last_verified_at"`
+	ProxyGroupID    pgtype.UUID        `json:"proxy_group_id"`
+	HealthScore     int32              `json:"health_score"`
+	Status          AccountStatus      `json:"status"`
+	Tags            []string           `json:"tags"`
+	WorkerID        pgtype.UUID        `json:"worker_id"`
+	LastUsedAt      pgtype.Timestamptz `json:"last_used_at"`
+	LastCheckedAt   pgtype.Timestamptz `json:"last_checked_at"`
+	LastError       *string            `json:"last_error"`
+	CookieExpiryAt  pgtype.Timestamptz `json:"cookie_expiry_at"`
+	RefreshFailures int32              `json:"refresh_failures"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 }
 
 // Account (executor identity) queries. password_enc is WRITE-ONLY: no query
@@ -210,6 +239,8 @@ func (q *Queries) GetAccountByID(ctx context.Context, id pgtype.UUID) (GetAccoun
 		&i.LastUsedAt,
 		&i.LastCheckedAt,
 		&i.LastError,
+		&i.CookieExpiryAt,
+		&i.RefreshFailures,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -219,7 +250,7 @@ const listAccounts = `-- name: ListAccounts :many
 SELECT
     id, platform, username, auth_status, handle, last_verified_at,
     proxy_group_id, health_score, status, tags, worker_id, last_used_at,
-    last_checked_at, last_error, created_at
+    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at
 FROM account
 ORDER BY created_at DESC
 LIMIT $1 OFFSET $2
@@ -231,21 +262,23 @@ type ListAccountsParams struct {
 }
 
 type ListAccountsRow struct {
-	ID             pgtype.UUID        `json:"id"`
-	Platform       Platform           `json:"platform"`
-	Username       string             `json:"username"`
-	AuthStatus     AuthStatus         `json:"auth_status"`
-	Handle         *string            `json:"handle"`
-	LastVerifiedAt pgtype.Timestamptz `json:"last_verified_at"`
-	ProxyGroupID   pgtype.UUID        `json:"proxy_group_id"`
-	HealthScore    int32              `json:"health_score"`
-	Status         AccountStatus      `json:"status"`
-	Tags           []string           `json:"tags"`
-	WorkerID       pgtype.UUID        `json:"worker_id"`
-	LastUsedAt     pgtype.Timestamptz `json:"last_used_at"`
-	LastCheckedAt  pgtype.Timestamptz `json:"last_checked_at"`
-	LastError      *string            `json:"last_error"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	ID              pgtype.UUID        `json:"id"`
+	Platform        Platform           `json:"platform"`
+	Username        string             `json:"username"`
+	AuthStatus      AuthStatus         `json:"auth_status"`
+	Handle          *string            `json:"handle"`
+	LastVerifiedAt  pgtype.Timestamptz `json:"last_verified_at"`
+	ProxyGroupID    pgtype.UUID        `json:"proxy_group_id"`
+	HealthScore     int32              `json:"health_score"`
+	Status          AccountStatus      `json:"status"`
+	Tags            []string           `json:"tags"`
+	WorkerID        pgtype.UUID        `json:"worker_id"`
+	LastUsedAt      pgtype.Timestamptz `json:"last_used_at"`
+	LastCheckedAt   pgtype.Timestamptz `json:"last_checked_at"`
+	LastError       *string            `json:"last_error"`
+	CookieExpiryAt  pgtype.Timestamptz `json:"cookie_expiry_at"`
+	RefreshFailures int32              `json:"refresh_failures"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 }
 
 func (q *Queries) ListAccounts(ctx context.Context, arg ListAccountsParams) ([]ListAccountsRow, error) {
@@ -272,6 +305,8 @@ func (q *Queries) ListAccounts(ctx context.Context, arg ListAccountsParams) ([]L
 			&i.LastUsedAt,
 			&i.LastCheckedAt,
 			&i.LastError,
+			&i.CookieExpiryAt,
+			&i.RefreshFailures,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -288,28 +323,30 @@ const listAccountsByWorker = `-- name: ListAccountsByWorker :many
 SELECT
     id, platform, username, auth_status, handle, last_verified_at,
     proxy_group_id, health_score, status, tags, worker_id, last_used_at,
-    last_checked_at, last_error, created_at
+    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at
 FROM account
 WHERE worker_id = $1
 ORDER BY platform
 `
 
 type ListAccountsByWorkerRow struct {
-	ID             pgtype.UUID        `json:"id"`
-	Platform       Platform           `json:"platform"`
-	Username       string             `json:"username"`
-	AuthStatus     AuthStatus         `json:"auth_status"`
-	Handle         *string            `json:"handle"`
-	LastVerifiedAt pgtype.Timestamptz `json:"last_verified_at"`
-	ProxyGroupID   pgtype.UUID        `json:"proxy_group_id"`
-	HealthScore    int32              `json:"health_score"`
-	Status         AccountStatus      `json:"status"`
-	Tags           []string           `json:"tags"`
-	WorkerID       pgtype.UUID        `json:"worker_id"`
-	LastUsedAt     pgtype.Timestamptz `json:"last_used_at"`
-	LastCheckedAt  pgtype.Timestamptz `json:"last_checked_at"`
-	LastError      *string            `json:"last_error"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	ID              pgtype.UUID        `json:"id"`
+	Platform        Platform           `json:"platform"`
+	Username        string             `json:"username"`
+	AuthStatus      AuthStatus         `json:"auth_status"`
+	Handle          *string            `json:"handle"`
+	LastVerifiedAt  pgtype.Timestamptz `json:"last_verified_at"`
+	ProxyGroupID    pgtype.UUID        `json:"proxy_group_id"`
+	HealthScore     int32              `json:"health_score"`
+	Status          AccountStatus      `json:"status"`
+	Tags            []string           `json:"tags"`
+	WorkerID        pgtype.UUID        `json:"worker_id"`
+	LastUsedAt      pgtype.Timestamptz `json:"last_used_at"`
+	LastCheckedAt   pgtype.Timestamptz `json:"last_checked_at"`
+	LastError       *string            `json:"last_error"`
+	CookieExpiryAt  pgtype.Timestamptz `json:"cookie_expiry_at"`
+	RefreshFailures int32              `json:"refresh_failures"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 }
 
 func (q *Queries) ListAccountsByWorker(ctx context.Context, workerID pgtype.UUID) ([]ListAccountsByWorkerRow, error) {
@@ -336,6 +373,113 @@ func (q *Queries) ListAccountsByWorker(ctx context.Context, workerID pgtype.UUID
 			&i.LastUsedAt,
 			&i.LastCheckedAt,
 			&i.LastError,
+			&i.CookieExpiryAt,
+			&i.RefreshFailures,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAccountsDueForRefresh = `-- name: ListAccountsDueForRefresh :many
+
+SELECT
+    id, platform, username, auth_status, handle, last_verified_at,
+    proxy_group_id, health_score, status, tags, worker_id, last_used_at,
+    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at
+FROM account
+WHERE cookie_expiry_at IS NOT NULL
+  AND cookie_expiry_at <= $1
+  AND auth_status IN ('AUTHENTICATED', 'FAILED')
+  AND status = 'ACTIVE'
+  AND worker_id IS NOT NULL
+  AND (last_checked_at IS NULL OR last_checked_at <= $2)
+ORDER BY cookie_expiry_at
+LIMIT $3
+`
+
+type ListAccountsDueForRefreshParams struct {
+	CookieExpiryAt pgtype.Timestamptz `json:"cookie_expiry_at"`
+	LastCheckedAt  pgtype.Timestamptz `json:"last_checked_at"`
+	Limit          int32              `json:"limit"`
+}
+
+type ListAccountsDueForRefreshRow struct {
+	ID              pgtype.UUID        `json:"id"`
+	Platform        Platform           `json:"platform"`
+	Username        string             `json:"username"`
+	AuthStatus      AuthStatus         `json:"auth_status"`
+	Handle          *string            `json:"handle"`
+	LastVerifiedAt  pgtype.Timestamptz `json:"last_verified_at"`
+	ProxyGroupID    pgtype.UUID        `json:"proxy_group_id"`
+	HealthScore     int32              `json:"health_score"`
+	Status          AccountStatus      `json:"status"`
+	Tags            []string           `json:"tags"`
+	WorkerID        pgtype.UUID        `json:"worker_id"`
+	LastUsedAt      pgtype.Timestamptz `json:"last_used_at"`
+	LastCheckedAt   pgtype.Timestamptz `json:"last_checked_at"`
+	LastError       *string            `json:"last_error"`
+	CookieExpiryAt  pgtype.Timestamptz `json:"cookie_expiry_at"`
+	RefreshFailures int32              `json:"refresh_failures"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+}
+
+// --- P2-06 session refresh -------------------------------------------------
+// Accounts whose session cookie is about to die and that have a container to
+// re-login on. `$1` is the caller's lead-time deadline (now + 7 days), so the
+// scheduler owns the window and SQL only answers "due yet".
+//
+// Three gates, each excluding a state where dispatching would be wrong:
+//
+//	cookie_expiry_at <= deadline — only for accounts a login actually dated.
+//	auth_status AUTHENTICATED|FAILED — a refresh is due, OR a previous one
+//	  failed. FAILED must stay eligible or the AC ("gagal 3x -> quarantined")
+//	  is unreachable: a failed refresh kills the session, the account never
+//	  returns to AUTHENTICATED by itself, and the streak would stall at 1.
+//	  AUTHENTICATING/NEEDS_INPUT are excluded: a login is already in flight
+//	  or parked for a human, and re-dispatching would close that context.
+//	status ACTIVE — a QUARANTINED account stays out until an operator resumes
+//	  it, which is also what resets the failure streak.
+//
+// `$3` spaces retries: a FAILED account waits out the backoff measured from
+// last_checked_at (stamped at dispatch) instead of re-firing on every tick.
+//
+// These gates MUST stay in sync with the partial predicate of
+// `account_refresh_due_idx` (000015): Postgres only uses a partial index whose
+// predicate the query provably implies, so widening one here without the other
+// silently degrades this query to a seq scan.
+func (q *Queries) ListAccountsDueForRefresh(ctx context.Context, arg ListAccountsDueForRefreshParams) ([]ListAccountsDueForRefreshRow, error) {
+	rows, err := q.db.Query(ctx, listAccountsDueForRefresh, arg.CookieExpiryAt, arg.LastCheckedAt, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAccountsDueForRefreshRow{}
+	for rows.Next() {
+		var i ListAccountsDueForRefreshRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Platform,
+			&i.Username,
+			&i.AuthStatus,
+			&i.Handle,
+			&i.LastVerifiedAt,
+			&i.ProxyGroupID,
+			&i.HealthScore,
+			&i.Status,
+			&i.Tags,
+			&i.WorkerID,
+			&i.LastUsedAt,
+			&i.LastCheckedAt,
+			&i.LastError,
+			&i.CookieExpiryAt,
+			&i.RefreshFailures,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -354,25 +498,27 @@ WHERE id = $1
 RETURNING
     id, platform, username, auth_status, handle, last_verified_at,
     proxy_group_id, health_score, status, tags, worker_id, last_used_at,
-    last_checked_at, last_error, created_at
+    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at
 `
 
 type UnassignAccountRow struct {
-	ID             pgtype.UUID        `json:"id"`
-	Platform       Platform           `json:"platform"`
-	Username       string             `json:"username"`
-	AuthStatus     AuthStatus         `json:"auth_status"`
-	Handle         *string            `json:"handle"`
-	LastVerifiedAt pgtype.Timestamptz `json:"last_verified_at"`
-	ProxyGroupID   pgtype.UUID        `json:"proxy_group_id"`
-	HealthScore    int32              `json:"health_score"`
-	Status         AccountStatus      `json:"status"`
-	Tags           []string           `json:"tags"`
-	WorkerID       pgtype.UUID        `json:"worker_id"`
-	LastUsedAt     pgtype.Timestamptz `json:"last_used_at"`
-	LastCheckedAt  pgtype.Timestamptz `json:"last_checked_at"`
-	LastError      *string            `json:"last_error"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	ID              pgtype.UUID        `json:"id"`
+	Platform        Platform           `json:"platform"`
+	Username        string             `json:"username"`
+	AuthStatus      AuthStatus         `json:"auth_status"`
+	Handle          *string            `json:"handle"`
+	LastVerifiedAt  pgtype.Timestamptz `json:"last_verified_at"`
+	ProxyGroupID    pgtype.UUID        `json:"proxy_group_id"`
+	HealthScore     int32              `json:"health_score"`
+	Status          AccountStatus      `json:"status"`
+	Tags            []string           `json:"tags"`
+	WorkerID        pgtype.UUID        `json:"worker_id"`
+	LastUsedAt      pgtype.Timestamptz `json:"last_used_at"`
+	LastCheckedAt   pgtype.Timestamptz `json:"last_checked_at"`
+	LastError       *string            `json:"last_error"`
+	CookieExpiryAt  pgtype.Timestamptz `json:"cookie_expiry_at"`
+	RefreshFailures int32              `json:"refresh_failures"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 }
 
 func (q *Queries) UnassignAccount(ctx context.Context, id pgtype.UUID) (UnassignAccountRow, error) {
@@ -393,6 +539,8 @@ func (q *Queries) UnassignAccount(ctx context.Context, id pgtype.UUID) (Unassign
 		&i.LastUsedAt,
 		&i.LastCheckedAt,
 		&i.LastError,
+		&i.CookieExpiryAt,
+		&i.RefreshFailures,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -410,45 +558,51 @@ UPDATE account SET
     worker_id        = $9,
     last_used_at     = $10,
     last_checked_at  = $11,
-    last_error       = $12
+    last_error       = $12,
+    cookie_expiry_at = $13,
+    refresh_failures = $14
 WHERE id = $1
 RETURNING
     id, platform, username, auth_status, handle, last_verified_at,
     proxy_group_id, health_score, status, tags, worker_id, last_used_at,
-    last_checked_at, last_error, created_at
+    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at
 `
 
 type UpdateAccountParams struct {
-	ID             pgtype.UUID        `json:"id"`
-	AuthStatus     AuthStatus         `json:"auth_status"`
-	Handle         *string            `json:"handle"`
-	LastVerifiedAt pgtype.Timestamptz `json:"last_verified_at"`
-	ProxyGroupID   pgtype.UUID        `json:"proxy_group_id"`
-	HealthScore    int32              `json:"health_score"`
-	Status         AccountStatus      `json:"status"`
-	Tags           []string           `json:"tags"`
-	WorkerID       pgtype.UUID        `json:"worker_id"`
-	LastUsedAt     pgtype.Timestamptz `json:"last_used_at"`
-	LastCheckedAt  pgtype.Timestamptz `json:"last_checked_at"`
-	LastError      *string            `json:"last_error"`
+	ID              pgtype.UUID        `json:"id"`
+	AuthStatus      AuthStatus         `json:"auth_status"`
+	Handle          *string            `json:"handle"`
+	LastVerifiedAt  pgtype.Timestamptz `json:"last_verified_at"`
+	ProxyGroupID    pgtype.UUID        `json:"proxy_group_id"`
+	HealthScore     int32              `json:"health_score"`
+	Status          AccountStatus      `json:"status"`
+	Tags            []string           `json:"tags"`
+	WorkerID        pgtype.UUID        `json:"worker_id"`
+	LastUsedAt      pgtype.Timestamptz `json:"last_used_at"`
+	LastCheckedAt   pgtype.Timestamptz `json:"last_checked_at"`
+	LastError       *string            `json:"last_error"`
+	CookieExpiryAt  pgtype.Timestamptz `json:"cookie_expiry_at"`
+	RefreshFailures int32              `json:"refresh_failures"`
 }
 
 type UpdateAccountRow struct {
-	ID             pgtype.UUID        `json:"id"`
-	Platform       Platform           `json:"platform"`
-	Username       string             `json:"username"`
-	AuthStatus     AuthStatus         `json:"auth_status"`
-	Handle         *string            `json:"handle"`
-	LastVerifiedAt pgtype.Timestamptz `json:"last_verified_at"`
-	ProxyGroupID   pgtype.UUID        `json:"proxy_group_id"`
-	HealthScore    int32              `json:"health_score"`
-	Status         AccountStatus      `json:"status"`
-	Tags           []string           `json:"tags"`
-	WorkerID       pgtype.UUID        `json:"worker_id"`
-	LastUsedAt     pgtype.Timestamptz `json:"last_used_at"`
-	LastCheckedAt  pgtype.Timestamptz `json:"last_checked_at"`
-	LastError      *string            `json:"last_error"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	ID              pgtype.UUID        `json:"id"`
+	Platform        Platform           `json:"platform"`
+	Username        string             `json:"username"`
+	AuthStatus      AuthStatus         `json:"auth_status"`
+	Handle          *string            `json:"handle"`
+	LastVerifiedAt  pgtype.Timestamptz `json:"last_verified_at"`
+	ProxyGroupID    pgtype.UUID        `json:"proxy_group_id"`
+	HealthScore     int32              `json:"health_score"`
+	Status          AccountStatus      `json:"status"`
+	Tags            []string           `json:"tags"`
+	WorkerID        pgtype.UUID        `json:"worker_id"`
+	LastUsedAt      pgtype.Timestamptz `json:"last_used_at"`
+	LastCheckedAt   pgtype.Timestamptz `json:"last_checked_at"`
+	LastError       *string            `json:"last_error"`
+	CookieExpiryAt  pgtype.Timestamptz `json:"cookie_expiry_at"`
+	RefreshFailures int32              `json:"refresh_failures"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 }
 
 func (q *Queries) UpdateAccount(ctx context.Context, arg UpdateAccountParams) (UpdateAccountRow, error) {
@@ -465,6 +619,8 @@ func (q *Queries) UpdateAccount(ctx context.Context, arg UpdateAccountParams) (U
 		arg.LastUsedAt,
 		arg.LastCheckedAt,
 		arg.LastError,
+		arg.CookieExpiryAt,
+		arg.RefreshFailures,
 	)
 	var i UpdateAccountRow
 	err := row.Scan(
@@ -482,6 +638,8 @@ func (q *Queries) UpdateAccount(ctx context.Context, arg UpdateAccountParams) (U
 		&i.LastUsedAt,
 		&i.LastCheckedAt,
 		&i.LastError,
+		&i.CookieExpiryAt,
+		&i.RefreshFailures,
 		&i.CreatedAt,
 	)
 	return i, err
