@@ -430,7 +430,8 @@ func (q *Queries) RescheduleScrapeJob(ctx context.Context, arg RescheduleScrapeJ
 const updateApifyRun = `-- name: UpdateApifyRun :one
 UPDATE apify_run
 SET status      = $2,
-    finished_at = $3
+    finished_at = $3,
+    run_id      = COALESCE(NULLIF($4::text, ''), run_id)
 WHERE id = $1
 RETURNING id, scrape_job_id, actor_id, run_id, status, started_at, finished_at
 `
@@ -439,12 +440,24 @@ type UpdateApifyRunParams struct {
 	ID         pgtype.UUID        `json:"id"`
 	Status     string             `json:"status"`
 	FinishedAt pgtype.Timestamptz `json:"finished_at"`
+	RunID      string             `json:"run_id"`
 }
 
 // finished_at is passed in (NULL while the run is still in flight) so the caller
 // controls the terminal stamp without a CASE in SQL.
+//
+// run_id is the Apify-side run id, which only exists AFTER the actor is
+// started: the row is created when the run begins (with an empty id) and this
+// is the write that fills it in. COALESCE/NULLIF keep that ordering safe — a
+// caller that does not have the id yet leaves the stored value untouched
+// instead of blanking it.
 func (q *Queries) UpdateApifyRun(ctx context.Context, arg UpdateApifyRunParams) (ApifyRun, error) {
-	row := q.db.QueryRow(ctx, updateApifyRun, arg.ID, arg.Status, arg.FinishedAt)
+	row := q.db.QueryRow(ctx, updateApifyRun,
+		arg.ID,
+		arg.Status,
+		arg.FinishedAt,
+		arg.RunID,
+	)
 	var i ApifyRun
 	err := row.Scan(
 		&i.ID,

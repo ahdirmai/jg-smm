@@ -87,9 +87,16 @@ RETURNING id, scrape_job_id, actor_id, run_id, status, started_at, finished_at;
 -- name: UpdateApifyRun :one
 -- finished_at is passed in (NULL while the run is still in flight) so the caller
 -- controls the terminal stamp without a CASE in SQL.
+--
+-- run_id is the Apify-side run id, which only exists AFTER the actor is
+-- started: the row is created when the run begins (with an empty id) and this
+-- is the write that fills it in. COALESCE/NULLIF keep that ordering safe — a
+-- caller that does not have the id yet leaves the stored value untouched
+-- instead of blanking it.
 UPDATE apify_run
 SET status      = $2,
-    finished_at = $3
+    finished_at = $3,
+    run_id      = COALESCE(NULLIF(sqlc.arg('run_id')::text, ''), run_id)
 WHERE id = $1
 RETURNING id, scrape_job_id, actor_id, run_id, status, started_at, finished_at;
 

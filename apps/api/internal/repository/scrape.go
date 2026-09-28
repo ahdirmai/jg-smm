@@ -410,6 +410,11 @@ func (r *ScrapeRepo) UpdateApifyRun(ctx context.Context, a domain.ApifyRun, fini
 		ID:         uuidValue(a.ID),
 		Status:     a.Status,
 		FinishedAt: fin,
+		// The Apify-side run id only exists once the actor has started, so the row
+		// is created with it empty and this write fills it in. COALESCE/NULLIF keep
+		// that ordering safe — a caller still without the id leaves the stored value
+		// untouched instead of blanking it.
+		RunID: a.RunID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.ApifyRun{}, domain.ErrNotFound
