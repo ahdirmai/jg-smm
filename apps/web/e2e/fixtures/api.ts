@@ -130,6 +130,17 @@ export class ApiClient {
       body: JSON.stringify({ items }),
     });
   }
+  /** Enqueue expecting a rejection, returning status + body. `json()` throws on
+   * non-2xx, which is the wrong shape for testing a guard. */
+  async enqueueRejected(
+    items: { accountId: string; targetUrl: string; actionType: string }[],
+  ): Promise<{ status: number; body: string }> {
+    const res = await this.req('/api/actions', {
+      method: 'POST',
+      body: JSON.stringify({ items }),
+    });
+    return { status: res.status, body: await res.text() };
+  }
 
   // Team / audit / reports (read-only in the suite) ---------------------
   listUsers() {

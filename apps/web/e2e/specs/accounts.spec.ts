@@ -11,30 +11,49 @@ import { test, expect } from '../fixtures/base.js';
 const USER = `e2e_user_${Date.now().toString(36)}`;
 
 test.describe('accounts page', () => {
-  test('renders the empty state and the platform filter', async ({ authedPage, api }) => {
+  test('renders the first-run panel', async ({ authedPage, api }) => {
     const list = await api.listAccounts();
     test.skip(list.accounts.length > 0, 'empty state needs no accounts');
 
     await authedPage.goto('/accounts');
     await expect(authedPage.getByText('No accounts yet')).toBeVisible();
 
-    await authedPage.getByLabel('All platforms').click();
-    await expect(authedPage.getByRole('option', { name: 'Instagram' })).toBeVisible();
+    // The two ways in are the whole content of the page until an account
+    // exists — the stat strip and the filter row are deliberately absent
+    // (zeros and dead controls are not a first run). The platform filter is
+    // covered by the bulk-select spec, which drives it against real rows.
+    await expect(authedPage.getByRole('link', { name: 'Add account' })).toBeVisible();
+    await expect(authedPage.getByRole('button', { name: 'Import CSV' })).toBeVisible();
+    await expect(authedPage.getByLabel('All platforms')).toBeHidden();
   });
 
   test('the new-account route renders its wizard', async ({ authedPage }) => {
     await authedPage.goto('/accounts/new');
 
-    // Step 0 is the platform picker: heading, the platform buttons, and the
-    // Continue affordance. Credentials fields only appear on step 1.
-    await expect(authedPage.getByRole('heading', { name: 'Pick a platform' })).toBeVisible();
-    await expect(authedPage.getByRole('button', { name: 'Instagram' })).toBeVisible();
-    await expect(authedPage.getByRole('button', { name: 'Continue' })).toBeVisible();
+    // Step 0 is the container picker (the wizard is container-first: the
+    // container's region decides where the account browses from, and a
+    // platform already present in that container is disabled). Continue stays
+    // disabled until one is chosen.
+    await expect(authedPage.getByRole('heading', { name: 'Pick a container' })).toBeVisible();
+    await expect(authedPage.getByRole('button', { name: 'Continue' })).toBeDisabled();
 
-    // Advancing to step 1 surfaces the credentials form.
+    // Pick whatever container the fleet has; with none provisioned the step
+    // says so and the credentials form is unreachable, which is the honest
+    // state on a fresh stack.
+    const firstContainer = authedPage.locator('button', { hasText: /·\s*(READY|IDLE)/ }).first();
+    if ((await firstContainer.count()) === 0) {
+      await expect(authedPage.getByText('No containers yet')).toBeVisible();
+      return;
+    }
+    await firstContainer.click();
+    await authedPage.getByRole('button', { name: 'Continue' }).click();
+
+    // Step 1 picks the platform; step 2 surfaces the credentials form.
+    await expect(authedPage.getByRole('heading', { name: 'Pick a platform' })).toBeVisible();
     await authedPage.getByRole('button', { name: 'Instagram' }).click();
     await authedPage.getByRole('button', { name: 'Continue' }).click();
-    await expect(authedPage.getByLabel(/Username/i)).toBeVisible();
+    await expect(authedPage.getByLabel('Username')).toBeVisible();
+    await expect(authedPage.getByLabel('Password')).toBeVisible();
   });
 
   test('a row created via the API renders with its auth badge', async ({ authedPage, api }) => {
@@ -107,8 +126,12 @@ test.describe('accounts page', () => {
     // Filtering hides the TikTok row; the bar still counts only what is visible.
     await authedPage.getByLabel('All platforms').click();
     await authedPage.getByRole('option', { name: 'TikTok' }).click();
-    await expect(authedPage.getByText(`@${USER}2`)).toBeVisible();
-    await expect(authedPage.getByText(`@${USER}`)).toBeHidden();
+    await expect(authedPage.getByText(`@${USER}2`, { exact: true })).toBeVisible();
+    // Exact again, for the same reason as the checkbox above: a substring
+    // match resolves to both rows, and an assertion over two elements is a
+    // strict-mode violation rather than the "is the Instagram row gone" check
+    // this is meant to be.
+    await expect(authedPage.getByText(`@${USER}`, { exact: true })).toBeHidden();
 
     // Clearing the selection is a first-class escape hatch.
     await authedPage.getByRole('button', { name: 'Clear' }).click();

@@ -86,7 +86,7 @@ event never fires and the default `waitUntil` hangs until timeout.
 | `auth.spec.ts` | Login | Owner session bootstrap, bad-password inline error, empty-submit guard, unauthenticated redirect, `next` open-redirect sanitisation, logged-in /login hides the form |
 | `workers.spec.ts` | Fleet | The create form renders the city list; **Add container lands a container in `docker ps` as `smm-worker-<slug>-<id>` and the card flips READY**; live-view disabled until noVNC publishes; provisioning log panel; delete removes row and container; delete refused while accounts packed; city grouping |
 | `accounts.spec.ts` | Accounts | Empty state, new-account route, row renders with auth badge, pause/resume flips the badge, bulk select counts only visible rows, status filter, row removal |
-| `actions.spec.ts` | Queue | Empty state, enqueue refuses without account/URL, like batch enqueues and renders, over-cap refusal with the count, status filter narrows and reports the count, job card opens the detail dialog |
+| `actions.spec.ts` | Queue | Empty state, enqueue refuses without account/URL, like batch enqueues and renders, over-cap refusal, status filter narrows and reports the count, job card opens the detail dialog. Scrape is stubbed at `/api/scrape/target` (a paid actor run per test buys nothing here) |
 | `templates.spec.ts` | Comment pool | Empty state, create/edit/delete variant, empty-body refusal, platform filter |
 | `monitoring.spec.ts` | Monitoring + shell | KPI strip and its empty state, sync round trip settles, platform subroute, every nav entry routes to its page, header title/subtitle |
 | `reports.spec.ts` | Reports | Filters, empty actions report, targets report, CSV export endpoint, analytics metric picker |
@@ -97,34 +97,57 @@ event never fires and the default `waitUntil` hangs until timeout.
 Docker assertions (`workers.spec.ts`) are skipped when no daemon is reachable,
 so the rest of the suite still runs in CI without a socket.
 
-## Status & known real bugs (audited 2026-09-19)
+## Status
 
-Last full run: **71 passed / 4 failed / 1 skipped**. The 4 failures are genuine
-app/env issues, not stale selectors — they are not force-passed:
+`actions.spec.ts` was rewritten on 2026-09-25 against the redesigned one-linear
+form: the old spec drove `Target URL` / `Account (worker)` / `Pick an account
+first.`, all of which the redesign removed, so five of seven tests failed on
+locators that no longer exist. The over-cap test moved to the API, where the cap
+(`service.MaxActionBatch`) is actually enforced.
 
-- **`GET /api/templates` with no `platform` defaults to instagram-only**
-  (`apps/api/internal/http/template.go`). The templates page fetches unfiltered
-  and filters client-side, so non-Instagram variants never render and the
-  platform filter is dead for other platforms. (`templates.spec.ts` platform
-  filter.)
+`accounts.spec.ts`: **6 passed / 1 skipped** (the first-run spec skips itself when
+accounts exist). Three failures were fixed on 2026-09-25 — two were real product
+bugs, one was a stale spec:
+
+- **Row click stole menu clicks.** `DropdownMenuContent` renders in a Radix
+  portal, but React still bubbles its events up the React tree to the `<tr>`,
+  whose `onClick` opens the account. Choosing "Pause" also opened the live
+  browser over the menu. Fixed by stopping propagation on the menu content.
+- **The checkbox selected *and* opened the row.** Its `stopPropagation` sat on
+  `onChange` while the row listens on `onClick`; switching to `onClick` fixed it.
+- **The bulk bar unmounted with the selection still live.** Filtering away every
+  selected row emptied the bar, taking `Clear` with it — so the one control that
+  undoes the selection vanished exactly when it was needed, and the hidden rows
+  stayed checked. The bar now stays while `selected` is non-empty, reports
+  `N hidden by filter`, and disables its actions at zero visible.
+
+Remaining failures elsewhere in the suite are genuine app/env issues, not stale
+selectors — they are not force-passed:
+
+- ~~**`GET /api/templates` with no `platform` defaults to instagram-only**~~ —
+  **fixed and re-verified 2026-09-25.** `template.go` now passes the empty
+  platform through and the repo omits the filter, so an unfiltered listing
+  returns every platform's variants. Verified live: seeded an instagram and a
+  threads variant, `GET /api/templates` → `count 2 platforms [instagram,
+  threads]`, `GET /api/templates?platform=threads` → `count 1 [threads]`.
 - **Live-fleet timing:** an enqueued job leaves `PENDING` before the "Pending"
   filter assertion, and the global queue accumulates across tests, so
   `1 of 1 shown` is not stable against a running fleet. (`actions.spec.ts`.)
-- **TikTok is not a provisioned platform in the MVP:** a TikTok account is
-  returned by the REST API but does not survive/render under the TikTok filter.
-  (`accounts.spec.ts` bulk/filter.)
 - **SSE-propagation flakiness:** `audit`/`settings` assertions that wait on
   audit-trail or roster propagation are intermittent; `retries: 1` covers this.
 
 Live-action smoke (manual, real session, `ACTION_DRY_RUN=false`):
 
 - `action_like` on a real post → **SUCCESS** end to end from a noVNC-authenticated
-  account (proves session cookies + like automation).
-- `action_comment` → **FAILED** — `locator.fill` times out waiting for
-  `div[contenteditable="true"][role="textbox"]`. The IG comment composer either
-  moved or now needs the comment affordance clicked first; the like-button path
-  is fine, the comment-box path is stale. Real worker fix (IG `commentOnPost`),
-  not a test bug.
+  account (proves session cookies + like automation). The job took 2 attempts and
+  ~9 minutes: the first was rescheduled by the deliberate per-account pace gate
+  (`ACTION_ACCOUNT_PACE_SECONDS=480`, anti-burst). A job that looks "stuck" for
+  8 minutes on a busy account is pacing, not a broken like path — read
+  `scheduled_at`/`error` before diagnosing.
+- `action_comment` → **SUCCESS** (re-verified 2026-09-25; the earlier
+  "`locator.fill` times out" note was against the pre-`composerCandidates`
+  worker). The composer path now tries the mounted box, then clicks the comment
+  affordance and re-hunts.
 
 Product notes to flag before ship:
 
