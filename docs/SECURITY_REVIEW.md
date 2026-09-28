@@ -12,7 +12,7 @@ trust boundaries the PRD names (RBAC, SSRF, credential storage, worker ingress).
 | Check | Status | Evidence |
 | ----- | ------ | -------- |
 | `govulncheck` application deps | PASS | `go-redis` v9.7.0 → **v9.7.3** (GO-2025-3540). No remaining module CVEs are reachable |
-| `govulncheck` Go stdlib | DEFERRED | 7 CVEs fixed in go1.26.6 (see §Toolchain). Local toolchain is 1.26.4; bump is a build-image change, not a code change |
+| `govulncheck` Go stdlib | PASS | **Closed 2026-09-25.** Re-ran under `golang:1.26-alpine` → `GOLANG_VERSION=1.26.8`, above the 1.26.6 the 7 CVEs were fixed in: `No vulnerabilities found`. See §Toolchain |
 | `gitleaks` | PASS | `.gitleaks.toml` extends the default ruleset; local-dev placeholders (`smmsmmsmm`, `changeme`, `dev-only-secret`) are explicitly allowlisted with a comment saying why. `.env` is gitignored |
 | RBAC | **FIXED** | The `/api` group required `act`, so STRATEGIST/ANALYST got 403 on every read. Floor is now `read`; every mutating route carries an `act`/`export`/`admin` gate |
 | SSRF | PASS | `safeTargetURL` is a strict allowlist (http/https + host required). No blocklist to drift |
@@ -45,26 +45,40 @@ After: the group floor is `PermRead`; the write routes opt up.
 Proven by `TestContainerRBAC` (analyst: read 200 / write 403; strategist: read
 200 / delete 403; anonymous: 401) and unchanged `TestAuthFlowAndRBAC`.
 
-## Toolchain (deferred)
+## Toolchain (closed 2026-09-25)
 
-`govulncheck` reports 7 stdlib CVEs reachable from the API: GO-2026-6218
-(net/url), -6090/-5856 (crypto/tls), -6089/-5026 (net/http), -6088
-(encoding/xml), -5972 (encoding/asn1). All are fixed in **go1.26.6**; the local
-toolchain is 1.26.4 and the CI image is `golang:1.26-alpine`.
+`govulncheck` previously reported 7 stdlib CVEs reachable from the API:
+GO-2026-6218 (net/url), -6090/-5856 (crypto/tls), -6089/-5026 (net/http),
+-6088 (encoding/xml), -5972 (encoding/asn1). All were fixed in **go1.26.6**;
+the local toolchain was 1.26.4 and the CI image tag is `golang:1.26-alpine`.
 
-`go.mod` stays at `go 1.26.0` on purpose: bumping the directive to 1.26.6 makes
-`go mod tidy` fail on any machine without the exact patch release, and `go
-1.26.0` already lets `GOTOOLCHAIN=auto` resolve forward. The honest remediation
-is to rebuild the image, which pulls a new Go download — deferred because the
-local network is flaky. This is the **only** open item.
+The prediction in the earlier revision of this section held: the `1.26` tag
+tracks the latest 1.26.x, so the remediation was a *rebuild*, not a code
+change. The image now resolves to `GOLANG_VERSION=1.26.8`, and re-running the
+scanner against it reports:
 
-To close it:
+```
+=== Symbol Results ===
+
+No vulnerabilities found.
+
+Your code is affected by 0 vulnerabilities.
+This scan also found 0 vulnerabilities in packages you import and 2
+vulnerabilities in modules you require, but your code doesn't appear to call
+these vulnerabilities.
+```
+
+`go.mod` still stays at `go 1.26.0` — that decision was about not breaking
+`go mod tidy` on machines without the exact patch release, and `GOTOOLCHAIN=auto`
+already resolves forward, so nothing there needed to change.
+
+To re-verify (no local Go toolchain required — the scan runs in the image that
+is actually built, which is the point):
 
 ```bash
-# locally: install the patch toolchain, then
-cd apps/api && go mod edit -go=1.26.6 && go mod tidy
-# in CI: the 1.26 tag already tracks the latest 1.26.x, so a rebuild is enough
-make ci
+cd apps/api
+docker run --rm -v "$PWD":/src -w /src golang:1.26-alpine sh -c \
+  'go install golang.org/x/vuln/cmd/govulncheck@latest && /go/bin/govulncheck ./...'
 ```
 
 ## noVNC production caveat

@@ -22,7 +22,7 @@ From `DEVELOPMENT_PHASE.md` → P5 Exit Criteria, plus the ticket's own AC:
 | A4  | MTTR worker failure              | < 5 min                            | reconciler restore timestamps                                    |
 | A5  | DR drill success                 | restore < 30 min                   | `make drill` output (destructive — staging only)                 |
 | A6  | Runbooks + severity matrix       | all alerts covered                 | `infra/runbooks/`, `SEVERITY.md`                            |
-| A7  | Security review sign-off         | granted                            | `SECURITY_REVIEW.md` — granted, one deferred toolchain item |
+| A7  | Security review sign-off         | granted                            | `SECURITY_REVIEW.md` — granted; the deferred toolchain item was closed 2026-09-25 |
 | A8  | Load test                        | API p95 < 1500 ms                  | `make load-test`; see `LOAD_TEST.md`                        |
 | A9  | Scale at ~50 containers          | invariants hold                    | `SCALE_TEST.md`                                             |
 
@@ -76,27 +76,18 @@ This is the substance of the ticket and it is calendar time, not code:
 The per-platform kill-switch and auto-quarantine are the containment; the ramp
 is how you avoid discovering them at full scale.
 
-### 3.2 Toolchain patch (A7, deferred)
+### 3.2 Toolchain patch (A7) — CLOSED 2026-09-25
 
-`govulncheck` reports **7 Go stdlib CVEs** reachable from the API
-(GO-2026-6218 and others, fixed in **go1.26.6**). Local toolchain is 1.26.4;
-the CI image is `golang:1.26-alpine`, whose `1.26` tag already tracks the
-latest 1.26.x, so the fix is a **rebuild**, not a code change.
+The 7 Go stdlib CVEs (GO-2026-6218 and others) were fixed in **go1.26.6**. The
+CI image `golang:1.26-alpine` tracks the latest 1.26.x, so the remediation was a
+rebuild — exactly as predicted here. The image now resolves to
+`GOLANG_VERSION=1.26.8`, and `govulncheck` re-run inside it reports
+**`No vulnerabilities found`**.
 
-`go.mod` deliberately stays at `go 1.26.0` — bumping the directive to 1.26.6
+`go.mod` deliberately stayed at `go 1.26.0` — bumping the directive to 1.26.6
 breaks `go mod tidy` on older toolchains while gaining nothing, since
-`GOTOOLCHAIN=auto` already resolves forward. See `SECURITY_REVIEW.md`
-§Toolchain.
-
-```bash
-# locally: install the 1.26.6 toolchain, then
-cd apps/api && go mod edit -go=1.26.6 && go mod tidy
-# in CI: rebuild the image; the 1.26 tag tracks the latest 1.26.x
-```
-
-This needs a network-available install, so it was **not** done during
-development. It is a pre-GA blocker for A7 only if the soak environment is
-exposed to the affected stdlib paths; record the decision either way.
+`GOTOOLCHAIN=auto` already resolves forward. That decision was correct and was
+not changed. See `SECURITY_REVIEW.md` §Toolchain for the re-verify command.
 
 ### 3.3 Docs sync (A6)
 
@@ -112,13 +103,12 @@ ticket → commit mapping.
 | Item                               | Status           | Note                                        |
 | ---------------------------------- | ---------------- | ------------------------------------------- |
 | Scale invariants at ~50 containers | PASS (in code)   | `TestPackScaleFiftyContainers`              |
-| Security review                    | PASS, 1 deferred | `SECURITY_REVIEW.md`; go1.26.6 rebuild |
+| Security review                    | PASS             | `SECURITY_REVIEW.md`; toolchain item closed 2026-09-25 |
 | Load test                          | PASS             | p95 8.22 ms vs 1500 ms target               |
 | Backup / restore / DR drill        | PASS (mechanism) | live drill must run in the soak (A5)        |
 | Observability tier                 | PASS             | `make up-obs`                               |
 | 30-day soak (A1–A4)                | **PENDING**      | calendar time; §3.1                         |
 | Alert → Slack (A3)                 | **PENDING**      | needs a live delivery in the window         |
-| Toolchain patch (A7)               | **PENDING**      | image rebuild, §3.2                         |
 
 **GA is granted when every PENDING row above has dated evidence attached.**
 Until then the build is feature-complete and green, but **not GA**.

@@ -26,6 +26,11 @@ erDiagram
 
     ScrapeJob ||--|| ApifyRun : produces
     ApifyRun ||--o{ RawPayload : stores
+    %% Keyword batch: one operator search -> one Apify run -> many posts (M:N via
+    %% keyword_batch_post; a post can be reached by several batches over time).
+    KeywordBatch }o--|| ApifyRun : drives
+    KeywordBatch ||--o{ KeywordBatchPost : contains
+    Post ||--o{ KeywordBatchPost : "in_batch"
 
     ActionJob ||--|| CommentTemplate : uses
     ActionJob ||--o{ ActionLog : attempts
@@ -126,7 +131,8 @@ model Account {
   handle          String?             // diverifikasi worker dari halaman profil setelah login sukses
   lastVerifiedAt  DateTime?
   credentials     Json?    // fallback cookie blob (encrypted) — jalur paste-cookie legacy
-  cookieExpiryAt  DateTime?
+  cookieExpiryAt  DateTime?           // kapan cookie sesi mati, dilaporkan login terverifikasi (P2-06); NULL = cookie sesi tanpa tanggal, tidak bisa dijadwalkan
+  refreshFailures Int      @default(0) // gagal refresh BERUNTUN (P2-06); reset tiap login terverifikasi, 3x → status QUARANTINED
   proxyGroupId    String?
   proxyGroup      ProxyGroup? @relation(fields: [proxyGroupId], references: [id])
   healthScore     Int      @default(100)
@@ -146,6 +152,7 @@ model Account {
   @@index([workerId])
   @@index([healthScore])
   @@index([tags])
+  @@index([cookieExpiryAt])                    // P2-06: partial index WHERE authStatus=AUTHENTICATED AND status=ACTIVE AND workerId IS NOT NULL — jalur due-refresh
 }
 
 // 1 Worker = 1 container = 1 "device". Meng-host BANYAK akun,
@@ -257,6 +264,35 @@ model RawPayload {
   s3Key       String
   bytes       Int
   receivedAt  DateTime @default(now())
+}
+model KeywordBatch {
+  id           String    @id @default(cuid())
+  platform     Platform
+  keywords     String[]  -- plain words or #hashtags, mixed freely
+  windowFrom   DateTime? -- applied downstream, not to the actor (see BATCH_SCRAPE)
+  windowTo     DateTime?
+  maxPosts     Int
+  actorId      String    -- full id, not prefix-derived: search actors differ per platform
+  status       String    @default("PENDING")  -- PENDING | RUNNING | SUCCEEDED | FAILED
+  apifyRunId   String?
+  apifyRun     ApifyRun? @relation(fields: [apifyRunId], references: [id], onDelete: SetNull)
+  itemsRead    Int       @default(0)  -- posts that survived the window, not items fetched upstream
+  postsCount   Int       @default(0)
+  commentsCount Int      @default(0)
+  error        String?
+  createdBy    String?   -- FK app_user ON DELETE SET NULL: a stale session nulls the row
+  createdByUser User?    @relation(fields: [createdBy], references: [id], onDelete: SetNull)
+  createdAt    DateTime  @default(now())
+  finishedAt   DateTime?
+  posts        KeywordBatchPost[]
+}
+model KeywordBatchPost {
+  keywordBatchId String
+  postId         String
+  keywordBatch   KeywordBatch @relation(fields: [keywordBatchId], references: [id], onDelete: Cascade)
+  post           Post         @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@id([keywordBatchId, postId])
 }
 
 model Post {

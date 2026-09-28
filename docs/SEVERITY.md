@@ -86,9 +86,18 @@ graph TD
 
 ## Alert sources (where alerts actually come from)
 
-1. **compose healthchecks** — postgres, redis, minio, api (see `compose.yaml`).
-   The `api` healthcheck runs `/app/server healthcheck` which probes
-   `/healthz`; readiness comes from `/readyz`.
+1. **Image healthchecks** — all six long-running services: postgres, redis,
+   minio (compose, `compose.yaml`), api (`compose.yaml`), web, worker (baked
+   into `apps/web/Dockerfile` and `apps/worker/Dockerfile`). The `api`
+   healthcheck runs `/app/server healthcheck` which probes `/healthz`;
+   readiness comes from `/readyz`. `web` probes `127.0.0.1:3000/login` with
+   busybox `wget` (127.0.0.1, not localhost — see below). `worker` pgrep's the
+   node process **and** fetches the noVNC page — two independent failures (a
+   crashed worker vs. a dead display stack) that a single probe would conflate.
+   The web/worker checks live in the image, not in compose, because most
+   workers are not compose services: the dashboard creates containers through
+   the Docker Engine API (`adapter/dockerprovisioner/docker.go`), which never
+   reads `compose.yaml`. Image-level checks are inherited by both paths.
 2. **`AlertEngine`** (`apps/api/internal/service/alert_engine.go`) — views-drop
    > 50 %/24 h and mention-spike > 3x. Enabled by `ALERT_INTERVAL_SECONDS`.
 3. **Heartbeat path** (`apps/api/internal/service/health.go` + worker
@@ -98,9 +107,15 @@ graph TD
 4. **Gates** — `internal/adapter/ratelimit.go` and `cooldown.go` surface as
    stalled action dispatch, not as pages; detect them from the runbooks.
 
-> **Gap, not a feature:** `web` and `worker` have **no** compose healthcheck.
-   Until one is added, a dead web/worker is detected by the heartbeat row,
-   `make ps`, or a user report — see the worker/web runbooks.
+> **Closed 2026-09-25.** `web` and `worker` now carry healthchecks, so this is
+> no longer a gap. Both directions were verified on a live container: the probe
+> returns 0 when healthy, and killing x11vnc/websockify while node keeps running
+> flips Docker to `unhealthy` after 3 strikes — the case the dual probe exists
+> for. Detection still does not *route* anywhere: nothing consumes Docker's
+> health status into an alert (no `restart:` policy, and the API never reads
+> container health), so a red healthcheck is a signal for `make ps` and the
+> runbooks, not a page. Wiring health → Alertmanager needs `docker events` or a
+> Prometheus cAdvisor scrape; that is separate work.
 
 ## Post-mortem
 
