@@ -17,16 +17,12 @@ Actor id search **tidak** diturunkan dari `APIFY_ACTOR_PREFIX` — dua actor sea
 
 | Platform | Actor | Kenapa |
 | --- | --- | --- |
-| instagram | `apify/instagram-scraper` (`searchType:hashtag`) | keyword → post, ada batas bawah tanggal |
+| instagram | `crawlerbros/instagram-keyword-search-scraper` | keyword → post, satu row flat per post; actor ini yang dipakai sejak v0.2 |
 | threads | `futurizerush/meta-threads-scraper` (`mode:search`) | `keywords[]` + `start_date`/`end_date` |
 
 Env: `APIFY_SEARCH_ACTOR_INSTAGRAM`, `APIFY_SEARCH_ACTOR_THREADS`.
 
-**Jangan pakai `apify/instagram-search-scraper`.** Tiga masalah yang bikin keyword search tidak pernah menghasilkan post benar:
-
-1. Actor itu me-resolve keyword jadi *halaman place/hashtag*, lalu mengembalikan top-post milik entitas itu — untuk keyword hidup, post-nya 2018–2024.
-2. Field input-nya `search` (string koma), bukan `searchTerms[]`. Dikirim `searchTerms[]`, actor mengabaikan keyword dan memakai defaultnya (`"restaurant, restaurant prague"`) — **silent, tanpa error**.
-3. Tidak ada batas tanggal atas.
+> **Riwayat pilihan actor (instagram):** `apify/instagram-search-scraper` me-resolve keyword jadi place/hashtag (post 2018–2024) dan field input-nya `search` (string koma), bukan `searchTerms[]`, sehingga keyword dikirim dan diabaikan **silent**. Diganti ke `apify/instagram-scraper` (`searchType:hashtag`) lalu ke `crawlerbros/instagram-keyword-search-scraper` — row flat snake_case (`shortcode`, `username`, `caption`, `pub_date`, `like_count`) yang butuh parser sendiri, karena Go unmarshal case-insensitive tidak menjembatani underscore (`like_count` ↛ `likesCount`).
 
 Dua jebakan lain yang sudah dikunci test:
 
@@ -66,7 +62,7 @@ PENDING → RUNNING → SUCCEEDED | FAILED
   "from": "2026-09-01T00:00:00Z|null",
   "to": "2026-09-24T00:00:00Z|null",
   "maxPosts": 50,
-  "actorId": "apify/instagram-scraper",
+  "actorId": "crawlerbros/instagram-keyword-search-scraper",
   "status": "PENDING|RUNNING|SUCCEEDED|FAILED",
   "apifyRunId": "uuid|null",
   "itemsRead": 12,

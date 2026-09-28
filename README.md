@@ -136,3 +136,31 @@ See `docs/DEVELOPMENT_RULE.md` for conventions and `docs/DEVELOPMENT_PHASE.md` f
 
 Manual, end-to-end run-through of the live stack (containers up, no mocks):
 `docs/MANUAL_TESTING.md`.
+
+## Apify actors
+
+Actor ids are **full ids**, never derived from `APIFY_ACTOR_PREFIX`: each
+search actor lives under a different Apify namespace, and a prefix-derived
+Threads id 404s on every scrape. All are env-overridable and pinned in
+`compose.yaml`.
+
+| Purpose | Actor | Env |
+| ------- | ----- | --- |
+| Threads per-post | `themineworks/threads-scraper` | `APIFY_POST_ACTOR_THREADS` |
+| Threads keyword search | `futurizerush/meta-threads-scraper` | `APIFY_SEARCH_ACTOR_THREADS` |
+| Instagram per-post | `apify/instagram-post-scraper` | `APIFY_POST_ACTOR_INSTAGRAM` |
+| Instagram keyword search | `crawlerbros/instagram-keyword-search-scraper` | `APIFY_SEARCH_ACTOR_INSTAGRAM` |
+
+Per-platform scrape detail (input, output rows, normalization) is in
+`docs/platforms/`; batch keyword scraping in `docs/BATCH_SCRAPE.md`.
+
+A wrong field name on an actor is **silent** — the actor falls back to its
+own default and the scrape quietly returns the wrong thing, not an error.
+The payload pinning for each actor lives in `runner_test.go` for that reason.
+
+## Changelog
+
+`CHANGELOG.md` is generated from conventional commits. `docs/PROGRESS.md`
+is the living log of completed tickets (`Ticket · Status · Commit · Date ·
+Notes`) and `docs/STATUS_SNAPSHOT.md` is the periodic read-out of what
+shipped, the live state, and what is still open.

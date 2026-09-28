@@ -52,12 +52,16 @@
 
 ## 4. Scrape Brief (Apify)
 
-### 4.1 On-demand post scrape — `apify/meta-threads-scraper`
+### 4.1 On-demand post scrape — `themineworks/threads-scraper` (`mode:post`)
 
-- **Actor:** `apify/meta-threads-scraper` (mode user-posts; runner me-resolve username dari permalink).
-- **Input:** `<url | handle | hashtag | mention>`
-- **Output field:** `<...>`
-- **Normalisasi → DB:** `<Post / Comment / MetricSnapshot mapping>`
+- **Actor:** `themineworks/threads-scraper` — **full id, bukan turunan `APIFY_ACTOR_PREFIX`**. Env `APIFY_POST_ACTOR_THREADS`. Dua pendahulunya sudah tidak dipakai: `futurizerush/meta-threads-scraper` **404** (build user-posts-only, tidak punya mode per-post), dan `pro100chok/threads-scraper-usage` hanya bisa async (tidak cocok dengan `run-sync-get-dataset-items`).
+- **Input:** `mode:"post"`, `postUrls:[<permalink>]`, `maxPosts`, `includeReplies:true`.
+- **`includeReplies:true` wajib.** Default actor mengecualikan reply, dan reply adalah satu-satunya sumber comment Threads. Tanpa flag ini post tersimpan dengan 0 comment.
+- **Context row:** mode post juga mengembalikan share/quote context row di sekitar post yang diminta (`Dengan <name> – Saya baru saja diakui…`), tanpa field yang membedakannya dari post asli. Ingestor memakai shortcode dari permalink untuk men-drop semua kecuali post yang diminta.
+- **Output row:** satu row flat per post — `code`, `url`, `text`, `posted_at` (RFC3339), `like_count`, `reply_count`, `repost_count`, `quote_count`, `username`, `media_urls[]`, `is_reply`, `is_quote_post`, `replied_to_post_code`.
+- **Normalisasi → DB:** `code`→`Post.external_id`, `username`→`author_handle`, `text`→`text`, `media_urls[]`→`media_urls`, metrics `like_count`/`reply_count`/`repost_count`+`quote_count`.
+
+> **Kesalahan terdokumentasi (v0.2):** actor flag `is_reply` pada row yang parent-nya **tidak pernah dikirim** — mode keyword menandai reply tanpa mengambil parent, dan `replied_to_post_code` datang kosong. Parser lama men-drop row itu sebagai orphan, sehingga 19 dari 50 post batch keyword hilang. Sekarang row tanpa parent yang bisa di-resolve disimpan sebagai post top-level.
 
 ### 4.2 Keyword search scrape — `futurizerush/meta-threads-scraper` (`mode:search`)
 
@@ -86,3 +90,4 @@
 | Versi | Tanggal | Perubahan |
 | --- | --- | --- |
 | v0.0 | | Stub dibuat |
+| v0.2 | 2026-09-29 | §4.1 actor per-post diganti: `apify/meta-threads-scraper` (404 — build user-posts-only, tidak ada mode per-post) → `pro100chok/threads-scraper-usage` (async-only) → `themineworks/threads-scraper`. Id full, bukan turunan prefix. `includeReplies:true` wajib (reply = satu-satunya sumber comment). Ingestor sekarang memfilter context row share/quote via shortcode permalink, dan menyimpan row `is_reply` tanpa parent sebagai post (sebelumnya di-drop — 19/50 post batch keyword hilang). |

@@ -59,22 +59,16 @@
 - **Output row:** satu row per post — `shortCode`, `caption`, `ownerUsername`, `ownerId`, `images[]`, `latestComments[]`, `likeCount`, `commentCount`.
 - **Normalisasi → DB:** `shortCode`→`Post.external_id`, `ownerUsername`→`author_handle`, `caption`→`text`, `images`→`media_urls`, `likeCount`/`commentCount`→`Post.metrics` + `MetricSnapshot`; `latestComments[]`→`Comment` rows keyed by shortcode parent.
 
-### 4.2 Keyword search scrape — `apify/instagram-scraper` (`searchType:hashtag`)
+### 4.2 Keyword search scrape — `crawlerbros/instagram-keyword-search-scraper`
 
-> **Jangan pakai `apify/instagram-search-scraper`.** Actor itu me-resolve keyword
-> jadi *halaman place/hashtag*, lalu mengembalikan top-post milik entitas itu
-> (untuk keyword hidup: post 2018–2024), dan field input-nya `search` (string
-> koma), bukan `searchTerms[]`. Dengan `searchTerms[]` actor mengabaikan keyword
-> dan memakai default bawaannya (`"restaurant, restaurant prague"`) — silent,
-> tanpa error. Actor itu juga tidak punya batas tanggal atas.
-
-- **Input:** `search` (string, keyword digabung koma — BUKAN array), `searchType:"hashtag"`, `resultsType:"posts"`, `resultsLimit`, `searchLimit:1`, `onlyPostsNewerThan` (batas bawah saja).
+- **Actor:** `crawlerbros/instagram-keyword-search-scraper` (env `APIFY_SEARCH_ACTOR_INSTAGRAM`). Id full, bukan turunan `APIFY_ACTOR_PREFIX`.
+- **Input:** `input_keyword`, keyword, window, max results di payload.
 - **Run mode:** sync (`run-sync-get-dataset-items`).
-- **⚠ Tidak ada batas atas di actor** → window bagian atas diterapkan di ingestor (`inWindow`).
-- **Output row:** satu row **flat per post** (bentuk sama dengan `instagram-post-scraper`): `shortCode`, `type`, `caption`, `ownerUsername`, `ownerId`, `displayUrl`/`images[]`, `likesCount`, `commentsCount`, `videoViewCount`, `timestamp` (RFC3339), `hashtags[]`, `latestComments[]`.
-- **Row metadata hashtag ikut terkirim** (`searchTerm`, `searchSource`, `name`, `postsCount` tanpa `posts[]`) — diabaikan parser, bukan error.
-- **Normalisasi → DB:** `shortCode`→`Post.external_id`, `ownerUsername`→`author_handle`, `caption`→`text`, `displayUrl`→`media_urls`, `likesCount`/`commentsCount`/`videoViewCount`→`Post.metrics` + `MetricSnapshot`.
-- **Parser lama (§ row `posts[]` nested)** tetap dipertahankan: bentuk itu masih muncul untuk row detail place/hashtag. Lihat `parseIGSearchItems`.
+- **⚠ Tidak ada batas tanggal di actor** → kedua batas window diterapkan di ingestor (`inWindow`).
+- **Output row:** satu row **flat snake_case per post** — `shortcode`, `username`, `caption`, `pub_date` (`"2026-08-03T07:06:51"` — **tanpa offset**, sehingga ditolak RFC3339; dibaca UTC via `parseActorTime`), `author_meta.id`, `like_count`, `comment_count`, `view_count`, `play_count`, `media_items[]`.
+- **Bentuk ini butuh parser sendiri** (`parseIGFlatPostItems`): Go unmarshal case-insensitive tidak menjembatani underscore (`like_count` ↛ `likesCount`), jadi membaca row ini lewat struct camelCase menghasilkan `likes: null, comments: null` dan handle `unknown`.
+- **Tidak mengembalikan comment bodies** — hanya `comment_count`. Untuk comment jalankan post-scrape (§4.1).
+- **Normalisasi → DB:** `shortcode`→`Post.external_id`, `username`→`author_handle`, `caption`→`text`, `media_items[].url`→`media_urls`, `like_count`/`comment_count`/`view_count`+`play_count`→`Post.metrics` + `MetricSnapshot`.
 - **Dataset keys:** `apify/search-<runID>/<i>.json`.
 
 ## 5. Live Brief (bila ada)
@@ -98,3 +92,4 @@
 | v0.1 | 2026-09-23 | §4.1–4.2: scrape brief on-demand (`instagram-post-scraper`) + keyword search (`instagram-search-scraper`) sesuai output asli actor; catat bahwa actor search mengabaikan since/until (filter di ingestor) dan row page kosong bukan error |
 | v0.2 | 2026-09-23 | Fix Bad Gateway saat scrape post: (1) actor id ke Apify pakai `~` bukan `/` (`apify/instagram-post-scraper` → 404, `apify~instagram-post-scraper` → 200); (2) read-back post pertama kali via shortcode-dari-URL karena target di-key by URL sedangkan post di-key by shortCode dan LinkTargetPost belum jalan |
 | v0.3 | 2026-09-25 | §4.2 koreksi actor: `instagram-search-scraper` → `apify/instagram-scraper` (`searchType:hashtag`). Actor lama me-resolve keyword jadi place/hashtag dan mengembalikan top-post lama; field-nya `search` (koma), bukan `searchTerms[]`, sehingga keyword kita diabaikan tanpa error. Catat tidak ada batas atas → filter di ingestor. Actor id search sekarang env (`APIFY_SEARCH_ACTOR_*`), bukan turunan prefix |
+| v0.4 | 2026-09-29 | §4.2 actor search diganti lagi: `apify/instagram-scraper` → `crawlerbros/instagram-keyword-search-scraper`. Row flat **snake_case** (`shortcode`/`pub_date`/`like_count`), bukan camelCase, sehingga butuh parser sendiri (`parseIGFlatPostItems`) — struct camelCase menghasilkan metrics null + handle `unknown`. `pub_date` datang tanpa offset, dibaca UTC. Actor hanya mengembalikan `comment_count`, bukan bodies — comment butuh post-scrape (§4.1) |
