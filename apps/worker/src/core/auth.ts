@@ -17,7 +17,7 @@ import {
   detectAuthInputWith,
   submitAuthInputWith,
 } from '../platforms/otp.js';
-import { FIXED_VIEWPORT, pinGeolocation } from './browser.js';
+import { newAccountContext } from './browser.js';
 import type { Geolocation } from './geolocation.js';
 import { captureScreenshot } from './screenshot.js';
 import { readSession, writeSession } from './session.js';
@@ -33,6 +33,13 @@ export interface LoginResult {
   handle?: string;
   /** Screenshot basename for the operator when `needs_input`. */
   screenshot?: string;
+  /**
+   * Epoch ms the session cookie expires, when the platform gave one (P2-06).
+   * Drives the refresh schedule: the API stores it and dispatches the next
+   * refresh a week ahead. Absent for a session cookie (`expires: -1`), which
+   * cannot be scheduled against — such an account is refreshed only by hand.
+   */
+  expiresAt?: number;
 }
 
 export interface AuthDeps {
@@ -43,6 +50,8 @@ export interface AuthDeps {
   geolocation?: (() => Promise<Geolocation | null>) | undefined;
   /** Where screenshots land (basename only in the result). */
   screenshotDir?: string;
+  /** Where persisted sessions live. Defaults to SESSION_DIR / /data/sessions. */
+  sessionDir?: string;
   /** Worker id, for the deterministic screenshot name (§7.3). */
   workerId?: string;
   /** Injectable clock for deterministic tests. */
@@ -76,6 +85,26 @@ export interface SessionVerdict {
   handle?: string;
   /** A 2FA/checkpoint field is showing: operator input needed. */
   needsInput: boolean;
+  /** Epoch ms the first-required cookie expires (P2-06); see `LoginResult`. */
+  expiresAt?: number;
+}
+
+/**
+ * The soonest a *required* cookie dies, in epoch ms, or undefined when none of
+ * them carries a date. Session cookies (`expires: -1`) never constrain the
+ * schedule — Playwright reports them as -1, which is not a timestamp.
+ *
+ * The minimum, not the first: a session stays proof only while EVERY required
+ * cookie is present, so the earliest expiry is when proof actually breaks.
+ */
+function soonestExpiry(
+  cookies: readonly { name: string; expires: number }[],
+  wanted: readonly string[],
+): number | undefined {
+  const dated = cookies
+    .filter((c) => wanted.includes(c.name) && c.expires > 0)
+    .map((c) => c.expires * 1000);
+  return dated.length > 0 ? Math.min(...dated) : undefined;
 }
 
 /**
@@ -93,10 +122,12 @@ export async function probeSession(
   const have = new Set(cookies.map((c) => c.name));
   const proven = wanted.length > 0 && wanted.every((name) => have.has(name));
   const handle = cookies.find((c) => c.name === wanted[0])?.value;
+  const expiresAt = soonestExpiry(cookies, wanted);
   return {
     proven,
     needsInput: await detectAuthInput(ctx, adapter),
     ...(handle ? { handle } : {}),
+    ...(expiresAt !== undefined ? { expiresAt } : {}),
   };
 }
 
@@ -117,7 +148,11 @@ export async function pollLoginOutcome(
     }
     const verdict = await probeSession(platform, ctx);
     if (verdict.proven) {
-      return { outcome: 'verified', ...(verdict.handle ? { handle: verdict.handle } : {}) };
+      return {
+        outcome: 'verified',
+        ...(verdict.handle ? { handle: verdict.handle } : {}),
+        ...(verdict.expiresAt !== undefined ? { expiresAt: verdict.expiresAt } : {}),
+      };
     }
     if (verdict.needsInput) return { outcome: 'needs_input' };
     await sleep(POLL_INTERVAL_MS);
@@ -135,11 +170,21 @@ export async function runLogin(
   deps: AuthDeps,
 ): Promise<LoginResult> {
   const browser = await deps.browser();
-  const ctx = await browser.newContext({ viewport: FIXED_VIEWPORT });
-  // The operator confirms the login in the noVNC view, where a localised page
-  // may show "current location" — pin it to the worker's frozen point so what
-  // they see matches what the action contexts will report.
-  await pinGeolocation(ctx, await deps.geolocation?.().catch(() => null));
+  // Hydrate the persisted session before the first poll. This is what makes a
+  // refresh autonomous: `pollLoginOutcome` proves a session by the presence of
+  // the platform's auth cookies, so a context hydrated from disk is proven on
+  // the first pass and never reaches the operator. Without it every invocation
+  // — including a scheduled P2-06 refresh of a perfectly healthy account —
+  // would open a bare login page and park on `needs_input` for a human.
+  //
+  // Same context shape the action path uses (locale, UA, geolocation), so the
+  // platform sees one consistent "device" across login and action.
+  const ctx = await newAccountContext(
+    browser,
+    platform,
+    await readSession(platform, deps.sessionDir).catch(() => undefined),
+    await deps.geolocation?.().catch(() => null),
+  );
   authContexts.set(accountId, ctx);
 
   const page = await ctx.newPage();
@@ -202,7 +247,7 @@ async function waitForOutcome(
     // Persist so a restart needs no re-login. A disk failure must never
     // downgrade a verified login to failed — the session is an optimisation.
     try {
-      await writeSession(platform, await ctx.storageState());
+      await writeSession(platform, await ctx.storageState(), deps.sessionDir);
     } catch {
       // Best effort; the login itself already succeeded.
     }

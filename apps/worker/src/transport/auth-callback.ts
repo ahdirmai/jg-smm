@@ -46,6 +46,11 @@ export function createAuthCallback(
       accountId,
       authStatus,
       ...(result.handle ? { handle: result.handle } : {}),
+      // ISO-8601 for the API's timestamptz. Only a verified login has one, and
+      // only when the platform dated the cookie (P2-06 scheduling).
+      ...(result.expiresAt !== undefined
+        ? { cookieExpiresAt: new Date(result.expiresAt).toISOString() }
+        : {}),
       ...(result.outcome === 'failed' ? { error: 'login did not complete' } : {}),
     });
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {

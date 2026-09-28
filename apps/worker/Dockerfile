@@ -6,6 +6,30 @@
 
 FROM node:22-bookworm AS base
 ENV DEBIAN_FRONTEND=noninteractive
+# This build host cannot fetch from deb.debian.org. Not a slow link — the name
+# resolves to a single Akamai address (140.248.130.132) that refuses both 80 and
+# 443, so every apt run dies with "Unable to connect to deb.debian.org". The
+# same packages from the mirrors below downloaded 3/3 with no failures, so the
+# sources are repointed with a fallback chain rather than a single substitute:
+# apt walks the list per file and only the last entry is the unreachable one.
+#
+# Replaces the base image's sources entirely — it lists only deb.debian.org.
+# Both a `bookworm` and a `bookworm-security` suite are needed; the security
+# suite lives on a different root, so it cannot share the first entry's URIs.
+RUN printf '%s\n' \
+      'Types: deb' \
+      'URIs: https://kartolo.sby.datautama.net.id/debian https://mirrors.ustc.edu.cn/debian https://deb.debian.org/debian' \
+      'Suites: bookworm bookworm-updates' \
+      'Components: main' \
+      'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg' \
+      '' \
+      'Types: deb' \
+      'URIs: https://kartolo.sby.datautama.net.id/debian-security https://mirrors.ustc.edu.cn/debian-security https://deb.debian.org/debian-security' \
+      'Suites: bookworm-security' \
+      'Components: main' \
+      'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg' \
+      > /etc/apt/sources.list.d/debian.sources \
+ && printf 'Acquire::Retries "5";\n' > /etc/apt/apt.conf.d/99-retries
 # Headful rendering under a virtual display, plus the noVNC live view.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       xvfb x11vnc novnc websockify \
@@ -59,4 +83,26 @@ COPY infra/docker/worker-entrypoint.sh /usr/local/bin/worker-entrypoint.sh
 RUN chmod +x /usr/local/bin/worker-entrypoint.sh
 # noVNC port (localhost-only mapping in compose) + worker liveness.
 EXPOSE 6080
+# Two independent things fail here, so probe both. `pgrep -x node` is liveness
+# of the worker process itself (node is PID 1 after the entrypoint execs;
+# heartbeat.ts calls process.exit after 3 failed heartbeats, so a dead worker is
+# a real state, not a theoretical one). The noVNC fetch catches the other half —
+# the display stack — which can die while node keeps running, and without which
+# a login cannot be driven even though the worker is healthy enough to claim
+# jobs.
+#
+# This lives in the image rather than in compose's service block because most
+# workers are not compose services: the dashboard creates containers through the
+# Docker Engine API (adapter/dockerprovisioner), which does not read compose at
+# all. An image-level HEALTHCHECK is inherited by both paths; a compose one
+# would cover only the `fleet` profile, leaving the containers operators
+# actually run with no health at all.
+#
+# 127.0.0.1 rather than localhost: busybox wget resolves localhost to ::1
+# first (/etc/hosts), so a v4-only listener refuses it. websockify happens to
+# bind both today, but the probe should not depend on that.
+#
+# No curl in this image: busybox wget is the available HTTP client.
+HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
+  CMD pgrep -x node >/dev/null && wget -q --spider http://127.0.0.1:6080/vnc.html
 ENTRYPOINT ["/usr/local/bin/worker-entrypoint.sh"]

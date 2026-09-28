@@ -163,10 +163,11 @@ func (h *InternalHandler) accountCallback(c echo.Context) error {
 	}
 
 	err = h.jobs.RecordAuthOutcome(c.Request().Context(), service.AuthOutcome{
-		AccountID:  req.AccountId,
-		AuthStatus: auth,
-		Handle:     req.Handle,
-		Error:      truncatePtr(req.Error, maxErrorRunes),
+		AccountID:       req.AccountId,
+		AuthStatus:      auth,
+		Handle:          req.Handle,
+		Error:           truncatePtr(req.Error, maxErrorRunes),
+		CookieExpiresAt: req.CookieExpiresAt,
 	})
 	return h.translate(c, err)
 }

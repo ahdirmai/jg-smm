@@ -690,8 +690,11 @@ export function missingText(): AdapterResult {
  * string to AUTH, P3-12) rather than a transient one.
  *
  * A failure always carries a screenshot: the operator's only evidence of what
- * the page actually showed. Never throws — the caller decides what a failure
- * means, and an orchestration bug must not masquerade as a platform failure.
+ * the page actually showed. A success carries one too — a verdict of "liked"
+ * with no picture is unauditable, and the operator has no way to tell a real
+ * like from one the page merely claimed. Never throws — the caller decides what
+ * a failure means, and an orchestration bug must not masquerade as a platform
+ * failure.
  */
 export async function runAction(
   ctx: BrowserContext,
@@ -716,7 +719,21 @@ export async function runAction(
     if (await pageUnavailable(page)) {
       return await failShot(d, TARGET_UNAVAILABLE_ERROR);
     }
-    return await fn(d);
+    const result = await fn(d);
+    if (!result.ok) return result;
+    // Success gets the same evidence as failure. Captured HERE, on the page the
+    // action just acted on, and before `finally` closes it — the action
+    // functions return as soon as they have verified, so this is the state the
+    // verification saw. A missing shot degrades to no screenshot rather than
+    // failing a job that already succeeded.
+    const deps = adapterDeps();
+    const shot = await captureScreenshot(
+      page,
+      job.id,
+      deps.workerId,
+      deps.screenshotDir ? { dir: deps.screenshotDir } : {},
+    );
+    return shot ? { ...result, screenshot: shot } : result;
   } catch (err) {
     return await failShot(d, `action ${job.action} threw: ${(err as Error).message}`);
   } finally {

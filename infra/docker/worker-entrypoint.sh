@@ -29,10 +29,28 @@ Xvfb ":${DISPLAY_NUM}" -screen 0 "${SCREEN_GEOMETRY}" -nolisten tcp &
 XVFB_PID=$!
 
 # Wait for X to be ready.
+#
+# Gate on the display socket, not on xdpyinfo: x11-utils is not installed in
+# this image (only xvfb/x11vnc/novnc/websockify), so the old `xdpyinfo` probe
+# exited 127 on every iteration and this loop always ran its full 50 × 0.1s —
+# a flat 5s added to every worker boot, including every reconciler-driven
+# recreate. The socket is what x11vnc and Chromium actually connect to, and it
+# appears once Xvfb is serving; the two-iteration confirmation avoids racing
+# the socket file's creation.
+seen=0
 for _ in $(seq 1 50); do
-  if xdpyinfo -display ":${DISPLAY_NUM}" >/dev/null 2>&1; then break; fi
+  if [ -e "/tmp/.X11-unix/X${DISPLAY_NUM}" ]; then
+    seen=$((seen + 1))
+    [ "${seen}" -ge 2 ] && break
+  else
+    seen=0
+  fi
   sleep 0.1
 done
+if [ "${seen}" -lt 2 ]; then
+  echo "{\"level\":\"error\",\"msg\":\"X display never became ready\",\"display\":\"${DISPLAY}\"}" >&2
+  exit 1
+fi
 
 # 2. VNC server bound to the X display (localhost only in compose).
 x11vnc -display ":${DISPLAY_NUM}" -forever -shared -nopw -rfbport "${VNC_PORT}" -quiet &

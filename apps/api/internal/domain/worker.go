@@ -22,7 +22,15 @@ type Account struct {
 	LastUsedAt   *time.Time
 	LastChecked  *time.Time
 	LastError    *string
-	CreatedAt    time.Time
+	// CookieExpiryAt is when the session cookie dies, as reported by the last
+	// verified login (P2-06). Nil means the platform dated nothing (a session
+	// cookie), so the refresh cannot be scheduled — such an account is
+	// refreshed by hand only.
+	CookieExpiryAt *time.Time
+	// RefreshFailures counts CONSECUTIVE failed session refreshes. Reset to 0
+	// by any verified login; at the threshold the account is quarantined.
+	RefreshFailures int
+	CreatedAt       time.Time
 }
 
 // IsPackable reports whether the account can be assigned to a container. A
