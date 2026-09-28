@@ -32,6 +32,13 @@ func (r *KeywordBatchRepo) CreateKeywordBatch(ctx context.Context, b domain.Keyw
 		CreatedBy:  uuidValuePtr(b.CreatedBy),
 	})
 	if err != nil {
+		// created_by points at app_user, and this only ever fails that way when
+		// the caller's token names a user deleted since it was issued — a stale
+		// session surviving a database reset. Report it as unauthorized (the
+		// client re-authenticates) rather than as a 502 from a bad insert.
+		if isForeignKeyViolation(err) {
+			return domain.KeywordBatch{}, fmt.Errorf("repository.keyword_batch.Create: %w: session user no longer exists", domain.ErrUnauthorized)
+		}
 		return domain.KeywordBatch{}, fmt.Errorf("repository.keyword_batch.Create: %w", err)
 	}
 	return toKeywordBatch(row), nil

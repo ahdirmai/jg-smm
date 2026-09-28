@@ -15,6 +15,8 @@ export type ActionsState = {
   error: string | null;
   refresh: () => void;
   enqueue: (items: ActionItem[]) => Promise<void>;
+  retry: (jobId: string) => Promise<void>;
+  runPendingNow: () => Promise<number>;
 };
 
 /**
@@ -71,5 +73,23 @@ export function useActions(status?: JobStatus): ActionsState {
     [refresh],
   );
 
-  return { actions, loading, error, refresh, enqueue };
+  // Manual retry. Throws on the server's 400 (job is not FAILED) so the caller
+  // can surface it; the refetch afterwards is what actually moves the row.
+  const retry = useCallback(
+    async (jobId: string) => {
+      await api.retryAction(jobId);
+      await refresh();
+    },
+    [refresh],
+  );
+
+  // Pull the PENDING queue forward so a backoff wait ends now. Resolves to the
+  // number moved, so the caller can report "0 waiting" rather than guessing.
+  const runPendingNow = useCallback(async () => {
+    const { moved } = await api.runPendingNow();
+    await refresh();
+    return moved;
+  }, [refresh]);
+
+  return { actions, loading, error, refresh, enqueue, retry, runPendingNow };
 }

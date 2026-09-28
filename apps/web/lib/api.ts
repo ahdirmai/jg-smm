@@ -264,10 +264,12 @@ export const api = {
     ),
   // On-demand scrape: run the platform actor synchronously for one post URL.
   // Long request (the actor run lasts tens of seconds); the caller shows a loader.
-  scrapeTarget: (platform: string, url: string) =>
+  // force=true skips the 6h freshness cache — needed for comments, because a
+  // keyword batch marks its posts fresh without ever fetching comment bodies.
+  scrapeTarget: (platform: string, url: string, force = false) =>
     request<ScrapeTargetResponse>('/api/scrape/target', {
       method: 'POST',
-      body: JSON.stringify({ platform, url }),
+      body: JSON.stringify({ platform, url, force }),
     }),
   // Keyword search: batch (keyword → many posts) is async 202 batch, vs post satuan (1 URL) sync.
   scrapeKeywords: (body: {
@@ -295,6 +297,15 @@ export const api = {
     if (params?.offset) qs.set('offset', String(params.offset));
     const q = qs.toString() ? `?${qs}` : '';
     return request<{ posts: ScrapedPost[] }>(`/api/scrape/batches/${id}/posts${q}`);
+  },
+  // Comments the batch ingest already stored for one post. A read, not a
+  // scrape — opening the detail dialog costs no Apify credit.
+  listPostComments: (postId: string, params?: { limit?: number; offset?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.limit) qs.set('limit', String(params.limit));
+    if (params?.offset) qs.set('offset', String(params.offset));
+    const q = qs.toString() ? `?${qs}` : '';
+    return request<{ comments: ScrapedComment[] }>(`/api/scrape/posts/${postId}/comments${q}`);
   },
   // AI comment candidates from a scraped post's context.
   generateComment: (body: {
@@ -344,6 +355,15 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ items }),
     }),
+  // Manual retry of one FAILED job. Server rejects anything else (400), so the
+  // button only needs to be enabled for failed rows.
+  retryAction: (jobId: string) =>
+    request<ActionJob>(`/api/actions/${jobId}/retry`, { method: 'POST' }),
+  // Pull the whole PENDING queue forward to now, so jobs sitting in a backoff
+  // are claimed on the next worker poll. Returns how many were moved; 0 is a
+  // normal answer, not an error.
+  runPendingNow: () =>
+    request<{ moved: number }>('/api/actions/run-pending', { method: 'POST' }),
 
   // Comment templates (P3-02/P3-03). The pool per platform.
   listTemplates: (platform?: Platform, signal?: AbortSignal) =>

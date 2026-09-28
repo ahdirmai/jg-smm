@@ -40,6 +40,9 @@ func (h *ScrapeHandler) Register(g *echo.Group) {
 	g.GET("/scrape/batches", h.listBatches, RequirePermission(domain.PermAct))
 	g.GET("/scrape/batches/:id", h.getBatch, RequirePermission(domain.PermAct))
 	g.GET("/scrape/batches/:id/posts", h.listBatchPosts, RequirePermission(domain.PermAct))
+	// Comments already stored for one post. Read-only over what the batch
+	// ingest already paid for — no new Apify run.
+	g.GET("/scrape/posts/:postId/comments", h.listPostComments, RequirePermission(domain.PermAct))
 	g.POST("/comments/generate", h.generateComment, RequirePermission(domain.PermAct))
 	g.GET("/scrape/recent", h.listRecent, RequirePermission(domain.PermAct))
 }
@@ -48,6 +51,11 @@ func (h *ScrapeHandler) Register(g *echo.Group) {
 type scrapeTargetRequest struct {
 	Platform string `json:"platform"`
 	URL      string `json:"url"`
+	// Force skips the 6h freshness cache. Set when the operator explicitly asks
+	// for comments: a keyword batch marks its posts fresh without ever fetching
+	// their comment bodies, so the cache alone would answer "no comments" for
+	// posts the operator just scraped.
+	Force bool `json:"force"`
 }
 
 // scrapeTarget runs the actor synchronously. A long request by design: the
@@ -60,7 +68,7 @@ func (h *ScrapeHandler) scrapeTarget(c echo.Context) error {
 	if err := c.Bind(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
 	}
-	detail, err := h.scrapes.ScrapeTarget(c.Request().Context(), domain.Platform(req.Platform), req.URL)
+	detail, err := h.scrapes.ScrapeTarget(c.Request().Context(), domain.Platform(req.Platform), req.URL, req.Force)
 	if err != nil {
 		return scrapeError(err)
 	}
@@ -158,6 +166,25 @@ func (h *ScrapeHandler) listBatchPosts(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]any{"posts": posts})
 }
 
+// listPostComments returns the comments already stored for one post. The batch
+// ingest already paid for and stored them, so this is a read — never a scrape.
+// An unknown post id yields an empty list rather than 404: the post may simply
+// have come back with no comments, and the dashboard shows "no comments" for both.
+func (h *ScrapeHandler) listPostComments(c echo.Context) error {
+	if h.keywords == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "keyword scrape is not configured")
+	}
+	limit, offset := parseLimitOffset(c, 50, 0)
+	comments, err := h.keywords.PostComments(c.Request().Context(), c.Param("postId"), &limit, &offset)
+	if err != nil {
+		return scrapeError(err)
+	}
+	if comments == nil {
+		comments = []domain.Comment{}
+	}
+	return c.JSON(http.StatusOK, map[string]any{"comments": comments})
+}
+
 func parseLimitOffset(c echo.Context, defLimit, defOffset int) (int, int) {
 	limit := defLimit
 	offset := defOffset
@@ -240,6 +267,10 @@ func (h *ScrapeHandler) generateComment(c echo.Context) error {
 // which is upstream, not this API's fault).
 func scrapeError(err error) error {
 	switch {
+	case errors.Is(err, domain.ErrUnauthorized):
+		// A stale session (its user was deleted) must re-authenticate, not
+		// retry — the frontend turns a 401 into a redirect to /login.
+		return echo.NewHTTPError(http.StatusUnauthorized, "session no longer valid, please sign in again")
 	case errors.Is(err, domain.ErrValidation):
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	case errors.Is(err, domain.ErrUnavailable):

@@ -1,8 +1,15 @@
 'use client';
 
 /**
- * Post media preview: a thumbnail grid — every carousel item, not just the
- * cover — with a click-to-open lightbox (prev/next, arrow keys, Esc to close).
+ * Post media carousel: one slide at a time, swipeable, with arrows and dots,
+ * plus a click-to-open lightbox for the full-size view.
+ *
+ * Native scroll-snap rather than a JS carousel: the browser already does
+ * momentum, rubber-banding, touch/trackpad swipe and snap for free, and a JS
+ * one would reimplement all of it worse. The track IS the state — the arrows
+ * and dots only call scrollTo, and the active dot is derived from scrollLeft,
+ * so there is no index to drift out of sync with what is on screen.
+ *
  * Plain <img>: media is remote user content on rotating CDN buckets
  * (scontent-<region>.cdninstagram.com), so next/image remotePatterns is the
  * wrong tool for a dashboard preview.
@@ -10,11 +17,13 @@
 
 import { Button, Dialog, DialogContent } from '@smm/ui';
 import { ChevronLeft, ChevronRight, X } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 export function PostMedia({ urls }: { urls: string[] | null }) {
-  const [open, setOpen] = useState<number | null>(null);
   const items = urls ?? [];
+  const track = useRef<HTMLDivElement>(null);
+  const [index, setIndex] = useState(0);
+  const [open, setOpen] = useState<number | null>(null);
 
   const close = useCallback(() => setOpen(null), []);
   const step = useCallback(
@@ -34,28 +43,109 @@ export function PostMedia({ urls }: { urls: string[] | null }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [open, close, step]);
 
+  /** Scroll to a slide. Reduced motion gets an instant jump, not a glide. */
+  const goTo = useCallback((i: number) => {
+    const el = track.current;
+    if (!el) return;
+    const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    el.scrollTo({ left: i * el.clientWidth, behavior: still ? 'auto' : 'smooth' });
+  }, []);
+
+  const onScroll = useCallback(() => {
+    const el = track.current;
+    if (!el || el.clientWidth === 0) return;
+    setIndex(Math.round(el.scrollLeft / el.clientWidth));
+  }, []);
+
   if (items.length === 0) return null;
 
   // Clamp in case the parent swaps posts while the lightbox is open.
   const cur = open !== null && open < items.length ? open : null;
-  const cols = items.length === 1 ? 'grid-cols-1' : items.length >= 5 ? 'grid-cols-3' : 'grid-cols-2';
+  const many = items.length > 1;
 
   return (
     <>
-      <div className={`grid gap-1.5 ${cols} ${items.length === 1 ? 'max-w-[260px]' : 'sm:max-w-md'}`}>
-        {items.map((u, i) => (
-          <button
-            key={i}
-            type="button"
-            onClick={() => setOpen(i)}
-            className="block aspect-square w-full overflow-hidden rounded-lg border border-border/60 bg-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-            aria-label={`Open media ${i + 1} of ${items.length}`}
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element -- remote user content, rotating CDN hosts */}
-            <img src={u} alt="" loading="lazy" className="h-full w-full object-cover" />
-          </button>
-        ))}
+      {/* Capped width: an uncapped square slide fills the whole column on a
+          desktop and buries the rest of the form below the fold. */}
+      <div className="relative mx-auto max-w-[380px] overflow-hidden rounded-xl border border-border/60 bg-secondary/40">
+        <div
+          ref={track}
+          onScroll={onScroll}
+          className="flex snap-x snap-mandatory overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          tabIndex={many ? 0 : -1}
+          role="group"
+          aria-roledescription="carousel"
+          aria-label={`Post media, ${items.length} item${many ? 's' : ''}`}
+        >
+          {items.map((u, i) => (
+            <button
+              key={i}
+              type="button"
+              onClick={() => setOpen(i)}
+              className="relative block aspect-square w-full shrink-0 snap-center focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+              aria-label={`Media ${i + 1} of ${items.length} — open full size`}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element -- remote user content, rotating CDN hosts */}
+              <img
+                src={u}
+                alt=""
+                loading={i === 0 ? 'eager' : 'lazy'}
+                draggable={false}
+                className="h-full w-full object-cover"
+              />
+            </button>
+          ))}
+        </div>
+
+        {many ? (
+          <>
+            {/* Arrows, inside soft squares per §3.6 — black as the second
+                accent on the cream ground, never a second saturated hue. */}
+            <button
+              type="button"
+              onClick={() => goTo(Math.max(0, index - 1))}
+              disabled={index === 0}
+              aria-label="Previous media"
+              className="absolute left-2 top-1/2 -translate-y-1/2 rounded-lg bg-background/80 p-1.5 text-foreground backdrop-blur-none transition-opacity hover:bg-background disabled:pointer-events-none disabled:opacity-0"
+            >
+              <ChevronLeft className="size-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => goTo(Math.min(items.length - 1, index + 1))}
+              disabled={index === items.length - 1}
+              aria-label="Next media"
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg bg-background/80 p-1.5 text-foreground transition-opacity hover:bg-background disabled:pointer-events-none disabled:opacity-0"
+            >
+              <ChevronRight className="size-4" />
+            </button>
+
+            {/* Counter once the dots stop being legible as individual targets. */}
+            {items.length > 8 ? (
+              <span className="absolute right-2 top-2 rounded-md bg-foreground/70 px-1.5 py-0.5 text-[11px] font-medium text-background">
+                {index + 1}/{items.length}
+              </span>
+            ) : null}
+          </>
+        ) : null}
       </div>
+
+      {many ? (
+        <div className="flex items-center justify-center gap-1.5 pt-2">
+          {items.map((_, i) => (
+            <button
+              key={i}
+              type="button"
+              onClick={() => goTo(i)}
+              aria-label={`Go to media ${i + 1}`}
+              aria-current={i === index}
+              className={`size-1.5 rounded-full transition-colors ${
+                i === index ? 'bg-foreground' : 'bg-border hover:bg-muted-foreground'
+              }`}
+            />
+          ))}
+        </div>
+      ) : null}
 
       <Dialog open={cur !== null} onOpenChange={(o) => !o && close()}>
         <DialogContent className="max-w-3xl p-2">

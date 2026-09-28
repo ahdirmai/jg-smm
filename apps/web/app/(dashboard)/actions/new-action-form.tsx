@@ -26,7 +26,7 @@ import {
   SelectValue,
   Textarea,
 } from '@smm/ui';
-import { AlertCircle, Heart, Loader2, MessageSquare, Search, Sparkles } from 'lucide-react';
+import { AlertCircle, AtSign, Heart, Loader2, MessageSquare, Search, Sparkles } from 'lucide-react';
 import { forwardRef, useCallback, useImperativeHandle, useMemo, useState } from 'react';
 
 import { api, type ScrapeTargetResponse } from '@/lib/api';
@@ -39,16 +39,56 @@ import { can } from '@/lib/auth/permissions';
 import { PostMedia } from '@/components/post-media';
 
 const MAX_BATCH = 50;
+// Mirrors MaxCommentTextLen in apps/api/internal/service/action.go — the API
+// rejects anything longer, so cap it here rather than letting the operator type
+// a paste that is guaranteed to fail at enqueue.
+const MAX_COMMENT_LEN = 2200;
 
 type Flow = 'comment' | 'like';
 
-function metricsLine(m: Record<string, number> | null): string {
-  if (!m) return '';
-  const parts: string[] = [];
-  for (const key of ['likes', 'likeCount', 'comments', 'commentCount', 'views', 'viewCount', 'playCount']) {
-    if (typeof m[key] === 'number') parts.push(`${key}: ${m[key]}`);
+/**
+ * Metrics arrive as raw Apify keys (`likeCount`, `playCount`, `views` …) with
+ * per-platform naming, so a naive render shows `likeCount: 42` to the operator.
+ * Fold the synonyms onto one label each, then format the count — these are the
+ * page's hero numbers (§3.4), and `128394` is not a number a human reads.
+ */
+const METRIC_LABELS: Record<string, string> = {
+  likes: 'likes',
+  likeCount: 'likes',
+  comments: 'comments',
+  commentCount: 'comments',
+  views: 'views',
+  viewCount: 'views',
+  playCount: 'plays',
+  shares: 'shares',
+  shareCount: 'shares',
+};
+
+function compact(n: number): string {
+  if (n < 1_000) return String(n);
+  if (n < 1_000_000) return `${(n / 1_000).toFixed(n < 10_000 ? 1 : 0).replace(/\.0$/, '')}K`;
+  return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
+}
+
+/** Folded metric pairs, first spelling of a synonym winning, cap 4. */
+function metrics(m: Record<string, number> | null): { label: string; value: string }[] {
+  if (!m) return [];
+  const seen = new Set<string>();
+  const out: { label: string; value: string }[] = [];
+  for (const [key, label] of Object.entries(METRIC_LABELS)) {
+    if (typeof m[key] !== 'number' || seen.has(label)) continue;
+    seen.add(label);
+    out.push({ label, value: compact(m[key]) });
   }
-  return parts.join(' · ');
+  return out.slice(0, 4);
+}
+
+/** Relative age of the scrape, so a stale 6h-cached post is visible as such. */
+function scrapedAgo(iso: string): string {
+  const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60_000));
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  return `${Math.round(mins / 60)}h ago`;
 }
 
 export type NewActionFormHandle = {
@@ -140,24 +180,29 @@ export const NewActionForm = forwardRef<
     if (!scrape) return;
     setAiBusy(true);
     try {
+      // One draft per selected account. The server dedups candidates within a
+      // batch, so asking for exactly N and handing them out in order is what
+      // keeps two accounts from posting the same text. Round-robin wraps when
+      // the LLM returns fewer than asked (a variant can be screened out by the
+      // denylist) — a blank field would silently fall back to the template
+      // pool, which is a worse outcome than a repeated draft the operator can
+      // edit.
+      const want = Math.min(Math.max(selectedAccounts.length, 1), MAX_BATCH);
       const res = await api.generateComment({
         postText: scrape.post.text ?? '',
         authorHandle: scrape.post.authorHandle,
         existingComments: scrape.comments.slice(0, 10).map((c) => c.text),
         mode: aiMode,
-        count: 3,
+        count: want,
       });
-      // First variant prefills every selected account still empty.
-      const draft = res.comments[0] ?? '';
-      if (draft) {
-        setText((s) => {
-          const copy = { ...s };
-          for (const a of selectedAccounts) {
-            if (!copy[a.id]) copy[a.id] = draft;
-          }
-          return copy;
+      const drafts = res.comments.length ? res.comments : [''];
+      setText((s) => {
+        const copy = { ...s };
+        selectedAccounts.forEach((a, i) => {
+          if (!copy[a.id]) copy[a.id] = drafts[i % drafts.length] ?? '';
         });
-      }
+        return copy;
+      });
     } catch (e) {
       setAiError(e instanceof Error ? e.message : 'AI generation failed');
     } finally {
@@ -218,7 +263,7 @@ export const NewActionForm = forwardRef<
       <CardContent className="space-y-5">
         {/* 1. Platform + link + scrape */}
         <div className="space-y-2">
-          <Label>Target post</Label>
+          <Label htmlFor="action-target-url">Target post</Label>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-[180px_1fr_auto]">
             <Select value={platform} onValueChange={(v) => setPlatform(v as 'instagram' | 'threads')}>
               <SelectTrigger aria-label="Platform">
@@ -230,6 +275,7 @@ export const NewActionForm = forwardRef<
               </SelectContent>
             </Select>
             <Input
+              id="action-target-url"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               placeholder="https://www.instagram.com/p/…"
@@ -256,27 +302,62 @@ export const NewActionForm = forwardRef<
 
         {/* 2. Scraped post preview */}
         {scrape ? (
-          <div className="rounded-lg border border-border/60 bg-secondary/30 p-3 space-y-1.5">
-            <div className="flex items-center gap-2">
-              <Badge variant="outline">{PLATFORM_LABEL[scrape.post.platform] ?? scrape.post.platform}</Badge>
-              <span className="text-sm font-medium">@{scrape.post.authorHandle}</span>
-              <span className="text-xs text-muted-foreground">{metricsLine(scrape.post.metrics)}</span>
-            </div>
-            {scrape.post.text ? (
-              <p className="text-sm whitespace-pre-wrap">{scrape.post.text}</p>
-            ) : (
-              <p className="text-xs text-muted-foreground">(no caption)</p>
-            )}
-            {scrape.post.mediaUrls && scrape.post.mediaUrls.length > 0 ? (
-              <div className="pt-1">
-                <PostMedia urls={scrape.post.mediaUrls} />
+          <div className="overflow-hidden rounded-xl border border-border/60 bg-secondary/30">
+            {/* Header: who posted it, and how fresh this read is. */}
+            <div className="flex items-center gap-2.5 border-b border-border/60 px-3 py-2.5">
+              <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-secondary">
+                <AtSign className="size-4 text-muted-foreground" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium">@{scrape.post.authorHandle}</p>
+                <p className="text-[11px] text-muted-foreground">
+                  {PLATFORM_LABEL[scrape.post.platform] ?? scrape.post.platform} · scraped{' '}
+                  {scrapedAgo(scrape.post.scrapedAt)}
+                </p>
               </div>
-            ) : null}
-            {scrape.comments.length > 0 ? (
-              <p className="text-xs text-muted-foreground">
-                {scrape.comments.length} existing comment{scrape.comments.length === 1 ? '' : 's'} loaded
-              </p>
-            ) : null}
+            </div>
+
+            <div className="space-y-3 p-3">
+              {scrape.post.mediaUrls && scrape.post.mediaUrls.length > 0 ? (
+                <PostMedia urls={scrape.post.mediaUrls} />
+              ) : null}
+
+              {scrape.post.text ? (
+                // Long captions are the norm on IG; clamp so the form stays
+                // scannable and let the operator expand when they care.
+                <details className="group">
+                  <summary className="line-clamp-4 cursor-pointer list-none text-sm group-open:line-clamp-none">
+                    {scrape.post.text}
+                  </summary>
+                  <span className="text-xs text-muted-foreground underline underline-offset-2 group-open:hidden">
+                    Show more
+                  </span>
+                </details>
+              ) : (
+                <p className="text-xs text-muted-foreground">(no caption)</p>
+              )}
+
+              {/* §3.4 — numbers are heroes: bold value, small muted label under. */}
+              {metrics(scrape.post.metrics).length > 0 ? (
+                <div className="flex flex-wrap gap-5 border-t border-border/60 pt-3">
+                  {metrics(scrape.post.metrics).map((m) => (
+                    <div key={m.label}>
+                      <p className="text-lg font-semibold leading-none">{m.value}</p>
+                      <p className="mt-1 text-[11px] uppercase tracking-wide text-muted-foreground">
+                        {m.label}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+
+              {scrape.comments.length > 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  {scrape.comments.length} existing comment
+                  {scrape.comments.length === 1 ? '' : 's'} loaded
+                </p>
+              ) : null}
+            </div>
           </div>
         ) : null}
 
@@ -346,6 +427,8 @@ export const NewActionForm = forwardRef<
                         variant={on ? 'default' : 'outline'}
                         size="sm"
                         className="mt-0.5 shrink-0"
+                        aria-pressed={on}
+                        aria-label={`${on ? 'Deselect' : 'Select'} @${a.username}`}
                         onClick={() => setSelected((s) => ({ ...s, [a.id]: !s[a.id] }))}
                       >
                         {on ? '✓' : '+'}
@@ -359,6 +442,7 @@ export const NewActionForm = forwardRef<
                           <Textarea
                             className="mt-1"
                             rows={2}
+                            maxLength={MAX_COMMENT_LEN}
                             placeholder="Comment for this account (blank = template pool)"
                             value={text[a.id] ?? ''}
                             onChange={(e) => setText((s) => ({ ...s, [a.id]: e.target.value }))}

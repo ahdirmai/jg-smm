@@ -39,4 +39,14 @@ COPY --from=build /repo/apps/web/public ./apps/web/public
 # distroless-style: run as the unprivileged node user.
 USER node
 EXPOSE 3000
+# Image-level so both paths get it: compose services inherit it, and so does any
+# container started from this image directly.
+#
+# 127.0.0.1, never localhost: busybox wget resolves localhost to ::1 first
+# (/etc/hosts), and Next's standalone server listens on IPv4 only — so a
+# `localhost` probe is a guaranteed ECONNREFUSED however healthy the app is.
+# Anything 2xx/3xx is a served page; wget --spider exits non-zero on a
+# connection failure or a 4xx/5xx, which is what a healthcheck wants.
+HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=5 \
+  CMD wget -q --spider http://127.0.0.1:3000/login || exit 1
 CMD ["node", "apps/web/server.js"]

@@ -14,13 +14,8 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
 } from '@smm/ui';
-import { AlertCircle } from 'lucide-react';
+import { AlertCircle, Check, Loader2, Play, RotateCcw } from 'lucide-react';
 import { useMemo, useRef, useState } from 'react';
 
 import { NewActionForm, type NewActionFormHandle } from './new-action-form';
@@ -31,6 +26,11 @@ import { useVirtualRowWindow } from '@/lib/hooks/use-virtual-window';
 import type { ActionJob, JobStatus } from '@/lib/api';
 
 const STATUSES: JobStatus[] = ['PENDING', 'RUNNING', 'SUCCESS', 'FAILED', 'CANCELLED'];
+
+/** The operator-facing name of a status, and of the unfiltered state. */
+function statusLabel(value: string): string {
+  return value === 'all' ? 'All statuses' : value[0] + value.slice(1).toLowerCase();
+}
 // Uniform row height: group headers and job rows share it so the window math
 // stays fixed-height (see useVirtualRowWindow).
 const ROW_HEIGHT = 44;
@@ -69,19 +69,91 @@ function stageReached(status: JobStatus): number {
 
 export default function ActionsPage() {
   const { accounts } = useAccounts();
-  const { actions, loading, error } = useActions();
+  const { actions, loading, error, retry, runPendingNow } = useActions();
 
   const formRef = useRef<NewActionFormHandle>(null);
   // Bumped after a fresh scrape so the history card re-reads the stored list.
   const [historyRefresh, setHistoryRefresh] = useState(0);
 
   const [status, setStatusFilter] = useState<string>('all');
+  // Job id currently being re-queued, so its row shows a spinner and the
+  // button cannot be double-pressed into two retries.
+  const [retrying, setRetrying] = useState<string | null>(null);
+  const [retryError, setRetryError] = useState<string | null>(null);
+  // Set while the whole-queue "run now" is in flight, so the button shows a
+  // spinner and cannot be pressed twice into two overlapping sweeps.
+  const [sweeping, setSweeping] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const inFlight = useMemo(
     () => actions.filter((a) => a.status === 'PENDING' || a.status === 'RUNNING').length,
     [actions],
   );
 
+  // Per-status tally for the filter chips: the old "4 of 4 shown" line told an
+  // operator nothing about whether the queue was healthy or stuck.
+  const tally = useMemo(() => {
+    const t: Record<string, number> = { all: actions.length };
+    for (const s of STATUSES) t[s] = 0;
+    for (const a of actions) t[a.status] = (t[a.status] ?? 0) + 1;
+    return t;
+  }, [actions]);
+
+  const failed = tally.FAILED ?? 0;
+  // Pending jobs carry a future scheduled_at while a backoff runs, so "why is
+  // nothing happening" is answerable without opening the API logs.
+  const pendingJobs = useMemo(
+    () => actions.filter((a) => a.status === 'PENDING'),
+    [actions],
+  );
+  const pendingCount = pendingJobs.length;
+  const nextDueLabel = useMemo(() => {
+    const waiting = pendingJobs
+      .map((a) => new Date(a.scheduledAt).getTime())
+      .filter((t) => Number.isFinite(t) && t > Date.now());
+    if (waiting.length === 0) return 'nothing waiting on a timer';
+    const soonest = Math.min(...waiting);
+    const secs = Math.round((soonest - Date.now()) / 1000);
+    if (secs < 60) return `next in ${secs}s`;
+    const mins = Math.round(secs / 60);
+    return `next in ${mins}m`;
+  }, [pendingJobs]);
+
+  // One retry at a time: the button disables per-row, and this clears the
+  // previous error so a second click does not leave a stale banner up.
+  async function doRetry(jobId: string) {
+    setRetryError(null);
+    setRetrying(jobId);
+    try {
+      await retry(jobId);
+    } catch (err) {
+      setRetryError(err instanceof Error ? err.message : 'Retry failed');
+    } finally {
+      setRetrying(null);
+    }
+  }
+
+  // Pull every PENDING job forward. Backoff is the queue protecting the
+  // platform, not the operator: the per-account velocity gate still applies to
+  // what the worker does after the claim, so this ends the wait without
+  // removing the protection.
+  async function doRunPendingNow() {
+    setRetryError(null);
+    setNotice(null);
+    setSweeping(true);
+    try {
+      const moved = await runPendingNow();
+      setNotice(
+        moved === 0
+          ? 'Nothing was waiting — the queue is empty or already running.'
+          : `Moved ${moved} job${moved === 1 ? '' : 's'} to now — workers pick them up on their next poll.`,
+      );
+    } catch (err) {
+      setRetryError(err instanceof Error ? err.message : 'Could not run the queue');
+    } finally {
+      setSweeping(false);
+    }
+  }
   const filtered = useMemo(
     () => (status === 'all' ? actions : actions.filter((a) => a.status === status)),
     [actions, status],
@@ -131,32 +203,75 @@ export default function ActionsPage() {
             <CardDescription>
               {loading
                 ? 'Loading…'
-                : `${filtered.length} of ${actions.length} shown · latest actions advance automatically`}
+                : failed > 0
+                  ? `${failed} failed — retry from the row or the detail dialog`
+                  : inFlight > 0
+                    ? `${inFlight} running · ${nextDueLabel}`
+                    : `${actions.length} job${actions.length === 1 ? '' : 's'}, all settled`}
+              {loading || failed > 0 || inFlight > 0
+                ? null
+                : pendingCount > 0
+                  ? // A settled queue can still hold jobs parked on a backoff
+                    // timer; show the wait instead of implying the queue is done.
+                    ` · ${nextDueLabel}`
+                  : null}
             </CardDescription>
           </div>
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            {inFlight > 0 ? (
-              <span className="size-2 animate-pulse rounded-full bg-primary" />
-            ) : null}
-            {inFlight} in flight
+          <div className="flex items-center gap-2">
+            <span className="flex items-center gap-2 text-xs text-muted-foreground">
+              {inFlight > 0 ? (
+                <span className="size-2 animate-pulse rounded-full bg-primary" />
+              ) : null}
+              {inFlight} in flight
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={sweeping || pendingCount === 0}
+              onClick={() => void doRunPendingNow()}
+              title={
+                pendingCount === 0
+                  ? 'No pending jobs'
+                  : `Move ${pendingCount} pending job${pendingCount === 1 ? '' : 's'} to now, skipping the backoff wait`
+              }
+            >
+              {sweeping ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
+              {sweeping ? 'Running…' : 'Run pending now'}
+            </Button>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
-          <section className="flex items-center gap-2">
-            <Select value={status} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-40" aria-label="All statuses">
-                <SelectValue placeholder="All statuses" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All statuses</SelectItem>
-                {STATUSES.map((s) => (
-                  <SelectItem key={s} value={s}>
-                    {s[0] + s.slice(1).toLowerCase()}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+          <section className="flex flex-wrap items-center gap-2">
+            <FilterChip
+              label="All"
+              count={tally.all ?? 0}
+              active={status === 'all'}
+              onClick={() => setStatusFilter('all')}
+            />
+            {STATUSES.map((s) => (
+              <FilterChip
+                key={s}
+                label={statusLabel(s)}
+                count={tally[s] ?? 0}
+                active={status === s}
+                tone={statusTone(s)}
+                onClick={() => setStatusFilter(s)}
+              />
+            ))}
           </section>
+
+          {notice ? (
+            <div className="flex items-center gap-2 rounded-lg border border-border/60 bg-secondary/40 p-3 text-sm">
+              <Check className="size-4" />
+              {notice}
+            </div>
+          ) : null}
+          {retryError ? (
+            <div className="flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+              <AlertCircle className="size-4" />
+              {retryError}
+            </div>
+          ) : null}
 
           {error ? (
             <div className="flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
@@ -191,11 +306,18 @@ export default function ActionsPage() {
                         Account {accountLabel(accounts, row.accountId)}
                       </div>
                     ) : (
-                      <button
+                      <div
                         key={row.job.id}
-                        type="button"
+                        role="row"
+                        tabIndex={0}
                         onClick={() => setSelected(row.job)}
-                        className="flex w-full items-center gap-4 border-b border-border/60 px-3 text-left transition-colors hover:bg-secondary/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            setSelected(row.job);
+                          }
+                        }}
+                        className="flex w-full cursor-pointer items-center gap-4 border-b border-border/60 px-3 text-left transition-colors hover:bg-secondary/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                         style={{ height: ROW_HEIGHT }}
                       >
                         <Badge variant={statusTone(row.job.status)}>{row.job.status}</Badge>
@@ -222,7 +344,39 @@ export default function ActionsPage() {
                         <span className="w-10 text-right text-sm tabular-nums text-muted-foreground">
                           {row.job.attempts}
                         </span>
-                      </button>
+                        {/* Only meaningful while queued: a finished job's
+                            scheduled_at is history. Absolute time on hover so
+                            "in 42s" stays readable without losing the instant. */}
+                        {row.job.status === 'PENDING' ? (
+                          <span
+                            className="w-24 text-right text-xs tabular-nums text-muted-foreground"
+                            title={`Scheduled for ${new Date(row.job.scheduledAt).toLocaleString()}`}
+                          >
+                            {countdown(row.job.scheduledAt)}
+                          </span>
+                        ) : null}
+                        {row.job.status === 'FAILED' ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 shrink-0"
+                            disabled={retrying === row.job.id}
+                            onClick={(e) => {
+                              // The row is clickable; without this the click
+                              // opens the detail dialog behind the retry.
+                              e.stopPropagation();
+                              void doRetry(row.job.id);
+                            }}
+                          >
+                            {retrying === row.job.id ? (
+                              <Loader2 className="size-3 animate-spin" />
+                            ) : (
+                              <RotateCcw className="size-3" />
+                            )}
+                            Retry
+                          </Button>
+                        ) : null}
+                      </div>
                     ),
                   )}
                 </div>
@@ -281,6 +435,22 @@ export default function ActionsPage() {
             </div>
           ) : null}
           <DialogFooter>
+            {selected?.status === 'FAILED' ? (
+              <Button
+                variant="outline"
+                disabled={retrying === selected.id}
+                onClick={() => {
+                  void doRetry(selected.id).then(() => setSelected(null));
+                }}
+              >
+                {retrying === selected.id ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <RotateCcw className="size-4" />
+                )}
+                Retry this action
+              </Button>
+            ) : null}
             <Button variant="outline" onClick={() => setSelected(null)}>
               Close
             </Button>
@@ -288,6 +458,67 @@ export default function ActionsPage() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+/**
+ * Status filter as a toggle chip with its live count. Replaces a Select: a
+ * dropdown hid the counts, so an operator could not see "6 failed" without
+ * opening it and switching to that value to find out.
+ */
+/**
+ * How long until a queued job becomes claimable, in the unit a person waiting
+ * on it actually thinks in. "now" past the due time rather than a negative
+ * count — the row is a few seconds stale at worst, and "-3s" reads as broken.
+ */
+function countdown(scheduledAt: string): string {
+  const ms = new Date(scheduledAt).getTime() - Date.now();
+  if (!Number.isFinite(ms)) return '—';
+  if (ms <= 0) return 'now';
+  const secs = Math.round(ms / 1000);
+  if (secs < 60) return `in ${secs}s`;
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return `in ${mins}m`;
+  const hrs = Math.round(mins / 60);
+  return hrs < 48 ? `in ${hrs}h` : `in ${Math.round(hrs / 24)}d`;
+}
+
+function FilterChip({
+  label,
+  count,
+  active,
+  tone,
+  onClick,
+}: {
+  label: string;
+  count: number;
+  active: boolean;
+  tone?: 'success' | 'outline' | 'secondary' | 'destructive';
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={[
+        'inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
+        active
+          ? 'border-primary bg-primary/10 text-foreground'
+          : 'border-border text-muted-foreground hover:bg-secondary/60',
+        // Only paint the tone when it is a live problem or a good outcome;
+        // a muted SUCCESS badge on every row is noise.
+        !active && count > 0 && tone === 'destructive'
+          ? 'border-destructive/50 text-destructive'
+          : '',
+        !active && count > 0 && tone === 'success'
+          ? 'text-success'
+          : '',
+      ].join(' ')}
+    >
+      {label}
+      <span className="tabular-nums opacity-70">{count}</span>
+    </button>
   );
 }
 
