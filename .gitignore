@@ -52,6 +52,15 @@ apps/web/playwright-report/
 apps/web/e2e/report/
 apps/web/e2e/test-results/
 infra/backup/sessions/
+# Backup output (both `make backup` and manual pre-reset dumps). Not just large:
+# a logical dump carries COPY blocks for app_user (password hashes), auth_session
+# (live session tokens) and account (platform credentials), and the bundles carry
+# the worker sessions volume as a tar. Committing either publishes those secrets
+# into git history, where deleting them later needs a rewrite. The scripts stay
+# tracked; only their output is ignored.
+infra/backup/backups/
+infra/backup/*.sql
+infra/backup/*.dump
 
 # local dev harness deps
 docs/local-worker/node_modules/
