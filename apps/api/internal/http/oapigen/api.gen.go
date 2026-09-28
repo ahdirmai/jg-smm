@@ -268,7 +268,13 @@ type AccountStatus string
 type AccountCallback struct {
 	AccountId  string     `json:"accountId"`
 	AuthStatus AuthStatus `json:"authStatus"`
-	Error      *string    `json:"error,omitempty"`
+
+	// CookieExpiresAt Expiry of the session cookie, reported on a verified login when the
+	// platform dated it (P2-06). The scheduler dispatches the next refresh
+	// a week before this. Omitted for a session cookie with no date, which
+	// cannot be scheduled against.
+	CookieExpiresAt *time.Time `json:"cookieExpiresAt,omitempty"`
+	Error           *string    `json:"error,omitempty"`
 
 	// Handle Verified platform handle, set after a successful login.
 	Handle *string `json:"handle,omitempty"`

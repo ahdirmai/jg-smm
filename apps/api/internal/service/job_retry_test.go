@@ -56,6 +56,16 @@ func (f *fakeActionStore) UpsertActionLog(_ context.Context, l domain.ActionLog)
 }
 
 func (f *fakeActionStore) GetActionJob(_ context.Context, id string) (domain.ActionJob, error) {
+	for _, j := range f.pending {
+		if j.ID == id {
+			return j, nil
+		}
+	}
+	for _, c := range f.completed {
+		if c.id == id {
+			return domain.ActionJob{ID: id, Status: c.status}, nil
+		}
+	}
 	return domain.ActionJob{}, domain.ErrNotFound
 }
 func (f *fakeActionStore) CreateActionJob(_ context.Context, j domain.ActionJob) (domain.ActionJob, error) {
@@ -109,7 +119,24 @@ func (f *fakeActionStore) ListActionJobsByStatus(_ context.Context, status domai
 			out = append(out, j)
 		}
 	}
-	return out, nil
+	// Honour the paging the real store applies, so a caller that walks the queue
+	// in MaxActionBatch-sized rounds sees the same rows as production. Without
+	// this the whole queue returns on every call and a looping caller re-reads
+	// the same jobs forever.
+	from, to := 0, len(out)
+	if offset != nil {
+		from = *offset
+	}
+	if limit != nil && *limit > 0 && from+*limit < to {
+		to = from + *limit
+	}
+	if from > len(out) {
+		from = len(out)
+	}
+	if from > to {
+		to = from
+	}
+	return out[from:to], nil
 }
 func (f *fakeActionStore) ListActionJobsByAccount(_ context.Context, accountID string, limit, offset *int) ([]domain.ActionJob, error) {
 	return nil, nil

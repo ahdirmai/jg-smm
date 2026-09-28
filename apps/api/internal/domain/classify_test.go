@@ -36,6 +36,10 @@ func TestClassifyActionError(t *testing.T) {
 		{"timeout", "page.goto: Timeout 30000ms exceeded", ErrorClassTransient},
 		{"selector", "Error: element not found [data-testid='comment']", ErrorClassTransient},
 		{"network", "net::ERR_CONNECTION_RESET", ErrorClassTransient},
+		// Worker adapter failShot strings for a control that has not painted or
+		// a state read that raced the click. Retried, not silently parked.
+		{"button not found", "like button not found on the post", ErrorClassTransient},
+		{"state unchanged", "like state did not change (verification failed)", ErrorClassTransient},
 
 		// Precedence: a banned account often presents as a login wall first.
 		// If BANNED were tested after AUTH this would misclassify as AUTH and

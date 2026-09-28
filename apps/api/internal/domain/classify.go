@@ -39,6 +39,12 @@ func ClassifyActionError(msg string) ErrorClass {
 	case containsAny(m,
 		"timeout", "timed out", "deadline", "connection", "network",
 		"navigation", "selector", "element not found", "detached",
+		// Worker-adapter failShot strings. The app's action bar paints a beat
+		// after the permalink resolves or a real click lands, so "not found"
+		// and "state did not change" are this app's race outcomes too — they
+		// belong with the other transient UI races, not in UNKNOWN where the
+		// job would sit unretried.
+		"not found", "did not change",
 	):
 		return ErrorClassTransient
 	}

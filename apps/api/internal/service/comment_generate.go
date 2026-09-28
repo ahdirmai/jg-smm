@@ -65,7 +65,10 @@ type GenerateInput struct {
 	ExistingComments []string
 	// Mode picks the editorial stance.
 	Mode CommentMode
-	// Count is how many variants to return (1..5).
+	// Count is how many variants to return. The dashboard asks for one per
+	// selected account, so the ceiling is the batch cap (MAX_BATCH=50 in
+	// apps/web/app/(dashboard)/actions/new-action-form.tsx) — anything lower
+	// and a large batch silently reuses variants.
 	Count int
 	// Language steers the output language ("id" → Bahasa Indonesia, the
 	// dashboard default).
@@ -84,8 +87,8 @@ func (g *CommentGenerator) Generate(ctx context.Context, in GenerateInput) ([]st
 	if in.Count < 1 {
 		in.Count = 1
 	}
-	if in.Count > 5 {
-		in.Count = 5
+	if in.Count > MaxAICommentVariants {
+		in.Count = MaxAICommentVariants
 	}
 
 	lang := in.Language

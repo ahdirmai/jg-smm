@@ -32,6 +32,11 @@ type JobService struct {
 	// stream fans action verdicts to dashboards (P4-03). Optional: a nil
 	// publisher means the callback still persists, the dashboard just polls.
 	stream port.StreamPublisher
+	// maxRefreshFailures is the consecutive-failed-refresh count that
+	// quarantines an account (P2-06). Sourced from SessionRefreshConfig so the
+	// scheduler and the counter cannot disagree about the threshold — the
+	// scheduler's due query and this check must use the same number.
+	maxRefreshFailures int
 	// metrics is the Prometheus instrument set (P5-03). Optional for the same
 	// reason: a nil registry means the callback still lands, the scrape just
 	// does not see the verdict.
@@ -72,6 +77,8 @@ func NewJobService(workers port.WorkerStore, accounts port.AccountStore, logs po
 		stream:   stream,
 		metrics:  metrics,
 		logger:   logger,
+		// Same default the refresher resolves when its config leaves it zero.
+		maxRefreshFailures: SessionRefreshConfig{}.withDefaults().MaxFailures,
 	}
 }
 
@@ -204,6 +211,10 @@ type AuthOutcome struct {
 	AuthStatus domain.AuthStatus
 	Handle     *string
 	Error      *string
+	// CookieExpiresAt is when the session cookie dies, reported on a verified
+	// login when the platform dated it (P2-06). Nil clears any stored date —
+	// a session cookie with no expiry cannot be scheduled against.
+	CookieExpiresAt *time.Time
 }
 
 // RecordAuthOutcome updates an account's login state machine.
@@ -228,10 +239,42 @@ func (s *JobService) RecordAuthOutcome(ctx context.Context, o AuthOutcome) error
 		if o.Handle != nil {
 			acc.Handle = o.Handle
 		}
+		// A verified login clears the refresh-failure streak (P2-06): the AC
+		// counts CONSECUTIVE failures, so one good session resets it. The
+		// expiry is authoritative from the worker — including its absence,
+		// which means the platform dated no cookie and the account cannot be
+		// scheduled (a stale date must not keep matching the due query).
+		acc.CookieExpiryAt = o.CookieExpiresAt
+		acc.RefreshFailures = 0
 		if acc.Status == domain.AccountPending {
 			acc.Status = domain.AccountActive
 		}
-	case domain.AuthFailed, domain.AuthNeedsInput:
+	case domain.AuthFailed:
+		if o.Error != nil {
+			acc.LastError = o.Error
+		}
+		// Only a failure of a session that WAS alive counts toward the P2-06
+		// streak. A first-time login that fails is an onboarding problem, not a
+		// dying session, and counting it would quarantine a brand-new account
+		// the operator has not finished setting up.
+		//
+		// A refresh is distinguishable by its expiry having been set: the
+		// scheduler only ever dispatches accounts a previous login dated.
+		if acc.CookieExpiryAt != nil {
+			acc.RefreshFailures++
+			if acc.RefreshFailures >= s.maxRefreshFailures {
+				acc.Status = domain.AccountQuarantined
+				s.logger.Warn("account quarantined after repeated refresh failures",
+					"accountId", o.AccountID,
+					"failures", acc.RefreshFailures,
+				)
+			}
+		}
+	case domain.AuthNeedsInput:
+		// Parked for the operator mid-refresh: not a failure. The streak is
+		// left alone so a slow human does not march an account toward
+		// quarantine, and the account is not re-dispatched while the context
+		// is parked (the due query excludes NEEDS_INPUT).
 		if o.Error != nil {
 			acc.LastError = o.Error
 		}

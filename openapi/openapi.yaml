@@ -2318,6 +2318,14 @@ components:
         handle:
           type: string
           description: Verified platform handle, set after a successful login.
+        cookieExpiresAt:
+          type: string
+          format: date-time
+          description: |
+            Expiry of the session cookie, reported on a verified login when the
+            platform dated it (P2-06). The scheduler dispatches the next refresh
+            a week before this. Omitted for a session cookie with no date, which
+            cannot be scheduled against.
         error:
           type: string
           maxLength: 4096

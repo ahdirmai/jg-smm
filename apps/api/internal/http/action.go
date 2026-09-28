@@ -35,6 +35,39 @@ func (h *ActionHandler) Register(g *echo.Group) {
 	// Batch monitoring: each enqueue call is recorded as a unit.
 	g.GET("/actions/batches", h.listBatches)
 	g.GET("/actions/batches/:batchId", h.getBatch)
+	// Manual retry. `act`, not `read`: re-queueing is an action against a
+	// platform account, same authority as enqueueing a fresh one.
+	g.POST("/actions/:jobId/retry", h.retry, RequirePermission(domain.PermAct))
+	// Pull the whole PENDING queue forward to now. `act`, same as retry: it
+	// re-queues work against a platform account.
+	g.POST("/actions/run-pending", h.runPendingNow, RequirePermission(domain.PermAct))
+}
+
+// retry re-queues one failed job. 200 with the job so the caller can swap the
+// row in place rather than refetching the whole queue.
+func (h *ActionHandler) retry(c echo.Context) error {
+	if h.actions == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "action service unavailable")
+	}
+	job, err := h.actions.Retry(c.Request().Context(), c.Param("jobId"))
+	if err != nil {
+		return actionError(err)
+	}
+	return c.JSON(http.StatusOK, jobToDTO(job))
+}
+
+// runPendingNow pulls the PENDING queue forward so waiting workers claim it on
+// their next poll. Returns the count actually rescheduled — 0 is a valid
+// answer, not an error, so the dashboard can say "nothing was waiting".
+func (h *ActionHandler) runPendingNow(c echo.Context) error {
+	if h.actions == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "action service unavailable")
+	}
+	n, err := h.actions.RunPendingNow(c.Request().Context())
+	if err != nil {
+		return actionError(err)
+	}
+	return c.JSON(http.StatusOK, map[string]any{"moved": n})
 }
 
 // enqueue turns a batch of intents into PENDING jobs.

@@ -1,13 +1,49 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
 	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/port"
 )
+
+// recordingStream captures published frames so a test can assert the enqueue
+// announcement. Mutex-guarded: the hub is called synchronously today, but the
+// port allows a publisher to fan out from its own goroutine.
+type recordingStream struct {
+	mu     sync.Mutex
+	frames []frame
+}
+
+type frame struct {
+	kind string
+	body []byte
+}
+
+func (s *recordingStream) Publish(_ context.Context, kind string, payload []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.frames = append(s.frames, frame{kind: kind, body: append([]byte(nil), payload...)})
+}
+
+// published returns every recorded payload of one kind, copied out.
+func (s *recordingStream) published(kind string) [][]byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out [][]byte
+	for _, f := range s.frames {
+		if f.kind == kind {
+			out = append(out, f.body)
+		}
+	}
+	return out
+}
 
 // ActionService tests. What is proven here is the enqueue contract — the floor
 // on what a queue page is allowed to submit — and that the list read pairs a
@@ -102,7 +138,7 @@ func (t *actionTargets) UpsertTarget(_ context.Context, tg domain.Target) (domai
 }
 
 func newActionService(store *actionStore, accs *actionAccounts, tgts *actionTargets) *ActionService {
-	return NewActionService(store, accs, tgts, fixedClock{}, nil, nil, nil)
+	return NewActionService(store, accs, tgts, fixedClock{}, nil, nil, nil, nil)
 }
 
 // itoa keeps the test free of strconv import noise.
@@ -162,6 +198,58 @@ func TestActionEnqueueCreatesPendingJobs(t *testing.T) {
 }
 
 // --- enqueue: rejection is all-or-nothing -----------------------------------
+
+// The queue page's only other refresh trigger is the verdict frame the job
+// service publishes when a worker reports back. Without a frame on enqueue, a
+// job an operator just queued is invisible until a worker runs it — and with no
+// fleet up (or a job nobody claims) that is never, so the queue reads as an
+// enqueue that silently failed.
+func TestActionEnqueuePublishesPerJobFrame(t *testing.T) {
+	stream := &recordingStream{}
+	svc := NewActionService(
+		newActionStore(),
+		&actionAccounts{acc: domain.Account{Platform: domain.PlatformInstagram, Status: domain.AccountActive}},
+		&actionTargets{ups: targetUpsert{id: "tgt-1"}},
+		fixedClock{}, nil, nil, nil, stream,
+	)
+
+	jobs, err := svc.Enqueue(t.Context(), []ActionItem{
+		{AccountID: "acc-1", TargetURL: "https://www.instagram.com/p/abc/", Type: domain.JobTypeActionLike},
+		{AccountID: "acc-1", TargetURL: "https://www.instagram.com/p/abc/", Type: domain.JobTypeActionLike},
+	})
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	if got := len(stream.published(port.EventActionUpdated)); got != len(jobs) {
+		t.Fatalf("published %d action-updated frames for %d jobs", got, len(jobs))
+	}
+	// The payload must name the job: the page refetches rather than patching,
+	// but a frame that names nothing cannot be correlated with a job by any
+	// consumer that does read it. Every job gets its own frame, so every id
+	// must appear across the set — not just the last one.
+	all := string(bytes.Join(stream.published(port.EventActionUpdated), nil))
+	for _, j := range jobs {
+		if !strings.Contains(all, j.ID) {
+			t.Errorf("no frame mentions job %s: %s", j.ID, all)
+		}
+	}
+}
+
+// A nil stream is the "no dashboard wired" configuration (local play, tests).
+// The write must still succeed — the port contract says so explicitly.
+func TestActionEnqueueToleratesNilStream(t *testing.T) {
+	svc := newActionService(
+		newActionStore(),
+		&actionAccounts{acc: domain.Account{Platform: domain.PlatformInstagram, Status: domain.AccountActive}},
+		&actionTargets{ups: targetUpsert{id: "tgt-1"}},
+	)
+	if _, err := svc.Enqueue(t.Context(), []ActionItem{
+		{AccountID: "acc-1", TargetURL: "https://www.instagram.com/p/abc/", Type: domain.JobTypeActionLike},
+	}); err != nil {
+		t.Fatalf("enqueue with no stream: %v", err)
+	}
+}
 
 func TestActionEnqueueRejectsBatchOverCap(t *testing.T) {
 	store := newActionStore()

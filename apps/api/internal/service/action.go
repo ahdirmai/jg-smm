@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -17,6 +18,11 @@ import (
 // MaxActionBatch is the enqueue cap (P3-13 "queue 50"): one request may carry
 // up to this many intents, and the queue page shows the same window.
 const MaxActionBatch = 50
+
+// maxRunPendingRows bounds "Run pending now": the sweep pages forward in
+// MaxActionBatch-sized reads, so this is the largest queue one press drains
+// (50 * 40 = 2000 pending jobs). A short page exits early before reaching it.
+const maxRunPendingRows = 2000
 
 // ActionService (P3-13) is the operator-facing side of the action engine: it
 // turns a paste of target URLs into PENDING jobs, and it reads the queue back
@@ -38,6 +44,15 @@ type ActionService struct {
 	// batches records each enqueue call as a unit for monitoring. Optional and
 	// best-effort: nil (or a store failure) never blocks an enqueue.
 	batches port.ActionBatchStore
+	// stream announces newly enqueued jobs to open dashboards. Optional: nil
+	// means "no dashboard wired" and must never fail the write.
+	//
+	// Without this, a job an operator just queued is invisible to the queue page
+	// until a *worker* reports back on it — the page's only other refresh trigger
+	// is the action-updated frame the job service publishes on a verdict. With
+	// no worker running (or one that has not yet claimed the job) the row simply
+	// never appears, which reads as a silently failed enqueue.
+	stream port.StreamPublisher
 }
 
 // ActionTextTTL bounds how long a per-account comment body waits for dispatch.
@@ -71,6 +86,11 @@ type ActionItem struct {
 // reaches the store or the worker.
 const MaxCommentTextLen = 2200
 
+// MaxAICommentVariants caps how many distinct AI drafts one generate call
+// returns. The dashboard requests one per selected account and its batch cap
+// is 50, so this is sized to match rather than truncate silently.
+const MaxAICommentVariants = 50
+
 // ActionView is one queue row: the job's live status plus the latest attempt's
 // verdict, which is what an operator actually reads.
 type ActionView struct {
@@ -81,6 +101,7 @@ type ActionView struct {
 }
 
 // NewActionService wires the service. A nil clock defaults to the system clock.
+// A nil stream disables enqueue announcements (the write still succeeds).
 func NewActionService(
 	actions port.ActionStore,
 	accounts narrowAccount,
@@ -89,6 +110,7 @@ func NewActionService(
 	logger *slog.Logger,
 	texts port.ActionTextStore,
 	batches port.ActionBatchStore,
+	stream port.StreamPublisher,
 ) *ActionService {
 	if logger == nil {
 		logger = slog.Default()
@@ -96,7 +118,7 @@ func NewActionService(
 	if clock == nil {
 		clock = systemClock{}
 	}
-	return &ActionService{actions: actions, accounts: accounts, scrapes: scrapes, clock: clock, log: logger, texts: texts, batches: batches}
+	return &ActionService{actions: actions, accounts: accounts, scrapes: scrapes, clock: clock, log: logger, texts: texts, batches: batches, stream: stream}
 }
 
 // Enqueue turns a batch of intents into PENDING jobs. Every item is validated
@@ -231,7 +253,43 @@ func (s *ActionService) Enqueue(ctx context.Context, items []ActionItem) ([]doma
 		}
 	}
 	s.log.Info("actions enqueued", "batch", batchID, "count", len(created))
+	s.publishEnqueued(ctx, created)
 	return created, nil
+}
+
+// publishEnqueued announces freshly created jobs so an open queue page picks
+// them up immediately instead of waiting for a worker verdict that may never
+// come (no fleet running, or a job nobody claims).
+//
+// One frame per job, matching the shape JobService.publishVerdict uses, because
+// the browser handler (use-actions.ts) treats every action-updated frame the
+// same way: it refetches the list rather than patching from the payload (ADR
+// 0010 — the frame is a signal, the read is authoritative). So the payload only
+// needs the id; the extra fields keep the two publishers' frames indistinguishable
+// to anything that ever does read them.
+//
+// Fire-and-forget per the port contract: a nil stream or a marshal failure is
+// logged, never propagated. The jobs are already persisted at this point, and
+// the page still converges on its next fetch.
+func (s *ActionService) publishEnqueued(ctx context.Context, jobs []domain.ActionJob) {
+	if s.stream == nil {
+		return
+	}
+	for _, j := range jobs {
+		body, err := json.Marshal(map[string]any{
+			"jobId":   j.ID,
+			"status":  string(j.Status),
+			"attempt": j.Attempts,
+			// Not a verdict: no verified flag, no error class. A consumer that
+			// needs to tell "queued" from "finished" has the status for it.
+			"enqueued": true,
+		})
+		if err != nil {
+			s.log.Warn("stream: marshal enqueue frame", "job", j.ID, "err", err)
+			continue
+		}
+		s.stream.Publish(ctx, port.EventActionUpdated, body)
+	}
 }
 
 // ListBatches returns recent enqueue batches (monitoring), newest first. Nil
@@ -276,6 +334,72 @@ func (s *ActionService) GetBatchStatus(ctx context.Context, id string) (BatchSta
 		byStatus[job.Status]++
 	}
 	return BatchStatus{Batch: b, ByStatus: byStatus, Missing: missing}, nil
+}
+
+// Retry puts a failed job back in the queue for another attempt. Only a
+// terminal FAILED job is retryable: re-queueing a PENDING/RUNNING one would
+// hand the same work to a second worker, and re-queueing a SUCCESS would repeat
+// an action the platform already performed (a second like is a no-op, a second
+// comment is a duplicate post).
+//
+// attempts is deliberately NOT reset — the retry budget is the job's history,
+// and the escalation in the attempt log is what tells an operator how many
+// times this has already failed.
+func (s *ActionService) Retry(ctx context.Context, jobID string) (domain.ActionJob, error) {
+	job, err := s.actions.GetActionJob(ctx, jobID)
+	if err != nil {
+		return domain.ActionJob{}, fmt.Errorf("retry action job: %w", err)
+	}
+	if job.Status != domain.JobStatusFailed {
+		return domain.ActionJob{}, fmt.Errorf("%w: only a failed job can be retried, %s is %s", domain.ErrValidation, jobID, job.Status)
+	}
+	// Now, not now+backoff: the operator pressed the button because they want
+	// it to run, and the per-account velocity gate in the scheduler is the
+	// thing that should decide whether it is safe yet.
+	return s.actions.RescheduleActionJob(ctx, jobID, s.clock.Now())
+}
+
+// RunPendingNow pulls every PENDING job forward to now, so the workers claim
+// them on their next poll instead of waiting out the backoff.
+//
+// This deliberately drops the per-account velocity gate's timing: that gate
+// exists to space OUT retries against a platform, and an operator pressing this
+// is saying "I know, run it now". The gate still applies to what happens after
+// the claim, so a run that fails goes back to normal backoff rather than
+// retrying immediately in a loop.
+//
+// Idempotent and safe to press twice: jobs already RUNNING or terminal are not
+// touched, and a PENDING job already due is rewritten to the same instant.
+func (s *ActionService) RunPendingNow(ctx context.Context) (int, error) {
+	now := s.clock.Now()
+	// Sweep the whole queue: the button promises "run pending now", and a cap
+	// here would leave a 60-job queue reporting "moved: 50" while 10 waited on.
+	// Page forward through MaxActionBatch rows at a time.
+	//
+	// The offset advances by the rows READ, not the rows moved: a row whose
+	// reschedule fails is still consumed, otherwise a permanently bad row would
+	// block the sweep at the same offset forever.
+	n := 0
+	for offset := 0; offset < maxRunPendingRows; offset += MaxActionBatch {
+		limit := MaxActionBatch
+		pending, err := s.actions.ListActionJobsByStatus(ctx, domain.JobStatusPending, &limit, &offset)
+		if err != nil {
+			return n, fmt.Errorf("run pending now: %w", err)
+		}
+		for _, job := range pending {
+			if _, err := s.actions.RescheduleActionJob(ctx, job.ID, now); err != nil {
+				// One bad row must not abandon the rest of the queue.
+				s.log.Warn("action: run-pending reschedule failed", "job", job.ID, "err", err)
+				continue
+			}
+			n++
+		}
+		if len(pending) < MaxActionBatch {
+			// A short page is the queue's end; a full one means more to sweep.
+			break
+		}
+	}
+	return n, nil
 }
 
 // List returns the queue newest-first with each job's latest attempt verdict.
