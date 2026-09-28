@@ -295,7 +295,7 @@ func main() {
 		if redisClient != nil {
 			actionBatches = adapter.NewActionBatchStore(redisClient, "smm:actionbatch")
 		}
-		actionSvc := service.NewActionService(actionRepo, accountRepo, scrapeRepo, nil, logger, actionTexts, actionBatches)
+		actionSvc := service.NewActionService(actionRepo, accountRepo, scrapeRepo, nil, logger, actionTexts, actionBatches, hub)
 		deps.Actions = apihttp.NewActionHandler(actionSvc)
 		deps.Templates = apihttp.NewTemplateHandler(templateSvc)
 
@@ -374,6 +374,21 @@ func main() {
 				},
 			)
 			go actionSched.Run(ctx, time.Duration(cfg.ActionIntervalSeconds)*time.Second)
+		}
+
+		// Session refresher (P2-06): finds accounts whose platform cookie dies
+		// inside SESSION_REFRESH_LEAD_HOURS and dispatches a headful re-login
+		// over the control channel — the same instruction the dashboard's login
+		// button sends — letting /internal/account-callback record the verdict.
+		// Opt-in via SESSION_REFRESH_INTERVAL_SECONDS, gated on Redis for the
+		// same reason as the action scheduler above (PublishControl needs it).
+		if cfg.SessionRefreshIntervalSeconds > 0 && redisClient != nil {
+			refresher := service.NewSessionRefresher(accountRepo, publisher, service.SessionRefreshConfig{
+				Lead:   time.Duration(cfg.SessionRefreshLeadHours) * time.Hour,
+				Clock:  time.Now,
+				Logger: logger,
+			})
+			go refresher.Run(ctx, time.Duration(cfg.SessionRefreshIntervalSeconds)*time.Second)
 		}
 
 		// Official-accounts API + analytics read models (P2-13 / P2-14).
@@ -532,15 +547,21 @@ func provisionDriver(ctx context.Context, cfg config.Config, workers port.Worker
 //   - instagram-post-scraper takes a post permalink in its `username` field
 //     and returns that exact post with comments (the old apify/instagram-
 //     scraper build dropped per-post scraping).
-//   - threads: the prefix holds the meta-threads-scraper (user-posts mode;
-//     the runner resolves the username from the permalink itself).
+//   - threads: themineworks/threads-scraper, addressed by its FULL id. The
+//     prefix-derived "<prefix>/meta-threads-scraper" this replaced 404'd on
+//     every scrape — that actor is a user-posts-only build with no per-post
+//     mode, so it could not address a permalink at all, and no store entry
+//     existed under the `apify/` namespace for it. Its predecessor
+//     (pro100chok/threads-scraper-usage) could address a permalink but ran
+//     async-only; this one is driven the same way and returns replies as
+//     sibling rows rather than nested (see runThreadsPost).
 func actorForPlatform(cfg config.Config) func(domain.Platform) string {
 	return func(p domain.Platform) string {
 		switch p {
 		case domain.PlatformInstagram:
 			return cfg.ApifyActorPrefix + "/instagram-post-scraper"
 		case domain.PlatformThreads:
-			return cfg.ApifyActorPrefix + "/meta-threads-scraper"
+			return cfg.ApifyPostActorThreads
 		}
 		return ""
 	}
