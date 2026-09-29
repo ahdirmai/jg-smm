@@ -374,13 +374,6 @@ SELECT external_id, published_at FROM post WHERE platform = 'TIKTOK' ORDER BY sc
 - `published_at` is non-null and **varies** across rows. If every row shows the scrape time, the date path is broken — the same defect as `87e4bab`, and the `TestParseTikTokFallsBackToUnixCreateTime` case.
 - `raw_payload` row count for the run is ≥ the stored post count, proving error rows were dropped rather than ingested. If it is **equal**, the actor returned no error rows and that path is still unexercised — say so in the changelog rather than claiming error handling is proven.
 - Compute the yield: stored ÷ raw items. On Instagram the comparable run was 18%. If this is not meaningfully higher, the date bound is not working regardless of what the payload says.
-```sql
-SELECT external_id, published_at FROM post WHERE platform = 'TIKTOK' ORDER BY scraped_at DESC LIMIT 10;
-```
-- **The date bound actually bound.** Every `published_at` must fall inside the 3-day window. If any row is outside it, the actor ignored `oldestPostDateUnified`/`newestPostDate` for `searchQueries` — almost certainly because the search path reads `videoSearchDateFilter` instead. The payload tests cannot see this. **Do not record the feature as done here.** Add `videoSearchDateFilter` to the Task 2 branch with a payload test, re-run, and only then continue. This is the check that separates "we sent a date filter" from "the date filter worked".
-- `published_at` is non-null and **varies** across rows. If every row shows the scrape time, the date path is broken — the same defect as `87e4bab`, and the `TestParseTikTokFallsBackToUnixCreateTime` case.
-- `raw_payload` row count for the run is ≥ the stored post count, proving error rows were dropped rather than ingested. If it is **equal**, the actor returned no error rows and that path is still unexercised — say so in the changelog rather than claiming error handling is proven.
-- Compute the yield: stored ÷ raw items. On Instagram the comparable run was 18%. If this is not meaningfully higher, the date bound is not working regardless of what the payload says.
 
 - [ ] **Step 5: Update CHANGELOG.md**
 One `### Added` bullet under `## Unreleased` naming the actor, the server-side date filter, and the measured yield from Step 4. Commit:

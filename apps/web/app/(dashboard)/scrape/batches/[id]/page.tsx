@@ -36,10 +36,18 @@ import { PostMedia } from '@/components/post-media';
 function postPermalink(p: ScrapedPost): string | null {
   const code = p.externalId?.trim();
   if (!code) return null;
-  // Platform arrives as the API's domain constant (INSTAGRAM/THREADS).
+  // Platform arrives as the API's domain constant (INSTAGRAM/THREADS/TIKTOK).
   const platform = p.platform?.toLowerCase();
   if (platform === 'threads') return `https://www.threads.com/post/${code}`;
   if (platform === 'instagram') return `https://www.instagram.com/p/${code}/`;
+  // TikTok's permalink is derived the same way as the other two. The actor
+  // also sends a ready-made `webVideoUrl` per row, but there is no column to
+  // store it and both parts it needs — handle and video id — already are.
+  if (platform === 'tiktok') {
+    const handle = p.authorHandle?.trim();
+    if (!handle || handle === 'unknown') return null;
+    return `https://www.tiktok.com/@${handle}/video/${code}`;
+  }
   return null;
 }
 

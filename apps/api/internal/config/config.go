@@ -132,6 +132,9 @@ type Config struct {
 	// Threads search actors publish under different Apify namespaces.
 	ApifySearchActorInstagram string
 	ApifySearchActorThreads   string
+	// ApifySearchActorTikTok is the full id of clockworks/tiktok-scraper. Same
+	// rule as the two above: never prefix-derived.
+	ApifySearchActorTikTok string
 	// ApifyBudgetUSD is the monthly Apify spend ceiling (P5-08). 0 publishes no
 	// ceiling, which disables the budget alert rather than making it noisy.
 	ApifyBudgetUSD float64
@@ -168,6 +171,10 @@ type Config struct {
 	// AnalyticsProviderBaseURL + key for the chosen provider.
 	AnalyticsProviderBaseURL string
 	AnalyticsProviderKey     string
+	// Composio backs the real analytics provider. The base url is the v3.1
+	// tool-execute root; the key is the project's API key.
+	ComposioBaseURL string
+	ComposioAPIKey  string
 
 	// MinIO / S3 for raw scrape payloads (P2-04). The bucket is created on first
 	// use, so these can point at a fresh MinIO.
@@ -240,6 +247,7 @@ func Load() (Config, error) {
 		// Full ids: the search actors live under different Apify namespaces.
 		ApifySearchActorInstagram: env("APIFY_SEARCH_ACTOR_INSTAGRAM", "crawlerbros/instagram-keyword-search-scraper"),
 		ApifySearchActorThreads:   env("APIFY_SEARCH_ACTOR_THREADS", "futurizerush/meta-threads-scraper"),
+		ApifySearchActorTikTok:    env("APIFY_SEARCH_ACTOR_TIKTOK", "clockworks/tiktok-scraper"),
 		ApifyPostActorThreads:     env("APIFY_POST_ACTOR_THREADS", "themineworks/threads-scraper"),
 		ApifyBudgetUSD:            envFloat("APIFY_BUDGET_USD", 0),
 		ProxyBudgetGB:             envFloat("PROXY_BUDGET_GB", 0),
@@ -256,6 +264,8 @@ func Load() (Config, error) {
 		AnalyticsProvider:              env("ANALYTICS_PROVIDER", "thirdparty_a"),
 		AnalyticsProviderBaseURL:       env("ANALYTICS_PROVIDER_BASE_URL", "https://provider.example.com/v1"),
 		AnalyticsProviderKey:           os.Getenv("ANALYTICS_PROVIDER_KEY"),
+		ComposioBaseURL:                env("COMPOSIO_BASE_URL", "https://backend.composio.dev/api/v3.1"),
+		ComposioAPIKey:                 os.Getenv("COMPOSIO_API_KEY"),
 
 		MinioEndpoint: env("MINIO_ENDPOINT", "minio:9000"),
 		MinioUser:     env("MINIO_USER", "smm"),

@@ -143,14 +143,34 @@ func TestParseTikTokNestedAuthorAndMetrics(t *testing.T) {
 	if len(it.MediaURLs) != 1 || it.MediaURLs[0] != "https://p16.tiktokcdn.com/7123.jpg" {
 		t.Errorf("mediaUrls = %v, want the single mediaUrls entry", it.MediaURLs)
 	}
-	// The counter names are TikTok's own (digg/share/collect), not the
-	// Instagram set. The stored keys are the cross-platform vocabulary the
-	// dashboard's metrics line already reads.
+	// The counter names are TikTok's own (digg/share/collect); the stored keys
+	// are the cross-platform vocabulary the dashboard already reads.
 	checkMetric(t, mustJSON(t, it.Metrics), "likes", 1200)
 	checkMetric(t, mustJSON(t, it.Metrics), "comments", 34)
 	checkMetric(t, mustJSON(t, it.Metrics), "shares", 7)
-	checkMetric(t, mustJSON(t, it.Metrics), "plays", 9000)
+	checkMetric(t, mustJSON(t, it.Metrics), "views", 9000)
 	checkMetric(t, mustJSON(t, it.Metrics), "collects", 3)
+}
+
+// A createTimeISO that is present but in a layout parseActorTime does not
+// accept is a different path from an empty string, and it is the one the actor
+// is most likely to produce. The post must be KEPT — the ingestor's window
+// treats a zero time as in-window, matching every other parser here — and the
+// date must be stored as NULL rather than as the zero time.
+func TestParseTikTokUnparseableISOIsKeptWithNoPublishDate(t *testing.T) {
+	// "08/03/2026 07:06:51" — the US-slashed shape some serializers emit. NOT
+	// "…07:06:51.123456": parseActorTime accepts fractional seconds through
+	// RFC3339, so that string parses and would prove nothing here.
+	items, err := tiktokParse(t, mkTikTokPost("7123", "08/03/2026 07:06:51", 0))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("items = %d, want the post kept — a date we cannot read is not a date outside the window", len(items))
+	}
+	if items[0].PublishedAt != nil {
+		t.Fatalf("publishedAt = %v, want nil — an unparseable date must never be stored as something", items[0].PublishedAt)
+	}
 }
 
 // createTimeISO frequently arrives with no timezone marker. RFC3339 rejects

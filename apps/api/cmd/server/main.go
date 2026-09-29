@@ -263,9 +263,21 @@ func main() {
 			checkers["minio"] = storageadapter.NewHealth(storage)
 		}
 
-		// Analytics provider (stub until the real contract is signed, P2-11).
+		// Analytics provider. ANALYTICS_PROVIDER picks the adapter: "composio"
+		// is the real one (Instagram only); anything else falls back to the
+		// deterministic stub so a local stack still renders a dashboard with no
+		// credentials. A configured-but-broken real provider is fatal at boot
+		// rather than silently serving zeros.
 		var analyticsProvider port.AnalyticsProvider
-		if cfg.AnalyticsProviderKey != "" {
+		switch {
+		case cfg.AnalyticsProvider == "composio":
+			provider, err := analyticsprovider.NewComposio(cfg.ComposioBaseURL, cfg.ComposioAPIKey)
+			if err != nil {
+				logger.Error("analytics provider init failed", "err", err)
+				os.Exit(1)
+			}
+			analyticsProvider = provider
+		case cfg.AnalyticsProviderKey != "":
 			stub, err := analyticsprovider.New(cfg.AnalyticsProviderBaseURL, cfg.AnalyticsProviderKey)
 			if err != nil {
 				logger.Error("analytics provider init failed", "err", err)
@@ -583,6 +595,11 @@ func actorForPlatform(cfg config.Config) func(domain.Platform) string {
 //     `search`, and its posts are not date-filterable.
 //   - Threads: futurizerush/meta-threads-scraper in `mode:search`, which takes
 //     keywords[] plus start_date/end_date.
+//   - TikTok: clockworks/tiktok-scraper, `searchQueries[]` plus both date
+//     bounds. It only honours the date filter under profileSorting
+//     latest|oldest, and the store listing does not say which of its two date
+//     fields governs the search path — so the ingestor's window is the only
+//     backstop that cannot be disabled from the payload.
 func searchActorForPlatform(cfg config.Config) func(domain.Platform) string {
 	return func(p domain.Platform) string {
 		switch p {
@@ -590,6 +607,8 @@ func searchActorForPlatform(cfg config.Config) func(domain.Platform) string {
 			return cfg.ApifySearchActorInstagram
 		case domain.PlatformThreads:
 			return cfg.ApifySearchActorThreads
+		case domain.PlatformTikTok:
+			return cfg.ApifySearchActorTikTok
 		}
 		return ""
 	}

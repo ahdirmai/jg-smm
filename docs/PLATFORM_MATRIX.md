@@ -44,7 +44,8 @@ Legend: **✅** didukung/diimplementasi · **🟡** brief-tbd (desain konsep ada
 | Metric: views (video/reels) | ✅  | 🟡      | ⬜  | ⬜  | ⬜       | ⬜      | ✅     |
 | Live views                  | 🟡  | ❌      | ⬜  | ❌  | ❌       | 🟡      | 🟡     |
 
-Baris **Scrape keyword batch** adalah satu-satunya yang TikTok penuhi di v0.1: `clockworks/tiktok-scraper` via `searchQueries[]`. `postURLs[]`/`profiles[]`/`hashtags[]` memang didukung actor tetapi belum diintegrasikan, jadi `Scrape post by URL` dan `Scrape hashtag` tetap ⬜. `Metric: views` terisi karena `playCount` dipetakan ke `Post.metrics.plays`. **Comment bodies tidak diambil** — actor menaruhnya di dataset kedua (`commentsDatasetURL`) yang tidak kita fetch, jadi `Scrape comments` TikTok tetap ⬜. Detail di `platforms/tiktok.md` §4.1.
+
+Baris **Scrape keyword batch** adalah satu-satunya yang TikTok penuhi di v0.1: `clockworks/tiktok-scraper` via `searchQueries[]`. `postURLs[]`/`profiles[]`/`hashtags[]` memang didukung actor tetapi belum diintegrasikan, jadi `Scrape post by URL` dan `Scrape hashtag` tetap ⬜. `Metric: views` terisi karena `playCount` dipetakan ke `Post.metrics.views` — **bukan** key baru: snapshot writer hanya membaca `views`/`viewCount`/`playCount`, dan `TopPostsByMetric` mengurutkan kolom `metric_snapshot.views`, jadi key yang tak dikenal membuat setiap post TikTok tersimpan dengan view count nol dan tidak pernah masuk peringkat. `collectCount` disimpan di `post.metrics` tapi belum punya kolom snapshot maupun renderer. **Comment bodies tidak diambil** — actor menaruhnya di dataset kedua (`commentsDatasetURL`) yang tidak kita fetch, jadi `Scrape comments` TikTok tetap ⬜. Detail di `platforms/tiktok.md` §4.1.
 
 ### 2.2 Action (semua via Playwright)
 

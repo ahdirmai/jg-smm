@@ -423,7 +423,6 @@ type tiktokPost struct {
 	Text          string   `json:"text"`
 	CreateTimeISO string   `json:"createTimeISO"`
 	CreateTime    int64    `json:"createTime"`
-	WebVideoURL   string   `json:"webVideoUrl"`
 	MediaURLs     []string `json:"mediaUrls"`
 	DiggCount     int      `json:"diggCount"`
 	CommentCount  int      `json:"commentCount"`
@@ -493,7 +492,11 @@ func parseTikTokItems(raw []byte, window port.KeywordTimeWindow) ([]scrapeItem, 
 		metrics["collects"] = src.CollectCount
 	}
 	if src.PlayCount != 0 {
-		metrics["plays"] = src.PlayCount
+		// `views`, not a new `plays` key. The snapshot writer reads
+		// metricsInt("views", "viewCount", "playCount") — an unfamiliar key is
+		// stored and then read by nobody, which is a stored view count of zero
+		// on a post that otherwise looks entirely correct.
+		metrics["views"] = src.PlayCount
 	}
 	return []scrapeItem{{
 		Platform:     string(domain.PlatformTikTok),
