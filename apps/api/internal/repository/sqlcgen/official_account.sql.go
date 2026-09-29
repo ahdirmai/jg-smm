@@ -39,9 +39,13 @@ func (q *Queries) ArchiveOfficialAccount(ctx context.Context, id pgtype.UUID) (O
 }
 
 const countOfficialAccountsByPlatform = `-- name: CountOfficialAccountsByPlatform :one
-SELECT count(*) FROM official_account WHERE platform = $1
+SELECT count(*) FROM official_account
+WHERE platform = $1
+  AND status <> 'ARCHIVED'
 `
 
+// Same filter as the list it counts: a per-platform count that included
+// archived accounts would disagree with the table shown beside it.
 func (q *Queries) CountOfficialAccountsByPlatform(ctx context.Context, platform Platform) (int64, error) {
 	row := q.db.QueryRow(ctx, countOfficialAccountsByPlatform, platform)
 	var count int64
@@ -167,6 +171,7 @@ const listOfficialAccounts = `-- name: ListOfficialAccounts :many
 SELECT id, platform, handle, display_name, profile_url, avatar_url, status,
        provider, provider_ref, tags, last_fetched_at, created_at
 FROM official_account
+WHERE status <> 'ARCHIVED'
 ORDER BY created_at DESC
 LIMIT $1 OFFSET $2
 `
@@ -176,6 +181,10 @@ type ListOfficialAccountsParams struct {
 	Offset int32 `json:"offset"`
 }
 
+// ARCHIVED is a soft delete: the row and its snapshots stay queryable for
+// history, but a deleted account must not reappear in the monitored list the
+// dashboard renders. PAUSED stays listed — paused means "monitored but not
+// ingesting", and hiding it would make it impossible to find and resume.
 func (q *Queries) ListOfficialAccounts(ctx context.Context, arg ListOfficialAccountsParams) ([]OfficialAccount, error) {
 	rows, err := q.db.Query(ctx, listOfficialAccounts, arg.Limit, arg.Offset)
 	if err != nil {
@@ -214,6 +223,7 @@ SELECT id, platform, handle, display_name, profile_url, avatar_url, status,
        provider, provider_ref, tags, last_fetched_at, created_at
 FROM official_account
 WHERE platform = $1
+  AND status <> 'ARCHIVED'
 ORDER BY handle
 LIMIT $2 OFFSET $3
 `

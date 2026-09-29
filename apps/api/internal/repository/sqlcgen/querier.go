@@ -26,12 +26,18 @@ type Querier interface {
 	// that platform over the trailing window. `last(x, ts)` over the bucket gives
 	// the most recent sample per account without a window-function round trip.
 	AnalyticsOverviewByPlatform(ctx context.Context, arg AnalyticsOverviewByPlatformParams) ([]AnalyticsOverviewByPlatformRow, error)
-	// Same shape, scoped to one account (the per-account drill-down view).
+	// Same shape, scoped to one account (the per-account drill-down view). One
+	// account per bucket, so the per-account step is the whole answer.
 	AnalyticsTrendByAccount(ctx context.Context, arg AnalyticsTrendByAccountParams) ([]AnalyticsTrendByAccountRow, error)
-	// Daily series of one metric summed across all accounts on a platform. The
-	// metric is picked by name so one query serves every KPI card; every branch is
-	// bigint so the CASE is type-homogeneous. gapfill needs both time bounds, which
-	// the WHERE supplies.
+	// Daily series of one metric across all accounts on a platform.
+	//
+	// Two axes, two aggregates. Within a day an account contributes ONE value —
+	// `max`, i.e. its latest reading — because a provider metric is a gauge for
+	// the period, not an increment; summing the samples in a day would multiply a
+	// single day by the number of ingests. Across accounts the values DO add up,
+	// so the outer query sums the per-account maxima. The metric is picked by name
+	// so one query serves every KPI card; every branch is bigint so the CASE is
+	// type-homogeneous.
 	AnalyticsTrendByPlatform(ctx context.Context, arg AnalyticsTrendByPlatformParams) ([]AnalyticsTrendByPlatformRow, error)
 	// provision_log queries: append-only audit of every provisioner op.
 	AppendProvisionLog(ctx context.Context, arg AppendProvisionLogParams) error
@@ -61,6 +67,8 @@ type Querier interface {
 	CountAccountsByWorker(ctx context.Context, workerID pgtype.UUID) (int64, error)
 	CountAuditLogsFiltered(ctx context.Context, arg CountAuditLogsFilteredParams) (int64, error)
 	CountCommentsByPost(ctx context.Context, postID pgtype.UUID) (int64, error)
+	// Same filter as the list it counts: a per-platform count that included
+	// archived accounts would disagree with the table shown beside it.
 	CountOfficialAccountsByPlatform(ctx context.Context, platform Platform) (int64, error)
 	CountOwnersExcept(ctx context.Context, id pgtype.UUID) (int64, error)
 	CountUsers(ctx context.Context) (int64, error)
@@ -226,6 +234,10 @@ type Querier interface {
 	ListKeywordBatchPosts(ctx context.Context, arg ListKeywordBatchPostsParams) ([]Post, error)
 	ListKeywordBatches(ctx context.Context, arg ListKeywordBatchesParams) ([]KeywordBatch, error)
 	ListMetricSnapshotsByPost(ctx context.Context, arg ListMetricSnapshotsByPostParams) ([]MetricSnapshot, error)
+	// ARCHIVED is a soft delete: the row and its snapshots stay queryable for
+	// history, but a deleted account must not reappear in the monitored list the
+	// dashboard renders. PAUSED stays listed — paused means "monitored but not
+	// ingesting", and hiding it would make it impossible to find and resume.
 	ListOfficialAccounts(ctx context.Context, arg ListOfficialAccountsParams) ([]OfficialAccount, error)
 	ListOfficialAccountsByPlatform(ctx context.Context, arg ListOfficialAccountsByPlatformParams) ([]OfficialAccount, error)
 	// every ACTIVE account for a provider, walked by the ingestor cron tick.
