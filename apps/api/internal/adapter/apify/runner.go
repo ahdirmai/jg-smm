@@ -90,11 +90,22 @@ var _ port.ApifyRunner = (*Runner)(nil)
 //     the ingestor, not requested here.
 //   - Threads (futurizerush/meta-threads-scraper): `mode:search` with a
 //     `keywords[]` array, and both `start_date`/`end_date` bounds.
+//   - TikTok (clockworks/tiktok-scraper): `searchQueries[]` (a `#tag` is a
+//     hashtag query and a bare word a full-text one, so terms pass through
+//     unchanged), and BOTH date bounds. Unlike the Instagram actor this one
+//     CAN filter server-side, so the window is requested here — but only
+//     under `profileSorting: latest`/`oldest`. Under `popular` the date fields
+//     are accepted and ignored, which is the silent-wrong-answer failure this
+//     whole function exists to prevent. The ingestor still applies the window;
+//     that second line of defence is the one no payload field can switch off.
 //
 // A wrong field name is silent here: the actor falls back to its own default
 // and returns unrelated posts, so these names are pinned against the live input
 // schemas in runner_test.go.
 func (r *Runner) searchInput(in port.ApifySearchInput, maxItems int) map[string]any {
+	if in.Platform == domain.PlatformTikTok {
+		return tiktokSearchInput(in, maxItems)
+	}
 	if in.Platform == domain.PlatformThreads {
 		payload := map[string]any{
 			"mode":          "search",
@@ -110,6 +121,7 @@ func (r *Runner) searchInput(in port.ApifySearchInput, maxItems int) map[string]
 		}
 		return payload
 	}
+
 	// No date keys: the actor's schema has no date field, so sending
 	// onlyPostsNewerThan (the old apify/instagram-scraper spelling) would be
 	// ignored — and an ignored lower bound means the ingestor has to drop
@@ -118,6 +130,32 @@ func (r *Runner) searchInput(in port.ApifySearchInput, maxItems int) map[string]
 		"keywords": in.Keywords,
 		"maxPosts": maxItems,
 	}
+}
+
+// tiktokSearchInput builds the payload for clockworks/tiktok-scraper.
+//
+// It is pay-per-event ($1.70 per 1000 results), so anything that bills is a
+// decision, not a default: the download flags are extra billed events and the
+// AI video description/summary fields bill PER VIDEO SECOND. They are omitted
+// rather than set false so a later edit cannot quietly switch one on.
+//
+// commentsPerPost: 0 because the actor does not return comment bodies inline —
+// it parks them in a separate dataset behind `commentsDatasetURL`, which this
+// integration does not fetch (same ceiling as the Instagram keyword path).
+func tiktokSearchInput(in port.ApifySearchInput, maxItems int) map[string]any {
+	payload := map[string]any{
+		"searchQueries":   in.Keywords,
+		"profileSorting":  "latest", // load-bearing: only latest|oldest honour the date fields
+		"resultsPerPage":  maxItems, // a page size, not a cap on what we are billed for
+		"commentsPerPost": 0,
+	}
+	if !in.Window.From.IsZero() {
+		payload["oldestPostDateUnified"] = in.Window.From.UTC().Format("2006-01-02")
+	}
+	if !in.Window.To.IsZero() {
+		payload["newestPostDate"] = in.Window.To.UTC().Format("2006-01-02")
+	}
+	return payload
 }
 
 // RunSearch drives the platform's search actor: keywords + window instead of

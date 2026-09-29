@@ -147,3 +147,110 @@ func TestThreadsPostInput(t *testing.T) {
 		t.Error("targets/action are the previous actor's fields; this one reads mode/postsUrls")
 	}
 }
+
+// The TikTok payload is pinned against clockworks/tiktok-scraper's input schema
+// (GdWCkxBtKWOsKjdch, verified 2026-09) for the same reason the others are: a
+// wrong field name here fails SILENTLY. The actor accepts the payload, falls
+// back to its own defaults, and returns a 200 with the wrong data.
+func tiktokInput() (port.ApifySearchInput, map[string]any) {
+	r := &Runner{}
+	in := port.ApifySearchInput{
+		Platform: domain.PlatformTikTok,
+		Keywords: []string{"#jadibully", "kopi susu"},
+		Window: port.KeywordTimeWindow{
+			From: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
+			To:   time.Date(2026, 9, 24, 0, 0, 0, 0, time.UTC),
+		},
+		MaxPosts: 30,
+	}
+	return in, r.searchInput(in, 30)
+}
+
+// The actor takes searchQueries, not keywords. A `#tag` is a hashtag query and a
+// bare word is a full-text query to it, so the terms pass through unchanged —
+// stripping the `#` would turn a hashtag scrape into a keyword one.
+func TestSearchInputTikTokUsesSearchQueries(t *testing.T) {
+	in, got := tiktokInput()
+	q, ok := got["searchQueries"].([]string)
+	if !ok || len(q) != 2 || q[0] != "#jadibully" || q[1] != "kopi susu" {
+		t.Errorf("searchQueries = %v, want the terms unchanged: %v", got["searchQueries"], in.Keywords)
+	}
+	if _, stale := got["keywords"]; stale {
+		t.Error("this actor reads searchQueries; `keywords` is a different actor's spelling")
+	}
+	if _, stale := got["hashtags"]; stale {
+		t.Error("hashtags[] is a different scrape mode; sending it alongside searchQueries changes what runs")
+	}
+}
+
+// The one thing this actor does that the Instagram keyword actor does not: it
+// takes a date range. Not sending it means paying for out-of-window posts and
+// dropping them in the ingestor — the measured 18% yield on run d3fc79a8.
+func TestSearchInputTikTokSendsBothDateBounds(t *testing.T) {
+	_, got := tiktokInput()
+	if v, want := got["oldestPostDateUnified"], "2026-08-01"; v != want {
+		t.Errorf("oldestPostDateUnified = %v, want %q", v, want)
+	}
+	if v, want := got["newestPostDate"], "2026-09-24"; v != want {
+		t.Errorf("newestPostDate = %v, want %q", v, want)
+	}
+}
+
+// profileSorting is what gates the date filter: the actor honours
+// oldestPostDateUnified/newestPostDate ONLY under latest|oldest. Set popular and
+// the date fields are accepted and ignored — the run still succeeds and returns
+// the newest-and-hottest videos across all time. This test fails the day anyone
+// "optimises" the sort, which is the whole point.
+func TestSearchInputTikTokSortPinsDateFilter(t *testing.T) {
+	_, got := tiktokInput()
+	if v := got["profileSorting"]; v != "latest" {
+		t.Errorf("profileSorting = %v, want \"latest\" — the actor honours the date "+
+			"bounds only under latest|oldest, so any other sort silently returns unfiltered results", v)
+	}
+}
+
+// A zero window omits the date fields rather than sending 0001-01-01, which
+// would read as a lower bound before the beginning of time.
+func TestSearchInputTikTokOmitsZeroWindow(t *testing.T) {
+	r := &Runner{}
+	got := r.searchInput(port.ApifySearchInput{Platform: domain.PlatformTikTok, Keywords: []string{"x"}}, 10)
+	for _, k := range []string{"oldestPostDateUnified", "newestPostDate"} {
+		if v, ok := got[k]; ok {
+			t.Errorf("zero window must omit %s, got %v", k, v)
+		}
+	}
+}
+
+// Pay-per-event: $1.70 per 1000 results, and every download flag is an EXTRA
+// event while the AI summary fields bill PER VIDEO SECOND — orders of magnitude
+// more than the per-result charge. They must be absent from the payload, not
+// merely left at their defaults, so a future edit cannot flip one on.
+func TestSearchInputTikTokOmitsChargeableAddons(t *testing.T) {
+	_, got := tiktokInput()
+	for _, k := range []string{
+		"shouldDownloadVideos", "shouldDownloadMusic", "shouldDownloadSubtitles",
+		"shouldDownloadCoverImages", "shouldDownloadProfilePhotos",
+		"downloadSummarizedVideoDescription", "downloadAIVideoSummaries",
+		"downloadSubtitlesOptions",
+	} {
+		if v, ok := got[k]; ok {
+			t.Errorf("%q is a chargeable add-on and must not be sent, got %v", k, v)
+		}
+	}
+}
+
+// resultsPerPage is a PAGE SIZE, not a total cap: 500 requested at
+// resultsPerPage 100 still bills 500 results. commentsPerPost is the field that
+// would actually bill, and this integration stores no comment bodies — the
+// actor parks them in a second dataset behind commentsDatasetURL, which we do
+// not fetch.
+func TestSearchInputTikTokDoesNotBillForComments(t *testing.T) {
+	_, got := tiktokInput()
+	if v, ok := got["resultsPerPage"]; !ok || v != 30 {
+		t.Errorf("resultsPerPage = %v, want 30 (a page size — it does not cap the run's bill)", v)
+	}
+	if v := got["commentsPerPost"]; v != 0 {
+		t.Errorf("commentsPerPost = %v, want 0 — comments are billed per comment and "+
+			"this integration does not fetch the second dataset they arrive in", v)
+	}
+}
