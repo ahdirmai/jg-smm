@@ -59,6 +59,9 @@ type OfficialAccountInput struct {
 	DisplayName string
 	ProfileURL  string
 	AvatarURL   string
+	// ProviderRef is the provider's own id for this account (a Composio
+	// connected-account id). The adapter keys on it, not the handle.
+	ProviderRef string
 	Provider    domain.AnalyticsProvider
 	Tags        []string
 }
@@ -89,6 +92,7 @@ func (s *AnalyticsService) Create(ctx context.Context, in OfficialAccountInput) 
 		Handle:      in.Handle,
 		DisplayName: nilIfEmpty(in.DisplayName),
 		ProfileURL:  nilIfEmpty(in.ProfileURL),
+		ProviderRef: nilIfEmpty(in.ProviderRef),
 		AvatarURL:   nilIfEmpty(in.AvatarURL),
 		Provider:    provider,
 		Tags:        tags,

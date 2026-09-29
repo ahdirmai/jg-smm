@@ -58,6 +58,7 @@ func (h *AnalyticsHandler) createOfficialAccount(c echo.Context) error {
 		DisplayName: derefStr(req.DisplayName),
 		ProfileURL:  derefStr(req.ProfileUrl),
 		AvatarURL:   derefStr(req.AvatarUrl),
+		ProviderRef: derefStr(req.ProviderRef),
 		Provider:    derefProvider(req.Provider),
 		Tags:        tags,
 	})

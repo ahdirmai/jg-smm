@@ -1933,6 +1933,12 @@ components:
           type: array
           items:
             type: string
+        providerRef:
+          type: string
+          description: |
+            The provider's own id for this account (a Composio connected-account
+            id, "ca_..."). Required by the real provider adapter: metrics are
+            keyed on the connection, not the handle.
 
     AnalyticsKpi:
       type: object

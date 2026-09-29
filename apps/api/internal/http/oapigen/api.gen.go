@@ -587,10 +587,15 @@ type CreateOfficialAccountRequest struct {
 	Handle      string  `json:"handle"`
 
 	// Platform The social platform. MVP active set is Instagram + Threads.
-	Platform   Platform  `json:"platform"`
-	ProfileUrl *string   `json:"profileUrl,omitempty"`
-	Provider   *string   `json:"provider,omitempty"`
-	Tags       *[]string `json:"tags,omitempty"`
+	Platform   Platform `json:"platform"`
+	ProfileUrl *string  `json:"profileUrl,omitempty"`
+	Provider   *string  `json:"provider,omitempty"`
+
+	// ProviderRef The provider's own id for this account (a Composio connected-account
+	// id, "ca_..."). Required by the real provider adapter: metrics are
+	// keyed on the connection, not the handle.
+	ProviderRef *string   `json:"providerRef,omitempty"`
+	Tags        *[]string `json:"tags,omitempty"`
 }
 
 // CreateProxyGroupRequest defines model for CreateProxyGroupRequest.

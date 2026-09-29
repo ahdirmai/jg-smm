@@ -176,6 +176,11 @@ services:
       REPORT_EMAIL_INTERVAL_SECONDS: ${REPORT_EMAIL_INTERVAL_SECONDS:-0}
       REPORT_EMAIL_TO: ${REPORT_EMAIL_TO:-}
       REPORT_EMAIL_WINDOW_DAYS: ${REPORT_EMAIL_WINDOW_DAYS:-7}
+      # Official-account reach via Composio (/monitoring). ANALYTICS_PROVIDER
+      # picks the adapter: "composio" is the real one (Instagram only), the
+      # stub stays the default so a local stack renders with no credentials.
+      COMPOSIO_BASE_URL: ${COMPOSIO_BASE_URL:-https://backend.composio.dev/api/v3.1}
+      COMPOSIO_API_KEY: ${COMPOSIO_API_KEY:-}
     ports:
       - '${API_PORT:-24080}:8080'
     # Local tier (F-06): the docker driver dials the daemon socket, which the
