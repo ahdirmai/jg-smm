@@ -80,7 +80,7 @@ func (q *Queries) AnalyticsOverviewByPlatform(ctx context.Context, arg Analytics
 const analyticsTrendByAccount = `-- name: AnalyticsTrendByAccount :many
 SELECT
     time_bucket_gapfill('1 day', ts, now() - $3::interval, now()) AS bucket,
-    COALESCE(sum(CASE $2::text
+    COALESCE(max(CASE $2::text
             WHEN 'followers'     THEN followers
             WHEN 'reach'         THEN COALESCE(reach, 0)
             WHEN 'views'         THEN COALESCE(views, 0)
@@ -108,7 +108,8 @@ type AnalyticsTrendByAccountRow struct {
 	Value  int64       `json:"value"`
 }
 
-// Same shape, scoped to one account (the per-account drill-down view).
+// Same shape, scoped to one account (the per-account drill-down view). One
+// account per bucket, so the per-account step is the whole answer.
 func (q *Queries) AnalyticsTrendByAccount(ctx context.Context, arg AnalyticsTrendByAccountParams) ([]AnalyticsTrendByAccountRow, error) {
 	rows, err := q.db.Query(ctx, analyticsTrendByAccount, arg.OfficialAccountID, arg.Column2, arg.Column3)
 	if err != nil {
@@ -130,21 +131,27 @@ func (q *Queries) AnalyticsTrendByAccount(ctx context.Context, arg AnalyticsTren
 }
 
 const analyticsTrendByPlatform = `-- name: AnalyticsTrendByPlatform :many
-SELECT
-    time_bucket_gapfill('1 day', ts, now() - $3::interval, now()) AS bucket,
-    COALESCE(sum(CASE $2::text
-            WHEN 'followers'     THEN followers
-            WHEN 'reach'         THEN COALESCE(reach, 0)
-            WHEN 'views'         THEN COALESCE(views, 0)
-            WHEN 'mentions'      THEN COALESCE(mentions, 0)
-            WHEN 'engagements'   THEN COALESCE(engagements, 0)
-            WHEN 'profile_views' THEN COALESCE(profile_views, 0)
-            ELSE 0::bigint
-        END), 0)::bigint AS value
-FROM analytics_snapshot
-WHERE platform = $1
-  AND ts      >= now() - $3::interval
-  AND ts      <  now()
+WITH per_account AS (
+    SELECT
+        official_account_id,
+        time_bucket_gapfill('1 day', ts, now() - $3::interval, now()) AS bucket,
+        max(CASE $2::text
+                WHEN 'followers'     THEN followers
+                WHEN 'reach'         THEN COALESCE(reach, 0)
+                WHEN 'views'         THEN COALESCE(views, 0)
+                WHEN 'mentions'      THEN COALESCE(mentions, 0)
+                WHEN 'engagements'   THEN COALESCE(engagements, 0)
+                WHEN 'profile_views' THEN COALESCE(profile_views, 0)
+                ELSE 0::bigint
+            END) AS value
+    FROM analytics_snapshot
+    WHERE platform = $1
+      AND ts      >= now() - $3::interval
+      AND ts      <  now()
+    GROUP BY official_account_id, bucket
+)
+SELECT bucket, COALESCE(sum(value), 0)::bigint AS value
+FROM per_account
 GROUP BY bucket
 ORDER BY bucket
 `
@@ -160,10 +167,15 @@ type AnalyticsTrendByPlatformRow struct {
 	Value  int64       `json:"value"`
 }
 
-// Daily series of one metric summed across all accounts on a platform. The
-// metric is picked by name so one query serves every KPI card; every branch is
-// bigint so the CASE is type-homogeneous. gapfill needs both time bounds, which
-// the WHERE supplies.
+// Daily series of one metric across all accounts on a platform.
+//
+// Two axes, two aggregates. Within a day an account contributes ONE value —
+// `max`, i.e. its latest reading — because a provider metric is a gauge for
+// the period, not an increment; summing the samples in a day would multiply a
+// single day by the number of ingests. Across accounts the values DO add up,
+// so the outer query sums the per-account maxima. The metric is picked by name
+// so one query serves every KPI card; every branch is bigint so the CASE is
+// type-homogeneous.
 func (q *Queries) AnalyticsTrendByPlatform(ctx context.Context, arg AnalyticsTrendByPlatformParams) ([]AnalyticsTrendByPlatformRow, error) {
 	rows, err := q.db.Query(ctx, analyticsTrendByPlatform, arg.Platform, arg.Column2, arg.Column3)
 	if err != nil {
