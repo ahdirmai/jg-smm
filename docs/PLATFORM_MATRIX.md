@@ -94,20 +94,32 @@ Legend: **✅** tersedia di provider (target MVP bila platform aktif) · **🟡*
 | Demographics (age/gender/geo)        | 🟡  | ⬜      | 🟡  | ⬜  | 🟡       | 🟡      | 🟡     |
 | Best posting time                    | 🟡  | 🟡      | 🟡  | 🟡  | 🟡       | 🟡      | 🟡     |
 
-**KPI default per halaman analytics** (tiap halaman menampilkan strip KPI + tren + tabel post/mention):
+**KPI default per halaman analytics** (tiap halaman menampilkan strip KPI + tren):
 
-| Halaman   | KPI utama                                              |
-| --------- | ------------------------------------------------------ |
-| Instagram | Followers, Reach, Profile views, Engagements, Mentions |
-| Threads   | Followers, Views, Replies, Reposts, Mentions           |
-| Facebook  | Page followers, Reach, Engagements, Mentions           |
-| LinkedIn  | Followers, Impressions, Engagements, Mentions          |
-| X         | Followers, Impressions, Engagements, Mentions          |
-| YouTube   | Subscribers, Views, Watch time, Comments               |
-| TikTok    | Followers, Views, Likes, Shares, Live viewers          |
+Hanya enam skalar yang tersimpan di `analytics_snapshot`
+(`followers, reach, views, engagements, mentions, profile_views`). Yang boleh
+berbeda antar platform adalah **label** dan **urutan** — bukan key-nya. Key
+yang tidak pernah diisi provider hanya menghasilkan kartu `—` selamanya.
 
-> **Status data.** Setiap KPI dapat `lastFetchedAt` + badge `stale` bila > 60 menit. Provider belum dipilih;
-> hook adapter sudah disiapkan, jadi integrasi riil = isi satu implementasi `Provider` — tanpa ubah ERD/FE.
+| Halaman   | KPI utama                                          |
+| --------- | -------------------------------------------------- |
+| Instagram | Reach, Views, Interactions, Profile visits, Followers |
+| Threads   | Views, Interactions, Profile views, Followers      |
+| Facebook  | Reach, Page views, Post engagements, Page followers |
+| LinkedIn  | Unique visitors, Engagements, Followers            |
+| X         | Impressions, Engagements, Followers                |
+| YouTube   | Views, Interactions, Subscribers                   |
+| TikTok    | Video views, Interactions, Followers               |
+
+> **Status data.** Setiap KPI dapat `lastFetchedAt` + badge `stale` bila > 60 menit.
+> Provider = **Composio** (`ANALYTICS_PROVIDER=composio`, `COMPOSIO_API_KEY`).
+> Akun resmi diikat ke Composio lewat `official_account.provider_ref` (`ca_...`).
+> **Instagram saja** yang terpasang. Facebook menyusul
+> (`FACEBOOK_GET_PAGE_INSIGHTS` tersedia). **TikTok tidak punya tool insights
+> sama sekali di Composio** — hanya `TIKTOK_GET_USER_STATS` (followers/likes/
+> video_count) — jadi reach TikTok tidak bisa diambil dari connector ini.
+> `mentions` tidak terisi di platform mana pun: toolkit Instagram tidak
+> menyediakan tool mentions sama sekali.
 
 ---
 

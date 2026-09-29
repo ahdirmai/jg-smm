@@ -167,14 +167,36 @@ accounts; they never appear in worker analytics.
 
 - [ ] `/monitoring` lists added official accounts across platforms with a
       freshness badge and **Sync now**.
-- [ ] `/monitoring/[platform]` renders that platform's own metric vocabulary
-      (e.g. Instagram: saves + reels views; YouTube: watch time + CTR).
-- [ ] The account filter narrows the KPI strip; the trend chart loads.
-- [ ] The audience panel is tagged `sample` — it is not live data.
-- [ ] **Top posts** table renders its explicit "Not yet enabled in the MVP"
-      empty state (the ingest exposes KPIs + trend only). No fabricated rows.
-- [ ] Reach/views metrics update after an analytics run (third-party provider).
+- [ ] The four cards read **Total reach / Total views / Total interactions /
+      Monitored accounts**, and each equals the API's total for that one metric
+      — `curl -b "$CJ" 'localhost:24080/api/analytics/overview?windowDays=30'`.
+      A card that equals the sum of *all* metrics is the old bug.
+- [ ] The table shows per-account **Reach / Views / Followers** columns, each
+      `—` when the provider did not report that metric (never `0`).
+- [ ] `/monitoring/instagram` renders the metric vocabulary the provider
+      actually fills: Reach, Views, Interactions, Profile visits, Followers.
+      There is no card for a metric Instagram does not report.
+- [ ] The account filter narrows the KPI strip, and the default
+      "All official accounts" shows every account rather than an empty strip.
+- [ ] The metric picker switches the trend series; the header names the metric
+      actually drawn and shows the period-over-period change. With no earlier
+      period it says so instead of a fabricated percentage.
+- [ ] Reach/views metrics update after **Sync now** (Composio).
 - [ ] Adding an official account does not create a worker container.
+
+**Wiring.** `ANALYTICS_PROVIDER=composio` + `COMPOSIO_API_KEY` selects the real
+adapter (Instagram only). The official account must carry the Composio
+connected-account id, or the ingest fails loudly:
+
+```bash
+curl -b "$CJ" -X POST localhost:24080/api/official-accounts \
+  -H 'content-type: application/json' \
+  -d '{"platform":"instagram","handle":"<ig_username>","providerRef":"ca_..."}'
+```
+
+- [ ] A run against a bound account records `status: success`,
+      `accountsOk: 1`; an unbound one records `status: failed` with
+      `errorClass` naming the cause (never zeros).
 
 ## 10b. Audit, Settings, Login (P6)
 
