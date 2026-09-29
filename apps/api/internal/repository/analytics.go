@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -280,6 +281,7 @@ func (r *AnalyticsRepo) AnalyticsOverview(ctx context.Context, p domain.Platform
 			Mentions:          aggInt64(row.Mentions),
 			Engagements:       aggInt64(row.Engagements),
 			ProfileViews:      aggInt64(row.ProfileViews),
+			Metrics:           aggRawJSON(row.Metrics),
 			Provider:          domain.AnalyticsProvider(""),
 			FetchedAt:         time.Time{},
 		})
@@ -445,4 +447,76 @@ func (r *AnalyticsRepo) GetLatestAnalyticsIngestRun(ctx context.Context) (domain
 		return domain.AnalyticsIngestRun{}, fmt.Errorf("repository.analytics.GetLatestAnalyticsIngestRun: %w", err)
 	}
 	return toAnalyticsIngestRun(row), nil
+}
+
+// ---------------------------------------------------------------------------
+// per-content metrics
+// ---------------------------------------------------------------------------
+
+// UpsertContentMetric writes one post's metrics, refreshing the row for a
+// media id rather than inserting a second copy of the same post.
+func (r *AnalyticsRepo) UpsertContentMetric(ctx context.Context, m domain.ContentMetric) (domain.ContentMetric, error) {
+	if m.FetchedAt.IsZero() {
+		m.FetchedAt = time.Now().UTC()
+	}
+	if len(m.Metrics) == 0 {
+		m.Metrics = json.RawMessage(`{}`)
+	}
+	row, err := r.q.UpsertContentMetric(ctx, sqlcgen.UpsertContentMetricParams{
+		OfficialAccountID: uuidValue(m.OfficialAccountID),
+		Platform:          platformEnum(m.Platform),
+		ExternalID:        m.ExternalID,
+		ContentType:       m.ContentType,
+		Caption:           m.Caption,
+		Permalink:         m.Permalink,
+		PublishedAt:       tsPtr(m.PublishedAt),
+		Reach:             m.Reach,
+		Views:             m.Views,
+		Interactions:      m.Interactions,
+		Likes:             m.Likes,
+		Comments:          m.Comments,
+		Saves:             m.Saves,
+		Shares:            m.Shares,
+		ProfileViews:      m.ProfileViews,
+		Metrics:           m.Metrics,
+		Provider:          analyticsProviderEnum(m.Provider),
+		FetchedAt:         tsPtr(&m.FetchedAt),
+	})
+	if err != nil {
+		return domain.ContentMetric{}, fmt.Errorf("repository.analytics.UpsertContentMetric: %w", err)
+	}
+	return toContentMetric(row), nil
+}
+
+// ListContentMetrics is the "top content" table for one platform. accountIDs
+// and window narrow it; passing nil for either means "all".
+func (r *AnalyticsRepo) ListContentMetrics(ctx context.Context, p domain.Platform, accountIDs []string, window time.Duration, limit int) ([]domain.ContentMetric, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	var ids []pgtype.UUID
+	if len(accountIDs) > 0 {
+		ids = make([]pgtype.UUID, 0, len(accountIDs))
+		for _, id := range accountIDs {
+			ids = append(ids, uuidValue(id))
+		}
+	}
+	var win pgtype.Interval
+	if window > 0 {
+		win = intervalArg(window)
+	}
+	rows, err := r.q.ListContentMetrics(ctx, sqlcgen.ListContentMetricsParams{
+		Platform: platformEnum(p),
+		Column2:  ids,
+		Column3:  win,
+		Limit:    int32(limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("repository.analytics.ListContentMetrics: %w", err)
+	}
+	out := make([]domain.ContentMetric, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, toContentMetricRow(row))
+	}
+	return out, nil
 }

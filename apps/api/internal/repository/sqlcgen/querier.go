@@ -231,6 +231,11 @@ type Querier interface {
 	// (see PickForTarget).
 	ListCommentTemplates(ctx context.Context, arg ListCommentTemplatesParams) ([]CommentTemplate, error)
 	ListCommentsByPost(ctx context.Context, arg ListCommentsByPostParams) ([]Comment, error)
+	// The per-platform "top content" table. Ordered by reach because that is the
+	// headline number, with interactions as the tie-break so two posts with the
+	// same reach do not swap places between renders. NULLS LAST keeps a post the
+	// provider has no reach for at the bottom instead of pinning it to the top.
+	ListContentMetrics(ctx context.Context, arg ListContentMetricsParams) ([]ListContentMetricsRow, error)
 	ListKeywordBatchPosts(ctx context.Context, arg ListKeywordBatchPostsParams) ([]Post, error)
 	ListKeywordBatches(ctx context.Context, arg ListKeywordBatchesParams) ([]KeywordBatch, error)
 	ListMetricSnapshotsByPost(ctx context.Context, arg ListMetricSnapshotsByPostParams) ([]MetricSnapshot, error)
@@ -323,6 +328,16 @@ type Querier interface {
 	// stated explicitly so `time_bucket_gapfill` can infer its range).
 	UpsertAnalyticsSnapshot(ctx context.Context, arg UpsertAnalyticsSnapshotParams) (AnalyticsSnapshot, error)
 	UpsertComment(ctx context.Context, arg UpsertCommentParams) (Comment, error)
+	// Per-content metrics are a lifetime gauge, so a re-ingest refreshes the row
+	// for a media id in place. The unique index on
+	// (official_account_id, external_id, provider) is what makes this an upsert
+	// rather than an append: without it every 30-minute run would insert another
+	// copy of the same post and the "top posts" table would rank duplicates.
+	//
+	// COALESCE on the scalar columns: a metric this run did not report must not
+	// blank out a value a previous run did. A provider that omits `replies` today
+	// should not erase yesterday's reply count.
+	UpsertContentMetric(ctx context.Context, arg UpsertContentMetricParams) (AnalyticsContentMetric, error)
 	UpsertPost(ctx context.Context, arg UpsertPostParams) (Post, error)
 	UpsertTarget(ctx context.Context, arg UpsertTargetParams) (Target, error)
 	UpsertTeamConfig(ctx context.Context, name string) (TeamConfig, error)

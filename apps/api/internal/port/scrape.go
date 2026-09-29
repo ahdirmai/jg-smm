@@ -89,6 +89,12 @@ type AnalyticsStore interface {
 	ListAnalyticsMentionsByAccount(ctx context.Context, accountID string, limit, offset *int) ([]domain.AnalyticsMention, error)
 	ListAnalyticsMentionsByPlatform(ctx context.Context, p domain.Platform, limit, offset *int) ([]domain.AnalyticsMention, error)
 
+	// Per-content metrics (idempotent upsert by account + media id + provider).
+	UpsertContentMetric(ctx context.Context, m domain.ContentMetric) (domain.ContentMetric, error)
+	// ListContentMetrics is the platform's "top content" table. accountIDs nil
+	// means every account on the platform; window <= 0 means no date filter.
+	ListContentMetrics(ctx context.Context, p domain.Platform, accountIDs []string, window time.Duration, limit int) ([]domain.ContentMetric, error)
+
 	// Ingest run audit trail.
 	CreateAnalyticsIngestRun(ctx context.Context, provider domain.AnalyticsProvider, scope string) (domain.AnalyticsIngestRun, error)
 	UpdateAnalyticsIngestRun(ctx context.Context, r domain.AnalyticsIngestRun) (domain.AnalyticsIngestRun, error)

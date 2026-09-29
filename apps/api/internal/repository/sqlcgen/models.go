@@ -777,6 +777,28 @@ type ActionLog struct {
 	TemplateID      pgtype.UUID        `json:"template_id"`
 }
 
+type AnalyticsContentMetric struct {
+	ID                pgtype.UUID        `json:"id"`
+	OfficialAccountID pgtype.UUID        `json:"official_account_id"`
+	Platform          Platform           `json:"platform"`
+	ExternalID        string             `json:"external_id"`
+	ContentType       *string            `json:"content_type"`
+	Caption           *string            `json:"caption"`
+	Permalink         *string            `json:"permalink"`
+	PublishedAt       pgtype.Timestamptz `json:"published_at"`
+	Reach             *int64             `json:"reach"`
+	Views             *int64             `json:"views"`
+	Interactions      *int64             `json:"interactions"`
+	Likes             *int64             `json:"likes"`
+	Comments          *int64             `json:"comments"`
+	Saves             *int64             `json:"saves"`
+	Shares            *int64             `json:"shares"`
+	ProfileViews      *int64             `json:"profile_views"`
+	Metrics           json.RawMessage    `json:"metrics"`
+	Provider          AnalyticsProvider  `json:"provider"`
+	FetchedAt         pgtype.Timestamptz `json:"fetched_at"`
+}
+
 type AnalyticsIngestRun struct {
 	ID          pgtype.UUID        `json:"id"`
 	Provider    AnalyticsProvider  `json:"provider"`

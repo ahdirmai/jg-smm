@@ -20,6 +20,11 @@ SELECT
     last(views, ts)         AS views,
     last(mentions, ts)      AS mentions,
     last(engagements, ts)   AS engagements,
+    -- The provider's raw metric bag, same "latest per account" rule. The
+    -- engagement breakdown (likes/comments/saves/shares) lives only here:
+    -- promoting each part to its own column would mean a migration every time
+    -- a provider reports one more interaction type.
+    last(metrics, ts)      AS metrics,
     last(profile_views, ts) AS profile_views,
     max(ts)                 AS ts
 FROM analytics_snapshot
@@ -41,6 +46,7 @@ type AnalyticsOverviewByPlatformRow struct {
 	Views             interface{} `json:"views"`
 	Mentions          interface{} `json:"mentions"`
 	Engagements       interface{} `json:"engagements"`
+	Metrics           interface{} `json:"metrics"`
 	ProfileViews      interface{} `json:"profile_views"`
 	Ts                interface{} `json:"ts"`
 }
@@ -64,6 +70,7 @@ func (q *Queries) AnalyticsOverviewByPlatform(ctx context.Context, arg Analytics
 			&i.Views,
 			&i.Mentions,
 			&i.Engagements,
+			&i.Metrics,
 			&i.ProfileViews,
 			&i.Ts,
 		); err != nil {

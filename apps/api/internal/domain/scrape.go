@@ -162,22 +162,22 @@ type Target struct {
 // handler serializes this struct straight to the dashboard (hand-rolled shape,
 // outside the OpenAPI contract), and the web client reads camelCase.
 type Post struct {
-	ID              string          `json:"id"`
-	Platform        Platform        `json:"platform"`
-	ExternalID      string          `json:"externalId"`
-	AuthorHandle    string          `json:"authorHandle"`
-	AuthorID        string          `json:"authorId"`
-	Text            *string         `json:"text"`
-	MediaURLs       []string        `json:"mediaUrls"`
-	Metrics         json.RawMessage `json:"metrics"`
-	ScrapedAt       time.Time       `json:"scrapedAt"`
+	ID           string          `json:"id"`
+	Platform     Platform        `json:"platform"`
+	ExternalID   string          `json:"externalId"`
+	AuthorHandle string          `json:"authorHandle"`
+	AuthorID     string          `json:"authorId"`
+	Text         *string         `json:"text"`
+	MediaURLs    []string        `json:"mediaUrls"`
+	Metrics      json.RawMessage `json:"metrics"`
+	ScrapedAt    time.Time       `json:"scrapedAt"`
 	// PublishedAt is when the post was published, from the actor payload.
 	// Nil for rows ingested before migration 000016 — the date was read, used
 	// to evaluate the operator's window, and then discarded. ScrapedAt is the
 	// fallback and is NOT a substitute: it is when we looked, not when it was
 	// posted.
-	PublishedAt    *time.Time      `json:"publishedAt"`
-	AuthorAccountID *string         `json:"authorAccountId"`
+	PublishedAt     *time.Time `json:"publishedAt"`
+	AuthorAccountID *string    `json:"authorAccountId"`
 }
 
 // Comment is a scraped comment, optionally a reply (ParentID chain). JSON tags
@@ -280,6 +280,42 @@ type AnalyticsSnapshot struct {
 	Provider          AnalyticsProvider
 	ProviderRunID     *string
 	FetchedAt         time.Time
+}
+
+// ContentMetric is one post/video/reel's performance for a monitored official
+// account. Unlike AnalyticsSnapshot it is NOT a time series: providers report a
+// post's metrics as a running total since publication, so the row is refreshed
+// in place rather than appended to. Every metric is a pointer because a
+// provider that does not report one means "unknown", not "zero" — Instagram
+// deprecated `impressions` outright and gives a static image no views at all.
+type ContentMetric struct {
+	ID                string
+	OfficialAccountID string
+	// AccountHandle is the owning account's handle, carried on the read path
+	// only. The per-content table spans every account on a platform, and a row
+	// whose caption says nothing about whose account it belongs to cannot be
+	// acted on.
+	AccountHandle string
+	Platform      Platform
+	// The provider's own id for the piece of content. Never the handle and
+	// never the permalink: handles repeat across accounts and Instagram lets a
+	// post's URL be repinned, so neither is stable enough to key on.
+	ExternalID   string
+	ContentType  *string
+	Caption      *string
+	Permalink    *string
+	PublishedAt  *time.Time
+	Reach        *int64
+	Views        *int64
+	Interactions *int64
+	Likes        *int64
+	Comments     *int64
+	Saves        *int64
+	Shares       *int64
+	ProfileViews *int64
+	Metrics      json.RawMessage
+	Provider     AnalyticsProvider
+	FetchedAt    time.Time
 }
 
 // AnalyticsMention is one mention of an official account, sourced from a

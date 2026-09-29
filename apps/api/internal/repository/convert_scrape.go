@@ -108,7 +108,7 @@ func toPost(row sqlcgen.Post) domain.Post {
 		MediaURLs:       row.MediaUrls,
 		Metrics:         json.RawMessage(row.Metrics),
 		ScrapedAt:       tsTimeOrZero(row.ScrapedAt),
-		PublishedAt:    tsTimePtr(row.PublishedAt),
+		PublishedAt:     tsTimePtr(row.PublishedAt),
 		AuthorAccountID: uuidStrPtr(row.AuthorAccountID),
 	}
 }
@@ -388,6 +388,35 @@ func aggTime(v interface{}) *time.Time {
 	return nil
 }
 
+// aggRawJSON reads a `last(metrics, ts)` aggregate back into a json blob. A nil
+// value means the snapshot carried no provider payload, which is not the same
+// as an empty one and must stay nil.
+func aggRawJSON(v interface{}) json.RawMessage {
+	switch b := v.(type) {
+	case nil:
+		return nil
+	case []byte:
+		if len(b) == 0 {
+			return nil
+		}
+		return json.RawMessage(b)
+	case string:
+		if b == "" {
+			return nil
+		}
+		return json.RawMessage(b)
+	}
+	// pgx decodes a jsonb aggregate into whatever generic Go value fits
+	// (map[string]any, float64, …) rather than raw bytes, so the value is
+	// re-encoded instead of type-switched. Re-encoding is lossless for every
+	// JSON type the blob can hold.
+	raw, err := json.Marshal(v)
+	if err != nil || len(raw) == 0 {
+		return nil
+	}
+	return json.RawMessage(raw)
+}
+
 // pgIntervalArg is the string form passed for a $n::interval bind parameter.
 func pgIntervalArg(d time.Duration) string { return intervalText(d) }
 
@@ -409,5 +438,54 @@ func toKeywordBatch(row sqlcgen.KeywordBatch) domain.KeywordBatch {
 		CreatedBy:     uuidStrPtr(row.CreatedBy),
 		CreatedAt:     tsTimeOrZero(row.CreatedAt),
 		FinishedAt:    tsTime(row.FinishedAt),
+	}
+}
+
+func toContentMetric(row sqlcgen.AnalyticsContentMetric) domain.ContentMetric {
+	return domain.ContentMetric{
+		ID:                uuidString(row.ID),
+		OfficialAccountID: uuidString(row.OfficialAccountID),
+		Platform:          platformDomain(row.Platform),
+		ExternalID:        row.ExternalID,
+		ContentType:       row.ContentType,
+		Caption:           row.Caption,
+		Permalink:         row.Permalink,
+		PublishedAt:       tsTimePtr(row.PublishedAt),
+		Reach:             row.Reach,
+		Views:             row.Views,
+		Interactions:      row.Interactions,
+		Likes:             row.Likes,
+		Comments:          row.Comments,
+		Saves:             row.Saves,
+		Shares:            row.Shares,
+		ProfileViews:      row.ProfileViews,
+		Metrics:           row.Metrics,
+		Provider:          analyticsProviderDomain(row.Provider),
+		FetchedAt:         tsTimeOrZero(row.FetchedAt),
+	}
+}
+
+func toContentMetricRow(row sqlcgen.ListContentMetricsRow) domain.ContentMetric {
+	return domain.ContentMetric{
+		ID:                uuidString(row.ID),
+		OfficialAccountID: uuidString(row.OfficialAccountID),
+		Platform:          platformDomain(row.Platform),
+		ExternalID:        row.ExternalID,
+		ContentType:       row.ContentType,
+		Caption:           row.Caption,
+		Permalink:         row.Permalink,
+		PublishedAt:       tsTimePtr(row.PublishedAt),
+		Reach:             row.Reach,
+		Views:             row.Views,
+		Interactions:      row.Interactions,
+		Likes:             row.Likes,
+		Comments:          row.Comments,
+		Saves:             row.Saves,
+		Shares:            row.Shares,
+		ProfileViews:      row.ProfileViews,
+		Metrics:           row.Metrics,
+		Provider:          analyticsProviderDomain(row.Provider),
+		FetchedAt:         tsTimeOrZero(row.FetchedAt),
+		AccountHandle:     row.AccountHandle,
 	}
 }
