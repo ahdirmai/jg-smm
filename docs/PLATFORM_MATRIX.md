@@ -20,7 +20,7 @@
 | `X`         | X (Twitter) | deferred (slot siap) | `platforms/x.md`         |
 | `LINKEDIN`  | LinkedIn    | deferred (slot siap) | `platforms/linkedin.md`  |
 | `YOUTUBE`   | YouTube     | deferred (slot siap) | `platforms/youtube.md`   |
-| `TIKTOK`    | TikTok      | deferred (slot siap) | `platforms/tiktok.md`    |
+| `TIKTOK`    | TikTok      | **AKTIF** (keyword)   | `platforms/tiktok.md`    |
 
 Enum `Platform` di `ERD.md` sudah memuat ke-7 nilai ini — **tidak ada** migrasi enum saat menambah platform.
 
@@ -39,9 +39,12 @@ Legend: **✅** didukung/diimplementasi · **🟡** brief-tbd (desain konsep ada
 | Scrape hashtag              | ✅  | 🟡      | ⬜  | ⬜  | ⬜       | 🟡      | ⬜     |
 | Scrape mention              | ✅  | ✅      | ⬜  | ⬜  | ⬜       | 🟡      | ⬜     |
 | Scrape comments             | ✅  | ✅      | ⬜  | ⬜  | ⬜       | 🟡      | ⬜     |
+| **Scrape keyword batch**     | ✅  | ✅      | ⬜  | ⬜  | ⬜       | ⬜      | ✅     |
 | Metric: reach               | ✅  | 🟡      | ⬜  | ⬜  | ⬜       | ⬜      | ⬜     |
-| Metric: views (video/reels) | ✅  | 🟡      | ⬜  | ⬜  | ⬜       | ⬜      | ⬜     |
+| Metric: views (video/reels) | ✅  | 🟡      | ⬜  | ⬜  | ⬜       | ⬜      | ✅     |
 | Live views                  | 🟡  | ❌      | ⬜  | ❌  | ❌       | 🟡      | 🟡     |
+
+Baris **Scrape keyword batch** adalah satu-satunya yang TikTok penuhi di v0.1: `clockworks/tiktok-scraper` via `searchQueries[]`. `postURLs[]`/`profiles[]`/`hashtags[]` memang didukung actor tetapi belum diintegrasikan, jadi `Scrape post by URL` dan `Scrape hashtag` tetap ⬜. `Metric: views` terisi karena `playCount` dipetakan ke `Post.metrics.plays`. **Comment bodies tidak diambil** — actor menaruhnya di dataset kedua (`commentsDatasetURL`) yang tidak kita fetch, jadi `Scrape comments` TikTok tetap ⬜. Detail di `platforms/tiktok.md` §4.1.
 
 ### 2.2 Action (semua via Playwright)
 

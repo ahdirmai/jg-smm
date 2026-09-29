@@ -36,8 +36,13 @@ func keywordSvcFor(t *testing.T, storage port.RawStorage) (*KeywordScrapeService
 		store,
 		runner,
 		func(p domain.Platform) string {
-			if p == domain.PlatformInstagram {
+			switch p {
+			case domain.PlatformInstagram:
 				return "apify/instagram-scraper"
+			case domain.PlatformThreads:
+				return "futurizerush/meta-threads-scraper"
+			case domain.PlatformTikTok:
+				return "clockworks/tiktok-scraper"
 			}
 			return ""
 		},
@@ -68,8 +73,16 @@ func checkMetric(t *testing.T, metrics json.RawMessage, key string, want float64
 func TestScrapeKeywordsValidates(t *testing.T) {
 	svc, _, _ := keywordSvcFor(t, &fakeRawStorage{items: map[string][]byte{}})
 
-	if _, err := svc.ScrapeKeywords(context.Background(), KeywordScrapeInput{Platform: domain.PlatformTikTok, Keywords: []string{"x"}}); !errors.Is(err, domain.ErrValidation) {
-		t.Fatalf("unsupported platform: want ErrValidation, got %v", err)
+	// Facebook is still a deferred slot and must stay rejected.
+	if _, err := svc.ScrapeKeywords(context.Background(), KeywordScrapeInput{Platform: domain.PlatformFacebook, Keywords: []string{"x"}}); !errors.Is(err, domain.ErrValidation) {
+		t.Fatalf("deferred platform: want ErrValidation, got %v", err)
+	}
+	// TikTok is a real target now. A TikTok batch must get PAST the platform
+	// gate — whatever fails after that is a different problem, and reporting
+	// it as "unsupported platform" would send the operator looking in the wrong
+	// place entirely.
+	if _, err := svc.ScrapeKeywords(context.Background(), KeywordScrapeInput{Platform: domain.PlatformTikTok, Keywords: []string{"x"}}); errors.Is(err, domain.ErrValidation) {
+		t.Fatalf("tiktok must no longer be rejected as an unsupported platform: %v", err)
 	}
 	if _, err := svc.ScrapeKeywords(context.Background(), KeywordScrapeInput{Platform: domain.PlatformInstagram}); !errors.Is(err, domain.ErrValidation) {
 		t.Fatalf("no keywords: want ErrValidation, got %v", err)
@@ -80,7 +93,18 @@ func TestScrapeKeywordsValidates(t *testing.T) {
 	}); !errors.Is(err, domain.ErrValidation) {
 		t.Fatalf(">5 keywords: want ErrValidation, got %v", err)
 	}
-	if _, err := svc.ScrapeKeywords(context.Background(), KeywordScrapeInput{
+	// A platform that passes the gate but has no actor configured is still
+	// rejected. Built inline with an empty resolver: keywordSvcFor supplies an
+	// actor for every scrapable platform, so it cannot express this case.
+	noActor := NewKeywordScrapeService(
+		newFakeScrapeStore(),
+		&fakeRunner{out: port.ApifyOutput{Status: "SUCCEEDED", RunID: "r1"}},
+		func(domain.Platform) string { return "" },
+		&fakeRawStorage{items: map[string][]byte{}},
+		nil,
+	)
+	noActor.SetBatchStore(newFakeKeywordBatchStore())
+	if _, err := noActor.ScrapeKeywords(context.Background(), KeywordScrapeInput{
 		Platform: domain.PlatformThreads,
 		Keywords: []string{"x"},
 	}); !errors.Is(err, domain.ErrValidation) {

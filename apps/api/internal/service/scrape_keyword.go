@@ -97,12 +97,24 @@ type KeywordScrapeResult struct {
 	ItemsRead int           `json:"itemsRead"`
 }
 
+// keywordScrapable is the gate on which platforms can run a keyword batch.
+// Each one has a search actor, a per-actor payload in the Apify runner, and a
+// dataset parser in the ingestor — all three, or the platform is not scrapable
+// and saying so here is kinder than a run that dies mid-ingest.
+func keywordScrapable(p domain.Platform) bool {
+	switch p {
+	case domain.PlatformInstagram, domain.PlatformThreads, domain.PlatformTikTok:
+		return true
+	}
+	return false
+}
+
 // CreateBatch validates, inserts keyword_batch PENDING and launches background
 // processing. Returns the batch immediately (202).
 func (s *KeywordScrapeService) CreateBatch(ctx context.Context, in KeywordScrapeInput) (domain.KeywordBatch, error) {
 	in.Platform = domain.Platform(strings.TrimSpace(string(in.Platform)))
-	if in.Platform != domain.PlatformInstagram && in.Platform != domain.PlatformThreads {
-		return domain.KeywordBatch{}, fmt.Errorf("%w: keyword scrape supports instagram and threads only, got %q", domain.ErrValidation, in.Platform)
+	if !keywordScrapable(in.Platform) {
+		return domain.KeywordBatch{}, fmt.Errorf("%w: keyword scrape supports instagram, threads and tiktok only, got %q", domain.ErrValidation, in.Platform)
 	}
 	cleaned := make([]string, 0, len(in.Keywords))
 	seen := map[string]struct{}{}

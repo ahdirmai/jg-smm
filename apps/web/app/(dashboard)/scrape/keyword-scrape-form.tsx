@@ -19,7 +19,7 @@ import { PLATFORM_LABEL } from '@/lib/platforms';
 const MAX_KEYWORDS = 5;
 
 export function KeywordScrapeForm() {
-  const [platform, setPlatform] = useState<'instagram' | 'threads'>('instagram');
+  const [platform, setPlatform] = useState<'instagram' | 'threads' | 'tiktok'>('instagram');
   const [keywords, setKeywords] = useState('');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
@@ -86,11 +86,12 @@ export function KeywordScrapeForm() {
             <select
               id="ks-platform"
               value={platform}
-              onChange={(e) => setPlatform(e.target.value as 'instagram' | 'threads')}
+              onChange={(e) => setPlatform(e.target.value as 'instagram' | 'threads' | 'tiktok')}
               className="h-9 w-full rounded-lg border border-input bg-transparent px-3 text-sm"
             >
               <option value="instagram">Instagram</option>
               <option value="threads">Threads</option>
+              <option value="tiktok">TikTok</option>
             </select>
           </div>
           <div className="space-y-1.5 sm:col-span-2">
@@ -163,7 +164,7 @@ export function KeywordScrapeForm() {
                     <div className="flex flex-wrap items-center gap-2">
                       <Badge variant={b.status === 'SUCCEEDED' ? 'default' : b.status === 'FAILED' ? 'destructive' : 'secondary'}>{b.status}</Badge>
                       <span className="text-sm font-medium">{b.keywords.join(', ')}</span>
-                      <Badge variant="outline">{PLATFORM_LABEL[b.platform as 'instagram' | 'threads'] ?? b.platform}</Badge>
+                      <Badge variant="outline">{PLATFORM_LABEL[b.platform as 'instagram' | 'threads' | 'tiktok'] ?? b.platform}</Badge>
                     </div>
                     <div className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">
                       <span>{b.postsCount} posts · {b.commentsCount} comments · {b.itemsRead} items</span>
