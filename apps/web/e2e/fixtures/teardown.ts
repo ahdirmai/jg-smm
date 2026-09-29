@@ -6,7 +6,9 @@
  * failure, so a dirty database never survives a run.
  *
  * `anandashinta__` is a real hand-authenticated account, not suite state: it is
- * the only row the sweep must leave alone.
+ * the only row the sweep must leave alone. Official accounts are swept too —
+ * the monitoring spec creates them, and a leftover one shows up in the
+ * dashboard's account list and in every subsequent overview total.
  */
 import { ApiClient } from './api.js';
 
@@ -43,6 +45,14 @@ export default async function globalTeardown(): Promise<void> {
   for (const t of templates) {
     if (t.text.startsWith(SUITE_PREFIX)) {
       await api.deleteTemplate(t.id).catch(() => undefined);
+    }
+  }
+
+  const official = (await api.listOfficialAccounts().catch(() => ({ officialAccounts: [] })))
+    .officialAccounts ?? [];
+  for (const o of official) {
+    if (o.handle.startsWith(SUITE_PREFIX)) {
+      await api.deleteOfficialAccount(o.id).catch(() => undefined);
     }
   }
 }

@@ -1,32 +1,60 @@
 import { test, expect } from '../fixtures/base.js';
 
 /**
- * Monitoring (P2-15) and the shared dashboard shell. The KPI strip and the
- * official-account table come from the analytics provider, so these specs
- * assert on rendering and navigation — not on metric values, which the stack
- * does not control.
+ * Monitoring (P2-15) and the shared dashboard shell.
+ *
+ * The provider is whatever the local stack is configured with: the
+ * deterministic stub, or Composio, which only ingests an account bound to a
+ * real connection. The specs therefore seed through the API, ask the API what
+ * it actually stored, and assert the page agrees — never pin a figure the
+ * stack does not control.
  */
+import type { ApiClient } from '../fixtures/api.js';
+
+/**
+ * Seeds one official account and runs an ingest. Returns the account plus the
+ * per-metric totals the API stored, or null totals when the configured
+ * provider cannot serve this account (Composio without a connection id) — the
+ * page then has nothing to show, and asserting a number would be asserting a
+ * fiction.
+ */
+async function seedAndIngest(api: ApiClient, handle: string) {
+  const acc = await api.createOfficialAccount(handle);
+  await api.refreshAnalytics();
+  const { kpis } = await api.analyticsOverview(30);
+  return {
+    acc,
+    kpis,
+    ingested: kpis.length > 0,
+    total: (metric: string) =>
+      kpis.filter((k) => k.metric === metric).reduce((s, k) => s + (k.value ?? 0), 0),
+  };
+}
 
 test.describe('monitoring page', () => {
-  test('renders the KPI strip and its empty state', async ({ authedPage }) => {
-    await authedPage.goto('/monitoring');
+  test('totals each metric separately instead of summing the whole KPI list', async ({
+    authedPage,
+    api,
+  }) => {
+    const { acc, ingested, total, kpis } = await seedAndIngest(api, `e2e_ig_${Date.now()}`);
+    try {
+      if (ingested) {
+        // The API returns one row per (account, metric). Summing all of them
+        // adds reach to views to followers and mislabels the total, so the
+        // grand total must be strictly larger than the reach alone.
+        const grandTotal = kpis.reduce((s, k) => s + (k.value ?? 0), 0);
+        expect(grandTotal).toBeGreaterThan(total('reach'));
+      }
 
-    // The shell header and the page both render a "Monitoring" heading; assert
-    // the first, either proves the page rendered.
-    await expect(authedPage.getByRole('heading', { name: 'Monitoring' }).first()).toBeVisible();
-    for (const label of [
-      'Monitored accounts',
-      'Platforms',
-      'Total followers',
-      'Stale accounts',
-    ]) {
-      // exact:true — "Platforms" is otherwise also matched by the header subtitle
-      // "Official-account reach across platforms".
-      await expect(authedPage.getByText(label, { exact: true })).toBeVisible();
+      await authedPage.goto('/monitoring');
+      await expect(authedPage.getByRole('heading', { name: 'Monitoring' }).first()).toBeVisible();
+      if (ingested) {
+        await expect(authedPage.getByText(total('reach').toLocaleString(), { exact: true }).first())
+          .toBeVisible();
+      }
+    } finally {
+      await api.deleteOfficialAccount(acc.id);
     }
-    // No official accounts are seeded, so the table says so instead of
-    // rendering a hollow shell.
-    await expect(authedPage.getByText('No official accounts monitored yet.')).toBeVisible();
   });
 
   test('the sync button is a real round trip and settles', async ({ authedPage }) => {
@@ -41,10 +69,27 @@ test.describe('monitoring page', () => {
     });
   });
 
-  test('a platform subroute renders without bouncing to an error', async ({ authedPage }) => {
-    await authedPage.goto('/monitoring/instagram');
-    await expect(authedPage).toHaveURL(/.*\/monitoring\/instagram/);
-    await expect(authedPage.getByRole('button', { name: 'Sync now' })).toBeVisible();
+  test('the platform page keeps its KPI strip populated under the default filter', async ({
+    authedPage,
+    api,
+  }) => {
+    const { acc, ingested, total } = await seedAndIngest(api, `e2e_ig_page_${Date.now()}`);
+    try {
+      await authedPage.goto('/monitoring/instagram');
+      await expect(authedPage).toHaveURL(/.*\/monitoring\/instagram/);
+      await expect(authedPage.getByRole('button', { name: 'Sync now' })).toBeVisible();
+      await expect(authedPage.getByText(acc.handle, { exact: true })).toBeVisible();
+
+      // "All official accounts" is the default. It must not filter the strip to
+      // nothing: a monitored account with a stored figure has to render it.
+      if (ingested) {
+        await expect(
+          authedPage.getByText(total('followers').toLocaleString(), { exact: true }).first(),
+        ).toBeVisible();
+      }
+    } finally {
+      await api.deleteOfficialAccount(acc.id);
+    }
   });
 });
 

@@ -172,6 +172,28 @@ export class ApiClient {
   me() {
     return this.json<MeResponse>('/api/auth/me');
   }
+
+  // Monitoring (/monitoring) --------------------------------------------
+  createOfficialAccount(handle: string, platform = 'instagram') {
+    return this.json<OfficialAccount>('/api/official-accounts', {
+      method: 'POST',
+      body: JSON.stringify({ platform, handle }),
+    });
+  }
+  listOfficialAccounts(platform?: string) {
+    return this.json<OfficialAccountList>(
+      `/api/official-accounts${platform ? `?platform=${platform}` : ''}`,
+    );
+  }
+  deleteOfficialAccount(id: string) {
+    return this.json<OfficialAccount>(`/api/official-accounts/${id}`, { method: 'DELETE' });
+  }
+  refreshAnalytics() {
+    return this.json<AnalyticsIngestRun>('/api/analytics/refresh', { method: 'POST' });
+  }
+  analyticsOverview(windowDays = 30) {
+    return this.json<AnalyticsOverview>(`/api/analytics/overview?windowDays=${windowDays}`);
+  }
 }
 
 // Contract-shaped types (mirrors @smm/shared ApiSchemas; duplicated here so the
@@ -233,6 +255,37 @@ export type AuditLogList = { logs: AuditLog[] };
 export type User = { id: string; email: string; name: string; role: string };
 export type UserList = { users: User[] };
 // /api/auth/me returns only the session's role + id — no email, no user wrapper.
+export type OfficialAccount = {
+  id: string;
+  platform: string;
+  handle: string;
+  displayName?: string | null;
+  status: string;
+  lastFetchedAt?: string | null;
+  stale: boolean;
+};
+export type OfficialAccountList = { officialAccounts: OfficialAccount[] };
+export type AnalyticsKpi = {
+  officialAccountId: string;
+  handle?: string;
+  metric: string;
+  value: number | null;
+};
+export type AnalyticsFreshness = {
+  lastRunStatus?: string | null;
+  lastRunAt?: string | null;
+  stale: boolean;
+  thresholdSeconds: number;
+};
+export type AnalyticsOverview = { kpis: AnalyticsKpi[]; freshness: AnalyticsFreshness };
+export type AnalyticsIngestRun = {
+  id: string;
+  status: string;
+  accountsOk: number;
+  accountsErr: number;
+  errorClass?: string | null;
+  error?: string | null;
+};
 // Operator email is not surfaced by the session; the team roster (listUsers) is
 // the source of an account's email.
 export type MeResponse = { role: string; userId: string };
