@@ -28,7 +28,7 @@ Belum ada flow login TikTok. Dibutuhkan hanya bila action Playwright (§3) dihid
 Kosong — lihat §1.
 ## 4. Scrape Brief (Apify)
 ### 4.1 Keyword search scrape — `clockworks/tiktok-scraper`
-- **Actor:** `clockworks/tiktok-scraper`, id lengkap `GdWCkxBtKWOsKjdch` — **full id, bukan turunan `APIFY_ACTOR_PREFIX`**. Env `APIFY_SEARCH_ACTOR_TIKTOK`.
+- **Actor:** `clockworks/tiktok-scraper` — **full id, bukan turunan `APIFY_ACTOR_PREFIX`**, sama seperti tiga actor lain. Env `APIFY_SEARCH_ACTOR_TIKTOK`.
 - **Run mode:** sync (`run-sync-get-dataset-items`).
 - **Input yang benar-benar dikirim** (`searchInput` → `tiktokSearchInput`):
   ```json
@@ -51,7 +51,7 @@ Kosong — lihat §1.
   - Row yang **tidak** punya `id` **dan** tidak punya `errorCode` tetap dianggap error, bukan di-drop diam-diam — Kalau di-drop, actor rusak tersembunyi di balik jumlah yang masuk akal.
 - **Tanggal:** `createTimeISO` sering tiba **tanpa offset** (`2026-08-03T07:06:51`), yang ditolak RFC3339. Parser memakai `parseActorTime` (baca UTC), dengan fallback ke `createTime` unix untuk row yang ISO-nya kosong/tidak bisa dibaca. Row tanpa kedua field **tetap disimpan** dengan `published_at` NULL — tanggal tidak pernah dikarang.
 - **Normalisasi → DB:** `id`→`Post.external_id`, `authorMeta.name`→`author_handle`, `authorMeta.id`→`author_id`, `text`→`text`, `mediaUrls[]`→`media_urls`, `createTimeISO`/`createTime`→`Post.published_at` (migration `000016`), `diggCount`/`commentCount`/`shareCount`/`playCount`/`collectCount`→`Post.metrics` + `MetricSnapshot` (kunci `likes`/`comments`/`shares`/`plays`/`collects` — kosakata lintas-platform yang sudah dibaca `metricsLine`).
-- **⚠ Tidak mengambil comment bodies.** Actor **`GdWCkxBtKWOsKjdch` storing comment-nya di dataset terpisah**, yang URL-nya ada di field `commentsDatasetURL` pada item normal; take it secara manual (curl/axios). Integrasi ini **tidak** mengambil URL itu, jadi `commentsPerPost: 0` — bukan hanya supaya tidak ada yang terbuang, tapi supaya tidak ada yang **ditagih**. Batas yang sama seperti jalur keyword Instagram (`instagram.md` §4.2).
+- **⚠ Tidak mengambil comment bodies.** Actor ini menyimpan comment-nya di **dataset terpisah**, yang URL-nya ada di field `commentsDatasetURL` pada item normal, dan store listing menyuruh pengambilan manual (curl/axios). Integrasi ini **tidak** mengambil URL itu, jadi `commentsPerPost: 0` — bukan hanya supaya tidak ada yang terbuang, tapi supaya tidak ada yang **ditagih**. Batas yang sama seperti jalur keyword Instagram (`instagram.md` §4.2).
   > `ponytail:` keyword batch menampilkan post, bukan thread komentar. Kalau comment bodies dibutuhkan, tambahkan pembaca dataset kedua di `Runner` (`GET commentsDatasetURL` → `storeItems` dengan key `apify/search-<runID>/comments-N.json`) dan set `commentsPerPost` > 0 — biayanya per komentar, jadi_putuskan dulu.
 - **Biaya — pay-per-event, mulai $1.70 per 1000 hasil.** Satu video = satu hasil. Add-on berikut **ditagih terpisah dan sengaja tidak dikirim** (bukan `false`, tapi absen, supaya edit berikutnya tidak menyalakannya diam-diam): `shouldDownloadVideos`, `shouldDownloadMusic`, `shouldDownloadSubtitles`, `shouldDownloadCoverImages`, `shouldDownloadProfilePhotos`, `downloadSummarizedVideoDescription`, `downloadAIVideoSummaries`, `downloadSubtitlesOptions`. Yang AI **ditagih per detik video** — jauh lebih besar dari tagihan per hasil.
   - Contoh hitungan: 1 batch 5 keyword × 30 post = 150 hasil → 150/1000 × $1.70 = **$0.255**.

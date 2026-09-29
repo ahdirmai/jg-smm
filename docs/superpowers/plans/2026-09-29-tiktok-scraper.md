@@ -2,17 +2,17 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Promote TikTok from a deferred platform slot to a working **keyword**-scraping target on `clockworks/tiktok-scraper` (Apify id `GdWCkxBtKWOsKjdch`), with server-side date filtering and the post's real publication date stored.
+**Goal:** Promote TikTok from a deferred platform slot to a working **keyword**-scraping target on `clockworks/tiktok-scraper`, with server-side date filtering and the post's real publication date stored.
 
 **Scope:** keyword search only — `searchQueries[]`, the path the dashboard's keyword-batch feature drives today. The actor's `profiles[]`, `postURLs[]` and `hashtags[]` modes, the per-post scrape, and the follower add-on (`connectedTo`) are **not** in this plan; `PLATFORM_MATRIX.md` keeps their rows ⬜. Add them as a second plan if the per-post scrape is wanted — the parser built in Task 1 is reusable for `hashtags[]` unchanged.
 
 **Tech Stack:** Go 1.24, sqlc, encoding/json, testify-style stdlib tests, `encoding/json` fixture rows, Next.js/React for the platform picker.
 
-**Spec:** Actor input/output schema pasted from the Apify store listing for `clockworks/tiktok-scraper` (id `GdWCkxBtKWOsKjdch`). Platform brief to be written as `docs/platforms/tiktok.md` per `docs/platforms/_TEMPLATE.md` §5.
+**Spec:** Actor input/output schema pasted from the Apify store listing for `clockworks/tiktok-scraper` (store name `clockworks/tiktok-scraper`). Platform brief to be written as `docs/platforms/tiktok.md` per `docs/platforms/_TEMPLATE.md` §5.
 
 ## Global Constraints
 
-- The actor id is `GdWCkxBtKWOsKjdch` — the **full** id, never derived from `APIFY_ACTOR_PREFIX`. The id is **not** env-configurable per platform in `compose.yaml` for this platform; it goes in `APIFY_SEARCH_ACTOR_TIKTOK` alongside the existing three.
+- The actor is addressed as `clockworks/tiktok-scraper` — a full id, never derived from `APIFY_ACTOR_PREFIX`, exactly like the other three. It goes in `APIFY_SEARCH_ACTOR_TIKTOK` in `compose.yaml`.
 - **Pricing is pay-per-event, from $1.70 per 1000 results.** A single video is one result. No run may be started against the live actor before the operator has been shown the projected cost.
 - **Chargeable add-ons must be absent from the payload, not merely left at their defaults**: `shouldDownloadVideos`, `shouldDownloadMusic`, `shouldDownloadSubtitles`, `shouldDownloadCoverImages`, `shouldDownloadProfilePhotos`, `downloadSummarizedVideoDescription`, `downloadAIVideoSummaries`, `downloadSubtitlesOptions`. The AI summary fields are billed **per video second** and dwarf the per-result charge.
 - **Date bounds are only honoured when `profileSorting` is `latest` or `oldest`.** With `profileSorting: popular` the actor accepts the date fields and silently ignores them — the exact silent-wrong-answer failure mode `runner.go:94-96` warns about. `profileSorting: latest` is therefore mandatory in this payload, not a preference.
@@ -261,7 +261,7 @@ git commit -m "feat(apify): send the TikTok actor a server-side date window"
 ### Task 3: Cost gate and platform brief
 
 **Files:**
-- Modify: `compose.yaml` (add `APIFY_SEARCH_ACTOR_TIKTOK: "GdWCkxBtKWOsKjdch"` to the `api` service env, beside the other three)
+- Modify: `compose.yaml` (add `APIFY_SEARCH_ACTOR_TIKTOK: "clockworks/tiktok-scraper"` to the `api` service env, beside the other three)
 - Create: `docs/platforms/tiktok.md` (from `docs/platforms/_TEMPLATE.md` §5)
 - Modify: `README.md` (add the TikTok row to the actor table at :147-152)
 
@@ -274,7 +274,7 @@ git commit -m "feat(apify): send the TikTok actor a server-side date window"
 `compose.yaml`: one env line, and **nothing else** — no `shouldDownload*` toggles, because their absence is the control.
 
 `docs/platforms/tiktok.md`, Indonesian, mirroring the shape of `docs/platforms/instagram.md`, covering:
-- §4.1 keyword scrape: actor id `GdWCkxBtKWOsKjdch`, env `APIFY_SEARCH_ACTOR_TIKTOK`, **input yang benar-benar dikirim** (the exact payload from Task 2), run mode sync, the `profileSorting`-gates-the-date rule in bold, and the `resultsPerPage`-is-not-a-cap warning.
+- §4.1 keyword scrape: actor `clockworks/tiktok-scraper`, env `APIFY_SEARCH_ACTOR_TIKTOK`, **input yang benar-benar dikirim** (the exact payload from Task 2), run mode sync, the `profileSorting`-gates-the-date rule in bold, and the `resultsPerPage`-is-not-a-cap warning.
 - Output row: **nested** — `authorMeta.name` → `author_handle`, `authorMeta.id` → `author_id`, `mediaUrls[]` → `media_urls`, `diggCount`/`commentCount`/`shareCount`/`playCount`/`collectCount` → `Post.metrics` + `MetricSnapshot`, `createTimeISO`→`published_at` with `createTime` unix fallback, `webVideoUrl` → the permalink.
 - `errorCode` rows: list the codes the actor emits (`PROFILE_PRIVATE`, `SEARCH_QUERY_NOT_FOUND`, `INVALID_INPUT`, `FILTER_NO_PASS`, …) and state that the parser drops them by design so one bad row cannot fail a 500-result run.
 - **Tidak mengambil comment bodies.** The actor parks them in a second dataset behind `commentsDatasetURL`; this integration does not fetch it. `commentsPerPost: 0` keeps it unbilled. `ponytail:` comment naming the ceiling — keyword batches show posts, not comment threads, exactly as the Instagram keyword path behaves (`instagram.md:70`).
@@ -284,7 +284,7 @@ git commit -m "feat(apify): send the TikTok actor a server-side date window"
 
 - [ ] **Step 2: Verify**
 Run: `docker compose config | grep -A 2 APIFY_SEARCH_ACTOR_TIKTOK`
-Expected: `APIFY_SEARCH_ACTOR_TIKTOK: GdWCkxBtKWOsKjdch` present in the `api` service.
+Expected: `APIFY_SEARCH_ACTOR_TIKTOK: clockworks/tiktok-scraper` present in the `api` service.
 
 - [ ] **Step 3: Commit**
 ```bash
