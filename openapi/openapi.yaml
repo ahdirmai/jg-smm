@@ -844,6 +844,65 @@ paths:
         '403':
           $ref: '#/components/responses/Error'
 
+  /api/analytics/{platform}/content:
+    parameters:
+      - name: platform
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/Platform'
+    get:
+      tags: [analytics]
+      summary: Per-post performance for one platform
+      description: |
+        The per-content table: one row per post, ordered by reach. Every metric
+        is nullable and null means the provider did not report it — Instagram
+        gives a static image no views and has deprecated impressions outright —
+        so a null must render as absent, never as 0.
+
+        Separate from /api/analytics/{platform} because it is a different shape
+        and a different cardinality: that endpoint is one row per account per
+        metric, this one is one row per post.
+      operationId: analyticsContentByPlatform
+      security:
+        - accessCookie: []
+      parameters:
+        - name: accountId
+          in: query
+          required: false
+          description: Narrow to one official account. Omit for every account on the platform.
+          schema:
+            type: string
+        - name: windowDays
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 90
+            default: 30
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        '200':
+          description: Per-post metrics.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContentMetricsResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+
   /api/analytics/refresh:
     post:
       tags: [analytics]
@@ -1980,7 +2039,7 @@ components:
 
     PlatformAnalytics:
       type: object
-      required: [platform, kpis, trend, freshness]
+      required: [platform, kpis, trend, freshness, breakdown]
       properties:
         platform:
           $ref: '#/components/schemas/Platform'
@@ -1994,6 +2053,129 @@ components:
             $ref: '#/components/schemas/TrendPoint'
         freshness:
           $ref: '#/components/schemas/AnalyticsFreshness'
+        breakdown:
+          type: array
+          items:
+            $ref: '#/components/schemas/EngagementBreakdown'
+
+    EngagementBreakdown:
+      type: object
+      description: |
+        One account's interactions split into their parts. Every field is
+        nullable and null means the provider did not report that part — the
+        dashboard must show "—", because a 0 here would claim "nobody saved
+        anything" on an account whose saves are simply not visible.
+      required: [officialAccountId, handle]
+      properties:
+        officialAccountId:
+          type: string
+        handle:
+          type: string
+        likes:
+          type: integer
+          format: int64
+          nullable: true
+        comments:
+          type: integer
+          format: int64
+          nullable: true
+        saves:
+          type: integer
+          format: int64
+          nullable: true
+        shares:
+          type: integer
+          format: int64
+          nullable: true
+        accountsEngaged:
+          type: integer
+          format: int64
+          nullable: true
+          description: Distinct accounts that interacted — reach counts impressions, this counts people.
+        engagementRatePct:
+          type: number
+          format: double
+          nullable: true
+          description: Interactions divided by reach, as a percentage. Null when reach is missing or zero.
+
+    ContentMetricsResponse:
+      type: object
+      required: [platform, items]
+      properties:
+        platform:
+          $ref: '#/components/schemas/Platform'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ContentMetric'
+
+    ContentMetric:
+      type: object
+      description: |
+        One post's performance. Every metric is nullable and a null means the
+        provider did not report it, not that it was zero — Instagram has
+        deprecated impressions, and a static image has no views to report.
+      required: [id, accountHandle, externalId]
+      properties:
+        id:
+          type: string
+        accountHandle:
+          type: string
+          description: The monitored account this post belongs to.
+        externalId:
+          type: string
+          description: The provider's own id for the post (an Instagram media id).
+        contentType:
+          type: string
+          nullable: true
+          description: 'FEED, REELS, CAROUSEL_ALBUM — the provider''s own label.'
+        caption:
+          type: string
+          nullable: true
+        permalink:
+          type: string
+          nullable: true
+        publishedAt:
+          type: string
+          format: date-time
+          nullable: true
+        reach:
+          type: integer
+          format: int64
+          nullable: true
+        views:
+          type: integer
+          format: int64
+          nullable: true
+        interactions:
+          type: integer
+          format: int64
+          nullable: true
+          description: Likes + comments + saves + shares, as Instagram counts it.
+        likes:
+          type: integer
+          format: int64
+          nullable: true
+        comments:
+          type: integer
+          format: int64
+          nullable: true
+        saves:
+          type: integer
+          format: int64
+          nullable: true
+        shares:
+          type: integer
+          format: int64
+          nullable: true
+        engagementRatePct:
+          type: number
+          format: double
+          nullable: true
+          description: |
+            Interactions divided by reach, as a percentage. Null when either
+            side is missing or reach is zero — a post nobody saw has no rate,
+            and printing 0% would read as "published and ignored".
 
     ActionReportRow:
       type: object

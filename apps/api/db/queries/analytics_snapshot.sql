@@ -45,6 +45,11 @@ SELECT
     last(views, ts)         AS views,
     last(mentions, ts)      AS mentions,
     last(engagements, ts)   AS engagements,
+    -- The provider's raw metric bag, same "latest per account" rule. The
+    -- engagement breakdown (likes/comments/saves/shares) lives only here:
+    -- promoting each part to its own column would mean a migration every time
+    -- a provider reports one more interaction type.
+    last(metrics, ts)      AS metrics,
     last(profile_views, ts) AS profile_views,
     max(ts)                 AS ts
 FROM analytics_snapshot

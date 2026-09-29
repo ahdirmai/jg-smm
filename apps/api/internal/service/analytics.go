@@ -2,8 +2,10 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"log/slog"
@@ -154,6 +156,26 @@ type PlatformResult struct {
 	KPIs      []KPI
 	Trend     []domain.TrendPoint
 	Freshness Freshness
+	Breakdown []EngagementBreakdown
+}
+
+// EngagementBreakdown splits an account's total interactions into the parts a
+// provider actually counts, so "14 interactions" reads as 9 likes and 5
+// comments instead of one opaque number. Every field is a pointer: a provider
+// that does not report a part means unknown, not zero, and a fabricated 0 here
+// would assert "nobody saved anything" when the truth is "saves are not
+// visible for this account".
+type EngagementBreakdown struct {
+	OfficialAccountID string
+	Handle            string
+	Likes             *int64
+	Comments          *int64
+	Saves             *int64
+	Shares            *int64
+	AccountsEngaged   *int64
+	// EngagementRatePct is interactions/reach for the same account as a
+	// percentage. Computed, not stored, and nil when reach is unknown or zero.
+	EngagementRatePct *float64
 }
 
 // Freshness backs the dashboard badge: stale when the last successful ingest is
@@ -245,7 +267,80 @@ func (s *AnalyticsService) PlatformPage(ctx context.Context, p domain.Platform, 
 		KPIs:      kpis,
 		Trend:     trend,
 		Freshness: s.freshness(ctx, active, now),
+		Breakdown: breakdowns(snapshots, active),
 	}, nil
+}
+
+// ContentMetric is one row of the platform's per-post table.
+type ContentMetric struct {
+	ID            string
+	AccountHandle string
+	ExternalID    string
+	ContentType   *string
+	Caption       *string
+	Permalink     *string
+	PublishedAt   *time.Time
+	Reach         *int64
+	Views         *int64
+	Interactions  *int64
+	Likes         *int64
+	Comments      *int64
+	Saves         *int64
+	Shares        *int64
+	// EngagementRate is interactions per reach, as a percentage, or nil when
+	// either side is missing. It is computed here rather than stored because it
+	// is a ratio of two columns that both move — persisting it would freeze a
+	// number that is wrong the moment either input is refreshed.
+	EngagementRatePct *float64
+}
+
+// Content returns the platform's per-post performance table, newest metrics
+// first, optionally narrowed to one account and to content published inside the
+// window. accountFilter empty means every account on the platform.
+func (s *AnalyticsService) Content(ctx context.Context, p domain.Platform, accountFilter string, windowDays, limit int) ([]ContentMetric, error) {
+	if !p.Valid() {
+		return nil, fmt.Errorf("%w: unknown platform", domain.ErrValidation)
+	}
+	var accountIDs []string
+	if accountFilter != "" && accountFilter != "all" {
+		accountIDs = []string{accountFilter}
+	}
+	rows, err := s.store.ListContentMetrics(ctx, p, accountIDs, windowOrDefault(windowDays), limit)
+	if err != nil {
+		return nil, fmt.Errorf("analytics.Content: %w", err)
+	}
+	out := make([]ContentMetric, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, ContentMetric{
+			ID:                r.ID,
+			AccountHandle:     r.AccountHandle,
+			ExternalID:        r.ExternalID,
+			ContentType:       r.ContentType,
+			Caption:           r.Caption,
+			Permalink:         r.Permalink,
+			PublishedAt:       r.PublishedAt,
+			Reach:             r.Reach,
+			Views:             r.Views,
+			Interactions:      r.Interactions,
+			Likes:             r.Likes,
+			Comments:          r.Comments,
+			Saves:             r.Saves,
+			Shares:            r.Shares,
+			EngagementRatePct: engagementRate(r.Interactions, r.Reach),
+		})
+	}
+	return out, nil
+}
+
+// engagementRate is interactions/reach as a percentage. A post with no reach
+// has no rate: dividing by zero would print "+Inf" or a flat 0%, and both are
+// lies about a post nobody saw.
+func engagementRate(interactions, reach *int64) *float64 {
+	if interactions == nil || reach == nil || *reach <= 0 {
+		return nil
+	}
+	v := float64(*interactions) / float64(*reach) * 100
+	return &v
 }
 
 // Refresh triggers an on-demand ingest run (the dashboard's refresh button).
@@ -338,6 +433,83 @@ func snapshotMetrics(snap domain.AnalyticsSnapshot) []struct {
 		}{col.metric, *col.value})
 	}
 	return out
+}
+
+// breakdowns reads the engagement parts out of each account's provider metric
+// bag. The bag is a JSON object keyed by platform with the provider's own
+// metric names inside ("likes", "saved"/"saves", …), so a new provider reports
+// new parts with no schema change here — and a part we do not know about is
+// simply absent, never zero.
+func breakdowns(snapshots []domain.AnalyticsSnapshot, accs []domain.OfficialAccount) []EngagementBreakdown {
+	handles := make(map[string]string, len(accs))
+	for _, acc := range accs {
+		handles[acc.ID] = acc.Handle
+	}
+	out := make([]EngagementBreakdown, 0, len(snapshots))
+	for _, snap := range snapshots {
+		parts := platformMetricBag(snap)
+		b := EngagementBreakdown{
+			OfficialAccountID: snap.OfficialAccountID,
+			Handle:            handles[snap.OfficialAccountID],
+			Likes:             bagInt(parts, "likes"),
+			Comments:          bagInt(parts, "comments"),
+			Saves:             bagInt(parts, "saves"),
+			Shares:            bagInt(parts, "shares"),
+			AccountsEngaged:   bagInt(parts, "accounts_engaged"),
+			EngagementRatePct: engagementRate(snap.Engagements, snap.Reach),
+		}
+		if b.Saves == nil {
+			// Instagram labels the account-level part "saves" and the
+			// media-level one "saved"; accept either so a provider rename
+			// does not silently blank the column.
+			b.Saves = bagInt(parts, "saved")
+		}
+		out = append(out, b)
+	}
+	return out
+}
+
+// platformMetricBag unwraps the platform-scoped object out of a snapshot's
+// metrics blob, falling back to the top level for providers that do not nest.
+// A blob that will not parse yields nil, and every part then reads as absent.
+func platformMetricBag(snap domain.AnalyticsSnapshot) map[string]any {
+	if len(snap.Metrics) == 0 {
+		return nil
+	}
+	var outer map[string]json.RawMessage
+	if err := json.Unmarshal(snap.Metrics, &outer); err != nil {
+		return nil
+	}
+	raw, ok := outer[string(snap.Platform)]
+	if !ok {
+		raw = snap.Metrics
+	}
+	var bag map[string]any
+	if err := json.Unmarshal(raw, &bag); err != nil {
+		return nil
+	}
+	return bag
+}
+
+// bagInt reads one metric out of the bag. A missing key, a non-numeric value or
+// a nil bag all mean the same thing — the provider did not report it — and all
+// return nil so the UI renders "—" rather than a zero it cannot justify.
+func bagInt(bag map[string]any, key string) *int64 {
+	if bag == nil {
+		return nil
+	}
+	switch v := bag[key].(type) {
+	case float64:
+		n := int64(v)
+		return &n
+	case string:
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return nil
+		}
+		return &n
+	}
+	return nil
 }
 
 func windowOrDefault(days int) time.Duration {

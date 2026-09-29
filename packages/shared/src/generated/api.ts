@@ -563,6 +563,36 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/analytics/{platform}/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                platform: components["schemas"]["Platform"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Per-post performance for one platform
+         * @description The per-content table: one row per post, ordered by reach. Every metric
+         *     is nullable and null means the provider did not report it — Instagram
+         *     gives a static image no views and has deprecated impressions outright —
+         *     so a null must render as absent, never as 0.
+         *
+         *     Separate from /api/analytics/{platform} because it is a different shape
+         *     and a different cardinality: that endpoint is one row per account per
+         *     metric, this one is one row per post.
+         *
+         */
+        get: operations["analyticsContentByPlatform"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/analytics/refresh": {
         parameters: {
             query?: never;
@@ -1174,6 +1204,11 @@ export interface components {
             /** @default thirdparty_a */
             provider: string;
             tags?: string[];
+            /** @description The provider's own id for this account (a Composio connected-account
+             *     id, "ca_..."). Required by the real provider adapter: metrics are
+             *     keyed on the connection, not the handle.
+             *      */
+            providerRef?: string;
         };
         /** @description One scalar KPI for one account. */
         AnalyticsKpi: {
@@ -1198,6 +1233,80 @@ export interface components {
             kpis: components["schemas"]["AnalyticsKpi"][];
             trend: components["schemas"]["TrendPoint"][];
             freshness: components["schemas"]["AnalyticsFreshness"];
+            breakdown: components["schemas"]["EngagementBreakdown"][];
+        };
+        /** @description One account's interactions split into their parts. Every field is
+         *     nullable and null means the provider did not report that part — the
+         *     dashboard must show "—", because a 0 here would claim "nobody saved
+         *     anything" on an account whose saves are simply not visible.
+         *      */
+        EngagementBreakdown: {
+            officialAccountId: string;
+            handle: string;
+            /** Format: int64 */
+            likes?: number | null;
+            /** Format: int64 */
+            comments?: number | null;
+            /** Format: int64 */
+            saves?: number | null;
+            /** Format: int64 */
+            shares?: number | null;
+            /**
+             * Format: int64
+             * @description Distinct accounts that interacted — reach counts impressions, this counts people.
+             */
+            accountsEngaged?: number | null;
+            /**
+             * Format: double
+             * @description Interactions divided by reach, as a percentage. Null when reach is missing or zero.
+             */
+            engagementRatePct?: number | null;
+        };
+        ContentMetricsResponse: {
+            platform: components["schemas"]["Platform"];
+            items: components["schemas"]["ContentMetric"][];
+        };
+        /** @description One post's performance. Every metric is nullable and a null means the
+         *     provider did not report it, not that it was zero — Instagram has
+         *     deprecated impressions, and a static image has no views to report.
+         *      */
+        ContentMetric: {
+            id: string;
+            /** @description The monitored account this post belongs to. */
+            accountHandle: string;
+            /** @description The provider's own id for the post (an Instagram media id). */
+            externalId: string;
+            /** @description FEED, REELS, CAROUSEL_ALBUM — the provider's own label. */
+            contentType?: string | null;
+            caption?: string | null;
+            permalink?: string | null;
+            /** Format: date-time */
+            publishedAt?: string | null;
+            /** Format: int64 */
+            reach?: number | null;
+            /** Format: int64 */
+            views?: number | null;
+            /**
+             * Format: int64
+             * @description Likes + comments + saves + shares, as Instagram counts it.
+             */
+            interactions?: number | null;
+            /** Format: int64 */
+            likes?: number | null;
+            /** Format: int64 */
+            comments?: number | null;
+            /** Format: int64 */
+            saves?: number | null;
+            /** Format: int64 */
+            shares?: number | null;
+            /**
+             * Format: double
+             * @description Interactions divided by reach, as a percentage. Null when either
+             *     side is missing or reach is zero — a post nobody saw has no rate,
+             *     and printing 0% would read as "published and ignored".
+             *
+             */
+            engagementRatePct?: number | null;
         };
         /** @description One day × account × action type in the action report. */
         ActionReportRow: {
@@ -1362,6 +1471,15 @@ export interface components {
             authStatus: components["schemas"]["AuthStatus"];
             /** @description Verified platform handle, set after a successful login. */
             handle?: string;
+            /**
+             * Format: date-time
+             * @description Expiry of the session cookie, reported on a verified login when the
+             *     platform dated it (P2-06). The scheduler dispatches the next refresh
+             *     a week before this. Omitted for a session cookie with no date, which
+             *     cannot be scheduled against.
+             *
+             */
+            cookieExpiresAt?: string;
             error?: string;
         };
         /** @enum {string} */
@@ -2305,6 +2423,36 @@ export interface operations {
                     "application/json": components["schemas"]["PlatformAnalytics"];
                 };
             };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    analyticsContentByPlatform: {
+        parameters: {
+            query?: {
+                /** @description Narrow to one official account. Omit for every account on the platform. */
+                accountId?: string;
+                windowDays?: number;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                platform: components["schemas"]["Platform"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Per-post metrics. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContentMetricsResponse"];
+                };
+            };
+            400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
         };

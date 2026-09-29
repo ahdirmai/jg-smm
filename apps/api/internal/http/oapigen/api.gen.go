@@ -549,6 +549,46 @@ type ContainerList struct {
 	Containers []Container `json:"containers"`
 }
 
+// ContentMetric One post's performance. Every metric is nullable and a null means the
+// provider did not report it, not that it was zero — Instagram has
+// deprecated impressions, and a static image has no views to report.
+type ContentMetric struct {
+	// AccountHandle The monitored account this post belongs to.
+	AccountHandle string                    `json:"accountHandle"`
+	Caption       nullable.Nullable[string] `json:"caption,omitempty"`
+	Comments      nullable.Nullable[int64]  `json:"comments,omitempty"`
+
+	// ContentType FEED, REELS, CAROUSEL_ALBUM — the provider's own label.
+	ContentType nullable.Nullable[string] `json:"contentType,omitempty"`
+
+	// EngagementRatePct Interactions divided by reach, as a percentage. Null when either
+	// side is missing or reach is zero — a post nobody saw has no rate,
+	// and printing 0% would read as "published and ignored".
+	EngagementRatePct nullable.Nullable[float64] `json:"engagementRatePct,omitempty"`
+
+	// ExternalId The provider's own id for the post (an Instagram media id).
+	ExternalId string `json:"externalId"`
+	Id         string `json:"id"`
+
+	// Interactions Likes + comments + saves + shares, as Instagram counts it.
+	Interactions nullable.Nullable[int64]     `json:"interactions,omitempty"`
+	Likes        nullable.Nullable[int64]     `json:"likes,omitempty"`
+	Permalink    nullable.Nullable[string]    `json:"permalink,omitempty"`
+	PublishedAt  nullable.Nullable[time.Time] `json:"publishedAt,omitempty"`
+	Reach        nullable.Nullable[int64]     `json:"reach,omitempty"`
+	Saves        nullable.Nullable[int64]     `json:"saves,omitempty"`
+	Shares       nullable.Nullable[int64]     `json:"shares,omitempty"`
+	Views        nullable.Nullable[int64]     `json:"views,omitempty"`
+}
+
+// ContentMetricsResponse defines model for ContentMetricsResponse.
+type ContentMetricsResponse struct {
+	Items []ContentMetric `json:"items"`
+
+	// Platform The social platform. MVP active set is Instagram + Threads.
+	Platform Platform `json:"platform"`
+}
+
 // CreateAccountRequest defines model for CreateAccountRequest.
 type CreateAccountRequest struct {
 	// Password Sealed at rest; never returned or logged.
@@ -640,6 +680,24 @@ type CreateUserRequest struct {
 	// Password Write-only; argon2id-hashed, never returned.
 	Password string `json:"password"`
 	Role     Role   `json:"role"`
+}
+
+// EngagementBreakdown One account's interactions split into their parts. Every field is
+// nullable and null means the provider did not report that part — the
+// dashboard must show "—", because a 0 here would claim "nobody saved
+// anything" on an account whose saves are simply not visible.
+type EngagementBreakdown struct {
+	// AccountsEngaged Distinct accounts that interacted — reach counts impressions, this counts people.
+	AccountsEngaged nullable.Nullable[int64] `json:"accountsEngaged,omitempty"`
+	Comments        nullable.Nullable[int64] `json:"comments,omitempty"`
+
+	// EngagementRatePct Interactions divided by reach, as a percentage. Null when reach is missing or zero.
+	EngagementRatePct nullable.Nullable[float64] `json:"engagementRatePct,omitempty"`
+	Handle            string                     `json:"handle"`
+	Likes             nullable.Nullable[int64]   `json:"likes,omitempty"`
+	OfficialAccountId string                     `json:"officialAccountId"`
+	Saves             nullable.Nullable[int64]   `json:"saves,omitempty"`
+	Shares            nullable.Nullable[int64]   `json:"shares,omitempty"`
 }
 
 // EnqueueActionsRequest A batch of intents. Comment text is deliberately absent: it is composed
@@ -783,6 +841,8 @@ type Platform string
 
 // PlatformAnalytics defines model for PlatformAnalytics.
 type PlatformAnalytics struct {
+	Breakdown []EngagementBreakdown `json:"breakdown"`
+
 	// Freshness Backs the dashboard's stale badge (P2-15 AC: stale when older than 60 minutes).
 	Freshness AnalyticsFreshness `json:"freshness"`
 	Kpis      []AnalyticsKpi     `json:"kpis"`
@@ -971,6 +1031,14 @@ type AnalyticsOverviewParams struct {
 type AnalyticsByPlatformParams struct {
 	Metric     *string `form:"metric,omitempty" json:"metric,omitempty"`
 	WindowDays *int    `form:"windowDays,omitempty" json:"windowDays,omitempty"`
+}
+
+// AnalyticsContentByPlatformParams defines parameters for AnalyticsContentByPlatform.
+type AnalyticsContentByPlatformParams struct {
+	// AccountId Narrow to one official account. Omit for every account on the platform.
+	AccountId  *string `form:"accountId,omitempty" json:"accountId,omitempty"`
+	WindowDays *int    `form:"windowDays,omitempty" json:"windowDays,omitempty"`
+	Limit      *int    `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // ListAuditParams defines parameters for ListAudit.

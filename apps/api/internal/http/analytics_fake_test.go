@@ -17,6 +17,7 @@ type httpAnalyticsStore struct {
 	accounts  map[string]domain.OfficialAccount
 	snapshots []domain.AnalyticsSnapshot
 	runs      []domain.AnalyticsIngestRun
+	content   []domain.ContentMetric
 }
 
 func newFakeAnalyticsStore() *httpAnalyticsStore {
@@ -224,4 +225,46 @@ func (p *httpProvider) FetchMetrics(ctx context.Context, acc domain.OfficialAcco
 func (p *httpProvider) FetchMentions(ctx context.Context, acc domain.OfficialAccount) ([]domain.AnalyticsMention, error) {
 	return nil, nil
 }
+func (p *httpProvider) FetchContentMetrics(ctx context.Context, acc domain.OfficialAccount, limit int) ([]domain.ContentMetric, error) {
+	return nil, nil
+}
 func (p *httpProvider) Health(ctx context.Context) error { return nil }
+
+func (f *httpAnalyticsStore) UpsertContentMetric(ctx context.Context, m domain.ContentMetric) (domain.ContentMetric, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i, existing := range f.content {
+		if existing.ExternalID == m.ExternalID && existing.OfficialAccountID == m.OfficialAccountID {
+			f.content[i] = m
+			return m, nil
+		}
+	}
+	f.content = append(f.content, m)
+	return m, nil
+}
+
+func (f *httpAnalyticsStore) ListContentMetrics(ctx context.Context, p domain.Platform, accountIDs []string, window time.Duration, limit int) ([]domain.ContentMetric, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	wanted := make(map[string]bool, len(accountIDs))
+	for _, id := range accountIDs {
+		wanted[id] = true
+	}
+	out := make([]domain.ContentMetric, 0, len(f.content))
+	for _, m := range f.content {
+		if m.Platform != p {
+			continue
+		}
+		if len(wanted) > 0 && !wanted[m.OfficialAccountID] {
+			continue
+		}
+		// The real query JOINs official_account for the handle, so the fake
+		// must too — a content row with no owner cannot be acted on.
+		m.AccountHandle = f.accounts[m.OfficialAccountID].Handle
+		out = append(out, m)
+	}
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}

@@ -231,3 +231,128 @@ func TestAnalyticsHandlerUnavailableWithoutService(t *testing.T) {
 		}
 	}
 }
+
+// A breakdown part the provider never reported must arrive as JSON null, not 0.
+// The dashboard renders null as "—"; a 0 would assert "nobody saved anything"
+// about an account whose saves are simply not visible.
+func TestAnalyticsHandlerBreakdownKeepsAbsentPartsNull(t *testing.T) {
+	store := newFakeAnalyticsStore()
+	acc := seedOfficial(store, "brand-trend")
+	store.UpsertAnalyticsSnapshot(context.Background(), domain.AnalyticsSnapshot{
+		OfficialAccountID: acc.ID,
+		Platform:          acc.Platform,
+		TS:                time.Now().UTC(),
+		Reach:             ptr(int64(100)),
+		Engagements:       ptr(int64(10)),
+		// Instagram reports likes/comments here but says nothing about saves.
+		Metrics:  json.RawMessage(`{"instagram":{"likes":7,"comments":3,"shares":0}}`),
+		Provider: domain.AnalyticsProviderA,
+	})
+
+	svc := service.NewAnalyticsService(store, service.AnalyticsConfig{Clock: time.Now})
+	e := newAnalyticsEcho(NewAnalyticsHandler(svc))
+	req := httptest.NewRequest(http.MethodGet, "/api/analytics/instagram?windowDays=30", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("platform page: %d %s", rec.Code, rec.Body.String())
+	}
+
+	var raw struct {
+		Breakdown []struct {
+			Handle            string           `json:"handle"`
+			Likes             *json.Number     `json:"likes"`
+			Comments          *json.Number     `json:"comments"`
+			Saves             *json.Number     `json:"saves"`
+			Shares            *json.Number     `json:"shares"`
+			EngagementRatePct *json.RawMessage `json:"engagementRatePct"`
+		} `json:"breakdown"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(raw.Breakdown) != 1 {
+		t.Fatalf("want 1 breakdown row, got %d", len(raw.Breakdown))
+	}
+	b := raw.Breakdown[0]
+	if b.Likes == nil || b.Likes.String() != "7" {
+		t.Errorf("likes: want 7, got %v", b.Likes)
+	}
+	if b.Comments == nil || b.Comments.String() != "3" {
+		t.Errorf("comments: want 3, got %v", b.Comments)
+	}
+	// A reported zero is a measurement and must survive as 0, not become null.
+	if b.Shares == nil || b.Shares.String() != "0" {
+		t.Errorf("shares: want a reported 0, got %v", b.Shares)
+	}
+	// An unreported part must be null. This is the whole point of the type.
+	if b.Saves != nil {
+		t.Errorf("saves: want null for an unreported part, got %v", *b.Saves)
+	}
+	if b.EngagementRatePct == nil || string(*b.EngagementRatePct) == "null" {
+		t.Errorf("engagement rate: want 10%%, got %s", string(*b.EngagementRatePct))
+	}
+}
+
+func TestAnalyticsContentRejectsBadLimit(t *testing.T) {
+	store := newFakeAnalyticsStore()
+	seedOfficial(store, "brand-trend")
+	svc := service.NewAnalyticsService(store, service.AnalyticsConfig{Clock: time.Now})
+	e := newAnalyticsEcho(NewAnalyticsHandler(svc))
+
+	for _, q := range []string{"limit=0", "limit=-3", "limit=abc"} {
+		req := httptest.NewRequest(http.MethodGet, "/api/analytics/instagram/content?"+q, nil)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: want 400, got %d", q, rec.Code)
+		}
+	}
+}
+
+// The content endpoint must not be shadowed by the /analytics/:platform route:
+// "content" is a path segment, not a platform name, and matching it as one
+// would answer every content request with an unknown-platform 400.
+func TestAnalyticsContentRouteNotShadowedByPlatformParam(t *testing.T) {
+	store := newFakeAnalyticsStore()
+	acc := seedOfficial(store, "brand-trend")
+	store.UpsertContentMetric(context.Background(), domain.ContentMetric{
+		OfficialAccountID: acc.ID,
+		Platform:          acc.Platform,
+		ExternalID:        "17900000000000001",
+		Provider:          domain.AnalyticsProviderA,
+		Reach:             ptr(int64(500)),
+	})
+
+	svc := service.NewAnalyticsService(store, service.AnalyticsConfig{Clock: time.Now})
+	e := newAnalyticsEcho(NewAnalyticsHandler(svc))
+	req := httptest.NewRequest(http.MethodGet, "/api/analytics/instagram/content?windowDays=30", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("content route: %d %s", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		Platform string `json:"platform"`
+		Items    []struct {
+			ExternalID    string       `json:"externalId"`
+			AccountHandle string       `json:"accountHandle"`
+			Reach         *json.Number `json:"reach"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Platform != "instagram" {
+		t.Fatalf("platform wrong: %s", got.Platform)
+	}
+	if len(got.Items) != 1 {
+		t.Fatalf("want 1 item, got %d", len(got.Items))
+	}
+	if got.Items[0].Reach == nil || got.Items[0].Reach.String() != "500" {
+		t.Errorf("reach: want 500, got %v", got.Items[0].Reach)
+	}
+	if got.Items[0].AccountHandle != "brand-trend" {
+		t.Errorf("account handle: want brand-trend, got %q", got.Items[0].AccountHandle)
+	}
+}

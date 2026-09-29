@@ -3,6 +3,7 @@ package http
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -38,6 +39,7 @@ func (h *AnalyticsHandler) Register(g *echo.Group) {
 	g.POST("/analytics/refresh", h.analyticsRefresh, RequirePermission(domain.PermAct))
 	g.GET("/analytics/overview", h.analyticsOverview)
 	g.GET("/analytics/:platform", h.analyticsByPlatform)
+	g.GET("/analytics/:platform/content", h.analyticsContentByPlatform)
 }
 
 func (h *AnalyticsHandler) createOfficialAccount(c echo.Context) error {
@@ -143,6 +145,36 @@ func (h *AnalyticsHandler) analyticsByPlatform(c echo.Context) error {
 		Kpis:      toKpiDTOs(res.KPIs),
 		Trend:     toTrendDTOs(res.Trend),
 		Freshness: toFreshnessDTO(res.Freshness),
+		Breakdown: toBreakdownDTOs(res.Breakdown),
+	})
+}
+
+func (h *AnalyticsHandler) analyticsContentByPlatform(c echo.Context) error {
+	if h.analytics == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "analytics service unavailable")
+	}
+	p := domain.Platform(c.Param("platform"))
+	if !p.Valid() {
+		return echo.NewHTTPError(http.StatusBadRequest, "unknown platform")
+	}
+	limit := 50
+	if v := strings.TrimSpace(c.QueryParam("limit")); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			return echo.NewHTTPError(http.StatusBadRequest, "limit must be a positive integer")
+		}
+		limit = n
+	}
+	rows, err := h.analytics.Content(c.Request().Context(), p, c.QueryParam("accountId"), windowDays(c), limit)
+	if err != nil {
+		if errors.Is(err, domain.ErrValidation) {
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		}
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+	}
+	return c.JSON(http.StatusOK, oapigen.ContentMetricsResponse{
+		Platform: oapigen.Platform(p),
+		Items:    toContentMetricDTOs(rows),
 	})
 }
 
@@ -285,4 +317,55 @@ func derefProvider(p *string) domain.AnalyticsProvider {
 		return domain.AnalyticsProviderA
 	}
 	return domain.AnalyticsProvider(*p)
+}
+
+func toContentMetricDTOs(rows []service.ContentMetric) []oapigen.ContentMetric {
+	out := make([]oapigen.ContentMetric, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, oapigen.ContentMetric{
+			Id:                r.ID,
+			AccountHandle:     r.AccountHandle,
+			ExternalId:        r.ExternalID,
+			ContentType:       nullStr(r.ContentType),
+			Caption:           nullStr(r.Caption),
+			Permalink:         nullStr(r.Permalink),
+			PublishedAt:       nullTime(r.PublishedAt),
+			Reach:             nullInt64(r.Reach),
+			Views:             nullInt64(r.Views),
+			Interactions:      nullInt64(r.Interactions),
+			Likes:             nullInt64(r.Likes),
+			Comments:          nullInt64(r.Comments),
+			Saves:             nullInt64(r.Saves),
+			Shares:            nullInt64(r.Shares),
+			EngagementRatePct: nullFloat64(r.EngagementRatePct),
+		})
+	}
+	return out
+}
+
+// nullFloat64 keeps "no rate" distinct from a rate of zero. A post with no
+// reach has no engagement rate at all, and 0% would read as "published and
+// ignored" — a verdict, where the truth is "we cannot know".
+func nullFloat64(p *float64) nullable.Nullable[float64] {
+	if p == nil {
+		return nullable.NewNullNullable[float64]()
+	}
+	return nullable.NewNullableWithValue(*p)
+}
+
+func toBreakdownDTOs(rows []service.EngagementBreakdown) []oapigen.EngagementBreakdown {
+	out := make([]oapigen.EngagementBreakdown, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, oapigen.EngagementBreakdown{
+			OfficialAccountId: r.OfficialAccountID,
+			Handle:            r.Handle,
+			Likes:             nullInt64(r.Likes),
+			Comments:          nullInt64(r.Comments),
+			Saves:             nullInt64(r.Saves),
+			Shares:            nullInt64(r.Shares),
+			AccountsEngaged:   nullInt64(r.AccountsEngaged),
+			EngagementRatePct: nullFloat64(r.EngagementRatePct),
+		})
+	}
+	return out
 }
