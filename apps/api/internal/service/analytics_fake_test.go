@@ -16,6 +16,7 @@ type fakeAnalyticsStore struct {
 	accounts  map[string]domain.OfficialAccount
 	snapshots []domain.AnalyticsSnapshot
 	mentions  []domain.AnalyticsMention
+	content   []domain.ContentMetric
 	runs      []domain.AnalyticsIngestRun
 	series    map[string][]domain.TrendPoint
 }
@@ -204,6 +205,39 @@ func (f *fakeAnalyticsStore) ListAnalyticsMentionsByPlatform(ctx context.Context
 	}
 	return out, nil
 }
+func (f *fakeAnalyticsStore) UpsertContentMetric(ctx context.Context, m domain.ContentMetric) (domain.ContentMetric, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i, existing := range f.content {
+		if existing.OfficialAccountID == m.OfficialAccountID && existing.ExternalID == m.ExternalID {
+			f.content[i] = m
+			return m, nil
+		}
+	}
+	f.content = append(f.content, m)
+	return m, nil
+}
+
+func (f *fakeAnalyticsStore) ListContentMetrics(ctx context.Context, p domain.Platform, accountIDs []string, window time.Duration, limit int) ([]domain.ContentMetric, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	want := map[string]bool{}
+	for _, id := range accountIDs {
+		want[id] = true
+	}
+	out := make([]domain.ContentMetric, 0, len(f.content))
+	for _, c := range f.content {
+		if c.Platform != p {
+			continue
+		}
+		if len(want) > 0 && !want[c.OfficialAccountID] {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out, nil
+}
+
 func (f *fakeAnalyticsStore) CreateAnalyticsIngestRun(ctx context.Context, provider domain.AnalyticsProvider, scope string) (domain.AnalyticsIngestRun, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

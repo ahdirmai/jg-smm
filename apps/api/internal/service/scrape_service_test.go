@@ -52,6 +52,7 @@ func (r *fakeRunner) RunSearch(ctx context.Context, in port.ApifySearchInput) (p
 type fakeProvider struct {
 	metrics    domain.AnalyticsSnapshot
 	mentions   []domain.AnalyticsMention
+	content    []domain.ContentMetric
 	metricsErr error
 	healthErr  error
 	calls      int
@@ -69,6 +70,19 @@ func (p *fakeProvider) FetchMetrics(ctx context.Context, acc domain.OfficialAcco
 	s.Platform = acc.Platform
 	s.TS = time.Now().UTC()
 	return s, nil
+}
+func (p *fakeProvider) FetchContentMetrics(ctx context.Context, acc domain.OfficialAccount, limit int) ([]domain.ContentMetric, error) {
+	out := make([]domain.ContentMetric, len(p.content))
+	for i, c := range p.content {
+		c.OfficialAccountID = acc.ID
+		c.Platform = acc.Platform
+		c.ExternalID = c.ExternalID + "-" + acc.Handle
+		out[i] = c
+	}
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }
 func (p *fakeProvider) FetchMentions(ctx context.Context, acc domain.OfficialAccount) ([]domain.AnalyticsMention, error) {
 	out := make([]domain.AnalyticsMention, len(p.mentions))
@@ -284,6 +298,9 @@ func (p *perAccountProvider) FetchMetrics(ctx context.Context, acc domain.Offici
 }
 func (p *perAccountProvider) FetchMentions(ctx context.Context, acc domain.OfficialAccount) ([]domain.AnalyticsMention, error) {
 	return p.inner.FetchMentions(ctx, acc)
+}
+func (p *perAccountProvider) FetchContentMetrics(ctx context.Context, acc domain.OfficialAccount, limit int) ([]domain.ContentMetric, error) {
+	return p.inner.FetchContentMetrics(ctx, acc, limit)
 }
 func (p *perAccountProvider) Health(ctx context.Context) error { return p.inner.Health(ctx) }
 

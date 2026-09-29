@@ -12,6 +12,12 @@ import (
 	"github.com/ahdirmai/jg-smm/apps/api/internal/port"
 )
 
+// contentMetricLimit is how many of an account's most recent posts get a
+// per-content fetch each pass. Every post costs one extra provider call, so
+// this is the knob that decides an ingest's price. It matches the adapter's
+// own ceiling; the API's limit parameter only ever asks for less.
+const contentMetricLimit = 10
+
 // AnalyticsIngestor (P2-12) is the cron that pulls official-account metrics from
 // the 3rd-party provider and writes them into the analytics hypertables.
 //
@@ -174,6 +180,22 @@ func (i *AnalyticsIngestor) ingestAccount(ctx context.Context, acc domain.Offici
 	for _, m := range mentions {
 		if _, err := i.store.UpsertAnalyticsMention(ctx, m); err != nil {
 			return fmt.Errorf("upsert mention: %w", err)
+		}
+	}
+
+	// Per-content metrics are fetched after the account snapshot, and a
+	// failure here fails the account: a per-content table that silently stops
+	// refreshing looks identical to one where every post happens to be dead. The
+	// rows already written stay — UpsertContentMetric refreshed what it could
+	// before the error — so a transient failure degrades the list rather than
+	// emptying it, and the run's error count is what tells the two apart.
+	content, err := i.provider.FetchContentMetrics(ctx, acc, contentMetricLimit)
+	if err != nil {
+		return fmt.Errorf("fetch content metrics: %w", err)
+	}
+	for _, c := range content {
+		if _, err := i.store.UpsertContentMetric(ctx, c); err != nil {
+			return fmt.Errorf("upsert content metric: %w", err)
 		}
 	}
 

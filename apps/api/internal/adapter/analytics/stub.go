@@ -116,6 +116,16 @@ func (p *StubProvider) FetchMentions(ctx context.Context, acc domain.OfficialAcc
 	return out, nil
 }
 
+// FetchContentMetrics returns nothing. The stub fabricates account-level
+// numbers so the dashboard has something to render without credentials, but a
+// per-post table full of invented captions and permalinks would be a different
+// thing entirely: it would look like real published content that does not
+// exist. An empty slice is the honest answer, and the UI shows its empty
+// state. The real adapter fills this in.
+func (p *StubProvider) FetchContentMetrics(ctx context.Context, acc domain.OfficialAccount, limit int) ([]domain.ContentMetric, error) {
+	return nil, p.Health(ctx)
+}
+
 // handleSeed turns a handle into a stable number so the same account always
 // charts the same shape between calls (a dashboard that repaints a different
 // curve on every refresh would look broken, even with fake data).

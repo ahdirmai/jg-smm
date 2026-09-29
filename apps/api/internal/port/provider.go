@@ -120,6 +120,13 @@ type AnalyticsProvider interface {
 	FetchMetrics(ctx context.Context, acc domain.OfficialAccount) (domain.AnalyticsSnapshot, error)
 	// FetchMentions pulls new mentions since the last fetch.
 	FetchMentions(ctx context.Context, acc domain.OfficialAccount) ([]domain.AnalyticsMention, error)
+	// FetchContentMetrics pulls per-post performance for one official account.
+	// Kept separate from FetchMetrics because it is an N+1 fan-out (list the
+	// account's content, then ask about each piece), it is expensive, and a
+	// provider may support account-level metrics without supporting per-content
+	// ones. An empty slice with a nil error means "this provider has no
+	// per-content data", which is not an error condition.
+	FetchContentMetrics(ctx context.Context, acc domain.OfficialAccount, limit int) ([]domain.ContentMetric, error)
 	// Health pings the provider so the ingestor can report a partial run with a
 	// clear error class instead of a generic failure.
 	Health(ctx context.Context) error
