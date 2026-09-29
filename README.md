@@ -150,7 +150,7 @@ Threads id 404s on every scrape. All are env-overridable and pinned in
 | Threads keyword search | `futurizerush/meta-threads-scraper` | `APIFY_SEARCH_ACTOR_THREADS` |
 | Instagram per-post | `apify/instagram-post-scraper` | `APIFY_POST_ACTOR_INSTAGRAM` |
 | Instagram keyword search | `crawlerbros/instagram-keyword-search-scraper` | `APIFY_SEARCH_ACTOR_INSTAGRAM` |
-| TikTok keyword search | `clockworks/tiktok-scraper` | `APIFY_SEARCH_ACTOR_TIKTOK` |
+| TikTok keyword search | `xmolodtsov/tiktok-search-scraper` | `APIFY_SEARCH_ACTOR_TIKTOK` |
 
 Per-platform scrape detail (input, output rows, normalization) is in
 `docs/platforms/`; batch keyword scraping in `docs/BATCH_SCRAPE.md`.
@@ -168,17 +168,23 @@ tickets. When an actor does expose a date filter, send it — see
 `docs/platforms/` for which ones do.
 
 The converse is worth stating too: an actor that *does* accept a date bound must
-be given one, or the same 18% yield is bought a second time. TikTok does — and
-it only honours the bound under `profileSorting: latest|oldest`, so the sort is
-load-bearing rather than a preference. A payload test proves what we sent; only
-a real run proves the actor obeyed it.
+be given one, or the same waste is bought a second time. **TikTok did not.**
+This integration shipped `oldestPostDateUnified`/`newestPostDate` on the
+strength of a code comment, and `clockworks/tiktok-scraper` has no date field
+of any kind in its input schema — both were accepted and discarded, silently,
+while a full page was billed. A payload test proves what we sent; it cannot
+prove the actor obeyed it, and a comment asserting an actor honours a field is
+not evidence that it does. `xmolodtsov/tiktok-search-scraper` also has no date
+input, so the window is enforced only in the ingestor — but it caps results at
+`maxItems`, which the previous actor did not, and returns both cover and
+thumbnail on every row with no billed flag.
 
-TikTok is **pay-per-event** (from $1.70 / 1000 results) and its download and
-AI-summary add-ons bill separately — the AI fields bill *per video second*.
-They are omitted from the payload rather than set to `false`, so an edit cannot
-quietly switch one on. Comment bodies arrive in a second dataset behind
-`commentsDatasetURL`, which this integration does not fetch, so
-`commentsPerPost: 0` keeps them unbilled.
+TikTok is **pay-per-event**, $0.30 / 1000 results on the free tier against
+$3.70 for the actor it replaced. That difference is the whole reason for the
+swap, and it is paid per result *returned* — which is why `maxItems` is the
+cost ceiling of a run and is pinned by a test. The `suggest`/`hashtag`/`music`
+expansion pools are billed as results too and return rows that are not posts,
+so they are left off.
 
 `Post.published_at` (migration `000016`) holds the post's own publication
 date. `Post.scraped_at` is when *we* looked and is not a substitute; the UI

@@ -414,116 +414,88 @@ func parseIGFlatPostItems(raw []byte, window port.KeywordTimeWindow) ([]scrapeIt
 	}}, nil
 }
 
-// tiktokPost is one dataset row from clockworks/tiktok-scraper. This actor
-// nests author, video and music under their own objects, so the row needs real
-// nested structs — unlike the flat snake_case Instagram row, there is no
-// underscore/camel bridging to save us here, the shape is simply different.
+// tiktokPost is one dataset row from xmolodtsov/tiktok-search-scraper. The
+// author and the media are each a nested object, so this platform still needs
+// its own parser — there is no underscore/camel bridging to save us here.
 type tiktokPost struct {
-	ID            string   `json:"id"`
-	Text          string   `json:"text"`
-	CreateTimeISO string   `json:"createTimeISO"`
-	CreateTime    int64    `json:"createTime"`
-	MediaURLs     []string `json:"mediaUrls"`
-	DiggCount     int      `json:"diggCount"`
-	CommentCount  int      `json:"commentCount"`
-	ShareCount    int      `json:"shareCount"`
-	CollectCount  int      `json:"collectCount"`
-	PlayCount     int      `json:"playCount"`
-	VideoMeta     struct {
-		// The cover is the only media this actor returns for free.
-		// `mediaUrls` is documented as an empty array in the actor's own
-		// output sample and only fills in when a shouldDownload* flag is on,
-		// and those are separately billed events. Reading only mediaUrls
-		// therefore stored zero media for every TikTok post this connector
-		// has ever scraped, while a free thumbnail sat unread in the same row.
-		// originalCoverUrl first: it is the uncropped original, matching the
-		// Instagram path's preference for the largest variant.
-		OriginalCoverURL string `json:"originalCoverUrl"`
-		CoverURL         string `json:"coverUrl"`
-	} `json:"videoMeta"`
-	AuthorMeta struct {
-		// any, not string: the actor has shipped authorMeta.id as both a
-		// number and a string, and a concretely-typed field here fails to
-		// unmarshal the ENTIRE row, taking the whole run down over one field.
-		ID   any    `json:"id"`
-		Name string `json:"name"`
-	} `json:"authorMeta"`
-	// ErrorCode marks an actor error item. The actor interleaves these with
-	// real results and documents that a normal item is never affected — so
-	// this is the only way to tell the two apart, and it must be read BEFORE
-	// the id guard: an error row has no id.
-	ErrorCode string `json:"errorCode"`
+	ID   string `json:"id"`
+	Text string `json:"title"`
+	// UploadedAtFormatted is ISO and is what this actor always sends;
+	// UploadedAt is the same instant as Unix seconds and is the fallback.
+	UploadedAtFormatted string `json:"uploadedAtFormatted"`
+	UploadedAt          int64  `json:"uploadedAt"`
+	Views               int    `json:"views"`
+	Likes               int    `json:"likes"`
+	Comments            int    `json:"comments"`
+	Shares              int    `json:"shares"`
+	Bookmarks           int    `json:"bookmarks"`
+	Video               struct {
+		// Both are plain TikTok CDN URLs present on every row, and neither is
+		// behind a billed flag: cover is the full-size frame, thumbnail the
+		// smaller one. cover is preferred.
+		Cover     string `json:"cover"`
+		Thumbnail string `json:"thumbnail"`
+	} `json:"video"`
+	Channel struct {
+		ID       string `json:"id"`
+		Username string `json:"username"`
+	} `json:"channel"`
 }
 
-// parseTikTokItems maps one clockworks/tiktok-scraper dataset row.
+// parseTikTokItems maps one xmolodtsov/tiktok-search-scraper dataset row.
 //
-// The window is applied here as well as being requested from the actor, because
-// the actor's date filter is gated on profileSorting and a mis-set sort makes it
-// ignore the bound silently. The second line of defence is the only one that
-// cannot be disabled by a payload field.
+// The window is applied here and nowhere else: this actor has no date input at
+// all, so unlike the previous one there is no server-side filter to lean on and
+// a window the payload cannot express is a window this function must enforce.
 func parseTikTokItems(raw []byte, window port.KeywordTimeWindow) ([]scrapeItem, error) {
 	var src tiktokPost
 	if err := json.Unmarshal(raw, &src); err != nil {
 		return nil, err
 	}
-	// An error item is not a failed post and not a failed run. Returning an
-	// error here would abort the whole ingest, including the valid rows the
-	// actor put in the same dataset.
-	if src.ErrorCode != "" {
-		return nil, nil
-	}
 	if src.ID == "" {
-		return nil, errors.New("tiktok item has no id and no errorCode")
+		return nil, errors.New("tiktok item has no id")
 	}
-	publishedAt := parseActorTime(src.CreateTimeISO)
-	if publishedAt.IsZero() && src.CreateTime != 0 {
-		publishedAt = time.Unix(src.CreateTime, 0).UTC()
+	publishedAt := parseActorTime(src.UploadedAtFormatted)
+	if publishedAt.IsZero() && src.UploadedAt != 0 {
+		publishedAt = time.Unix(src.UploadedAt, 0).UTC()
 	}
 	if !inWindow(publishedAt, window) {
 		return nil, nil
 	}
-	media := make([]string, 0, len(src.MediaURLs))
-	for _, u := range src.MediaURLs {
-		if u != "" {
-			media = append(media, u)
-		}
-	}
-	// A run with a shouldDownload* flag set populates mediaUrls and the cover
-	// is redundant. A default run populates neither, so fall back to the cover
-	// the actor already returned for free rather than storing an empty list
-	// that the page renders as "no media" on a post that has one.
-	if len(media) == 0 {
-		if cover := orDefault(src.VideoMeta.OriginalCoverURL, src.VideoMeta.CoverURL); cover != "" {
-			media = []string{cover}
-		}
+	// Non-nil even when empty: this list is stored and served as a JSON array,
+	// and a null there is a different thing to every reader downstream.
+	media := make([]string, 0, 1)
+	if cover := orDefault(src.Video.Cover, src.Video.Thumbnail); cover != "" {
+		media = append(media, cover)
 	}
 	metrics := map[string]any{}
-	// TikTok's counter names are its own; these are the cross-platform keys
-	// the dashboard's metrics line already knows how to render.
-	if src.DiggCount != 0 {
-		metrics["likes"] = src.DiggCount
+	if src.Likes != 0 {
+		metrics["likes"] = src.Likes
 	}
-	if src.CommentCount != 0 {
-		metrics["comments"] = src.CommentCount
+	if src.Comments != 0 {
+		metrics["comments"] = src.Comments
 	}
-	if src.ShareCount != 0 {
-		metrics["shares"] = src.ShareCount
+	if src.Shares != 0 {
+		metrics["shares"] = src.Shares
 	}
-	if src.CollectCount != 0 {
-		metrics["collects"] = src.CollectCount
+	if src.Bookmarks != 0 {
+		// Stored under the same key the previous actor's `collectCount` used.
+		// TikTok's save count is the same measure under the other name, and
+		// renaming the key would orphan the value on every stored post.
+		metrics["collects"] = src.Bookmarks
 	}
-	if src.PlayCount != 0 {
+	if src.Views != 0 {
 		// `views`, not a new `plays` key. The snapshot writer reads
 		// metricsInt("views", "viewCount", "playCount") — an unfamiliar key is
 		// stored and then read by nobody, which is a stored view count of zero
 		// on a post that otherwise looks entirely correct.
-		metrics["views"] = src.PlayCount
+		metrics["views"] = src.Views
 	}
 	return []scrapeItem{{
 		Platform:     string(domain.PlatformTikTok),
 		ExternalID:   src.ID,
-		AuthorHandle: orDefault(src.AuthorMeta.Name, "unknown"),
-		AuthorID:     anyToString(src.AuthorMeta.ID),
+		AuthorHandle: orDefault(src.Channel.Username, "unknown"),
+		AuthorID:     src.Channel.ID,
 		Text:         src.Text,
 		MediaURLs:    media,
 		Metrics:      metrics,

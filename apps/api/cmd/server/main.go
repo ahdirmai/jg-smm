@@ -595,11 +595,10 @@ func actorForPlatform(cfg config.Config) func(domain.Platform) string {
 //     `search`, and its posts are not date-filterable.
 //   - Threads: futurizerush/meta-threads-scraper in `mode:search`, which takes
 //     keywords[] plus start_date/end_date.
-//   - TikTok: clockworks/tiktok-scraper, `searchQueries[]` plus both date
-//     bounds. It only honours the date filter under profileSorting
-//     latest|oldest, and the store listing does not say which of its two date
-//     fields governs the search path — so the ingestor's window is the only
-//     backstop that cannot be disabled from the payload.
+//   - TikTok: xmolodtsov/tiktok-search-scraper, `keywords[]` plus `maxItems`
+//     as a real result cap. It has no date input at all, so the ingestor's
+//     window is the only backstop, not merely the second one — nothing in the
+//     payload can be set to ask the actor for a narrower pool.
 func searchActorForPlatform(cfg config.Config) func(domain.Platform) string {
 	return func(p domain.Platform) string {
 		switch p {

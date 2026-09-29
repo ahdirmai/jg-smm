@@ -16,7 +16,7 @@
 | Views / Reach | ☐ | ☐ |
 | Live views | ☐ | ☐ |
 
-Action **tidak** dikerjakan di MVP ini. Yang hidup hanya keyword scrape (§4.1). `profiles[]`, `postURLs[]`, dan `hashtags[]` milik actor **tidak** diintegrasikan — parser di §4.1 bisa dipakai ulang untuk `hashtags[]` tanpa perubahan bentuk row.
+Action **tidak** dikerjakan di MVP ini. Yang hidup hanya keyword scrape (§4.1). Actor-nya keyword-saja: mode `profiles[]`/`postURLs[]`/`hashtags[]` milik actor sebelumnya **sudah tidak ada**, jadi tidak ada yang belum diintegrasikan — hanya `expansion` yang sengaja dibiarkan mati (§4.1).
 ## 2. Login Flow
 - **Halaman:** —
 - **Step:** —
@@ -27,43 +27,39 @@ Belum ada flow login TikTok. Dibutuhkan hanya bila action Playwright (§3) dihid
 ## 3. Action Brief
 Kosong — lihat §1.
 ## 4. Scrape Brief (Apify)
-### 4.1 Keyword search scrape — `clockworks/tiktok-scraper`
-- **Actor:** `clockworks/tiktok-scraper` — **full id, bukan turunan `APIFY_ACTOR_PREFIX`**, sama seperti tiga actor lain. Env `APIFY_SEARCH_ACTOR_TIKTOK`.
+### 4.1 Keyword search scrape — `xmolodtsov/tiktok-search-scraper`
+- **Actor:** `xmolodtsov/tiktok-search-scraper` — **full id, bukan turunan `APIFY_ACTOR_PREFIX`**, sama seperti tiga actor lain. Env `APIFY_SEARCH_ACTOR_TIKTOK`.
 - **Run mode:** sync (`run-sync-get-dataset-items`).
 - **Input yang benar-benar dikirim** (`searchInput` → `tiktokSearchInput`):
   ```json
   {
-    "searchQueries": ["<keyword>", ...],
-    "profileSorting": "latest",
-    "resultsPerPage": <max_posts>,
-    "commentsPerPost": 0,
-    "oldestPostDateUnified": "YYYY-MM-DD",
-    "newestPostDate": "YYYY-MM-DD"
+    "keywords": ["<keyword>", ...],
+    "maxItems": <max_posts>
   }
   ```
-  - `searchQueries` — **bukan** `keywords` dan **bukan** `hashtags[]`. Bagi actor, `#tag` adalah hashtag query dan kata biasa adalah full-text query; keduanya lewat apa adanya, `#` tidak dibuang.
-  - `profileSorting: "latest"` — **wajib, bukan preferensi.** Actor hanya menghormati `oldestPostDateUnified`/`newestPostDate` pada mode `latest`/`oldest`. Di `popular` field tanggal **diterima lalu diabaikan**, run tetap sukses, dan hasilnya video terbaru-terpopuler lintas waktu. Ingestor tetap menerapkan `inWindow` sebagai jaring pengaman — itu satu-satunya baris pertahanan yang tidak bisa dimatikan field payload.
-  - `resultsPerPage` adalah **ukuran halaman, bukan batas total**. 500 post pada `resultsPerPage: 100` tetap ditagih 500 hasil. Tidak ada field payload yang membatasi tagihan; yang membatasi adalah `commentsPerPost`.
-  - `profileScrapeSections` **tidak dikirim** — default actor dipakai. Default itu belum diverifikasi terhadap schema, jadi bila ternyata lebih luas dari `videos`, baris non-video akan tersimpan sebagai post tanpa `text` dan tanpa tanggal. Run pertama harus mengeceknya sebelum hasil apa pun dipercaya.
-- **Output row:** satu row per post, bentuknya **nested** — `id`, `text`, `createTimeISO`, `createTime` (unix detik), `webVideoUrl`, `mediaUrls[]`, `diggCount`, `commentCount`, `shareCount`, `collectCount`, `playCount`, `hashtags[]`, `isAd`, plus objek `authorMeta{id,name,nickName,signature,fans,heart,verified}`, `videoMeta{duration,coverUrl,format,width,height}`, `musicMeta{id,musicName,authorName,original}`.
-  - Row ini **butuh parser sendiri** (`parseTikTokItems`). Bedanya dari row IG flat: tidak ada jembatan underscore↔camel, bentuknya memang berbeda.
-  - `authorMeta.id` datang sebagai **number**. Field bertipe `string` akan gagal unmarshal **seluruh row** dan menjatuhkan run — dipakai `any` + `anyToString`, seperti parser IG.
-- **`errorCode` — row error berinterleave dengan hasil asli.** Actor menyatakan item normal tidak pernah terpengaruh, jadi `errorCode` satu-satunya cara membedakan keduanya dan **wajib dibaca sebelum guard external-id**: row error tidak punya `id`, sehingga guard itu menyala dan error-nya merambat ke seluruh ingest — beserta row-row valid di dataset yang sama. Kode yang emitted: `PROFILE_PRIVATE`, `SEARCH_QUERY_NOT_FOUND`, `INVALID_INPUT`, `FILTER_NO_PASS`, `PASSWORD_RESET`, `UNKNOWN`. `INVALID_INPUT` juga menghentikan run.
-  - Row yang **tidak** punya `id` **dan** tidak punya `errorCode` tetap dianggap error, bukan di-drop diam-diam — Kalau di-drop, actor rusak tersembunyi di balik jumlah yang masuk akal.
-- **Tanggal:** `createTimeISO` sering tiba **tanpa offset** (`2026-08-03T07:06:51`), yang ditolak RFC3339. Parser memakai `parseActorTime` (baca UTC), dengan fallback ke `createTime` unix untuk row yang ISO-nya kosong/tidak bisa dibaca. Row tanpa kedua field **tetap disimpan** dengan `published_at` NULL — tanggal tidak pernah dikarang.
-- **Normalisasi → DB:** `id`→`Post.external_id`, `authorMeta.name`→`author_handle`, `authorMeta.id`→`author_id`, `text`→`text`, `mediaUrls[]`→`media_urls`, `createTimeISO`/`createTime`→`Post.published_at` (migration `000016`), dan metrics: `diggCount`→`likes`, `commentCount`→`comments`, `shareCount`→`shares`, **`playCount`→`views`**, `collectCount`→`collects`.
-  - **`playCount` harus jadi `views`, bukan key baru `plays`.** Snapshot writer baca `metricsInt("views", "viewCount", "playCount")`; key yang tidak dikenal siapa pun akan tersimpan lalu dibaca tidak oleh siapa pun — hasilnya view count nol pada post yang selebihnya terlihat benar. `TopPostsByMetric` mengurutkan kolom `metric_snapshot.views`, jadi post dengan key asing tidak akan pernah masuk peringkat.
+  - `keywords` — bagi actor, `#tag` adalah hashtag query dan kata biasa adalah full-text query; keduanya lewat apa adanya, `#` tidak dibuang.
+  - `maxItems` adalah **batas total, bukan ukuran halaman** — dan karena actor menagih per hasil yang dikembalikan, ini adalah **plafon biaya satu run**. 30 keyword × 30 post = 900 hasil = $0.27. Bandingkan `resultsPerPage` milik actor sebelumnya, yang cuma ukuran halaman dan tidak membatasi apa pun yang ditagih.
+  - **Tidak ada field tanggal yang dikirim, karena tidak ada yang bisa dikirim.** Actor ini tidak punya input tanggal sama sekali. `expansion` juga tidak dikirim: pool `suggest`/`hashtag`/`music` ditagih sebagai hasil dan mengembalikan baris yang bukan post yang kita minta.
+- **Output row:** satu row per post, metriknya **flat di atas** dan hanya dua yang bersarang — `id`, `title`, `views`, `likes`, `comments`, `shares`, `bookmarks`, `hashtags[]`, `uploadedAt` (unix detik), `uploadedAtFormatted` (ISO), `postPage`, `keyword`, plus objek `channel{id,name,username,avatar,verified,url,followers,following,videos,likes}` dan `video{width,height,ratio,duration,url,cover,thumbnail}`.
+  - Row ini **butuh parser sendiri** (`parseTikTokItems`).
+  - `channel.id` dan `id` keduanya **string** di 11 row yang diuji — tidak seperti `authorMeta.id` actor lama yang pernah datang sebagai number.
+  - `hashtags` bisa berisi `null` (terverifikasi di row nyata). Tidak dipakai parser, tapi jangan menambahkannya sebagai `[]string` tanpa mengubah tipenya — satu `null` akan menjatuhkan seluruh row.
+- **Tidak ada `errorCode` di actor ini.** 11 row nyata tidak punya key ber-`error` sama sekali, jadi parser cukup gagal keras pada row tanpa `id` — actor rusak tidak akan tersembunyi di balik jumlah yang masuk akal.
+- **Media gratis, tanpa flag berbayar.** `video.cover` dan `video.thumbnail` adalah URL CDN TikTok biasa yang ada di **setiap** row. Keduanya dicek HTTP 200 (jpeg 62–144 KB); `video.url` (file video) membalas 403 tanpa cookie dan tidak dipakai. Ini menghapus seluruh kelas bug "post tanpa media" yang dimiliki actor sebelumnya, yang menyembunyikan cover gratisnya di balik `mediaUrls` yang kosong kecuali flag download berbayar dinyalakan.
+- **Tanggal:** `uploadedAtFormatted` (ISO) adalah field utama, `uploadedAt` (unix) fallback-nya. Parser memakai `parseActorTime` (baca UTC). Row tanpa keduanya **tetap disimpan** dengan `published_at` NULL — tanggal tidak pernah dikarang.
+- **Normalisasi → DB:** `id`→`Post.external_id`, `channel.username`→`author_handle`, `channel.id`→`author_id`, `title`→`text`, `video.cover`→`media_urls`, `uploadedAtFormatted`/`uploadedAt`→`Post.published_at` (migration `000016`), dan metrics: `likes`→`likes`, `comments`→`comments`, `shares`→`shares`, **`views`→`views`**, `bookmarks`→`collects`.
+  - **`views` harus tetap `views`.** Snapshot writer baca `metricsInt("views", "viewCount", "playCount")`; key yang tidak dikenal siapa pun akan tersimpan lalu dibaca tidak oleh siapa pun — hasilnya view count nol pada post yang selebihnya terlihat benar. `TopPostsByMetric` mengurutkan kolom `metric_snapshot.views`, jadi post dengan key asing tidak akan pernah masuk peringkat.
+  - **`bookmarks` disimpan sebagai `collects`.** Save-count TikTok diukur sama, hanya dinamai berbeda; me-rename key-nya akan membuat nilai itu yatim di setiap post yang sudah tersimpan.
   - `collects` disimpan di `post.metrics` tetapi **belum punya kolom snapshot maupun renderer** — nilainya ada, belum tampil. Menambahkannya butuh kolom baru, bukan rename.
-  - `webVideoUrl` yang dikirim actor **tidak disimpan** (tidak ada kolomnya). Halaman batch menyusun ulang permalink dari `authorHandle` + `externalId`, sama seperti IG dan Threads.
-- **⚠ Tidak mengambil comment bodies.** Actor ini menyimpan comment-nya di **dataset terpisah**, yang URL-nya ada di field `commentsDatasetURL` pada item normal, dan store listing menyuruh pengambilan manual (curl/axios). Integrasi ini **tidak** mengambil URL itu, jadi `commentsPerPost: 0` — bukan hanya supaya tidak ada yang terbuang, tapi supaya tidak ada yang **ditagih**. Batas yang sama seperti jalur keyword Instagram (`instagram.md` §4.2).
-  > `ponytail:` keyword batch menampilkan post, bukan thread komentar. Kalau comment bodies dibutuhkan, tambahkan pembaca dataset kedua di `Runner` (`GET commentsDatasetURL` → `storeItems` dengan key `apify/search-<runID>/comments-N.json`) dan set `commentsPerPost` > 0 — biayanya per komentar, jadi_putuskan dulu.
-- **Biaya — pay-per-event, mulai $1.70 per 1000 hasil.** Satu video = satu hasil. Add-on berikut **ditagih terpisah dan sengaja tidak dikirim** (bukan `false`, tapi absen, supaya edit berikutnya tidak menyalakannya diam-diam): `shouldDownloadVideos`, `shouldDownloadMusic`, `shouldDownloadSubtitles`, `shouldDownloadCoverImages`, `shouldDownloadProfilePhotos`, `downloadSummarizedVideoDescription`, `downloadAIVideoSummaries`, `downloadSubtitlesOptions`. Yang AI **ditagih per detik video** — jauh lebih besar dari tagihan per hasil.
-  - Contoh hitungan: 1 batch 5 keyword × 30 post = 150 hasil → 150/1000 × $1.70 = **$0.255**.
-- **⚠ Yield.window.** Berbeda dari actor IG, actor ini **menerima** batas tanggal, jadi window dikirim ke actor. Tapi `profileSorting` yang mengaktifkannya — kalau sort berubah, yield anjlok ke pola yang sama seperti IG: item di-fetch habis lalu dibuang ingestor. Run pembanding `d3fc79a8` (IG): 150 diambil, 27 disimpan — **18%**. Ukur ulang yield setelah run TikTok pertama sebelum mengklaim apa pun soal perbaikan.
+  - `postPage` yang dikirim actor **tidak disimpan** (tidak ada kolomnya). Halaman batch menyusun ulang permalink dari `authorHandle` + `externalId`, sama seperti IG dan Threads.
+- **Biaya — pay-per-event, $0.30 per 1000 hasil di tier FREE.** Itu 12× lebih murah dari $3.70 yang dibayar actor sebelumnya, dan hampir tidak ada add-on yang perlu dinonaktifkan: yang ditagih hanyalah hasil yang dikembalikan.
+  - Contoh: 1 batch 5 keyword × 30 post = 150 hasil → **$0.045**. Actor sebelumnya membayar $0.555 untuk halaman yang sama dan 90%-nya dibuang ingestor.
+- **⚠ Yield.window tidak membaik karena ganti actor.** Actor ini **tidak** menerima batas tanggal, persis seperti actor sebelumnya — jadi pola "ambil habis, buang yang di luar window" tetap berlaku dan hanya bisa dikendalikan lewat `maxItems` dan keyword yang lebih sempit.
+  - Yang benar-benar membaik adalah **halaman yang dikembalikan lebih kecil**: pada keyword yang sama, `clockworks` mengembalikan 50 baris untuk 3 yang in-window, sedangkan actor ini mengembalikan 10 baris untuk 3 yang sama. Dikombinasikan dengan harga satuan yang 12× lebih murah, biaya per post yang benar-benar terpakai turun dari **$0.062 ke $0.001**.
+  - `sortType: DATE_POSTED` **tidak dikirim**: docs mengklaimnya mengurutkan terbaru lebih dulu, tapi diukur pada 2026-09 ia mengembalikan kumpulan yang sama dan tidak terurut dengan `RELEVANCE`. Field yang terbaca seperti filter tetapi bukan filter adalah kegagalan diam-diam.
 ## 5. Live Brief (bila ada)
 - **Sumber:** —
 - **Cara ambil live views:** —
 ## 6. Risiko & Catatan Platform
-- **Batas tanggal ganda.** Store listing menyebut **dua** mekanisme tanggal — `oldestPostDateUnified`/`newestPostDate` (untuk profil/hashtag) dan `videoSearchDateFilter` (bersama `videoSearchSorting`, untuk video search) — dan **tidak menyatakan yang mana yang governs `searchQueries`**. Test payload hanya membuktikan apa yang kita kirim, bukan bahwa actor memperlakukannya. Satu-satunya bukti adalah run nyata: bila ada `published_at` di luar window, tambahkan `videoSearchDateFilter` lalu jalankan ulang.
 - **Field name salah = diam-diam.** Actor menerima payload, jatuh ke default-nya sendiri, dan mengembalikan 200 dengan data yang salah. Semua field di §4.1 dipin di `runner_test.go` (`TestSearchInputTikTok*`) karena itu.
-- **Tidak ada mode per-post.** `Scrape post by URL` masih ⬜ di `../PLATFORM_MATRIX.md` §2.1; actor mendukungnya (`postURLs[]`) tapi belum ada parser maupun gate-nya.
+- **Tidak ada mode per-post sama sekali.** `Scrape post by URL` masih ⬜ di `../PLATFORM_MATRIX.md` §2.1, dan actor ini memang **tidak** punya mode URL — inputnya keyword saja, ditambah pool `expansion`. Tidak ada parser maupun gate-nya karena tidak ada jalur yang bisa di-gate. Kalau scraping satu permalink dibutuhkan, itu actor terpisah, bukan flag di sini.

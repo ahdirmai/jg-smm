@@ -60,6 +60,44 @@
   refreshing looks exactly like one where every post is dead. **TikTok is
   doubly blocked here**: no per-post insights tool at all, and the reach it
   would need is unobtainable too.
+### Changed
+- **TikTok scraping moved to `xmolodtsov/tiktok-search-scraper` — 83× cheaper
+  per post that is actually stored.** The old actor billed **$0.0037 per
+  result on the free tier**, not the "$1.70 / 1000" its store page advertises
+  (that is the GOLD-tier price, and this account is on FREE). A live run
+  returned a 50-row page and billed all of it at **$0.186**, of which the
+  ingestor kept **3** rows. Cost per usable post: **$0.062**.
+  - The reason for the 94% waste is the actual subject of this change: the
+    payload sent `oldestPostDateUnified` and `newestPostDate` on the strength
+    of a code comment asserting this actor "CAN filter server-side … under
+    `profileSorting: latest`". **That actor has no date field of any kind in
+    its input schema.** Both fields were accepted and discarded, silently, and
+    a full page was billed against a window nothing narrowed. A payload test
+    proves what we sent; it cannot prove the actor obeyed it, and a comment
+    asserting an actor honours a field is not evidence that it does.
+  - The replacement bills **$0.0003 per result** and returns a 10-row page for
+    the same keyword, so a real batch cost **$0.003 for 4 stored posts** —
+    **$0.00075 each**. `maxItems` is a genuine cap there, so it is the ceiling
+    on what a run can cost; the old `resultsPerPage` was a page size and
+    bounded nothing.
+  - The parser is rewritten for the new row shape, and the swap is a net
+    deletion: `errorCode` handling, the `mediaUrls` loop, the `anyToString`
+    round-trip on the author id and the three dead date fields are all gone.
+    `bookmarks` is stored under the existing `collects` key so saved posts keep
+    their value. Cover and thumbnail now arrive on every row with no billed
+    flag, so the media problem fixed in the previous commit cannot recur.
+  - The test fixture is a **verbatim row captured from a live run**, because
+    the last TikTok parser was written against a hand-invented row and shipped
+    a bug for months: the fixture asserted a `mediaUrls` entry the actor only
+    emits behind a billed flag, so the suite agreed with the bug.
+  - `sortType: DATE_POSTED` is documented as sorting newest-first but was
+    measured returning the same unsorted pool as the default, so it is not
+    sent. A field that reads like a filter and is not one is the same
+    silent-wrong-answer shape this fix is about.
+  - ⚠ **This actor is less battle-tested than the one it replaced**: 30,517
+    users and **1 review**, against 294,682 users and 370. If a keyword batch
+    looks thin, re-run it before trusting the count.
+
 ### Fixed
 - **No scraped TikTok post ever stored its media.** The parser read
   `mediaUrls`, which the actor documents as an **empty array** unless a

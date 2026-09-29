@@ -90,14 +90,14 @@ var _ port.ApifyRunner = (*Runner)(nil)
 //     the ingestor, not requested here.
 //   - Threads (futurizerush/meta-threads-scraper): `mode:search` with a
 //     `keywords[]` array, and both `start_date`/`end_date` bounds.
-//   - TikTok (clockworks/tiktok-scraper): `searchQueries[]` (a `#tag` is a
-//     hashtag query and a bare word a full-text one, so terms pass through
-//     unchanged), and BOTH date bounds. Unlike the Instagram actor this one
-//     CAN filter server-side, so the window is requested here — but only
-//     under `profileSorting: latest`/`oldest`. Under `popular` the date fields
-//     are accepted and ignored, which is the silent-wrong-answer failure this
-//     whole function exists to prevent. The ingestor still applies the window;
-//     that second line of defence is the one no payload field can switch off.
+//   - TikTok (xmolodtsov/tiktok-search-scraper): `keywords[]` of search terms,
+//     plus `maxItems`, which this actor honours as a hard cap on rows returned
+//     and so is the billed ceiling too. It has NO date input at all, so the
+//     window is applied downstream by the ingestor and nowhere else.
+//     `sortType: DATE_POSTED` is documented as sorting newest-first but was
+//     measured on 2026-09 returning the same unsorted pool as the default, so
+//     it is not sent; a field that reads as a filter and is not one is exactly
+//     the silent-wrong-answer shape this function exists to prevent.
 //
 // A wrong field name is silent here: the actor falls back to its own default
 // and returns unrelated posts, so these names are pinned against the live input
@@ -132,30 +132,18 @@ func (r *Runner) searchInput(in port.ApifySearchInput, maxItems int) map[string]
 	}
 }
 
-// tiktokSearchInput builds the payload for clockworks/tiktok-scraper.
+// tiktokSearchInput builds the payload for xmolodtsov/tiktok-search-scraper.
 //
-// It is pay-per-event ($1.70 per 1000 results), so anything that bills is a
-// decision, not a default: the download flags are extra billed events and the
-// AI video description/summary fields bill PER VIDEO SECOND. They are omitted
-// rather than set false so a later edit cannot quietly switch one on.
-//
-// commentsPerPost: 0 because the actor does not return comment bodies inline —
-// it parks them in a separate dataset behind `commentsDatasetURL`, which this
-// integration does not fetch (same ceiling as the Instagram keyword path).
+// Pay-per-event, billed per result returned, so maxItems is the cost ceiling —
+// this actor honours it as a real cap, unlike the previous actor's
+// resultsPerPage, which was a page size and did not bound what we were billed
+// for. Everything the actor offers beyond the keyword search itself — the
+// suggest/hashtag/music expansion pools — is billed too and is left off.
 func tiktokSearchInput(in port.ApifySearchInput, maxItems int) map[string]any {
-	payload := map[string]any{
-		"searchQueries":   in.Keywords,
-		"profileSorting":  "latest", // load-bearing: only latest|oldest honour the date fields
-		"resultsPerPage":  maxItems, // a page size, not a cap on what we are billed for
-		"commentsPerPost": 0,
+	return map[string]any{
+		"keywords": in.Keywords,
+		"maxItems": maxItems,
 	}
-	if !in.Window.From.IsZero() {
-		payload["oldestPostDateUnified"] = in.Window.From.UTC().Format("2006-01-02")
-	}
-	if !in.Window.To.IsZero() {
-		payload["newestPostDate"] = in.Window.To.UTC().Format("2006-01-02")
-	}
-	return payload
 }
 
 // RunSearch drives the platform's search actor: keywords + window instead of

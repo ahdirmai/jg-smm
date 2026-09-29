@@ -9,74 +9,114 @@ import (
 	"github.com/ahdirmai/jg-smm/apps/api/internal/port"
 )
 
-// mkTikTokPost builds one dataset row as clockworks/tiktok-scraper emits it.
-// The nested authorMeta/videoMeta/musicMeta objects and the twin createTime
-// fields are the whole reason this platform needs its own parser.
-func mkTikTokPost(id string, createTimeISO string, createTime int64) map[string]any {
-	// The two date fields are always consistent here. A post whose ISO says
-	// 3 August and whose createTime says 25 July would silently fall out of the
+// mkTikTokPost builds one dataset row in xmolodtsov/tiktok-search-scraper's
+// shape: flat metrics, a nested channel, a nested video, and twin upload date
+// fields. Use realActorRow below instead wherever the point of the test is
+// that the parser matches the actor.
+func mkTikTokPost(id string, uploadedAtFormatted string, uploadedAt int64) map[string]any {
+	// The two date fields are always consistent here. A row whose ISO says
+	// 3 August and whose unix says 25 July would silently fall out of the
 	// window the moment the ISO parse regressed, turning a date bug into a
 	// "the row vanished" failure that points nowhere.
-	if createTime == 0 {
-		if t, err := time.Parse(time.RFC3339, createTimeISO); err == nil {
-			createTime = t.Unix()
+	if uploadedAt == 0 {
+		if t, err := time.Parse(time.RFC3339, uploadedAtFormatted); err == nil {
+			uploadedAt = t.Unix()
 		}
 	}
 	return map[string]any{
-		"id":            id,
-		"text":          "viral dance " + id,
-		"createTimeISO": createTimeISO,
-		"createTime":    createTime,
-		"webVideoUrl":   "https://www.tiktok.com/@owner/video/" + id,
-		"diggCount":     1200,
-		"commentCount":  34,
-		"shareCount":    7,
-		"collectCount":  3,
-		"playCount":     9000,
-		// Empty, exactly as the actor's own documented output sample shows.
-		// A previous version of this fixture put a URL here, which the actor
-		// only ever emits when a billed shouldDownload* flag is on — so the
-		// test asserted a shape no default run produces and the parser shipped
-		// storing zero media for every TikTok post. The cover below is what
-		// a default run actually returns.
-		"mediaUrls": []string{},
-		"hashtags":  []string{"fyp", "dance"},
-		"isAd":      false,
-		"authorMeta": map[string]any{
-			// The actor has shipped this as both a number and a string, so the
-			// parser keeps it untyped. A concretely-typed field fails to
-			// unmarshal the whole row.
-			"id": 67123, "name": "owner_" + id, "nickName": "Owner " + id,
-			"signature": "bio", "fans": 1200, "heart": 34000, "verified": false,
+		"id":                  id,
+		"title":               "viral dance " + id,
+		"uploadedAtFormatted": uploadedAtFormatted,
+		"uploadedAt":          uploadedAt,
+		"postPage":            "https://www.tiktok.com/@owner/video/" + id,
+		"views":               9000,
+		"likes":               1200,
+		"comments":            34,
+		"shares":              7,
+		"bookmarks":           3,
+		"channel": map[string]any{
+			"id": "6" + id, "name": "Owner " + id, "username": "owner_" + id,
+			"avatar":   "https://cdn.tiktok/avatar-" + id + ".jpg",
+			"verified": false, "followers": 1200, "following": 12, "videos": 40, "likes": 27500,
 		},
-		"videoMeta": map[string]any{
-			"duration": 15,
-			// Both spellings the actor emits. The parser prefers the
-			// original (uncropped) one, matching the Instagram path.
-			"coverUrl":         "https://p16.tiktokcdn.com/cover-" + id + ".jpg",
-			"originalCoverUrl": "https://p16.tiktokcdn.com/orig-" + id + ".jpg",
-			"format":           "mp4", "width": 576, "height": 1024,
-		},
-		"musicMeta": map[string]any{
-			"id": "77", "musicName": "original sound", "authorName": "owner_" + id, "original": true,
+		"video": map[string]any{
+			"width": 576, "height": 1024, "ratio": "540p", "duration": 15,
+			"url":       "https://cdn.tiktok/video-" + id + ".mp4",
+			"cover":     "https://cdn.tiktok/cover-" + id + ".jpg",
+			"thumbnail": "https://cdn.tiktok/thumb-" + id + ".jpg",
 		},
 	}
 }
 
-// mkTikTokErrorRow is the actor's interleaved error item. It carries errorCode
-// and NO id — the shape that would trip an external-id guard.
-func mkTikTokErrorRow(code string) map[string]any {
-	return map[string]any{
-		"errorCode":    code,
-		"errorMessage": "search query not found",
-		"query":        "#doesnotexist",
-	}
-}
+// realActorRow is one row captured verbatim from a live
+// xmolodtsov/tiktok-search-scraper run (keyword "Batulicin", 2026-09-29) with
+// only the signed CDN query strings elided — every key, every nesting level
+// and every value that is not a URL is exactly what the actor returned.
+//
+// It exists because the last TikTok parser was written against a hand-invented
+// row and shipped a bug for months: the fixture asserted a `mediaUrls` entry
+// the actor only emits behind a billed flag, so the suite agreed with the bug
+// instead of catching it. A test that cannot fail on a renamed field is not a
+// test of that field.
+const realActorRow = `{
+  "inputSource": "Batulicin",
+  "id": "7689500671057399047",
+  "title": "Ada yg baru lg di batulicin #batulicin #tanahbumbu #fypp #platinumcineplex ",
+  "views": 75200,
+  "likes": 1351,
+  "comments": 65,
+  "shares": 1352,
+  "bookmarks": 148,
+  "hashtags": [null, "batulicin", "tanahbumbu", "fypp", "fypppppppppppppp", "platinumcineplex"],
+  "channel": {
+    "id": "246423893891063808",
+    "name": "CiciSuciii",
+    "username": "sucirachmadiana",
+    "avatar": "https://p16-common-sign.tiktokcdn-eu.com/avatar...jpeg",
+    "verified": false,
+    "url": "https://www.tiktok.com/@sucirachmadiana",
+    "followers": 3737,
+    "following": 163,
+    "videos": 597,
+    "likes": 27500
+  },
+  "collabInfo": null,
+  "uploadedAt": 1790351396,
+  "uploadedAtFormatted": "2026-09-25T15:49:56.000Z",
+  "video": {
+    "width": 576,
+    "height": 1024,
+    "ratio": "540p",
+    "duration": 95,
+    "url": "https://v16-webapp-prime.tiktok.com/video/tos/...mp4",
+    "cover": "https://p16-sign.tiktokcdn.com/ogQItLV8SCXf....jpeg",
+    "thumbnail": "https://p16-sign.tiktokcdn.com/oom2rfAbeAQY....jpeg"
+  },
+  "song": {
+    "id": "7335499320058547000",
+    "title": "original sound - Spotify",
+    "artist": "Dylan",
+    "album": null,
+    "duration": 144,
+    "cover": "https://p16-sign.tiktokcdn.com/537c5b69219f....jpeg"
+  },
+  "postPage": "https://www.tiktok.com/@sucirachmadiana/video/7689500671057399047",
+  "poi": {
+    "poiName": "PLATINUM CINEPLEX BATULICIN",
+    "address": "Jl. Transmigrasi Plajau No.2, Kabupaten Tanah Bumbu, Kalimantan Selatan 72212, Indonesia",
+    "cityCode": "9780988",
+    "cityName": null,
+    "latitude": null,
+    "longitude": null,
+    "regionCode": null
+  },
+  "keyword": "Batulicin"
+}`
 
 func tiktokWindow() port.KeywordTimeWindow {
 	return port.KeywordTimeWindow{
 		From: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
-		To:   time.Date(2026, 9, 24, 0, 0, 0, 0, time.UTC),
+		To:   time.Date(2026, 9, 29, 0, 0, 0, 0, time.UTC),
 	}
 }
 
@@ -89,52 +129,13 @@ func tiktokParse(t *testing.T, row map[string]any) ([]scrapeItem, error) {
 	return parseTikTokItems(raw, tiktokWindow())
 }
 
-// The actor interleaves error items with real results and says so in its own
-// docs. A row carrying errorCode has no id, so an unhandled one trips the
-// external-id guard and the error propagates: the ENTIRE run's ingest dies,
-// taking the valid rows beside it. This row must yield nothing and no error.
-func TestParseTikTokErrorRowIsSkippedNotFatal(t *testing.T) {
-	for _, code := range []string{"PROFILE_PRIVATE", "SEARCH_QUERY_NOT_FOUND", "INVALID_INPUT", "FILTER_NO_PASS"} {
-		items, err := tiktokParse(t, mkTikTokErrorRow(code))
-		if err != nil {
-			t.Fatalf("%s: one error row must not fail the run: %v", code, err)
-		}
-		if len(items) != 0 {
-			t.Fatalf("%s: got %d items, want 0 (an error row is not a post)", code, len(items))
-		}
-	}
-}
-
-// The valid rows on either side of an error row must all survive.
-func TestParseTikTokKeepsTheValidRowsAroundAnErrorRow(t *testing.T) {
-	rows := []map[string]any{
-		mkTikTokErrorRow("SEARCH_QUERY_NOT_FOUND"),
-		mkTikTokPost("7123", "2026-08-03T07:06:51Z", 1785740811),
-		mkTikTokErrorRow("PROFILE_PRIVATE"),
-		mkTikTokPost("7124", "2026-08-04T07:06:51Z", 1785827211),
-		mkTikTokErrorRow("FILTER_NO_PASS"),
-	}
-	var kept []string
-	for _, row := range rows {
-		items, err := tiktokParse(t, row)
-		if err != nil {
-			t.Fatalf("scrape: %v", err)
-		}
-		for _, it := range items {
-			kept = append(kept, it.ExternalID)
-		}
-	}
-	if len(kept) != 2 || kept[0] != "7123" || kept[1] != "7124" {
-		t.Fatalf("kept = %v, want [7123 7124] — the error rows must not cost us the posts", kept)
-	}
-}
-
-// authorMeta is a nested OBJECT, not a string like the other platforms'
-// author field. If the parser reads it flat it silently yields an empty handle.
-func TestParseTikTokNestedAuthorAndMetrics(t *testing.T) {
-	items, err := tiktokParse(t, mkTikTokPost("7123", "2026-08-03T07:06:51Z", 1785740811))
+// The captured row is the ground truth this parser is written against. Every
+// assertion here is a field the actor actually sends; if the actor renames one,
+// or nests one differently, or starts sending it as a number, this fails.
+func TestParseTikTokRealActorRow(t *testing.T) {
+	items, err := parseTikTokItems([]byte(realActorRow), tiktokWindow())
 	if err != nil {
-		t.Fatalf("parse: %v", err)
+		t.Fatalf("parse captured row: %v", err)
 	}
 	if len(items) != 1 {
 		t.Fatalf("items = %d, want 1", len(items))
@@ -143,35 +144,39 @@ func TestParseTikTokNestedAuthorAndMetrics(t *testing.T) {
 	if it.Platform != "tiktok" {
 		t.Errorf("platform = %q, want tiktok", it.Platform)
 	}
-	if it.ExternalID != "7123" {
-		t.Errorf("externalID = %q, want 7123", it.ExternalID)
+	if it.ExternalID != "7689500671057399047" {
+		t.Errorf("externalID = %q, want 7689500671057399047", it.ExternalID)
 	}
-	if it.AuthorHandle != "owner_7123" {
-		t.Errorf("authorHandle = %q, want owner_7123 (from nested authorMeta.name)", it.AuthorHandle)
+	// channel is a nested object, not a flat string like the other platforms.
+	if it.AuthorHandle != "sucirachmadiana" {
+		t.Errorf("authorHandle = %q, want sucirachmadiana (channel.username)", it.AuthorHandle)
 	}
-	if it.AuthorID != "67123" {
-		t.Errorf("authorID = %q, want 67123 (from nested authorMeta.id)", it.AuthorID)
+	if it.AuthorID != "246423893891063808" {
+		t.Errorf("authorID = %q, want 246423893891063808 (channel.id)", it.AuthorID)
 	}
-	// mediaUrls is empty on a default run, so the cover is the only media the
-	// actor gave us. Storing an empty list here is what made every scraped
-	// TikTok post render with no thumbnail.
-	if len(it.MediaURLs) != 1 || it.MediaURLs[0] != "https://p16.tiktokcdn.com/orig-7123.jpg" {
-		t.Errorf("mediaUrls = %v, want the videoMeta original cover", it.MediaURLs)
+	if !strings.Contains(it.Text, "batulicin") {
+		t.Errorf("text = %q, want the caption from `title`", it.Text)
 	}
-	// The counter names are TikTok's own (digg/share/collect); the stored keys
-	// are the cross-platform vocabulary the dashboard already reads.
-	checkMetric(t, mustJSON(t, it.Metrics), "likes", 1200)
-	checkMetric(t, mustJSON(t, it.Metrics), "comments", 34)
-	checkMetric(t, mustJSON(t, it.Metrics), "shares", 7)
-	checkMetric(t, mustJSON(t, it.Metrics), "views", 9000)
-	checkMetric(t, mustJSON(t, it.Metrics), "collects", 3)
+	if len(it.MediaURLs) != 1 || !strings.Contains(it.MediaURLs[0], "ogQItLV8SCXf") {
+		t.Errorf("mediaUrls = %v, want exactly video.cover", it.MediaURLs)
+	}
+	want := time.Date(2026, 9, 25, 15, 49, 56, 0, time.UTC)
+	if it.PublishedAt == nil || !it.PublishedAt.Equal(want) {
+		t.Fatalf("publishedAt = %v, want %s", it.PublishedAt, want)
+	}
+	checkMetric(t, mustJSON(t, it.Metrics), "views", 75200)
+	checkMetric(t, mustJSON(t, it.Metrics), "likes", 1351)
+	checkMetric(t, mustJSON(t, it.Metrics), "comments", 65)
+	checkMetric(t, mustJSON(t, it.Metrics), "shares", 1352)
+	// bookmarks is the new actor's name for what the old one called
+	// collectCount; the stored key is unchanged so stored posts keep their value.
+	checkMetric(t, mustJSON(t, it.Metrics), "collects", 148)
 }
 
-// A createTimeISO that is present but in a layout parseActorTime does not
-// accept is a different path from an empty string, and it is the one the actor
-// is most likely to produce. The post must be KEPT — the ingestor's window
-// treats a zero time as in-window, matching every other parser here — and the
-// date must be stored as NULL rather than as the zero time.
+// A date present but in a layout parseActorTime does not accept is a different
+// path from an empty string. The post must be KEPT — the window treats a zero
+// time as in-window, matching every other parser here — and the date stored as
+// NULL rather than as the zero time.
 func TestParseTikTokUnparseableISOIsKeptWithNoPublishDate(t *testing.T) {
 	// "08/03/2026 07:06:51" — the US-slashed shape some serializers emit. NOT
 	// "…07:06:51.123456": parseActorTime accepts fractional seconds through
@@ -188,10 +193,9 @@ func TestParseTikTokUnparseableISOIsKeptWithNoPublishDate(t *testing.T) {
 	}
 }
 
-// createTimeISO frequently arrives with no timezone marker. RFC3339 rejects
-// it, so a parser using time.Parse alone stores a ZERO date that reads as
-// "no date" rather than "3 August" — the same class of silent date loss as
-// the Instagram pub_date bug.
+// An offsetless ISO is rejected by RFC3339, so a parser using time.Parse alone
+// stores a ZERO date that reads as "no date" rather than "3 August" — the same
+// class of silent date loss as the Instagram pub_date bug.
 func TestParseTikTokOffsetlessISOIsReadAsUTC(t *testing.T) {
 	items, err := tiktokParse(t, mkTikTokPost("7123", "2026-08-03T07:06:51", 0))
 	if err != nil {
@@ -206,15 +210,15 @@ func TestParseTikTokOffsetlessISOIsReadAsUTC(t *testing.T) {
 	}
 }
 
-// The reverse case: no usable ISO, but a Unix createTime. Reading the ISO
+// The reverse case: no usable ISO, but a Unix upload time. Reading the ISO
 // unconditionally yields a zero date on exactly the rows that have data.
-func TestParseTikTokFallsBackToUnixCreateTime(t *testing.T) {
+func TestParseTikTokFallsBackToUnixUploadTime(t *testing.T) {
 	items, err := tiktokParse(t, mkTikTokPost("7123", "", 1785740811))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	if len(items) != 1 || items[0].PublishedAt == nil {
-		t.Fatalf("publishedAt = nil; a Unix createTime is a usable date")
+		t.Fatalf("publishedAt = nil; a Unix upload time is a usable date")
 	}
 	want := time.Unix(1785740811, 0).UTC()
 	if !items[0].PublishedAt.Equal(want) {
@@ -237,8 +241,9 @@ func TestParseTikTokUndatedRowIsKeptWithNoPublishDate(t *testing.T) {
 	}
 }
 
-// The window drops the rows outside it. The actor is asked for a date range
-// too, so this is a second line of defence, not the only one.
+// This actor has no date input, so the ingestor's window is the ONLY filter
+// between what we paid for and what we store. Out-of-window rows must be
+// dropped, and dropping one must not fail the run.
 func TestParseTikTokFiltersByWindow(t *testing.T) {
 	items, err := tiktokParse(t, mkTikTokPost("7123", "2026-08-03T07:06:51Z", 1785740811))
 	if err != nil || len(items) != 1 {
@@ -253,12 +258,44 @@ func TestParseTikTokFiltersByWindow(t *testing.T) {
 	}
 }
 
-// A post row with no id at all and no errorCode is genuinely malformed and
-// must say so — silently dropping it would hide a broken actor behind a
-// plausible-looking count.
+// A post row with no id is genuinely malformed and must say so. Silently
+// dropping it would hide a broken actor behind a plausible-looking count.
 func TestParseTikTokRowWithNoIDIsAnError(t *testing.T) {
-	if _, err := tiktokParse(t, map[string]any{"text": "orphan", "diggCount": 1}); err == nil {
-		t.Fatal("a row with neither id nor errorCode is malformed and must error, not be dropped silently")
+	if _, err := tiktokParse(t, map[string]any{"title": "orphan", "views": 1}); err == nil {
+		t.Fatal("a row with no id is malformed and must error, not be dropped silently")
+	}
+}
+
+// cover is the frame, thumbnail the smaller variant, and both are free on a
+// default run. A row carrying only the thumbnail must still get media — the
+// alternative is the empty list that renders as "no media" on a post that has it.
+func TestParseTikTokFallsBackToThumbnailWhenCoverMissing(t *testing.T) {
+	row := mkTikTokPost("7123", "2026-08-03T07:06:51Z", 1785740811)
+	row["video"].(map[string]any)["cover"] = ""
+	items, err := tiktokParse(t, row)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(items[0].MediaURLs) != 1 || !strings.Contains(items[0].MediaURLs[0], "thumb-7123") {
+		t.Errorf("mediaUrls = %v, want the thumbnail when the cover is absent", items[0].MediaURLs)
+	}
+}
+
+// video is absent on some rows. The post must still be stored — with no media,
+// which the page renders as no thumbnail — rather than dropped over a missing
+// optional object.
+func TestParseTikTokSurvivesMissingVideo(t *testing.T) {
+	row := mkTikTokPost("7123", "2026-08-03T07:06:51Z", 1785740811)
+	delete(row, "video")
+	items, err := tiktokParse(t, row)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("items = %d, want 1: a row without video is still a post", len(items))
+	}
+	if items[0].MediaURLs == nil || len(items[0].MediaURLs) != 0 {
+		t.Errorf("mediaUrls = %v, want an empty non-nil list when the actor sent no cover", items[0].MediaURLs)
 	}
 }
 
@@ -269,46 +306,4 @@ func mustJSON(t *testing.T, m map[string]any) json.RawMessage {
 		t.Fatalf("marshal metrics: %v", err)
 	}
 	return b
-}
-
-// A run with a billed shouldDownload* flag set populates mediaUrls. That
-// download is the higher-fidelity asset, so it must win over the cover and the
-// cover must not be appended as a second, redundant slide.
-func TestParseTikTokPrefersDownloadedMediaOverCover(t *testing.T) {
-	row := mkTikTokPost("7123", "2026-08-03T07:06:51Z", 1785740811)
-	row["mediaUrls"] = []string{
-		"https://p16.tiktokcdn.com/video-7123.mp4",
-		"https://p16.tiktokcdn.com/poster-7123.jpg",
-	}
-	items, err := tiktokParse(t, row)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	got := items[0].MediaURLs
-	if len(got) != 2 {
-		t.Fatalf("mediaUrls = %v, want exactly the 2 downloaded assets", got)
-	}
-	for _, u := range got {
-		if strings.Contains(u, "orig-") || strings.Contains(u, "cover-") {
-			t.Errorf("mediaUrls = %v, want no cover fallback mixed in", got)
-		}
-	}
-}
-
-// videoMeta is absent on a photomode row in some actor versions. The post must
-// still be stored — with no media, which the page renders as no thumbnail —
-// rather than dropped over a missing optional object.
-func TestParseTikTokSurvivesMissingVideoMeta(t *testing.T) {
-	row := mkTikTokPost("7123", "2026-08-03T07:06:51Z", 1785740811)
-	delete(row, "videoMeta")
-	items, err := tiktokParse(t, row)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if len(items) != 1 {
-		t.Fatalf("items = %d, want 1: a row without videoMeta is still a post", len(items))
-	}
-	if len(items[0].MediaURLs) != 0 {
-		t.Errorf("mediaUrls = %v, want none when the actor sent no cover", items[0].MediaURLs)
-	}
 }

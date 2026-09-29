@@ -156,7 +156,7 @@ services:
       # a running stack.
       APIFY_SEARCH_ACTOR_INSTAGRAM: ${APIFY_SEARCH_ACTOR_INSTAGRAM:-crawlerbros/instagram-keyword-search-scraper}
       APIFY_SEARCH_ACTOR_THREADS: ${APIFY_SEARCH_ACTOR_THREADS:-futurizerush/meta-threads-scraper}
-      APIFY_SEARCH_ACTOR_TIKTOK: ${APIFY_SEARCH_ACTOR_TIKTOK:-clockworks/tiktok-scraper}
+      APIFY_SEARCH_ACTOR_TIKTOK: ${APIFY_SEARCH_ACTOR_TIKTOK:-xmolodtsov/tiktok-search-scraper}
       # Per-POST Threads scraper, also a full id: the prefix-derived
       # "<prefix>/meta-threads-scraper" 404s on every scrape — that build is
       # user-posts-only (no per-post mode) and has no store entry under apify/.

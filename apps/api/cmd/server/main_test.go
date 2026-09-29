@@ -22,7 +22,7 @@ func TestSearchActorForPlatformCoversEveryScrapablePlatform(t *testing.T) {
 	cfg := config.Config{
 		ApifySearchActorInstagram: "crawlerbros/instagram-keyword-search-scraper",
 		ApifySearchActorThreads:   "futurizerush/meta-threads-scraper",
-		ApifySearchActorTikTok:    "clockworks/tiktok-scraper",
+		ApifySearchActorTikTok:    "xmolodtsov/tiktok-search-scraper",
 	}
 	resolve := searchActorForPlatform(cfg)
 

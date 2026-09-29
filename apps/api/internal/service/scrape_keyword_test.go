@@ -42,7 +42,7 @@ func keywordSvcFor(t *testing.T, storage port.RawStorage) (*KeywordScrapeService
 			case domain.PlatformThreads:
 				return "futurizerush/meta-threads-scraper"
 			case domain.PlatformTikTok:
-				return "clockworks/tiktok-scraper"
+				return "xmolodtsov/tiktok-search-scraper"
 			}
 			return ""
 		},

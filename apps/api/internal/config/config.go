@@ -132,8 +132,9 @@ type Config struct {
 	// Threads search actors publish under different Apify namespaces.
 	ApifySearchActorInstagram string
 	ApifySearchActorThreads   string
-	// ApifySearchActorTikTok is the full id of clockworks/tiktok-scraper. Same
-	// rule as the two above: never prefix-derived.
+	// ApifySearchActorTikTok is the full id of
+	// xmolodtsov/tiktok-search-scraper. Same rule as the two above: never
+	// prefix-derived.
 	ApifySearchActorTikTok string
 	// ApifyBudgetUSD is the monthly Apify spend ceiling (P5-08). 0 publishes no
 	// ceiling, which disables the budget alert rather than making it noisy.
@@ -247,7 +248,7 @@ func Load() (Config, error) {
 		// Full ids: the search actors live under different Apify namespaces.
 		ApifySearchActorInstagram: env("APIFY_SEARCH_ACTOR_INSTAGRAM", "crawlerbros/instagram-keyword-search-scraper"),
 		ApifySearchActorThreads:   env("APIFY_SEARCH_ACTOR_THREADS", "futurizerush/meta-threads-scraper"),
-		ApifySearchActorTikTok:    env("APIFY_SEARCH_ACTOR_TIKTOK", "clockworks/tiktok-scraper"),
+		ApifySearchActorTikTok:    env("APIFY_SEARCH_ACTOR_TIKTOK", "xmolodtsov/tiktok-search-scraper"),
 		ApifyPostActorThreads:     env("APIFY_POST_ACTOR_THREADS", "themineworks/threads-scraper"),
 		ApifyBudgetUSD:            envFloat("APIFY_BUDGET_USD", 0),
 		ProxyBudgetGB:             envFloat("PROXY_BUDGET_GB", 0),
