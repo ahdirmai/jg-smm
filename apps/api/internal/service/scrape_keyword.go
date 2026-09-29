@@ -101,12 +101,38 @@ type KeywordScrapeResult struct {
 // Each one has a search actor, a per-actor payload in the Apify runner, and a
 // dataset parser in the ingestor — all three, or the platform is not scrapable
 // and saying so here is kinder than a run that dies mid-ingest.
+//
+// The list is the single source of truth for both this gate and the message
+// below, which is rendered from it. A hand-written enumeration here went stale
+// the moment a platform was added without the string being updated, so the
+// error now derives from this list and cannot drift.
 func keywordScrapable(p domain.Platform) bool {
-	switch p {
-	case domain.PlatformInstagram, domain.PlatformThreads, domain.PlatformTikTok:
-		return true
+	return keywordScrapablePlatforms[p]
+}
+
+// keywordScrapablePlatforms is the allowlist. Declared as a map (not a switch)
+// so scrapablePlatformNames can render the user-facing error from the same
+// data instead of a second hand-maintained copy of the list.
+var keywordScrapablePlatforms = map[domain.Platform]bool{
+	domain.PlatformInstagram: true,
+	domain.PlatformThreads:   true,
+	domain.PlatformTikTok:    true,
+	domain.PlatformYouTube:   true,
+	domain.PlatformLinkedIn:  true,
+	domain.PlatformX:         true,
+	domain.PlatformFacebook:  true,
+}
+
+// scrapablePlatformNames lists the allowlist in the order a user would say it,
+// for the validation error. Derived, never typed by hand.
+func scrapablePlatformNames() string {
+	names := make([]string, 0, len(keywordScrapablePlatforms))
+	for _, p := range domain.AllPlatforms {
+		if keywordScrapablePlatforms[p] {
+			names = append(names, string(p))
+		}
 	}
-	return false
+	return strings.Join(names, ", ")
 }
 
 // CreateBatch validates, inserts keyword_batch PENDING and launches background
@@ -114,7 +140,7 @@ func keywordScrapable(p domain.Platform) bool {
 func (s *KeywordScrapeService) CreateBatch(ctx context.Context, in KeywordScrapeInput) (domain.KeywordBatch, error) {
 	in.Platform = domain.Platform(strings.TrimSpace(string(in.Platform)))
 	if !keywordScrapable(in.Platform) {
-		return domain.KeywordBatch{}, fmt.Errorf("%w: keyword scrape supports instagram, threads and tiktok only, got %q", domain.ErrValidation, in.Platform)
+		return domain.KeywordBatch{}, fmt.Errorf("%w: keyword scrape supports %s only, got %q", domain.ErrValidation, scrapablePlatformNames(), in.Platform)
 	}
 	cleaned := make([]string, 0, len(in.Keywords))
 	seen := map[string]struct{}{}

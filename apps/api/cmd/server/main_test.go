@@ -23,6 +23,10 @@ func TestSearchActorForPlatformCoversEveryScrapablePlatform(t *testing.T) {
 		ApifySearchActorInstagram: "crawlerbros/instagram-keyword-search-scraper",
 		ApifySearchActorThreads:   "futurizerush/meta-threads-scraper",
 		ApifySearchActorTikTok:    "xmolodtsov/tiktok-search-scraper",
+		ApifySearchActorYouTube:   "apidojo/youtube-scraper-api",
+		ApifySearchActorLinkedIn:  "harvestapi/linkedin-post-search",
+		ApifySearchActorX:         "apidojo/twitter-scraper-lite",
+		ApifySearchActorFacebook:  "danek/facebook-search-ppr",
 	}
 	resolve := searchActorForPlatform(cfg)
 
@@ -34,23 +38,11 @@ func TestSearchActorForPlatformCoversEveryScrapablePlatform(t *testing.T) {
 				"every batch for it 400s with \"no search actor configured\"", p)
 		}
 	}
-}
 
-func TestSearchActorForPlatformLeavesDeferredPlatformsEmpty(t *testing.T) {
-	cfg := config.Config{
-		ApifySearchActorInstagram: "ig",
-		ApifySearchActorThreads:   "th",
-		ApifySearchActorTikTok:    "tt",
-	}
-	resolve := searchActorForPlatform(cfg)
-
-	for _, p := range []domain.Platform{
-		domain.PlatformFacebook, domain.PlatformLinkedIn,
-		domain.PlatformX, domain.PlatformYouTube,
-	} {
-		if got := resolve(p); got != "" {
-			t.Errorf("platform %q is still deferred but resolves to actor %q", p, got)
-		}
+	// The other direction: a platform that is not scrapable must resolve to
+	// nothing, so CreateBatch refuses it before spending a call.
+	if got := resolve(domain.Platform("mastodon")); got != "" {
+		t.Errorf("an unknown platform resolved to actor %q", got)
 	}
 }
 
@@ -64,5 +56,9 @@ func keywordScrapablePlatforms() []domain.Platform {
 		domain.PlatformInstagram,
 		domain.PlatformThreads,
 		domain.PlatformTikTok,
+		domain.PlatformYouTube,
+		domain.PlatformLinkedIn,
+		domain.PlatformX,
+		domain.PlatformFacebook,
 	}
 }

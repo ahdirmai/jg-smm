@@ -136,6 +136,13 @@ type Config struct {
 	// xmolodtsov/tiktok-search-scraper. Same rule as the two above: never
 	// prefix-derived.
 	ApifySearchActorTikTok string
+	// ApifySearchActorYouTube / LinkedIn / X / Facebook are the full ids of the
+	// four newer keyword-search actors. Same rule as above: full store ids,
+	// never prefix-derived — all four publish under third-party namespaces.
+	ApifySearchActorYouTube  string
+	ApifySearchActorLinkedIn string
+	ApifySearchActorX        string
+	ApifySearchActorFacebook string
 	// ApifyBudgetUSD is the monthly Apify spend ceiling (P5-08). 0 publishes no
 	// ceiling, which disables the budget alert rather than making it noisy.
 	ApifyBudgetUSD float64
@@ -249,6 +256,10 @@ func Load() (Config, error) {
 		ApifySearchActorInstagram: env("APIFY_SEARCH_ACTOR_INSTAGRAM", "crawlerbros/instagram-keyword-search-scraper"),
 		ApifySearchActorThreads:   env("APIFY_SEARCH_ACTOR_THREADS", "futurizerush/meta-threads-scraper"),
 		ApifySearchActorTikTok:    env("APIFY_SEARCH_ACTOR_TIKTOK", "xmolodtsov/tiktok-search-scraper"),
+		ApifySearchActorYouTube:   env("APIFY_SEARCH_ACTOR_YOUTUBE", "apidojo/youtube-scraper-api"),
+		ApifySearchActorLinkedIn:  env("APIFY_SEARCH_ACTOR_LINKEDIN", "harvestapi/linkedin-post-search"),
+		ApifySearchActorX:         env("APIFY_SEARCH_ACTOR_X", "apidojo/twitter-scraper-lite"),
+		ApifySearchActorFacebook:  env("APIFY_SEARCH_ACTOR_FACEBOOK", "danek/facebook-search-ppr"),
 		ApifyPostActorThreads:     env("APIFY_POST_ACTOR_THREADS", "themineworks/threads-scraper"),
 		ApifyBudgetUSD:            envFloat("APIFY_BUDGET_USD", 0),
 		ProxyBudgetGB:             envFloat("PROXY_BUDGET_GB", 0),

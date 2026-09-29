@@ -102,33 +102,167 @@ var _ port.ApifyRunner = (*Runner)(nil)
 // A wrong field name is silent here: the actor falls back to its own default
 // and returns unrelated posts, so these names are pinned against the live input
 // schemas in runner_test.go.
+// This is a switch, not a chain of ifs, and its default returns nil. The old
+// form fell through to the Instagram payload, so any platform not yet listed
+// here was silently POSTed `keywords`/`maxPosts` — actors that spell it
+// differently ignore those keys and answer 200 with whatever their own default
+// returns. A wrong field name is invisible; a missing branch is not.
 func (r *Runner) searchInput(in port.ApifySearchInput, maxItems int) map[string]any {
-	if in.Platform == domain.PlatformTikTok {
+	switch in.Platform {
+	case domain.PlatformInstagram:
+		return instagramSearchInput(in, maxItems)
+	case domain.PlatformThreads:
+		return threadsSearchInput(in, maxItems)
+	case domain.PlatformTikTok:
 		return tiktokSearchInput(in, maxItems)
+	case domain.PlatformYouTube:
+		return youTubeSearchInput(in, maxItems)
+	case domain.PlatformLinkedIn:
+		return linkedInSearchInput(in, maxItems)
+	case domain.PlatformX:
+		return xSearchInput(in, maxItems)
+	case domain.PlatformFacebook:
+		return facebookSearchInput(in, maxItems)
 	}
-	if in.Platform == domain.PlatformThreads {
-		payload := map[string]any{
-			"mode":          "search",
-			"keywords":      in.Keywords,
-			"max_posts":     maxItems,
-			"search_filter": "recent",
-		}
-		if !in.Window.From.IsZero() {
-			payload["start_date"] = in.Window.From.UTC().Format("2006-01-02")
-		}
-		if !in.Window.To.IsZero() {
-			payload["end_date"] = in.Window.To.UTC().Format("2006-01-02")
-		}
-		return payload
-	}
+	return nil
+}
 
-	// No date keys: the actor's schema has no date field, so sending
-	// onlyPostsNewerThan (the old apify/instagram-scraper spelling) would be
-	// ignored — and an ignored lower bound means the ingestor has to drop
-	// out-of-window posts it already paid to fetch.
+// instagramSearchInput builds the payload for
+// crawlerbros/instagram-keyword-search-scraper.
+//
+// No date keys: the actor's schema has no date field, so sending
+// onlyPostsNewerThan (the old apify/instagram-scraper spelling) would be
+// ignored — and an ignored lower bound means the ingestor has to drop
+// out-of-window posts it already paid to fetch.
+func instagramSearchInput(in port.ApifySearchInput, maxItems int) map[string]any {
 	return map[string]any{
 		"keywords": in.Keywords,
 		"maxPosts": maxItems,
+	}
+}
+
+// threadsSearchInput builds the payload for futurizerush/meta-threads-scraper,
+// whose date bounds are the only two that have ever been verified to filter
+// server-side rather than being accepted and discarded.
+func threadsSearchInput(in port.ApifySearchInput, maxItems int) map[string]any {
+	payload := map[string]any{
+		"mode":          "search",
+		"keywords":      in.Keywords,
+		"max_posts":     maxItems,
+		"search_filter": "recent",
+	}
+	if !in.Window.From.IsZero() {
+		payload["start_date"] = in.Window.From.UTC().Format("2006-01-02")
+	}
+	if !in.Window.To.IsZero() {
+		payload["end_date"] = in.Window.To.UTC().Format("2006-01-02")
+	}
+	return payload
+}
+
+// youTubeSearchInput builds the payload for apidojo/youtube-scraper-api.
+//
+// uploadDate is a real server-side filter, but it takes ENUM values
+// (any/l/t/w/m/y), not a date — verified 2026-09-29, where sending "month"
+// is rejected outright with "must be equal to one of the allowed values".
+// So the window is mapped down to the coarsest bucket that still contains the
+// whole requested range, and the ingestor narrows to the exact days. Sending a
+// real date string is not an option and sending nothing would bill the actor
+// for the actor's own default window.
+func youTubeSearchInput(in port.ApifySearchInput, maxItems int) map[string]any {
+	return map[string]any{
+		"keywords":   in.Keywords,
+		"maxItems":   maxItems,
+		"uploadDate": youTubeUploadDateBucket(in.Window),
+	}
+}
+
+// youTubeUploadDateBucket picks the smallest uploadDate bucket that fully
+// covers the requested window. A bucket that is too narrow silently drops
+// posts the user asked for; too wide only costs money, because the ingestor
+// still applies the exact window. So err towards wide.
+func youTubeUploadDateBucket(w port.KeywordTimeWindow) string {
+	if w.From.IsZero() && w.To.IsZero() {
+		return "all"
+	}
+	// Only the lower bound can be expressed, and only as a duration, so size
+	// it from From and ignore To: the actor's filter is "newer than", never
+	// "older than", and the ingestor applies the upper bound.
+	if w.From.IsZero() {
+		return "all"
+	}
+	switch d := time.Since(w.From); {
+	// The actor's allowed set is exactly {all, l, t, w, m, y} — verified
+	// 2026-09-29, where "month" was rejected outright with
+	//   invalid-input: Field input.uploadDate must be equal to one of the
+	//   allowed values: "all", "l", "t", "w", "m", "y"
+	// There is no "h": the sub-daily bucket is "l" (last hour). Returning "h"
+	// here 400s the whole run.
+	case d <= 2*time.Hour:
+		return "l"
+	case d <= 48*time.Hour:
+		return "t"
+	case d <= 8*24*time.Hour:
+		return "w"
+	case d <= 32*24*time.Hour:
+		return "m"
+	case d <= 400*24*time.Hour:
+		return "y"
+	}
+	return "all"
+}
+
+// linkedInSearchInput builds the payload for harvestapi/linkedin-post-search.
+//
+// maxPosts is the real per-query cap and MUST be sent: omitted, the actor uses
+// its own default of 100 posts per query and bills all of them. That was
+// measured — a 5-post cap sent as `maxItems` (a key this actor does not have)
+// returned 97 rows and cost $0.096.
+//
+// postedLimitDate is a real absolute lower bound. postedLimit is a relative
+// alternative and is not sent: sending both lets the actor pick, and the
+// absolute date is the one that matches the window we actually hold.
+func linkedInSearchInput(in port.ApifySearchInput, maxItems int) map[string]any {
+	payload := map[string]any{
+		"searchQueries": in.Keywords,
+		"maxPosts":      maxItems,
+		// Newest first: the window's lower bound is the filter that matters
+		// for cost, and a relevance sort can fill the cap with old posts
+		// that the ingestor then drops.
+		"sortBy": "date",
+	}
+	if !in.Window.From.IsZero() {
+		payload["postedLimitDate"] = in.Window.From.UTC().Format("2006-01-02")
+	}
+	return payload
+}
+
+// xSearchInput builds the payload for apidojo/twitter-scraper-lite.
+//
+// This actor has no date input and no result cap. `maxItems` is therefore NOT
+// sent: it is not in the schema, so it would be ignored, and the run's cost is
+// bounded by the ingestor only. sort:Latest is sent because it is the only
+// ordering available and a relevance-ordered pool fills the earliest rows with
+// old posts. The actor bills a per-QUERY event on top of the per-result fee,
+// so the keyword list is the only thing the caller can shrink.
+func xSearchInput(in port.ApifySearchInput, _ int) map[string]any {
+	return map[string]any{
+		"searchTerms": in.Keywords,
+		"sort":        "Latest",
+	}
+}
+
+// facebookSearchInput builds the payload for danek/facebook-search-ppr.
+//
+// search_type must be "posts": the actor also searches groups, people and
+// events, and its default is not posts. max_posts is a real cap.
+func facebookSearchInput(in port.ApifySearchInput, maxItems int) map[string]any {
+	// This actor takes ONE query string, not an array, so the keyword list is
+	// sent verbatim and the actor's own matching decides the pool.
+	return map[string]any{
+		"query":       strings.Join(in.Keywords, " "),
+		"search_type": "posts",
+		"max_posts":   maxItems,
 	}
 }
 

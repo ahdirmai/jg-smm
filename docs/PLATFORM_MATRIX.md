@@ -39,11 +39,38 @@ Legend: **✅** didukung/diimplementasi · **🟡** brief-tbd (desain konsep ada
 | Scrape hashtag              | ✅  | 🟡      | ⬜  | ⬜  | ⬜       | 🟡      | ⬜     |
 | Scrape mention              | ✅  | ✅      | ⬜  | ⬜  | ⬜       | 🟡      | ⬜     |
 | Scrape comments             | ✅  | ✅      | ⬜  | ⬜  | ⬜       | 🟡      | ⬜     |
-| **Scrape keyword batch**     | ✅  | ✅      | ⬜  | ⬜  | ⬜       | ⬜      | ✅     |
+| **Scrape keyword batch**     | ✅  | ✅      | ✅  | ✅  | ✅       | ✅      | ✅     |
 | Metric: reach               | ✅  | 🟡      | ⬜  | ⬜  | ⬜       | ⬜      | ⬜     |
-| Metric: views (video/reels) | ✅  | 🟡      | ⬜  | ⬜  | ⬜       | ⬜      | ✅     |
+| Metric: views (video/reels) | ✅  | 🟡      | ⬜  | ✅  | ⬜       | ✅      | ✅     |
 | Live views                  | 🟡  | ❌      | ⬜  | ❌  | ❌       | 🟡      | 🟡     |
 
+Ketujuh platform sekarang menjalankan keyword batch, tetapi sifat biaya dan
+cakupan filter-nya berbeda satu sama lain — "keyword batch ✅" bukan berarti
+fitur yang sama:
+
+| Platform | Actor | $/hasil | Filter tanggal server-side? | Batas hasil? |
+| --- | --- | --- | --- | --- |
+| YouTube | `apidojo/youtube-scraper-api` | $0.0005 **+ ~$0.015 per query** | Ya — `uploadDate` (enum bucket) | `maxItems` |
+| LinkedIn | `harvestapi/linkedin-post-search` | $0.002 | Ya — `postedLimitDate` (absolut) | `maxPosts` (wajib) |
+| X | `apidojo/twitter-scraper-lite` | $0.0004 **+ ~$0.016 per query** | **Tidak ada** | **Tidak ada** |
+| Facebook | `danek/facebook-search-ppr` | ~$0.00001 | Tidak ada | `max_posts` |
+
+Dua konsekuensi yang harus dibaca sebelum menjalankan batch luas:
+
+1. **YouTube dan X menagih per QUERY, di luar biaya per hasil.** Satu keyword
+   sudah ~$0.015–0.016 sebelum satu baris pun datang. Batch 5 keyword ≈ $0.08
+   hanya dari tarif query, dan angka itu tidak terlihat di halaman store.
+2. **X tidak punya batas hasil maupun filter tanggal sama sekali.** Tidak ada
+   field payload yang bisa dipersempit, jadi satu batch X dapat mengembalikan
+   pool penuh dan membakar sisa kredit bulan ini. Perlakukan sebagai platform
+   paling berbahaya secara biaya, bukan yang paling murah.
+
+Pemilihan actor membatalkan asumsi "paling mahal = paling benar". Untuk keempat
+platform ini actor termurah di store justru yang salah: `worldunboxer/rapid-linkedin-scraper`
+($0.0005, termurah untuk LinkedIn) adalah scraper **lowongan kerja**, bukan post
+(`jobs_titles`/`cities`/`employment_level`), dan `apify/facebook-posts-scraper`
+(115 ribu user, paling terbukti) hanya menerima **URL halaman**, bukan keyword,
+jadi tidak bisa melayani keyword batch sama sekali.
 
 Baris **Scrape keyword batch** adalah satu-satunya yang TikTok penuhi di v0.1: `xmolodtsov/tiktok-search-scraper` via `keywords[]`. Actor ini **tidak punya input tanggal sama sekali**, jadi window 100% ditegakkan ingestor — tidak ada field payload yang bisa dipersempit. `Metric: views` terisi karena `views` dipetakan ke `Post.metrics.views` — **bukan** key baru: snapshot writer hanya membaca `views`/`viewCount`/`playCount`, dan `TopPostsByMetric` mengurutkan kolom `metric_snapshot.views`, jadi key yang tak dikenal membuat setiap post TikTok tersimpan dengan view count nol dan tidak pernah masuk peringkat. `bookmarks` disimpan sebagai `collects` di `post.metrics` tapi belum punya kolom snapshot maupun renderer. Row tanpa `id` dianggap error, bukan di-drop diam-diam.
 

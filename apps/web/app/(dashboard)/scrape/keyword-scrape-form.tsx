@@ -14,12 +14,12 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 
 import { api, type KeywordBatch } from '@/lib/api';
-import { PLATFORM_LABEL } from '@/lib/platforms';
+import { PLATFORMS, PLATFORM_LABEL, type Platform } from '@/lib/platforms';
 
 const MAX_KEYWORDS = 5;
 
 export function KeywordScrapeForm() {
-  const [platform, setPlatform] = useState<'instagram' | 'threads' | 'tiktok'>('instagram');
+  const [platform, setPlatform] = useState<Platform>('instagram');
   const [keywords, setKeywords] = useState('');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
@@ -86,12 +86,17 @@ export function KeywordScrapeForm() {
             <select
               id="ks-platform"
               value={platform}
-              onChange={(e) => setPlatform(e.target.value as 'instagram' | 'threads' | 'tiktok')}
+              onChange={(e) => setPlatform(e.target.value as Platform)}
               className="h-9 w-full rounded-lg border border-input bg-transparent px-3 text-sm"
             >
-              <option value="instagram">Instagram</option>
-              <option value="threads">Threads</option>
-              <option value="tiktok">TikTok</option>
+              {/* Driven from PLATFORMS, not a hand-written union: the old
+                  literal list of three was a second copy of the same fact and
+                  had to be edited in lockstep with the backend gate. */}
+              {PLATFORMS.map((p) => (
+                <option key={p} value={p}>
+                  {PLATFORM_LABEL[p]}
+                </option>
+              ))}
             </select>
           </div>
           <div className="space-y-1.5 sm:col-span-2">
@@ -164,7 +169,7 @@ export function KeywordScrapeForm() {
                     <div className="flex flex-wrap items-center gap-2">
                       <Badge variant={b.status === 'SUCCEEDED' ? 'default' : b.status === 'FAILED' ? 'destructive' : 'secondary'}>{b.status}</Badge>
                       <span className="text-sm font-medium">{b.keywords.join(', ')}</span>
-                      <Badge variant="outline">{PLATFORM_LABEL[b.platform as 'instagram' | 'threads' | 'tiktok'] ?? b.platform}</Badge>
+                      <Badge variant="outline">{PLATFORM_LABEL[b.platform] ?? b.platform}</Badge>
                     </div>
                     <div className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">
                       <span>{b.postsCount} posts · {b.commentsCount} comments · {b.itemsRead} items</span>

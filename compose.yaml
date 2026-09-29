@@ -157,6 +157,13 @@ services:
       APIFY_SEARCH_ACTOR_INSTAGRAM: ${APIFY_SEARCH_ACTOR_INSTAGRAM:-crawlerbros/instagram-keyword-search-scraper}
       APIFY_SEARCH_ACTOR_THREADS: ${APIFY_SEARCH_ACTOR_THREADS:-futurizerush/meta-threads-scraper}
       APIFY_SEARCH_ACTOR_TIKTOK: ${APIFY_SEARCH_ACTOR_TIKTOK:-xmolodtsov/tiktok-search-scraper}
+      # The four newer keyword platforms, same full-id rule as the three above.
+      # YouTube and X charge a per-QUERY event on top of the per-result fee, so
+      # a 5-keyword batch costs ~$0.08 in query fees alone before any results.
+      APIFY_SEARCH_ACTOR_YOUTUBE: ${APIFY_SEARCH_ACTOR_YOUTUBE:-apidojo/youtube-scraper-api}
+      APIFY_SEARCH_ACTOR_LINKEDIN: ${APIFY_SEARCH_ACTOR_LINKEDIN:-harvestapi/linkedin-post-search}
+      APIFY_SEARCH_ACTOR_X: ${APIFY_SEARCH_ACTOR_X:-apidojo/twitter-scraper-lite}
+      APIFY_SEARCH_ACTOR_FACEBOOK: ${APIFY_SEARCH_ACTOR_FACEBOOK:-danek/facebook-search-ppr}
       # Per-POST Threads scraper, also a full id: the prefix-derived
       # "<prefix>/meta-threads-scraper" 404s on every scrape — that build is
       # user-posts-only (no per-post mode) and has no store entry under apify/.

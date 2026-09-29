@@ -151,9 +151,19 @@ Threads id 404s on every scrape. All are env-overridable and pinned in
 | Instagram per-post | `apify/instagram-post-scraper` | `APIFY_POST_ACTOR_INSTAGRAM` |
 | Instagram keyword search | `crawlerbros/instagram-keyword-search-scraper` | `APIFY_SEARCH_ACTOR_INSTAGRAM` |
 | TikTok keyword search | `xmolodtsov/tiktok-search-scraper` | `APIFY_SEARCH_ACTOR_TIKTOK` |
+| YouTube keyword search | `apidojo/youtube-scraper-api` | `APIFY_SEARCH_ACTOR_YOUTUBE` |
+| LinkedIn keyword search | `harvestapi/linkedin-post-search` | `APIFY_SEARCH_ACTOR_LINKEDIN` |
+| X keyword search | `apidojo/twitter-scraper-lite` | `APIFY_SEARCH_ACTOR_X` |
+| Facebook keyword search | `danek/facebook-search-ppr` | `APIFY_SEARCH_ACTOR_FACEBOOK` |
 
 Per-platform scrape detail (input, output rows, normalization) is in
 `docs/platforms/`; batch keyword scraping in `docs/BATCH_SCRAPE.md`.
+
+⚠ **Per-query fees.** YouTube and X bill ~$0.015–0.016 per query on top of
+per-result pricing; the store page advertises only the per-result rate. X has
+no result cap and no date filter in its schema, so a keyword set is the unit of
+cost, not a row. `APIFY_BUDGET_USD` is parsed into config but not yet enforced
+anywhere — do not run these two at volume until it is.
 
 A wrong field name on an actor is **silent** — the actor falls back to its
 own default and the scrape quietly returns the wrong thing, not an error.

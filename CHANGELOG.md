@@ -6,6 +6,36 @@
 
 ## Unreleased
 ### Added
+- **Keyword batches now run on seven platforms: YouTube, LinkedIn, X and
+  Facebook join Instagram, Threads and TikTok.** One batch per platform per
+  keyword set, four new Apify actors chosen by measured cost and verified
+  against live rows before a line of parser was written:
+  `apidojo/youtube-scraper-api`, `harvestapi/linkedin-post-search`,
+  `apidojo/twitter-scraper-lite`, `danek/facebook-search-ppr`.
+  Two cheaper-looking actors were rejected on their real input schema:
+  `worldunboxer/rapid-linkedin-scraper` ($0.0005, the cheapest LinkedIn actor
+  in the store) scrapes **job boards** — its inputs are `jobs_titles`,
+  `cities` and `employment_level`, and it has no post search at all; and
+  `apify/facebook-posts-scraper` (115k users, the most proven actor on
+  Facebook) takes page and profile **URLs**, not keywords, so it cannot serve
+  a keyword batch. `docs/platforms/*.md` §4 records both.
+  ⚠ **YouTube and X also bill ~$0.015–0.016 per query** on top of per-result
+  pricing (measured: a 9-row YouTube run $0.0185, a 10-row X run $0.020). That
+  fee is invisible on the store page, which advertises the per-result rate
+  only, so a 5-keyword batch on either platform costs ~$0.08 before a single
+  row arrives. **X has no result cap and no date filter in its schema at all**,
+  which makes it the most expensive platform per keyword set rather than one of
+  the cheapest — its window is enforced entirely in the ingestor. LinkedIn's
+  `maxPosts` must be sent, and as `maxPosts`: sent as `maxItems` the key is
+  ignored, and one measured run returned 97 rows for $0.096 against a request
+  for 5.
+- **A platform that cannot serve a keyword batch says so from the platform
+  list, not from a hand-typed string.** `scrape_keyword.go` had a literal
+  "supports instagram, threads and tiktok only" that went stale on every add.
+  `runner.go`'s `searchInput` likewise became a `switch` that returns `nil` for
+  an unknown platform: the old if-chain silently sent the Instagram payload to
+  any platform missing from it, and an unknown key is answered 200 with the
+  actor's own default — invisible, where a missing branch is not.
 - **`/monitoring` reads real Instagram metrics through Composio.** The
   analytics provider was a deterministic stub, so the page had never shown a
   figure a social media team could act on. `apps/api/internal/adapter/

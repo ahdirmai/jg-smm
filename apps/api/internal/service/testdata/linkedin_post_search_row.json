@@ -1,0 +1,142 @@
+{
+  "type": "post",
+  "id": "7510340765928185856",
+  "linkedinUrl": "https://www.linkedin.com/posts/miketemkin_thoughtsandobservations-ai-jobmarket-activity-7510340765928185856-XgqS",
+  "content": "\u201cThe search for workers who can harness artificial intelligence has led to occupations with the most exposure to AI also seeing bigger-than-expected pay bumps, but those increases are going almost entirely to more experienced workers. Fresh data from Indeed's HiringLab that looked at millions of job postings found that instead of hollowing out the pay for AI-exposed work, those AI-exposed jobs have seen their advertised pay climb about 46% since 2021, more than the 25% growth in the least-exposed fields. That pay premium works out to 5.7% above less-exposed jobs even when controlling for the changing mix of occupations employers have been looking for over the last several years.\u00a0 Seniority offers a pay bump within each occupation as well, at a 2.4% bump over less-exposed AI roles.\u00a0 The Indeed data found that the higher up in seniority you go, the bigger the pay bump, w/senior-level job pay growing 45% in advertised postings compared to 28% in senior roles for less-exposed fields, while mid-level roles show a clear but smaller gap of about 12 percentage points, with essentially no premium for entry-level roles.\u00a0 Sneha Puri, an economist at at Indeed's HiringLab, said the premium shrinks when only the years after the launch of ChatGPT are analyzed, but the gap still suggests a broader dynamic has emerged within the job market. That is, companies are looking for workers w/both AI skills & a collection of softer skills that serve as a complement to the technology. That means workers who can help vet the AI's output, understand when it is wrong & get better results from it \u2014 all of which require more experience and, subsequently more seniority, she said. \u2026 The impact on the job market at the entry level is real, w/senior-level job postings up 13.5% since January 2025, while mid-level roles are down 6.7% & entry-level roles are down 6.3% as of earlier this year. Entry-level roles had declined 7.5% year-over-year as of May. \u2026 The battle for a shrinking set of entry-level jobs is made harder by the fact that more experienced people are applying for those positions, according to a separate set of data from Indeed's HiringLab. In May, 49% of the job applications filed by workers with 10 years of experience or more were for entry-level roles, while another 39% were for mid-career roles. Just 12% of the applications made by the most-experienced workers were for senior-level roles. For workers with six to nine years of experience, 62% of applications were for entry-level roles, compared to 32% for mid-level roles and 6% for senior-level roles.\u201d \u00a0From the article \u201cThe AI pay premium is going entirely to one class of workers\u201d posted September 25, 2026, on The Business Journals website by Andy Medici \u2013 U.S. journalist.\n\nFor more #ThoughtsAndObservations about #AI and the #JobMarket go to https://lnkd.in/g7xi4xAZ\n\n#LaborTrends #Employment #TalentAcquisition #ArtificialIntelligence",
+  "contentAttributes": [
+    {
+      "start": 251,
+      "length": 6,
+      "type": "COMPANY_NAME",
+      "hyperlink": "https://www.linkedin.com/company/indeed-com/",
+      "textLink": null,
+      "company": {
+        "id": "36229",
+        "name": "Indeed",
+        "linkedinUrl": "https://www.linkedin.com/company/indeed-com/"
+      }
+    },
+    {
+      "start": 1129,
+      "length": 10,
+      "type": "PROFILE_MENTION",
+      "hyperlink": "https://www.linkedin.com/in/ACoAACtsTOEBzvOtFKJVJ8xIAOVXisnSyaFdlAA",
+      "textLink": null,
+      "profile": {
+        "id": "ACoAACtsTOEBzvOtFKJVJ8xIAOVXisnSyaFdlAA",
+        "firstName": "Sneha",
+        "lastName": "Puri",
+        "linkedinUrl": "https://www.linkedin.com/in/sneha-puri",
+        "publicIdentifier": "sneha-puri"
+      }
+    },
+    {
+      "start": 2689,
+      "length": 21,
+      "type": "COMPANY_NAME",
+      "hyperlink": "https://www.linkedin.com/company/bizjournals/",
+      "textLink": null,
+      "company": {
+        "id": "356109",
+        "name": "The Business Journals",
+        "linkedinUrl": "https://www.linkedin.com/company/bizjournals/"
+      }
+    },
+    {
+      "start": 2722,
+      "length": 11,
+      "type": "PROFILE_MENTION",
+      "hyperlink": "https://www.linkedin.com/in/ACoAAADR-HIBOfmxgqIbiyvDxBSNUgHUioiI738",
+      "textLink": null,
+      "profile": {
+        "id": "ACoAAADR-HIBOfmxgqIbiyvDxBSNUgHUioiI738",
+        "firstName": "Andy",
+        "lastName": "Medici",
+        "linkedinUrl": "https://www.linkedin.com/in/andymedici",
+        "publicIdentifier": "andymedici"
+      }
+    }
+  ],
+  "author": {
+    "id": "ACoAAAADIeQB-8Nfgcgdv144BnR4iqhgrt0F1lI",
+    "universalName": null,
+    "publicIdentifier": "miketemkin",
+    "type": "profile",
+    "name": "Michael Temkin",
+    "linkedinUrl": "https://www.linkedin.com/in/miketemkin?miniProfileUrn=urn%3Ali%3Afsd_profile%3AACoAAAADIeQB-8Nfgcgdv144BnR4iqhgrt0F1lI",
+    "info": "Retired Advertising/Marketing executive with extensive experience in recruitment marketing, direct response advertising, branding and media/software agency/vendor partnerships.",
+    "website": "https://www.linkedin.com/newsletters/thoughts-and-observations-6938249090539421696/",
+    "websiteLabel": "View my newsletter",
+    "avatar": {
+      "url": "https://media.licdn.com/dms/image/v2/D5603AQF7elJx3fhjug/profile-displayphoto-crop_800_800/B56Zd8DB8bGoAI-/0/1750132858984?e=1792022400&v=beta&t=huJVktUaeT5CTxDOJlGsQmmv6zHHHPZrxVDTP530iUU",
+      "width": 800,
+      "height": 800
+    },
+    "urn": "205284",
+    "profileId": "ACoAAAADIeQB-8Nfgcgdv144BnR4iqhgrt0F1lI"
+  },
+  "postedAt": {
+    "timestamp": 1790604773981,
+    "date": "2026-09-28T14:12:53.981Z",
+    "postedAgoShort": "20h",
+    "postedAgoText": "20 hours ago \u2022 Edited \u2022 Visible to anyone on or off LinkedIn"
+  },
+  "postImages": [],
+  "article": {
+    "title": "Gen AI \u2013 Current and Future Shifts in Employment, Training, And Productivity.",
+    "subtitle": "Michael Temkin",
+    "link": "https://www.linkedin.com/pulse/gen-ai-current-future-shifts-employment-training-michael-temkin-bngdc?trackingId=Z9lrRLDZTXyXQPTxXkIziw%3D%3D",
+    "linkLabel": "Open article: Gen AI \u2013 Current and Future Shifts in Employment, Training, And Productivity. by Michael Temkin \u2022 40 min read",
+    "description": "Thoughts And Observations along with facts and stats about Generative AI:\u201c(The) McKinsey Global Institute estimates that generative AI will add betwee",
+    "image": null
+  },
+  "newsletterUrl": "https://www.linkedin.com/newsletters/thoughts-and-observations-6938249090539421696",
+  "newsletterTitle": "Thoughts and Observations ",
+  "socialContent": {
+    "hideCommentsCount": false,
+    "hideReactionsCount": false,
+    "hideSocialActivityCounts": false,
+    "hideShareAction": true,
+    "hideSendAction": true,
+    "hideRepostsCount": false,
+    "hideViewsCount": false,
+    "trustInterventionBanner": null,
+    "hideReactAction": false,
+    "hideCommentAction": false,
+    "shareUrl": "https://www.linkedin.com/posts/miketemkin_thoughtsandobservations-ai-jobmarket-activity-7510340765928185856-XgqS?",
+    "showContributionExperience": false,
+    "showSocialDetail": true
+  },
+  "comments": [],
+  "header": {
+    "text": null
+  },
+  "entityId": "7510340765928185856",
+  "shareUrn": "urn:li:ugcPost:7510340764174995458",
+  "shareLinkedinUrl": "https://www.linkedin.com/feed/update/urn:li:ugcPost:7510340764174995458",
+  "engagement": {
+    "id": "7510340764174995458",
+    "likes": 16,
+    "comments": 10,
+    "shares": 0,
+    "reactions": [
+      {
+        "type": "LIKE",
+        "count": 15
+      },
+      {
+        "type": "EMPATHY",
+        "count": 1
+      }
+    ]
+  },
+  "reactions": [],
+  "reactionIds": [],
+  "commentIds": [],
+  "query": {
+    "sortBy": "date",
+    "page": 1,
+    "search": "digital marketing",
+    "postedLimit": "month"
+  }
+}

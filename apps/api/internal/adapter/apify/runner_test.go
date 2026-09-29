@@ -219,3 +219,122 @@ func TestSearchInputTikTokOmitsExpansionPools(t *testing.T) {
 			"return suggest/hashtag/music rows rather than the keyword's posts", v)
 	}
 }
+
+// The four newer platforms are pinned against their live input schemas
+// (verified 2026-09-29 by running each actor) for the reason the ones above
+// are: a wrong field name is silent. Apify accepts the payload, the actor falls
+// back to its own default, and the run returns 200 with whatever it wanted.
+// Three of these four were caught only by running the actor — the top-priced
+// actor per platform is not the right one for a keyword batch, and the store
+// page never says so.
+
+func searchInputFor(p domain.Platform, kw []string, w port.KeywordTimeWindow, n int) map[string]any {
+	r := &Runner{}
+	in := port.ApifySearchInput{Platform: p, Keywords: kw, Window: w, MaxPosts: n}
+	return r.searchInput(in, n)
+}
+
+func fullWindow() port.KeywordTimeWindow {
+	return port.KeywordTimeWindow{
+		From: time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC),
+		To:   time.Date(2026, 9, 29, 0, 0, 0, 0, time.UTC),
+	}
+}
+
+func TestSearchInputYouTubePinsKeywordsMaxItemsAndUploadDate(t *testing.T) {
+	got := searchInputFor(domain.PlatformYouTube, []string{"batulicin"}, fullWindow(), 10)
+	if q, ok := got["keywords"].([]string); !ok || len(q) != 1 || q[0] != "batulicin" {
+		t.Errorf("keywords = %v, want the terms unchanged", got["keywords"])
+	}
+	if got["maxItems"] != 10 {
+		t.Errorf("maxItems = %v, want 10", got["maxItems"])
+	}
+	// uploadDate is an ENUM of durations, not a date. Sending the window's
+	// start as a date string is rejected outright (400 invalid-input), and
+	// sending a real date would be worse than useless if it were accepted.
+	if got["uploadDate"] != "m" {
+		t.Errorf("uploadDate = %v, want \"m\" — a 28-day-old lower bound maps to the month bucket", got["uploadDate"])
+	}
+}
+
+func TestSearchInputLinkedInPinsSearchQueriesAndMaxPosts(t *testing.T) {
+	got := searchInputFor(domain.PlatformLinkedIn, []string{"digital marketing"}, fullWindow(), 10)
+	if q, ok := got["searchQueries"].([]string); !ok || len(q) != 1 {
+		t.Errorf("searchQueries = %v, want the terms as an array — this actor spells it searchQueries, not keywords", got["searchQueries"])
+	}
+	// maxPosts, not maxItems. Sending maxItems to this actor is ignored and it
+	// bills its own default of 100 posts per query: measured at 97 rows and
+	// $0.096 for a batch that asked for 5.
+	if got["maxPosts"] != 10 {
+		t.Errorf("maxPosts = %v, want 10 — omitting it bills the actor's default of 100 per query", got["maxPosts"])
+	}
+	if got["postedLimitDate"] != "2026-09-01" {
+		t.Errorf("postedLimitDate = %v, want 2026-09-01 — a real server-side lower bound", got["postedLimitDate"])
+	}
+}
+
+func TestSearchInputXSendsNoCapTheActorDoesNotHave(t *testing.T) {
+	got := searchInputFor(domain.PlatformX, []string{"batulicin"}, fullWindow(), 10)
+	if q, ok := got["searchTerms"].([]string); !ok || len(q) != 1 {
+		t.Errorf("searchTerms = %v, want the terms as an array", got["searchTerms"])
+	}
+	if got["sort"] != "Latest" {
+		t.Errorf("sort = %v, want Latest", got["sort"])
+	}
+	// This actor has no result cap and no date input. Sending either is a key
+	// it ignores, which reads as a working filter and is not one.
+	for _, k := range []string{"maxItems", "maxResults", "startDate", "endDate", "since", "until"} {
+		if v, ok := got[k]; ok {
+			t.Errorf("%q = %v, but this actor has no such input — it is ignored silently", k, v)
+		}
+	}
+}
+
+// The actor's allowed uploadDate set is exactly {all, l, t, w, m, y}. This is
+// pinned because an out-of-set value is not a near-miss: Apify rejects the
+// whole run with a 400, so a bucket that "looks close enough" costs the entire
+// batch. "h" was written first and would have 400'd every window under two
+// hours — the sub-daily bucket is "l".
+func TestYouTubeUploadDateBucketStaysInsideTheAllowedEnum(t *testing.T) {
+	allowed := map[string]bool{"all": true, "l": true, "t": true, "w": true, "m": true, "y": true}
+	now := time.Now()
+	for _, age := range []time.Duration{
+		0, time.Minute, 90 * time.Minute, 2 * time.Hour, 36 * time.Hour,
+		3 * 24 * time.Hour, 7 * 24 * time.Hour, 20 * 24 * time.Hour,
+		29 * 24 * time.Hour, 200 * 24 * time.Hour, 900 * 24 * time.Hour,
+	} {
+		got := youTubeUploadDateBucket(port.KeywordTimeWindow{From: now.Add(-age)})
+		if !allowed[got] {
+			t.Errorf("window %s old -> uploadDate %q, which the actor rejects (allowed: all, l, t, w, m, y)", age, got)
+		}
+	}
+	// And an unbounded window must ask for everything, not a bucket.
+	if got := youTubeUploadDateBucket(port.KeywordTimeWindow{}); got != "all" {
+		t.Errorf("open window -> uploadDate %q, want all", got)
+	}
+}
+
+func TestSearchInputFacebookSendsOneQueryAndForcesPostType(t *testing.T) {
+	got := searchInputFor(domain.PlatformFacebook, []string{"batulicin", "kotabaru"}, fullWindow(), 10)
+	// This actor takes ONE string, not an array, and its default search_type is
+	// not posts — it also searches groups, people and events.
+	if got["query"] != "batulicin kotabaru" {
+		t.Errorf("query = %v, want the terms joined into one string", got["query"])
+	}
+	if got["search_type"] != "posts" {
+		t.Errorf("search_type = %v, want posts", got["search_type"])
+	}
+	if got["max_posts"] != 10 {
+		t.Errorf("max_posts = %v, want 10", got["max_posts"])
+	}
+}
+
+// A platform with no branch returns nil rather than falling through to the
+// Instagram payload. The old if-chain sent `keywords`/`maxPosts` to every
+// platform it did not know, so a newly added platform was billed for a search
+// the actor ignored and answered with its own default results.
+func TestSearchInputUnknownPlatformYieldsNoPayload(t *testing.T) {
+	if got := searchInputFor(domain.Platform("mastodon"), []string{"x"}, fullWindow(), 10); got != nil {
+		t.Errorf("unknown platform payload = %v, want nil — an unlisted platform must not borrow another actor's schema", got)
+	}
+}

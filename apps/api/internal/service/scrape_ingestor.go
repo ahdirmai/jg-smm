@@ -276,6 +276,14 @@ func parseItems(platform domain.Platform, raw []byte, window port.KeywordTimeWin
 		return parseThreadsItem(raw, window, onlyCode, run)
 	case domain.PlatformTikTok:
 		return parseTikTokItems(raw, window)
+	case domain.PlatformYouTube:
+		return parseYouTubeItems(raw, window)
+	case domain.PlatformLinkedIn:
+		return parseLinkedInItems(raw, window)
+	case domain.PlatformX:
+		return parseXItems(raw, window)
+	case domain.PlatformFacebook:
+		return parseFacebookItems(raw, window)
 	}
 	// Unknown actor shape: keep the legacy self-describing contract.
 	item, err := parseLegacyItem(raw)

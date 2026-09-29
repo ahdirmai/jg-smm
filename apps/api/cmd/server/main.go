@@ -599,6 +599,26 @@ func actorForPlatform(cfg config.Config) func(domain.Platform) string {
 //     as a real result cap. It has no date input at all, so the ingestor's
 //     window is the only backstop, not merely the second one — nothing in the
 //     payload can be set to ask the actor for a narrower pool.
+//   - YouTube: apidojo/youtube-scraper-api. `keywords[]` plus a REAL server-side
+//     `uploadDate` filter (any/l/t/w/m/y) that only applies to keyword search,
+//     so the window can be pushed down to the actor rather than only applied
+//     after billing. `maxItems` caps output. Billed per QUERY too, not only per
+//     result: ~$0.015 a search before a single row is charged.
+//   - LinkedIn: harvestapi/linkedin-post-search. `searchQueries[]` plus
+//     `postedLimitDate` (absolute) and `postedLimit` (relative) — a real
+//     server-side date filter. `maxPosts` is the real per-query cap; measured,
+//     and omitting it returns the actor's own default of 100 posts per query
+//     billed in full. Rejects the top-priced "rapid-linkedin-scraper", which
+//     is a JOB board scraper (jobs_titles/cities/employment_level) and has no
+//     post search at all.
+//   - X: apidojo/twitter-scraper-lite, `searchTerms[]` plus `sort:Latest`,
+//     returning the native Twitter v2 tweet object. No date filter and no
+//     result cap, so the ingestor's window is the only backstop here. Also
+//     billed per query (~$0.016), on top of $0.0004 a result.
+//   - Facebook: danek/facebook-search-ppr, `query` + `search_type:posts` +
+//     `max_posts`. NOT apify/facebook-posts-scraper, which is far more proven
+//     (115k users) but takes page URLs, not keywords, so it cannot serve a
+//     keyword batch at all.
 func searchActorForPlatform(cfg config.Config) func(domain.Platform) string {
 	return func(p domain.Platform) string {
 		switch p {
@@ -608,6 +628,14 @@ func searchActorForPlatform(cfg config.Config) func(domain.Platform) string {
 			return cfg.ApifySearchActorThreads
 		case domain.PlatformTikTok:
 			return cfg.ApifySearchActorTikTok
+		case domain.PlatformYouTube:
+			return cfg.ApifySearchActorYouTube
+		case domain.PlatformLinkedIn:
+			return cfg.ApifySearchActorLinkedIn
+		case domain.PlatformX:
+			return cfg.ApifySearchActorX
+		case domain.PlatformFacebook:
+			return cfg.ApifySearchActorFacebook
 		}
 		return ""
 	}

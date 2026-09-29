@@ -19,8 +19,18 @@ Actor id search **tidak** diturunkan dari `APIFY_ACTOR_PREFIX` — dua actor sea
 | --- | --- | --- |
 | instagram | `crawlerbros/instagram-keyword-search-scraper` | keyword → post, satu row flat per post; actor ini yang dipakai sejak v0.2 |
 | threads | `futurizerush/meta-threads-scraper` (`mode:search`) | `keywords[]` + `start_date`/`end_date` |
+| tiktok | `xmolodtsov/tiktok-search-scraper` | 83× lebih murah per post tersimpan dibanding actor sebelumnya |
+| youtube | `apidojo/youtube-scraper-api` | `uploadDate` enum; ⚠ +\~$0.015 **per query** di luar harga per hasil |
+| linkedin | `harvestapi/linkedin-post-search` | satu-satunya yang bisa mendorong window ke payload lewat `postedLimitDate`; `maxPosts` wajib, dan harus `maxPosts` |
+| x | `apidojo/twitter-scraper-lite` | ⚠ **tanpa cap hasil dan tanpa filter tanggal sama sekali** —+\~$0.016 per query |
+| facebook | `danek/facebook-search-ppr` | `query` satu string; tidak ada input tanggal |
 
-Env: `APIFY_SEARCH_ACTOR_INSTAGRAM`, `APIFY_SEARCH_ACTOR_THREADS`.
+Env: `APIFY_SEARCH_ACTOR_INSTAGRAM`, `APIFY_SEARCH_ACTOR_THREADS`,
+`APIFY_SEARCH_ACTOR_TIKTOK`, `APIFY_SEARCH_ACTOR_YOUTUBE`,
+`APIFY_SEARCH_ACTOR_LINKEDIN`, `APIFY_SEARCH_ACTOR_X`,
+`APIFY_SEARCH_ACTOR_FACEBOOK`. Platform yang tidak ada di daftar ini
+ditolak dengan pesan yang diturunkan dari daftar itu sendiri, bukan dari
+string yang diketik tangan.
 
 > **Riwayat pilihan actor (instagram):** `apify/instagram-search-scraper` me-resolve keyword jadi place/hashtag (post 2018–2024) dan field input-nya `search` (string koma), bukan `searchTerms[]`, sehingga keyword dikirim dan diabaikan **silent**. Diganti ke `apify/instagram-scraper` (`searchType:hashtag`) lalu ke `crawlerbros/instagram-keyword-search-scraper` — row flat snake_case (`shortcode`, `username`, `caption`, `pub_date`, `like_count`) yang butuh parser sendiri, karena Go unmarshal case-insensitive tidak menjembatani underscore (`like_count` ↛ `likesCount`).
 
