@@ -274,6 +274,8 @@ func parseItems(platform domain.Platform, raw []byte, window port.KeywordTimeWin
 		return parseIGItems(raw, window)
 	case domain.PlatformThreads:
 		return parseThreadsItem(raw, window, onlyCode, run)
+	case domain.PlatformTikTok:
+		return parseTikTokItems(raw, window)
 	}
 	// Unknown actor shape: keep the legacy self-describing contract.
 	item, err := parseLegacyItem(raw)
@@ -409,6 +411,99 @@ func parseIGFlatPostItems(raw []byte, window port.KeywordTimeWindow) ([]scrapeIt
 		MediaURLs:    media,
 		Metrics:      metrics,
 		PublishedAt:  publishedAtPtr(takenAt),
+	}}, nil
+}
+
+// tiktokPost is one dataset row from clockworks/tiktok-scraper. This actor
+// nests author, video and music under their own objects, so the row needs real
+// nested structs — unlike the flat snake_case Instagram row, there is no
+// underscore/camel bridging to save us here, the shape is simply different.
+type tiktokPost struct {
+	ID            string   `json:"id"`
+	Text          string   `json:"text"`
+	CreateTimeISO string   `json:"createTimeISO"`
+	CreateTime    int64    `json:"createTime"`
+	WebVideoURL   string   `json:"webVideoUrl"`
+	MediaURLs     []string `json:"mediaUrls"`
+	DiggCount     int      `json:"diggCount"`
+	CommentCount  int      `json:"commentCount"`
+	ShareCount    int      `json:"shareCount"`
+	CollectCount  int      `json:"collectCount"`
+	PlayCount     int      `json:"playCount"`
+	AuthorMeta    struct {
+		// any, not string: the actor emits authorMeta.id as a number. A
+		// string-typed field here fails to unmarshal the ENTIRE row, which
+		// would take the whole run down over one field.
+		ID   any    `json:"id"`
+		Name string `json:"name"`
+	} `json:"authorMeta"`
+	// ErrorCode marks an actor error item. The actor interleaves these with
+	// real results and documents that a normal item is never affected — so
+	// this is the only way to tell the two apart, and it must be read BEFORE
+	// the id guard: an error row has no id.
+	ErrorCode string `json:"errorCode"`
+}
+
+// parseTikTokItems maps one clockworks/tiktok-scraper dataset row.
+//
+// The window is applied here as well as being requested from the actor, because
+// the actor's date filter is gated on profileSorting and a mis-set sort makes it
+// ignore the bound silently. The second line of defence is the only one that
+// cannot be disabled by a payload field.
+func parseTikTokItems(raw []byte, window port.KeywordTimeWindow) ([]scrapeItem, error) {
+	var src tiktokPost
+	if err := json.Unmarshal(raw, &src); err != nil {
+		return nil, err
+	}
+	// An error item is not a failed post and not a failed run. Returning an
+	// error here would abort the whole ingest, including the valid rows the
+	// actor put in the same dataset.
+	if src.ErrorCode != "" {
+		return nil, nil
+	}
+	if src.ID == "" {
+		return nil, errors.New("tiktok item has no id and no errorCode")
+	}
+	publishedAt := parseActorTime(src.CreateTimeISO)
+	if publishedAt.IsZero() && src.CreateTime != 0 {
+		publishedAt = time.Unix(src.CreateTime, 0).UTC()
+	}
+	if !inWindow(publishedAt, window) {
+		return nil, nil
+	}
+	media := make([]string, 0, len(src.MediaURLs))
+	for _, u := range src.MediaURLs {
+		if u != "" {
+			media = append(media, u)
+		}
+	}
+	metrics := map[string]any{}
+	// TikTok's counter names are its own; these are the cross-platform keys
+	// the dashboard's metrics line already knows how to render.
+	if src.DiggCount != 0 {
+		metrics["likes"] = src.DiggCount
+	}
+	if src.CommentCount != 0 {
+		metrics["comments"] = src.CommentCount
+	}
+	if src.ShareCount != 0 {
+		metrics["shares"] = src.ShareCount
+	}
+	if src.CollectCount != 0 {
+		metrics["collects"] = src.CollectCount
+	}
+	if src.PlayCount != 0 {
+		metrics["plays"] = src.PlayCount
+	}
+	return []scrapeItem{{
+		Platform:     string(domain.PlatformTikTok),
+		ExternalID:   src.ID,
+		AuthorHandle: orDefault(src.AuthorMeta.Name, "unknown"),
+		AuthorID:     anyToString(src.AuthorMeta.ID),
+		Text:         src.Text,
+		MediaURLs:    media,
+		Metrics:      metrics,
+		PublishedAt:  publishedAtPtr(publishedAt),
 	}}, nil
 }
 
