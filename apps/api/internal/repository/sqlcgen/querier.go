@@ -235,8 +235,10 @@ type Querier interface {
 	ListProvisionLogsByWorker(ctx context.Context, arg ListProvisionLogsByWorkerParams) ([]ProvisionLog, error)
 	ListProxyGroups(ctx context.Context) ([]ProxyGroup, error)
 	ListRawPayloadsByRun(ctx context.Context, apifyRunID pgtype.UUID) ([]string, error)
-	// Posts on a platform, newest scrape first. The keyword-scrape read-back uses
-	// it (this run's rows just got the freshest scraped_at), not a metric ranking.
+	// Posts on a platform, newest PUBLICATION first, falling back to scrape time for
+	// rows ingested before 000016 (which has no recoverable publish date). The
+	// keyword-scrape read-back uses it to show this run's rows in the order they
+	// were posted, not the order we happened to fetch them.
 	ListRecentPostsByPlatform(ctx context.Context, arg ListRecentPostsByPlatformParams) ([]Post, error)
 	ListScrapeJobs(ctx context.Context, arg ListScrapeJobsParams) ([]ScrapeJob, error)
 	ListScrapeJobsByStatus(ctx context.Context, arg ListScrapeJobsByStatusParams) ([]ScrapeJob, error)

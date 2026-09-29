@@ -231,7 +231,11 @@ function PostRow({
         <span className="flex items-center gap-2 text-[11px] text-muted-foreground">
           <span>{metricsShort(post.metrics)}</span>
           <span aria-hidden>·</span>
-          <span>{new Date(post.scrapedAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</span>
+          <span>
+            {post.publishedAt
+              ? new Date(post.publishedAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+              : `scraped ${new Date(post.scrapedAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}`}
+          </span>
         </span>
       </span>
     </button>

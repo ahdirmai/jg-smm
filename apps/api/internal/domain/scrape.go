@@ -171,6 +171,12 @@ type Post struct {
 	MediaURLs       []string        `json:"mediaUrls"`
 	Metrics         json.RawMessage `json:"metrics"`
 	ScrapedAt       time.Time       `json:"scrapedAt"`
+	// PublishedAt is when the post was published, from the actor payload.
+	// Nil for rows ingested before migration 000016 — the date was read, used
+	// to evaluate the operator's window, and then discarded. ScrapedAt is the
+	// fallback and is NOT a substitute: it is when we looked, not when it was
+	// posted.
+	PublishedAt    *time.Time      `json:"publishedAt"`
 	AuthorAccountID *string         `json:"authorAccountId"`
 }
 

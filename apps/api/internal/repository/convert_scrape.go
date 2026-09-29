@@ -108,6 +108,7 @@ func toPost(row sqlcgen.Post) domain.Post {
 		MediaURLs:       row.MediaUrls,
 		Metrics:         json.RawMessage(row.Metrics),
 		ScrapedAt:       tsTimeOrZero(row.ScrapedAt),
+		PublishedAt:    tsTimePtr(row.PublishedAt),
 		AuthorAccountID: uuidStrPtr(row.AuthorAccountID),
 	}
 }

@@ -169,6 +169,10 @@ export interface ScrapedPost {
   mediaUrls: string[] | null;
   metrics: Record<string, number> | null;
   scrapedAt: string;
+  /** When the post was published. Null for rows ingested before migration
+   *  000016 — the date was read, used to evaluate the window, and discarded.
+   *  `scrapedAt` is the fallback and is NOT the same thing. */
+  publishedAt: string | null;
 }
 
 export interface ScrapeTargetResponse {

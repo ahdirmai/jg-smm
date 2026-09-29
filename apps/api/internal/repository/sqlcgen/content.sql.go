@@ -79,7 +79,7 @@ func (q *Queries) GetCommentByPlatformExternalID(ctx context.Context, arg GetCom
 const getPostByID = `-- name: GetPostByID :one
 
 SELECT id, platform, external_id, author_handle, author_id, text, media_urls,
-       metrics, scraped_at, author_account_id
+       metrics, scraped_at, author_account_id, published_at
 FROM post
 WHERE id = $1
 `
@@ -101,13 +101,14 @@ func (q *Queries) GetPostByID(ctx context.Context, id pgtype.UUID) (Post, error)
 		&i.Metrics,
 		&i.ScrapedAt,
 		&i.AuthorAccountID,
+		&i.PublishedAt,
 	)
 	return i, err
 }
 
 const getPostByPlatformExternalID = `-- name: GetPostByPlatformExternalID :one
 SELECT id, platform, external_id, author_handle, author_id, text, media_urls,
-       metrics, scraped_at, author_account_id
+       metrics, scraped_at, author_account_id, published_at
 FROM post
 WHERE platform = $1 AND external_id = $2
 `
@@ -131,6 +132,7 @@ func (q *Queries) GetPostByPlatformExternalID(ctx context.Context, arg GetPostBy
 		&i.Metrics,
 		&i.ScrapedAt,
 		&i.AuthorAccountID,
+		&i.PublishedAt,
 	)
 	return i, err
 }
@@ -182,9 +184,9 @@ func (q *Queries) ListCommentsByPost(ctx context.Context, arg ListCommentsByPost
 
 const listPosts = `-- name: ListPosts :many
 SELECT id, platform, external_id, author_handle, author_id, text, media_urls,
-       metrics, scraped_at, author_account_id
+       metrics, scraped_at, author_account_id, published_at
 FROM post
-ORDER BY scraped_at DESC
+ORDER BY published_at DESC NULLS LAST, scraped_at DESC
 LIMIT $1 OFFSET $2
 `
 
@@ -213,6 +215,7 @@ func (q *Queries) ListPosts(ctx context.Context, arg ListPostsParams) ([]Post, e
 			&i.Metrics,
 			&i.ScrapedAt,
 			&i.AuthorAccountID,
+			&i.PublishedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -226,10 +229,10 @@ func (q *Queries) ListPosts(ctx context.Context, arg ListPostsParams) ([]Post, e
 
 const listRecentPostsByPlatform = `-- name: ListRecentPostsByPlatform :many
 SELECT id, platform, external_id, author_handle, author_id, text, media_urls,
-       metrics, scraped_at, author_account_id
+       metrics, scraped_at, author_account_id, published_at
 FROM post
 WHERE platform = $1
-ORDER BY scraped_at DESC
+ORDER BY published_at DESC NULLS LAST, scraped_at DESC
 LIMIT $2
 `
 
@@ -238,8 +241,10 @@ type ListRecentPostsByPlatformParams struct {
 	Limit    int32    `json:"limit"`
 }
 
-// Posts on a platform, newest scrape first. The keyword-scrape read-back uses
-// it (this run's rows just got the freshest scraped_at), not a metric ranking.
+// Posts on a platform, newest PUBLICATION first, falling back to scrape time for
+// rows ingested before 000016 (which has no recoverable publish date). The
+// keyword-scrape read-back uses it to show this run's rows in the order they
+// were posted, not the order we happened to fetch them.
 func (q *Queries) ListRecentPostsByPlatform(ctx context.Context, arg ListRecentPostsByPlatformParams) ([]Post, error) {
 	rows, err := q.db.Query(ctx, listRecentPostsByPlatform, arg.Platform, arg.Limit)
 	if err != nil {
@@ -260,6 +265,7 @@ func (q *Queries) ListRecentPostsByPlatform(ctx context.Context, arg ListRecentP
 			&i.Metrics,
 			&i.ScrapedAt,
 			&i.AuthorAccountID,
+			&i.PublishedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -273,7 +279,7 @@ func (q *Queries) ListRecentPostsByPlatform(ctx context.Context, arg ListRecentP
 
 const listTopPostsByPlatform = `-- name: ListTopPostsByPlatform :many
 SELECT id, platform, external_id, author_handle, author_id, text, media_urls,
-       metrics, scraped_at, author_account_id
+       metrics, scraped_at, author_account_id, published_at
 FROM post
 WHERE platform = $1
 ORDER BY (metrics->>$2::text)::bigint DESC NULLS LAST
@@ -309,6 +315,7 @@ func (q *Queries) ListTopPostsByPlatform(ctx context.Context, arg ListTopPostsBy
 			&i.Metrics,
 			&i.ScrapedAt,
 			&i.AuthorAccountID,
+			&i.PublishedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -371,27 +378,29 @@ func (q *Queries) UpsertComment(ctx context.Context, arg UpsertCommentParams) (C
 const upsertPost = `-- name: UpsertPost :one
 INSERT INTO post (
     platform, external_id, author_handle, author_id, text, media_urls, metrics,
-    author_account_id
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    author_account_id, published_at
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $9, $8)
 ON CONFLICT (platform, external_id) DO UPDATE
 SET text               = EXCLUDED.text,
     media_urls         = EXCLUDED.media_urls,
     metrics            = EXCLUDED.metrics,
     scraped_at         = now(),
-    author_account_id  = EXCLUDED.author_account_id
+    author_account_id  = EXCLUDED.author_account_id,
+    published_at        = COALESCE(EXCLUDED.published_at, post.published_at)
 RETURNING id, platform, external_id, author_handle, author_id, text, media_urls,
-          metrics, scraped_at, author_account_id
+          metrics, scraped_at, author_account_id, published_at
 `
 
 type UpsertPostParams struct {
-	Platform        Platform        `json:"platform"`
-	ExternalID      string          `json:"external_id"`
-	AuthorHandle    string          `json:"author_handle"`
-	AuthorID        string          `json:"author_id"`
-	Text            *string         `json:"text"`
-	MediaUrls       []string        `json:"media_urls"`
-	Metrics         json.RawMessage `json:"metrics"`
-	AuthorAccountID pgtype.UUID     `json:"author_account_id"`
+	Platform        Platform           `json:"platform"`
+	ExternalID      string             `json:"external_id"`
+	AuthorHandle    string             `json:"author_handle"`
+	AuthorID        string             `json:"author_id"`
+	Text            *string            `json:"text"`
+	MediaUrls       []string           `json:"media_urls"`
+	Metrics         json.RawMessage    `json:"metrics"`
+	PublishedAt     pgtype.Timestamptz `json:"published_at"`
+	AuthorAccountID pgtype.UUID        `json:"author_account_id"`
 }
 
 func (q *Queries) UpsertPost(ctx context.Context, arg UpsertPostParams) (Post, error) {
@@ -403,6 +412,7 @@ func (q *Queries) UpsertPost(ctx context.Context, arg UpsertPostParams) (Post, e
 		arg.Text,
 		arg.MediaUrls,
 		arg.Metrics,
+		arg.PublishedAt,
 		arg.AuthorAccountID,
 	)
 	var i Post
@@ -417,6 +427,7 @@ func (q *Queries) UpsertPost(ctx context.Context, arg UpsertPostParams) (Post, e
 		&i.Metrics,
 		&i.ScrapedAt,
 		&i.AuthorAccountID,
+		&i.PublishedAt,
 	)
 	return i, err
 }

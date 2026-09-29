@@ -478,6 +478,66 @@ func TestScrapeKeywordsCrawlerbrosFlatRows(t *testing.T) {
 	}
 }
 
+// The regression this pins: the window filter read pub_date to decide the row
+// was in range and then dropped the value on the floor, so a post ingested on
+// 2026-09-29 was stored with no date at all and the UI rendered scrapedAt in
+// its place — every post in a batch read as the day the batch ran. The kept
+// row must carry the very date it was filtered on.
+func TestScrapeKeywordsStoresThePublishDateItFilteredOn(t *testing.T) {
+	svc, _, _, _ := keywordRun(t,
+		mkIGCrawlerbrosRow("DbkaUUqxYkg", "2026-08-03T07:06:51"),
+	)
+
+	res, err := svc.ScrapeKeywords(context.Background(), KeywordScrapeInput{
+		Platform: domain.PlatformInstagram,
+		Keywords: []string{"batulicin"},
+		Window: KeywordWindow{
+			From: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
+			To:   time.Date(2026, 9, 24, 0, 0, 0, 0, time.UTC),
+		},
+	})
+	if err != nil {
+		t.Fatalf("scrape: %v", err)
+	}
+	if len(res.Posts) != 1 {
+		t.Fatalf("posts: want 1, got %d", len(res.Posts))
+	}
+	got := res.Posts[0].PublishedAt
+	if got == nil {
+		t.Fatal("publishedAt is nil — the date the window filtered on was discarded")
+	}
+	want := time.Date(2026, 8, 3, 7, 6, 51, 0, time.UTC)
+	if !got.Equal(want) {
+		t.Fatalf("publishedAt = %s, want %s", got.Format(time.RFC3339), want.Format(time.RFC3339))
+	}
+}
+
+// A row the actor gave no parseable date for is KEPT (a missing field is the
+// actor's gap, not a date outside the window) but must not be given an invented
+// publish date. NULL here is the honest answer; scrapedAt remains the labelled
+// fallback.
+func TestScrapeKeywordsUndatedRowIsKeptWithNoPublishDate(t *testing.T) {
+	svc, _, _, _ := keywordRun(t, mkIGCrawlerbrosRow("Dnodate", ""))
+
+	res, err := svc.ScrapeKeywords(context.Background(), KeywordScrapeInput{
+		Platform: domain.PlatformInstagram,
+		Keywords: []string{"batulicin"},
+		Window: KeywordWindow{
+			From: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
+			To:   time.Date(2026, 9, 24, 0, 0, 0, 0, time.UTC),
+		},
+	})
+	if err != nil {
+		t.Fatalf("scrape: %v", err)
+	}
+	if len(res.Posts) != 1 {
+		t.Fatalf("posts: want the undated row kept, got %d", len(res.Posts))
+	}
+	if res.Posts[0].PublishedAt != nil {
+		t.Fatalf("publishedAt = %v, want nil — no date was supplied, so none may be stored", res.Posts[0].PublishedAt)
+	}
+}
+
 // The Threads search actor returns a flat post row with an RFC3339 created_at;
 // the window drops the rows outside it.
 func TestScrapeKeywordsThreadsWindow(t *testing.T) {

@@ -62,13 +62,16 @@
 ### 4.2 Keyword search scrape — `crawlerbros/instagram-keyword-search-scraper`
 
 - **Actor:** `crawlerbros/instagram-keyword-search-scraper` (env `APIFY_SEARCH_ACTOR_INSTAGRAM`). Id full, bukan turunan `APIFY_ACTOR_PREFIX`.
-- **Input:** `input_keyword`, keyword, window, max results di payload.
+- **Input yang benar-benar dikirim:** hanya `keywords` (array) + `maxPosts` (`runner.go:117-120`). Actor id `GdWCkxBtKWOsKjdch` **tidak menerima** batas tanggal maupun `search_filter` — field yang pernah dicoba diabaikan diam-diam.
 - **Run mode:** sync (`run-sync-get-dataset-items`).
 - **⚠ Tidak ada batas tanggal di actor** → kedua batas window diterapkan di ingestor (`inWindow`).
 - **Output row:** satu row **flat snake_case per post** — `shortcode`, `username`, `caption`, `pub_date` (`"2026-08-03T07:06:51"` — **tanpa offset**, sehingga ditolak RFC3339; dibaca UTC via `parseActorTime`), `author_meta.id`, `like_count`, `comment_count`, `view_count`, `play_count`, `media_items[]`.
 - **Bentuk ini butuh parser sendiri** (`parseIGFlatPostItems`): Go unmarshal case-insensitive tidak menjembatani underscore (`like_count` ↛ `likesCount`), jadi membaca row ini lewat struct camelCase menghasilkan `likes: null, comments: null` dan handle `unknown`.
 - **Tidak mengembalikan comment bodies** — hanya `comment_count`. Untuk comment jalankan post-scrape (§4.1).
 - **Normalisasi → DB:** `shortcode`→`Post.external_id`, `username`→`author_handle`, `caption`→`text`, `media_items[].url`→`media_urls`, `like_count`/`comment_count`/`view_count`+`play_count`→`Post.metrics` + `MetricSnapshot`.
+- **`pub_date` → `Post.published_at` (migration `000016`).** Nilai ini dipakai `inWindow` untuk menyaring lalu dibuang; sekarang ikut tersimpan. `Post.scraped_at` tetap `now()` dan bukan pengganti — UI melabelinya `scrape …`.
+>
+> **Yield.window.** Karena actor tidak bisa difilter, `max_posts` habis terpakai pada post yang ternyata di luar jendela. Terukur pada run `d3fc79a8` (3 keyword, `max_posts=50`, jendela 28 hari): 150 item di-fetch, 27 lolos — **yield 18%**, 82% compute terbuang. Persempit jendela menaikkan yield; menaikkan `max_posts` hanya membeli tiket lotre lebih banyak.
 - **Dataset keys:** `apify/search-<runID>/<i>.json`.
 
 ## 5. Live Brief (bila ada)

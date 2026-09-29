@@ -181,6 +181,18 @@ func tsPtr(t *time.Time) pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: t.UTC(), Valid: true}
 }
 
+// tsTimePtr converts a NULLABLE pgtype timestamp to *time.Time. Used for
+// published_at, which is genuinely absent on rows ingested before migration
+// 000016 — a nil here is the honest answer, not a zero time the UI would
+// render as 1 January 0001.
+func tsTimePtr(ts pgtype.Timestamptz) *time.Time {
+	if !ts.Valid {
+		return nil
+	}
+	v := ts.Time.UTC()
+	return &v
+}
+
 // uuidStrPtr converts a nullable pgtype UUID to *string. An invalid (NULL)
 // UUID becomes nil, not a pointer to the empty string.
 func uuidStrPtr(id pgtype.UUID) *string {

@@ -157,6 +157,7 @@ func (s *ScrapeIngestor) ingestPost(ctx context.Context, p domain.Platform, item
 		Text:         nilIfEmpty(item.Text),
 		MediaURLs:    item.MediaURLs,
 		Metrics:      item.metricsJSON(),
+		PublishedAt:  item.PublishedAt,
 	})
 	if err != nil {
 		return fmt.Errorf("upsert post: %w", err)
@@ -237,6 +238,11 @@ type scrapeItem struct {
 	Text         string         `json:"text"`
 	MediaURLs    []string       `json:"mediaUrls"`
 	Metrics      map[string]any `json:"metrics"`
+	// PublishedAt carries the post's own publish time through to the DB. It is
+	// the same value the window filter already read (takenAt) — previously it
+	// was used to decide keep/drop and then thrown away, so no post row ever
+	// carried a date.
+	PublishedAt *time.Time `json:"publishedAt"`
 }
 
 // igCommentItem is one element of instagram-post-scraper's latestComments[].
@@ -402,6 +408,7 @@ func parseIGFlatPostItems(raw []byte, window port.KeywordTimeWindow) ([]scrapeIt
 		Text:         src.Caption,
 		MediaURLs:    media,
 		Metrics:      metrics,
+		PublishedAt:  publishedAtPtr(takenAt),
 	}}, nil
 }
 
@@ -472,6 +479,7 @@ func parseIGPostItems(raw []byte, window port.KeywordTimeWindow) ([]scrapeItem, 
 		Text:         orDefault(src.Caption, src.FirstComment),
 		MediaURLs:    media,
 		Metrics:      metrics,
+		PublishedAt:  publishedAtPtr(takenAt),
 	}
 	items := []scrapeItem{post}
 	items = append(items, parseIGComments(domain.PlatformInstagram, post, src.LatestComments)...)
@@ -618,6 +626,19 @@ func inWindow(t time.Time, w port.KeywordTimeWindow) bool {
 		return false
 	}
 	return true
+}
+
+// publishedAtPtr normalises the filter's takenAt into a nullable DB value. A
+// zero time means the actor gave us no parseable date — we keep the row
+// (inWindow treats a missing field as "not outside the window") but we must not
+// invent a publish date for it, so the column stays NULL and the UI falls back
+// to scrapedAt, labelled as such rather than passed off as a publish date.
+func publishedAtPtr(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+	v := t.UTC()
+	return &v
 }
 
 // parseActorTime reads a timestamp from an actor, accepting the layouts they
@@ -806,6 +827,7 @@ func parseThreadsItem(raw []byte, window port.KeywordTimeWindow, onlyCode string
 				AuthorHandle: handle,
 				Text:         text,
 				Metrics:      map[string]any{"likes": src.LikeCount},
+				PublishedAt:  publishedAtPtr(takenAt),
 			}}, nil
 		}
 		// The parent is not in this run. The actor flags `is_reply` on rows
@@ -840,6 +862,7 @@ func parseThreadsItem(raw []byte, window port.KeywordTimeWindow, onlyCode string
 			"comments": src.ReplyCount,
 			"shares":   orInt(src.RepostCount, src.ReshareCt, src.QuoteCount),
 		},
+		PublishedAt: publishedAtPtr(takenAt),
 	}}, nil
 }
 

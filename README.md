@@ -158,6 +158,18 @@ A wrong field name on an actor is **silent** — the actor falls back to its
 own default and the scrape quietly returns the wrong thing, not an error.
 The payload pinning for each actor lives in `runner_test.go` for that reason.
 
+An actor that accepts **no date bound** cannot be filtered server-side, so
+`max_posts` is spent on posts that may fall outside the operator's window and
+are then dropped by the ingestor. Measured on run `d3fc79a8` (Instagram,
+3 keywords, 28-day window): 150 items fetched, 27 kept — an 18% yield. A
+narrower window raises the yield; a larger `max_posts` only buys more lottery
+tickets. When an actor does expose a date filter, send it — see
+`docs/platforms/` for which ones do.
+
+`Post.published_at` (migration `000016`) holds the post's own publication
+date. `Post.scraped_at` is when *we* looked and is not a substitute; the UI
+labels the fallback `scrape …` so the two are never confused.
+
 ## Changelog
 
 `CHANGELOG.md` is generated from conventional commits. `docs/PROGRESS.md`

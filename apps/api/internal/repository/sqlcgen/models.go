@@ -959,6 +959,7 @@ type Post struct {
 	Metrics         json.RawMessage    `json:"metrics"`
 	ScrapedAt       pgtype.Timestamptz `json:"scraped_at"`
 	AuthorAccountID pgtype.UUID        `json:"author_account_id"`
+	PublishedAt     pgtype.Timestamptz `json:"published_at"`
 }
 
 type ProvisionLog struct {

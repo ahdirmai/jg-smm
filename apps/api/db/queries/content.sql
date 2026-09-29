@@ -4,35 +4,36 @@
 
 -- name: GetPostByID :one
 SELECT id, platform, external_id, author_handle, author_id, text, media_urls,
-       metrics, scraped_at, author_account_id
+       metrics, scraped_at, author_account_id, published_at
 FROM post
 WHERE id = $1;
 
 -- name: GetPostByPlatformExternalID :one
 SELECT id, platform, external_id, author_handle, author_id, text, media_urls,
-       metrics, scraped_at, author_account_id
+       metrics, scraped_at, author_account_id, published_at
 FROM post
 WHERE platform = $1 AND external_id = $2;
 
 -- name: UpsertPost :one
 INSERT INTO post (
     platform, external_id, author_handle, author_id, text, media_urls, metrics,
-    author_account_id
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    author_account_id, published_at
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $9, $8)
 ON CONFLICT (platform, external_id) DO UPDATE
 SET text               = EXCLUDED.text,
     media_urls         = EXCLUDED.media_urls,
     metrics            = EXCLUDED.metrics,
     scraped_at         = now(),
-    author_account_id  = EXCLUDED.author_account_id
+    author_account_id  = EXCLUDED.author_account_id,
+    published_at        = COALESCE(EXCLUDED.published_at, post.published_at)
 RETURNING id, platform, external_id, author_handle, author_id, text, media_urls,
-          metrics, scraped_at, author_account_id;
+          metrics, scraped_at, author_account_id, published_at;
 
 -- name: ListPosts :many
 SELECT id, platform, external_id, author_handle, author_id, text, media_urls,
-       metrics, scraped_at, author_account_id
+       metrics, scraped_at, author_account_id, published_at
 FROM post
-ORDER BY scraped_at DESC
+ORDER BY published_at DESC NULLS LAST, scraped_at DESC
 LIMIT $1 OFFSET $2;
 
 -- name: ListTopPostsByPlatform :many
@@ -40,20 +41,22 @@ LIMIT $1 OFFSET $2;
 -- the dashboard's "top posts" table. metric_key must be a jsonb text field;
 -- `->>` keeps the bind a plain text parameter (no jsonb literal assembly).
 SELECT id, platform, external_id, author_handle, author_id, text, media_urls,
-       metrics, scraped_at, author_account_id
+       metrics, scraped_at, author_account_id, published_at
 FROM post
 WHERE platform = $1
 ORDER BY (metrics->>$2::text)::bigint DESC NULLS LAST
 LIMIT $3;
 
 -- name: ListRecentPostsByPlatform :many
--- Posts on a platform, newest scrape first. The keyword-scrape read-back uses
--- it (this run's rows just got the freshest scraped_at), not a metric ranking.
+-- Posts on a platform, newest PUBLICATION first, falling back to scrape time for
+-- rows ingested before 000016 (which has no recoverable publish date). The
+-- keyword-scrape read-back uses it to show this run's rows in the order they
+-- were posted, not the order we happened to fetch them.
 SELECT id, platform, external_id, author_handle, author_id, text, media_urls,
-       metrics, scraped_at, author_account_id
+       metrics, scraped_at, author_account_id, published_at
 FROM post
 WHERE platform = $1
-ORDER BY scraped_at DESC
+ORDER BY published_at DESC NULLS LAST, scraped_at DESC
 LIMIT $2;
 
 -- name: GetCommentByID :one

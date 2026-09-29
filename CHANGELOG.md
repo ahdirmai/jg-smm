@@ -5,6 +5,29 @@
 > schema changes are traced here per `docs/DEVELOPMENT_RULE.md` §4.
 
 ## Unreleased
+### Fixed
+- **`post` now stores the date a post was published (migration
+  `000016_post_published_at`).** `post` carried exactly one timestamp,
+  `scraped_at`, which is `now()`. The actor payload's publish date
+  (`pub_date`, `timestamp`, `posted_at`, `taken_at`, `created_at`) was
+  read, used to evaluate the operator's window, and then discarded —
+  `scrapeItem` had no field to carry it and no column to land it in.
+
+  The symptom was not a wrong number but a plausible one: the batch
+  detail page rendered `scrapedAt` with no label, so every post in a
+  batch read as the day the batch ran. A batch scraped on 2026-09-29
+  with a 2026-09-01 → 2026-09-29 window showed 27 posts all dated
+  29 September, while the actor's own dataset showed a real spread of
+  4–28 September. It made recency unsortable, made "posts from the last
+  N days" unanswerable from the database, and made the window filter's
+  own result unauditable without re-reading the raw payload.
+
+  `published_at` is nullable on purpose: existing rows are
+  unbackfillable — the dates are gone, not hidden. `scraped_at` remains
+  the fallback and is now labelled `scrape …` in the UI rather than
+  silently standing in for a date we never had. `ListPosts` and
+  `ListRecentPostsByPlatform` order by
+  `published_at DESC NULLS LAST, scraped_at DESC`.
 
 ### Scrape
 

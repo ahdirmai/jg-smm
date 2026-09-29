@@ -255,7 +255,13 @@ export default function BatchDetailPage() {
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                         <span className="font-medium text-foreground">@{p.authorHandle || 'unknown'}</span>
-                        <span>{new Date(p.scrapedAt).toLocaleDateString()}</span>
+                        {p.publishedAt ? (
+                          <span title="Tanggal publikasi post">{new Date(p.publishedAt).toLocaleDateString()}</span>
+                        ) : (
+                          <span title="Tanggal publikasi tidak tersedia untuk post ini — menampilkan kapan post di-scrape" className="text-muted-foreground/70">
+                           scrape {new Date(p.scrapedAt).toLocaleDateString()}
+                          </span>
+                        )}
                         {p.metrics ? <span>{metricsLine(p.platform, p.metrics)}</span> : null}
                         <div className="ml-auto flex items-center gap-1">
                           {link ? (

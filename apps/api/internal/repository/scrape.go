@@ -123,6 +123,7 @@ func (r *ScrapeRepo) UpsertPost(ctx context.Context, p domain.Post) (domain.Post
 		Text:            p.Text,
 		MediaUrls:       media,
 		Metrics:         jsonbBytes(p.Metrics),
+		PublishedAt:     tsPtr(p.PublishedAt),
 		AuthorAccountID: uuidValuePtr(p.AuthorAccountID),
 	})
 	if err != nil {
