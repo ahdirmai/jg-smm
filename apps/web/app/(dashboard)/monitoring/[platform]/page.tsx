@@ -13,12 +13,6 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
 } from '@smm/ui';
 import { RefreshCw } from 'lucide-react';
 import Link from 'next/link';
@@ -34,17 +28,16 @@ import {
 import { PLATFORMS, PLATFORM_LABEL } from '@/lib/platforms';
 import { analyticsConfig } from '@/lib/analytics-config';
 
+/** The window the reader is looking at, and the one it is compared against. */
+const WINDOW_DAYS = 30;
+
 /**
- * Per-platform analytics (P6-06, mirrors docs/prototype/analytics-<platform>.html).
+ * Per-platform analytics (P6-06).
  *
- * Each platform has its own metric vocabulary (IG: saves + reels views, YouTube:
- * watch time + CTR, …) read from analyticsConfig; the KPI strip and the trend
- * pairing follow the approved prototype per platform.
- *
- * All figures come from the 3rd-party analytics ingest for official (monitored)
- * accounts only — worker accounts are never measured here. KPI cards aggregate
- * the metric across the platform's accounts so the strip reads as one number
- * per metric.
+ * All figures come from the analytics ingest for official (monitored) accounts
+ * only — worker accounts are never measured here. KPI cards aggregate the
+ * metric across the platform's accounts so the strip reads as one number per
+ * metric.
  */
 export default function PlatformAnalyticsPage({
   params,
@@ -55,35 +48,58 @@ export default function PlatformAnalyticsPage({
   const cfg = analyticsConfig(platform);
   const label = PLATFORM_LABEL[platform] ?? platform;
 
-  // The trend metric defaults to the platform's primary series pair so the
-  // chart title matches the prototype out of the box.
-  const [metric] = useState(cfg?.seriesA ?? 'followers');
+  // The metric drives the trend. It is a real control, not a constant: the API
+  // serves one series per request, so this is how the reader compares reach
+  // against views without a second, differently-scaled line.
+  const [metric, setMetric] = useState(cfg?.defaultMetric ?? 'reach');
   const [accountFilter, setAccountFilter] = useState<string>('all');
 
+  // Twice the window in one request: the extra half is what the period-over-
+  // period figure is measured against, so the comparison costs no extra call.
   const accounts = useOfficialAccounts(platform);
-  const analytics = usePlatformAnalytics(platform, metric, 30);
+  const analytics = usePlatformAnalytics(platform, metric, WINDOW_DAYS * 2);
   const refresh = useAnalyticsRefresh();
   const [syncing, setSyncing] = useState(false);
 
   // The account filter is client-side: the API returns the platform's KPIs in
   // one call, so narrowing to one account is a projection of that payload.
+  // "All" must be null, not an empty Set — an empty Set is truthy, so testing it
+  // as a filter drops every KPI on the default view.
   const accountIds = useMemo(
-    () => new Set(accountFilter === 'all' ? null : [accountFilter]),
+    () => (accountFilter === 'all' ? null : new Set([accountFilter])),
     [accountFilter],
   );
 
   const kpis = useMemo(() => {
     const all = analytics.data?.kpis ?? [];
-    const filtered = accountIds ? all.filter((k) => accountIds.has(k.officialAccountId)) : all;
+    const rows = accountIds ? all.filter((k) => accountIds.has(k.officialAccountId)) : all;
     const byMetric = new Map<string, number>();
-    for (const k of filtered) {
+    for (const k of rows) {
       if (k.value == null) continue;
       byMetric.set(k.metric, (byMetric.get(k.metric) ?? 0) + k.value);
     }
     return byMetric;
   }, [analytics.data?.kpis, accountIds]);
 
-  const trend = analytics.data?.trend ?? [];
+  // The chart shows the recent window; the half before it is the baseline.
+  const { points, period } = useMemo(() => {
+    const all = analytics.data?.trend ?? [];
+    const recent = all.slice(-WINDOW_DAYS);
+    const sum = (xs: typeof recent) => xs.reduce((s, p) => s + p.value, 0);
+    const current = sum(recent);
+    const previous = sum(all.slice(-WINDOW_DAYS * 2, -WINDOW_DAYS));
+    return {
+      points: recent,
+      period: {
+        current,
+        // No baseline means no honest percentage: reporting "+100%" off a zero
+        // previous period would be a fabricated number.
+        changePct: previous > 0 ? ((current - previous) / previous) * 100 : null,
+      },
+    };
+  }, [analytics.data?.trend]);
+
+  const metricLabel = cfg?.kpis.find((k) => k.metric === metric)?.label ?? metric;
   const accountRows = accounts.data?.officialAccounts ?? [];
 
   async function onSync() {
@@ -152,7 +168,7 @@ export default function PlatformAnalyticsPage({
         </Card>
       ) : null}
 
-      {/* Filters: account narrows the KPI strip; metric drives the trend. */}
+      {/* Filters: account narrows the KPI strip, metric drives the trend. */}
       <section className="flex flex-wrap items-center gap-2">
         <Select value={accountFilter} onValueChange={setAccountFilter}>
           <SelectTrigger className="w-56" aria-label="All official accounts">
@@ -167,12 +183,23 @@ export default function PlatformAnalyticsPage({
             ))}
           </SelectContent>
         </Select>
-        <span className="ml-auto text-xs text-muted-foreground">Last 30 days</span>
+        <Select value={metric} onValueChange={setMetric}>
+          <SelectTrigger className="w-48" aria-label="Trend metric">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {(cfg?.kpis ?? []).map((k) => (
+              <SelectItem key={k.metric} value={k.metric}>
+                {k.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </section>
 
       {/* KPI strip: the platform's own metric vocabulary (analyticsConfig). */}
       <section className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        {(cfg?.kpis ?? []).slice(0, 4).map((k) => {
+        {(cfg?.kpis ?? []).map((k) => {
           const value = kpis.get(k.metric);
           const Icon = k.icon;
           return (
@@ -194,35 +221,38 @@ export default function PlatformAnalyticsPage({
         })}
       </section>
 
-      <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div>
-                <CardTitle>{cfg?.trendTitle ?? 'Trend'}</CardTitle>
-                <CardDescription>Daily series · last 30 days</CardDescription>
-              </div>
-              <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                <span className="flex items-center gap-1.5">
-                  <span className="inline-block size-2 rounded-full bg-[hsl(var(--chart-1))]" />
-                  {cfg?.seriesA}
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span className="inline-block size-2 rounded-full bg-[hsl(var(--chart-4))]" />
-                  {cfg?.seriesB}
-                </span>
-              </div>
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <CardTitle>{metricLabel} · last {WINDOW_DAYS} days</CardTitle>
+              <CardDescription>
+                {period.changePct == null ? (
+                  'Daily series · no earlier period to compare against yet'
+                ) : (
+                  <>
+                    {period.current.toLocaleString()} in the last {WINDOW_DAYS} days ·{' '}
+                    <span
+                      className={
+                        period.changePct >= 0
+                          ? 'font-medium text-foreground'
+                          : 'font-medium text-destructive'
+                      }
+                    >
+                      {period.changePct >= 0 ? '+' : ''}
+                      {period.changePct.toFixed(0)}%
+                    </span>{' '}
+                    vs the {WINDOW_DAYS} days before
+                  </>
+                )}
+              </CardDescription>
             </div>
-          </CardHeader>
-          <CardContent>
-            <TrendChart points={trend} />
-          </CardContent>
-        </Card>
-
-        {/* Audience mix: the 3rd-party ingestion does not expose a geo split
-         * yet. The panel is hidden rather than shown with labelled-but-fake
-         * bars — no example numbers presented as data of any kind. */}
-      </section>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <TrendChart points={points} />
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>
@@ -252,6 +282,7 @@ export default function PlatformAnalyticsPage({
                     ) : null}
                   </div>
                   <div className="flex items-center gap-4">
+                    <span className="text-xs text-muted-foreground">Followers</span>
                     <span className="tabular-nums">
                       {kpisForAccount(analytics.data?.kpis ?? [], a.id, 'followers')}
                     </span>
@@ -263,43 +294,6 @@ export default function PlatformAnalyticsPage({
               ))}
             </ul>
           )}
-        </CardContent>
-      </Card>
-
-      {/* Top posts. The prototype ships this table with its own "not yet
-          enabled" empty state; the ingest API exposes KPIs + trend only, so
-          per-post rows have no source yet. Structure matches the prototype,
-          rows are never fabricated. */}
-      <Card>
-        <CardHeader>
-          <div>
-            <CardTitle>Top posts</CardTitle>
-            <CardDescription>{label} · last 30 days</CardDescription>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="overflow-x-auto rounded-lg border border-border/60">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Post</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Date</TableHead>
-                  <TableHead className="text-right">Metrics</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                <TableRow>
-                  <TableCell
-                    colSpan={4}
-                    className="py-10 text-center text-xs text-muted-foreground"
-                  >
-                    Not yet enabled in the MVP — layout shown for review.
-                  </TableCell>
-                </TableRow>
-              </TableBody>
-            </Table>
-          </div>
         </CardContent>
       </Card>
     </div>

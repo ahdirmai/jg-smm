@@ -46,15 +46,6 @@ export const TrendChartSeries: StoryObj = {
   render: () => <TrendChart points={SERIES} />,
 };
 
-export const TrendChartCompare: StoryObj = {
-  render: () => (
-    <TrendChart
-      points={SERIES}
-      compare={SERIES.map((p, i) => ({ bucket: p.bucket, value: 8 + i * 3 }))}
-    />
-  ),
-};
-
 export const TrendChartEmpty: StoryObj = {
   render: () => <TrendChart points={[]} />,
 };

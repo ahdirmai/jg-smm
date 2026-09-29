@@ -23,19 +23,15 @@ const PAD_BOTTOM = 10;
 
 type Props = {
   points: TrendPoint[];
-  /** Optional second series (prototype's "Reach vs Views" two-line card). */
-  compare?: TrendPoint[];
   className?: string;
 };
 
-export function TrendChart({ points, compare, className }: Props) {
-  // Two series must normalise against one scale, or the second line lies about
-  // its magnitude relative to the first.
-  const all = [...points, ...(compare ?? [])];
-  const min = all.length ? Math.min(...all.map((p) => p.value)) : 0;
-  const max = all.length ? Math.max(...all.map((p) => p.value)) : 0;
+export function TrendChart({ points, className }: Props) {
+  // A provider metric is a gauge, so the axis is scaled to the series' own
+  // range; a flat series would otherwise divide by zero.
+  const min = points.length ? Math.min(...points.map((p) => p.value)) : 0;
+  const max = points.length ? Math.max(...points.map((p) => p.value)) : 0;
   const span = max - min || 1;
-
   const x = (i: number, len: number) => (len <= 1 ? VIEW_W / 2 : (i / (len - 1)) * VIEW_W);
   const y = (v: number) =>
     VIEW_H - ((v - min) / span) * (VIEW_H - PAD_TOP - PAD_BOTTOM) - PAD_BOTTOM;
@@ -93,16 +89,6 @@ export function TrendChart({ points, compare, className }: Props) {
             strokeLinejoin="round"
             points={line(points)}
           />
-          {compare && compare.length > 0 ? (
-            <polyline
-              fill="none"
-              stroke="hsl(var(--chart-2))"
-              strokeWidth={2}
-              strokeDasharray="5 4"
-              strokeLinejoin="round"
-              points={line(compare)}
-            />
-          ) : null}
         </svg>
       )}
     </div>

@@ -47,6 +47,13 @@ export default function MonitoringPage() {
 
   const kpis = overview.data?.kpis ?? [];
   const rows = accounts.data?.officialAccounts ?? [];
+  // Aggregates are per metric: the API returns one KPI row per (account,
+  // metric), so summing the whole list would add reach to views to followers
+  // and label the result "followers".
+  const totalByMetric = (metric: string) =>
+    kpis.reduce((sum, k) => (k.metric === metric ? sum + (k.value ?? 0) : sum), 0);
+  const metricFor = (id: string, metric: string) =>
+    kpis.find((k) => k.officialAccountId === id && k.metric === metric)?.value;
 
   return (
     <div className="space-y-6">
@@ -68,20 +75,19 @@ export default function MonitoringPage() {
         </Card>
       ) : null}
 
+      {/* Four cards: the reach the team is here to watch, plus the two other
+          scalars the provider reports and the fleet size. Staleness is not a
+          card — the freshness badge above already states it, and each account
+          carries its own status in the table. */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <KpiCard label="Monitored accounts" value={rows.length} loading={accounts.loading} />
-        <KpiCard label="Platforms" value={new Set(rows.map((a) => a.platform)).size} loading={accounts.loading} />
+        <KpiCard label="Total reach" value={totalByMetric('reach')} loading={overview.loading} />
+        <KpiCard label="Total views" value={totalByMetric('views')} loading={overview.loading} />
         <KpiCard
-          label="Total followers"
-          value={kpis.reduce((sum, k) => sum + (k.value ?? 0), 0)}
+          label="Total interactions"
+          value={totalByMetric('engagements')}
           loading={overview.loading}
         />
-        <KpiCard
-          label="Stale accounts"
-          value={rows.filter((a) => a.stale).length}
-          loading={accounts.loading}
-          tone={rows.some((a) => a.stale) ? 'warn' : 'ok'}
-        />
+        <KpiCard label="Monitored accounts" value={rows.length} loading={accounts.loading} />
       </div>
 
       <Card>
@@ -108,6 +114,8 @@ export default function MonitoringPage() {
                   <TableHead>Account</TableHead>
                   <TableHead>Platform</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead>Reach</TableHead>
+                  <TableHead>Views</TableHead>
                   <TableHead>Followers</TableHead>
                   <TableHead>Last synced</TableHead>
                   <TableHead>Analytics</TableHead>
@@ -115,7 +123,6 @@ export default function MonitoringPage() {
               </TableHeader>
               <TableBody>
                 {rows.map((a) => {
-                  const kpi = kpis.find((k) => k.officialAccountId === a.id);
                   return (
                     <TableRow key={a.id}>
                       <TableCell className="font-medium">
@@ -131,7 +138,13 @@ export default function MonitoringPage() {
                         <Badge variant={a.stale ? 'destructive' : 'success'}>{a.stale ? 'Stale' : 'Fresh'}</Badge>
                       </TableCell>
                       <TableCell className="tabular-nums">
-                        {kpi?.value != null ? kpi.value.toLocaleString() : '—'}
+                        {metricFor(a.id, 'reach')?.toLocaleString() ?? '—'}
+                      </TableCell>
+                      <TableCell className="tabular-nums">
+                        {metricFor(a.id, 'views')?.toLocaleString() ?? '—'}
+                      </TableCell>
+                      <TableCell className="tabular-nums">
+                        {metricFor(a.id, 'followers')?.toLocaleString() ?? '—'}
                       </TableCell>
                       <TableCell className="text-muted-foreground">
                         {a.lastFetchedAt ? new Date(a.lastFetchedAt).toLocaleString() : 'Never'}
@@ -154,26 +167,12 @@ export default function MonitoringPage() {
   );
 }
 
-function KpiCard({
-  label,
-  value,
-  loading,
-  tone = 'ok',
-}: {
-  label: string;
-  value: number;
-  loading: boolean;
-  tone?: 'ok' | 'warn';
-}) {
+function KpiCard({ label, value, loading }: { label: string; value: number; loading: boolean }) {
   return (
     <Card>
       <CardContent className="space-y-2 p-5">
         {/* Principle 4: hero number, small muted label beneath. */}
-        <div
-          className={`text-2xl font-semibold tracking-tight tabular-nums ${
-            tone === 'warn' && value > 0 ? 'text-destructive' : ''
-          }`}
-        >
+        <div className="text-2xl font-semibold tracking-tight tabular-nums">
           {loading ? '—' : value.toLocaleString()}
         </div>
         <div className="text-xs uppercase tracking-wide text-muted-foreground">{label}</div>
