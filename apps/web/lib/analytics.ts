@@ -14,6 +14,8 @@ export type OfficialAccountList = ApiSchemas['OfficialAccountList'];
 export type CreateOfficialAccountRequest = ApiSchemas['CreateOfficialAccountRequest'];
 export type AnalyticsOverview = ApiSchemas['AnalyticsOverview'];
 export type PlatformAnalytics = ApiSchemas['PlatformAnalytics'];
+export type ContentMetric = ApiSchemas['ContentMetric'];
+export type ContentMetricsResponse = ApiSchemas['ContentMetricsResponse'];
 export type AnalyticsIngestRun = ApiSchemas['AnalyticsIngestRun'];
 
 export async function listOfficialAccounts(platform?: string): Promise<OfficialAccountList> {
@@ -40,6 +42,26 @@ export async function analyticsByPlatform(
 ): Promise<PlatformAnalytics> {
   const qs = new URLSearchParams({ metric, windowDays: String(windowDays) });
   return request<PlatformAnalytics>(`/api/analytics/${encodeURIComponent(platform)}?${qs}`);
+}
+
+/**
+ * Per-post performance. `accountId` narrows to one monitored account; omit it
+ * for the whole platform.
+ */
+export async function analyticsContent(
+  platform: string,
+  // `| undefined` on accountId is deliberate: the workspace sets
+  // exactOptionalPropertyTypes, and a caller filtering "all accounts" holds a
+  // possibly-undefined id, not an absent key.
+  opts: { accountId?: string | undefined; windowDays?: number; limit?: number } = {},
+): Promise<ContentMetricsResponse> {
+  const qs = new URLSearchParams({ windowDays: String(opts.windowDays ?? 30) });
+  // The query is built key by key rather than by assigning undefined: the
+  // workspace sets exactOptionalPropertyTypes, where an explicit undefined is
+  // not interchangeable with an absent key.
+  if (opts.accountId != null) qs.set('accountId', opts.accountId);
+  if (opts.limit != null) qs.set('limit', String(opts.limit));
+  return request<ContentMetricsResponse>(`/api/analytics/${encodeURIComponent(platform)}/content?${qs}`);
 }
 
 export async function analyticsRefresh(): Promise<AnalyticsIngestRun> {

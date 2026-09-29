@@ -87,12 +87,43 @@ Legend: **✅** tersedia di provider (target MVP bila platform aktif) · **🟡*
 | Engagements (likes+comments+shares)  | ✅  | ✅      | 🟡  | 🟡  | 🟡       | ✅      | ✅     |
 | Mentions                             | ✅  | ✅      | 🟡  | 🟡  | 🟡       | 🟡      | 🟡     |
 | Followers delta (growth)             | ✅  | ✅      | 🟡  | 🟡  | 🟡       | ✅      | ✅     |
-| Post-level breakdown                 | ✅  | ✅      | 🟡  | 🟡  | 🟡       | ✅      | ✅     |
+| Post-level breakdown                 | ✅  | 🟡      | 🟡  | 🟡  | 🟡       | 🟡      | ❌     |
 | Watch time                           | ❌  | ❌      | ⬜  | ⬜  | ⬜       | ✅      | 🟡     |
 | Live viewers (live TikTok / live IG) | 🟡  | ❌      | ⬜  | ❌  | ❌       | 🟡      | 🟡     |
 | Sentiment (mention)                  | 🟡  | 🟡      | ⬜  | 🟡  | ⬜       | ⬜      | ⬜     |
 | Demographics (age/gender/geo)        | 🟡  | ⬜      | 🟡  | ⬜  | 🟡       | 🟡      | 🟡     |
 | Best posting time                    | 🟡  | 🟡      | 🟡  | 🟡  | 🟡       | 🟡      | 🟡     |
+
+**Rincian engagement + metrik per konten.** Satu halaman analytics menampilkan
+strip KPI, tren, dan dua tabel turunan:
+
+- **Engagement breakdown** (`GET /api/analytics/{platform}` → `breakdown`):
+  `likes`, `comments`, `saves`, `shares`, `accounts_engaged` dipecah dari
+  `analytics_snapshot.metrics` (blob JSON), plus `engagementRatePct` =
+  interactions ÷ reach. Bagian yang tidak dilaporkan provider tetap `null` →
+  `—`, bukan `0`.
+- **Metrik per konten** (`GET /api/analytics/{platform}/content`):
+  satu baris per post (caption, permalink, tipe, tanggal publikasi, reach /
+  views / interactions / likes / comments / saves / shares / engagement rate),
+  diurutkan reach. Ditulis tiap ingest ke `analytics_content_metric`, **10
+  post per akun per pass**.
+
+> Metric insights media Instagram bersifat **lifetime** (running total sejak
+> publikasi), jadi tabelnya adalah *gauge* yang di-refresh in-place lewat upsert
+> pada `(official_account_id, external_id, provider)` — **bukan** time series,
+> karenanya tidak memakai hypertable.
+> Satu set metric berlaku untuk feed dan reels: `profile_visits`/`follows`
+> bersifat akun-level dan meminta REELS untuk keduanya **gagal seluruh call**,
+> `impressions` sudah deprecated Instagram, `replies` ditolak carousel.
+> Kegagalan ambil metrik konten **menggagalkan run akun** (bukan diam-diam) —
+> tabel yang berhenti refresh tidak bisa dibedakan dari tabel yang isinya
+> semuanya sudah mati. Baris yang sudah tertulis tetap aman karena upsert
+> di-commit sebelum error.
+>
+> **Hanya Instagram** yang terpasang. **TikTok terblokir dua kali**: tidak ada
+> tool insights per konten di Composio, dan reach-nya sendiri tidak bisa
+> diambil (lihat catatan di bawah) — jadi engagement rate TikTok mustahil
+> dihitung meski tool-nya ada.
 
 **KPI default per halaman analytics** (tiap halaman menampilkan strip KPI + tren):
 

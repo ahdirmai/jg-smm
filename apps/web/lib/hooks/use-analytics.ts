@@ -13,11 +13,13 @@ import { useCallback, useEffect, useState } from 'react';
 
 import {
   analyticsByPlatform,
+  analyticsContent,
   analyticsOverview,
   analyticsRefresh,
   listOfficialAccounts,
   type AnalyticsIngestRun,
   type AnalyticsOverview,
+  type ContentMetricsResponse,
   type OfficialAccountList,
   type PlatformAnalytics,
 } from '@/lib/analytics';
@@ -64,6 +66,18 @@ export function usePlatformAnalytics(platform: string, metric = 'followers', win
   return useAsync<PlatformAnalytics>(
     () => analyticsByPlatform(platform, metric, windowDays),
     [platform, metric, windowDays],
+  );
+}
+
+export function useContentMetrics(
+  platform: string,
+  accountId?: string,
+  windowDays = 30,
+  limit = 50,
+) {
+  return useAsync<ContentMetricsResponse>(
+    () => analyticsContent(platform, { accountId, windowDays, limit }),
+    [platform, accountId ?? 'all', windowDays, limit],
   );
 }
 

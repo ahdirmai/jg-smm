@@ -183,6 +183,22 @@ accounts; they never appear in worker analytics.
       period it says so instead of a fabricated percentage.
 - [ ] Reach/views metrics update after **Sync now** (Composio).
 - [ ] Adding an official account does not create a worker container.
+- [ ] **Engagement breakdown** splits the interaction total into Likes /
+      Comments / Saves / Shares / Accounts engaged, with the
+      interactions-per-reach rate beside the handle. A part the provider did
+      not report reads `—`, never `0`; a provider-reported `0` stays `0`.
+- [ ] **Top content** lists one row per post — type badge, publish date, a
+      permalink link, the caption, and the owning handle — with Reach / Views /
+      Interactions / Likes / Comments / Saves / Shares / Eng. rate. Ordered by
+      reach, highest first.
+- [ ] Every cell the provider did not report renders `—`. Instagram gives a
+      static feed post no `views`; a `0` there is a bug, not a small number.
+- [ ] The account filter narrows **both** new tables as well as the KPI strip,
+      and the Top content caption says which account it is showing.
+- [ ] On a platform with no adapter (e.g. `/monitoring/tiktok`) both new
+      sections show their empty state, not an empty table or a zeroed one.
+- [ ] **Sync now** refetches the content table too, and a second sync does not
+      duplicate rows.
 
 **Wiring.** `ANALYTICS_PROVIDER=composio` + `COMPOSIO_API_KEY` selects the real
 adapter (Instagram only). The official account must carry the Composio
@@ -197,6 +213,25 @@ curl -b "$CJ" -X POST localhost:24080/api/official-accounts \
 - [ ] A run against a bound account records `status: success`,
       `accountsOk: 1`; an unbound one records `status: failed` with
       `errorClass` naming the cause (never zeros).
+
+**Per-content endpoint.** `limit` rejects `0`, negatives and junk with 400;
+omitting `accountId` returns every account on the platform.
+
+```bash
+curl -b "$CJ" 'localhost:24080/api/analytics/instagram/content?windowDays=30&limit=5'
+```
+
+- [ ] Absent metrics are JSON `null`, not `0`. The UI renders `null` as `—` and
+      a genuine provider-reported `0` as `0`, so confirm the wire format for a
+      metric the provider does not report.
+- [ ] Repeated ingests do not duplicate: one row per media id.
+
+```bash
+docker compose exec -T postgres psql -U smm -d smm -tAc \
+  "SELECT count(*), count(DISTINCT external_id) FROM analytics_content_metric;"
+```
+
+- [ ] The two counts match.
 
 ## 10b. Audit, Settings, Login (P6)
 

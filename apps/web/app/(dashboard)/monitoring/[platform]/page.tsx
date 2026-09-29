@@ -18,10 +18,16 @@ import { RefreshCw } from 'lucide-react';
 import Link from 'next/link';
 import { use, useMemo, useState } from 'react';
 
+import { ContentMetricsTable } from '@/components/content-metrics-table';
+import {
+  EngagementBreakdownCard,
+  type EngagementBreakdownRow,
+} from '@/components/engagement-breakdown-card';
 import { FreshnessBadge } from '@/components/freshness-badge';
 import { TrendChart } from '@/components/trend-chart';
 import {
   useAnalyticsRefresh,
+  useContentMetrics,
   useOfficialAccounts,
   usePlatformAnalytics,
 } from '@/lib/hooks/use-analytics';
@@ -58,6 +64,15 @@ export default function PlatformAnalyticsPage({
   // period figure is measured against, so the comparison costs no extra call.
   const accounts = useOfficialAccounts(platform);
   const analytics = usePlatformAnalytics(platform, metric, WINDOW_DAYS * 2);
+  // The content table follows the same account filter as the KPI strip: a
+  // reader who narrows to one account means it everywhere on the page, not
+  // just on the strip above.
+  const content = useContentMetrics(
+    platform,
+    accountFilter === 'all' ? undefined : accountFilter,
+    WINDOW_DAYS,
+    50,
+  );
   const refresh = useAnalyticsRefresh();
   const [syncing, setSyncing] = useState(false);
 
@@ -102,12 +117,26 @@ export default function PlatformAnalyticsPage({
   const metricLabel = cfg?.kpis.find((k) => k.metric === metric)?.label ?? metric;
   const accountRows = accounts.data?.officialAccounts ?? [];
 
+  // The breakdown is filtered client-side for the same reason the KPI strip is:
+  // the platform endpoint already returns every account in one call.
+  const breakdownRows = useMemo(() => {
+    const all = analytics.data?.breakdown ?? [];
+    const rows = accountIds ? all.filter((b) => accountIds.has(b.officialAccountId)) : all;
+    return rows as EngagementBreakdownRow[];
+  }, [analytics.data?.breakdown, accountIds]);
+
+  const accountFilterLabel =
+    accountFilter === 'all'
+      ? 'All official accounts'
+      : (accountRows.find((a) => a.id === accountFilter)?.handle ?? 'this account');
+
   async function onSync() {
     setSyncing(true);
     try {
       await refresh.refresh();
       analytics.refresh();
       accounts.refresh();
+      content.refresh();
     } finally {
       setSyncing(false);
     }
@@ -253,6 +282,19 @@ export default function PlatformAnalyticsPage({
           <TrendChart points={points} />
         </CardContent>
       </Card>
+
+      <EngagementBreakdownCard
+        rows={breakdownRows}
+        platformLabel={label}
+        loading={analytics.loading}
+      />
+
+      <ContentMetricsTable
+        items={content.data?.items ?? []}
+        platformLabel={label}
+        loading={content.loading}
+        accountLabel={accountFilterLabel}
+      />
 
       <Card>
         <CardHeader>

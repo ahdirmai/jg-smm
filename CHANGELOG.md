@@ -30,6 +30,36 @@
   preceding period arrives in the same response, and shows the total plus the
   percentage change against it. A previous period that sums to zero renders as
   "no earlier period to compare against yet" rather than a fabricated +100%.
+- **`/monitoring/:platform` now breaks interactions down, and lists posts.**
+  Two gaps, one cause: the adapter fetched more than the page could show. The
+  KPI strip could only say "14 interactions" — one opaque number — while
+  `likes`, `comments`, `saves`, `shares` and `accounts_engaged` sat unread in
+  the snapshot's `metrics` blob, and the per-post table had been deleted as
+  dead UI. `GET /api/analytics/{platform}` now returns a `breakdown` array
+  parsed from that blob (plus an interactions-per-reach rate, computed, and
+  null when reach is unknown — a post nobody saw has no rate, and 0% would
+  read as "published and ignored"). Those parts are promoted out of JSON
+  rather than into columns: a provider reporting one more interaction type
+  would otherwise need a migration.
+- **Per-post metrics, Instagram only.**
+  `GET /api/analytics/{platform}/content` returns one row per post — caption,
+  permalink, content type, publish date, reach / views / interactions /
+  likes / comments / saves / shares and an engagement rate — fed by a new
+  `analytics_content_metric` table written by every ingest (10 posts per
+  account per pass, one Composio call each). Backed by
+  `port.AnalyticsProvider.FetchContentMetrics`; the stub deliberately returns
+  nothing rather than inventing captions, because a per-post table of
+  fabricated posts is indistinguishable from a real one. Media insights are
+  **lifetime totals**, so the table is a gauge refreshed in place, not a time
+  series — hence an upsert on `(account, media_id, provider)` and no
+  hypertable. One metric set serves feed posts and reels alike:
+  `profile_visits`/`follows` are account-scoped and asking a REELS for them
+  fails the whole call, `impressions` is deprecated by Instagram and
+  `replies` is rejected by carousels. A content-fetch failure fails the
+  account run rather than going quiet — a table that silently stops
+  refreshing looks exactly like one where every post is dead. **TikTok is
+  doubly blocked here**: no per-post insights tool at all, and the reach it
+  would need is unobtainable too.
 
 ### Fixed
 - **Deleting an official account did not remove it from `/monitoring`.**
