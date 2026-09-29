@@ -150,6 +150,7 @@ Threads id 404s on every scrape. All are env-overridable and pinned in
 | Threads keyword search | `futurizerush/meta-threads-scraper` | `APIFY_SEARCH_ACTOR_THREADS` |
 | Instagram per-post | `apify/instagram-post-scraper` | `APIFY_POST_ACTOR_INSTAGRAM` |
 | Instagram keyword search | `crawlerbros/instagram-keyword-search-scraper` | `APIFY_SEARCH_ACTOR_INSTAGRAM` |
+| TikTok keyword search | `clockworks/tiktok-scraper` | `APIFY_SEARCH_ACTOR_TIKTOK` |
 
 Per-platform scrape detail (input, output rows, normalization) is in
 `docs/platforms/`; batch keyword scraping in `docs/BATCH_SCRAPE.md`.
@@ -165,6 +166,19 @@ are then dropped by the ingestor. Measured on run `d3fc79a8` (Instagram,
 narrower window raises the yield; a larger `max_posts` only buys more lottery
 tickets. When an actor does expose a date filter, send it — see
 `docs/platforms/` for which ones do.
+
+The converse is worth stating too: an actor that *does* accept a date bound must
+be given one, or the same 18% yield is bought a second time. TikTok does — and
+it only honours the bound under `profileSorting: latest|oldest`, so the sort is
+load-bearing rather than a preference. A payload test proves what we sent; only
+a real run proves the actor obeyed it.
+
+TikTok is **pay-per-event** (from $1.70 / 1000 results) and its download and
+AI-summary add-ons bill separately — the AI fields bill *per video second*.
+They are omitted from the payload rather than set to `false`, so an edit cannot
+quietly switch one on. Comment bodies arrive in a second dataset behind
+`commentsDatasetURL`, which this integration does not fetch, so
+`commentsPerPost: 0` keeps them unbilled.
 
 `Post.published_at` (migration `000016`) holds the post's own publication
 date. `Post.scraped_at` is when *we* looked and is not a substitute; the UI
