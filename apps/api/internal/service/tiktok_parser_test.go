@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -32,18 +33,29 @@ func mkTikTokPost(id string, createTimeISO string, createTime int64) map[string]
 		"shareCount":    7,
 		"collectCount":  3,
 		"playCount":     9000,
-		"mediaUrls":     []string{"https://p16.tiktokcdn.com/" + id + ".jpg"},
-		"hashtags":      []string{"fyp", "dance"},
-		"isAd":          false,
+		// Empty, exactly as the actor's own documented output sample shows.
+		// A previous version of this fixture put a URL here, which the actor
+		// only ever emits when a billed shouldDownload* flag is on — so the
+		// test asserted a shape no default run produces and the parser shipped
+		// storing zero media for every TikTok post. The cover below is what
+		// a default run actually returns.
+		"mediaUrls": []string{},
+		"hashtags":  []string{"fyp", "dance"},
+		"isAd":      false,
 		"authorMeta": map[string]any{
-			// authorMeta.id is a NUMBER in the actor's output, not a string.
-			// A string-typed struct field fails to unmarshal the whole row.
+			// The actor has shipped this as both a number and a string, so the
+			// parser keeps it untyped. A concretely-typed field fails to
+			// unmarshal the whole row.
 			"id": 67123, "name": "owner_" + id, "nickName": "Owner " + id,
 			"signature": "bio", "fans": 1200, "heart": 34000, "verified": false,
 		},
 		"videoMeta": map[string]any{
-			"duration": 15, "coverUrl": "https://p16.tiktokcdn.com/cover-" + id + ".jpg",
-			"format": "mp4", "width": 576, "height": 1024,
+			"duration": 15,
+			// Both spellings the actor emits. The parser prefers the
+			// original (uncropped) one, matching the Instagram path.
+			"coverUrl":         "https://p16.tiktokcdn.com/cover-" + id + ".jpg",
+			"originalCoverUrl": "https://p16.tiktokcdn.com/orig-" + id + ".jpg",
+			"format":           "mp4", "width": 576, "height": 1024,
 		},
 		"musicMeta": map[string]any{
 			"id": "77", "musicName": "original sound", "authorName": "owner_" + id, "original": true,
@@ -140,8 +152,11 @@ func TestParseTikTokNestedAuthorAndMetrics(t *testing.T) {
 	if it.AuthorID != "67123" {
 		t.Errorf("authorID = %q, want 67123 (from nested authorMeta.id)", it.AuthorID)
 	}
-	if len(it.MediaURLs) != 1 || it.MediaURLs[0] != "https://p16.tiktokcdn.com/7123.jpg" {
-		t.Errorf("mediaUrls = %v, want the single mediaUrls entry", it.MediaURLs)
+	// mediaUrls is empty on a default run, so the cover is the only media the
+	// actor gave us. Storing an empty list here is what made every scraped
+	// TikTok post render with no thumbnail.
+	if len(it.MediaURLs) != 1 || it.MediaURLs[0] != "https://p16.tiktokcdn.com/orig-7123.jpg" {
+		t.Errorf("mediaUrls = %v, want the videoMeta original cover", it.MediaURLs)
 	}
 	// The counter names are TikTok's own (digg/share/collect); the stored keys
 	// are the cross-platform vocabulary the dashboard already reads.
@@ -254,4 +269,46 @@ func mustJSON(t *testing.T, m map[string]any) json.RawMessage {
 		t.Fatalf("marshal metrics: %v", err)
 	}
 	return b
+}
+
+// A run with a billed shouldDownload* flag set populates mediaUrls. That
+// download is the higher-fidelity asset, so it must win over the cover and the
+// cover must not be appended as a second, redundant slide.
+func TestParseTikTokPrefersDownloadedMediaOverCover(t *testing.T) {
+	row := mkTikTokPost("7123", "2026-08-03T07:06:51Z", 1785740811)
+	row["mediaUrls"] = []string{
+		"https://p16.tiktokcdn.com/video-7123.mp4",
+		"https://p16.tiktokcdn.com/poster-7123.jpg",
+	}
+	items, err := tiktokParse(t, row)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	got := items[0].MediaURLs
+	if len(got) != 2 {
+		t.Fatalf("mediaUrls = %v, want exactly the 2 downloaded assets", got)
+	}
+	for _, u := range got {
+		if strings.Contains(u, "orig-") || strings.Contains(u, "cover-") {
+			t.Errorf("mediaUrls = %v, want no cover fallback mixed in", got)
+		}
+	}
+}
+
+// videoMeta is absent on a photomode row in some actor versions. The post must
+// still be stored — with no media, which the page renders as no thumbnail —
+// rather than dropped over a missing optional object.
+func TestParseTikTokSurvivesMissingVideoMeta(t *testing.T) {
+	row := mkTikTokPost("7123", "2026-08-03T07:06:51Z", 1785740811)
+	delete(row, "videoMeta")
+	items, err := tiktokParse(t, row)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("items = %d, want 1: a row without videoMeta is still a post", len(items))
+	}
+	if len(items[0].MediaURLs) != 0 {
+		t.Errorf("mediaUrls = %v, want none when the actor sent no cover", items[0].MediaURLs)
+	}
 }

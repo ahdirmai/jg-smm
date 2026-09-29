@@ -429,10 +429,22 @@ type tiktokPost struct {
 	ShareCount    int      `json:"shareCount"`
 	CollectCount  int      `json:"collectCount"`
 	PlayCount     int      `json:"playCount"`
-	AuthorMeta    struct {
-		// any, not string: the actor emits authorMeta.id as a number. A
-		// string-typed field here fails to unmarshal the ENTIRE row, which
-		// would take the whole run down over one field.
+	VideoMeta     struct {
+		// The cover is the only media this actor returns for free.
+		// `mediaUrls` is documented as an empty array in the actor's own
+		// output sample and only fills in when a shouldDownload* flag is on,
+		// and those are separately billed events. Reading only mediaUrls
+		// therefore stored zero media for every TikTok post this connector
+		// has ever scraped, while a free thumbnail sat unread in the same row.
+		// originalCoverUrl first: it is the uncropped original, matching the
+		// Instagram path's preference for the largest variant.
+		OriginalCoverURL string `json:"originalCoverUrl"`
+		CoverURL         string `json:"coverUrl"`
+	} `json:"videoMeta"`
+	AuthorMeta struct {
+		// any, not string: the actor has shipped authorMeta.id as both a
+		// number and a string, and a concretely-typed field here fails to
+		// unmarshal the ENTIRE row, taking the whole run down over one field.
 		ID   any    `json:"id"`
 		Name string `json:"name"`
 	} `json:"authorMeta"`
@@ -474,6 +486,15 @@ func parseTikTokItems(raw []byte, window port.KeywordTimeWindow) ([]scrapeItem, 
 	for _, u := range src.MediaURLs {
 		if u != "" {
 			media = append(media, u)
+		}
+	}
+	// A run with a shouldDownload* flag set populates mediaUrls and the cover
+	// is redundant. A default run populates neither, so fall back to the cover
+	// the actor already returned for free rather than storing an empty list
+	// that the page renders as "no media" on a post that has one.
+	if len(media) == 0 {
+		if cover := orDefault(src.VideoMeta.OriginalCoverURL, src.VideoMeta.CoverURL); cover != "" {
+			media = []string{cover}
 		}
 	}
 	metrics := map[string]any{}

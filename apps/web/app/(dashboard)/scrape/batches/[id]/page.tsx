@@ -311,7 +311,16 @@ export default function BatchDetailPage() {
             <div className="max-h-[60vh] space-y-4 overflow-y-auto">
               {detail.mediaUrls && detail.mediaUrls.length > 0 ? (
                 <PostMedia urls={detail.mediaUrls} />
-              ) : null}
+              ) : (
+                // Said out loud on purpose. A silent gap here is how a whole
+                // platform's media went missing and looked identical to a post
+                // that genuinely has none.
+                <p className="rounded-lg border border-dashed border-border bg-secondary/30 p-3 text-sm text-muted-foreground">
+                  Tidak ada media untuk post ini. Kalau postnya jelas punya
+                  video atau foto, berarti provider tidak mengembalikan URL
+                  media — bukan post tanpa media.
+                </p>
+              )}
               {detail.text ? (
                 <p className="whitespace-pre-wrap rounded-lg border border-border/60 bg-secondary/40 p-3 text-sm">
                   {detail.text}

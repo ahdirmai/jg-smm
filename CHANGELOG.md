@@ -60,8 +60,23 @@
   refreshing looks exactly like one where every post is dead. **TikTok is
   doubly blocked here**: no per-post insights tool at all, and the reach it
   would need is unobtainable too.
-
 ### Fixed
+- **No scraped TikTok post ever stored its media.** The parser read
+  `mediaUrls`, which the actor documents as an **empty array** unless a
+  `shouldDownload*` flag is on — and those flags are separately billed events
+  this integration deliberately does not pay for. The free media, the
+  thumbnail, was in `videoMeta.coverUrl` in the very same row, unread. Every
+  TikTok post stored an empty list and the detail dialog rendered nothing at
+  all. The parser now falls back to the cover, preferring `originalCoverUrl`.
+  The test fixture is why this shipped: it asserted a `mediaUrls` entry the
+  actor never emits on a default run, so the suite agreed with the bug. It
+  now matches the actor's published output sample, and covers both paths —
+  a downloaded run keeps its downloads, a row with no `videoMeta` survives
+  with no media rather than being dropped.
+- **The post detail dialog said nothing when media was missing.** A post with
+  no media and a post whose media the provider never returned looked
+  identical, which is how the above went unnoticed. It now says which one
+  it is.
 - **Deleting an official account did not remove it from `/monitoring`.**
   `ArchiveOfficialAccount` sets `status = 'ARCHIVED'` — a soft delete, which is
   the right call for an entity whose snapshots stay queryable as history. But
