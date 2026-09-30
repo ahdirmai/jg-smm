@@ -15,7 +15,9 @@ export const PLATFORMS = [
 
 export type Platform = (typeof PLATFORMS)[number];
 
-export const PLATFORM_LABEL: Record<string, string> = {
+// Keyed by Platform, not string: adding a platform to PLATFORMS without a label
+// is a compile error rather than an "undefined" rendered somewhere at runtime.
+export const PLATFORM_LABEL: Record<Platform, string> = {
   instagram: 'Instagram',
   threads: 'Threads',
   facebook: 'Facebook',
@@ -24,6 +26,20 @@ export const PLATFORM_LABEL: Record<string, string> = {
   youtube: 'YouTube',
   tiktok: 'TikTok',
 };
+
+/**
+ * Display name for an untrusted platform id — a route segment, an API value, a
+ * stored row. Returns undefined for anything this codebase does not know, which
+ * is the signal a caller needs to fall back. Going through PLATFORMS rather
+ * * than indexing the record directly keeps a bare `string` from silently
+ * producing `undefined` under a type that claims it cannot happen.
+ */
+export function platformLabel(id: string): string | undefined {
+  const key = id.trim().toLowerCase();
+  return PLATFORMS.find((p) => p === key)
+    ? PLATFORM_LABEL[key as Platform]
+    : undefined;
+}
 
 /** KPI metrics available per platform (PLATFORM_MATRIX §2.3). */
 export const ANALYTICS_METRICS = [

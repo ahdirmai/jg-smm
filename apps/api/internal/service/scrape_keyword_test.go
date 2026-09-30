@@ -823,3 +823,42 @@ func TestScrapeKeywordsThreadsReplyWithoutParentFallsBackToPost(t *testing.T) {
 		t.Fatalf("post code: want RdGJIzFiWk1, got %q", res.Posts[0].ExternalID)
 	}
 }
+
+// The Instagram and Threads parsers store a *int64 in scrapeItem.Metrics to
+// distinguish "the actor reported 0" from "the actor reported nothing". Until
+// numeric() learned to follow that pointer, every one of those posts stored a
+// snapshot row of zeros and ranked last in TopPostsByMetric, while post.metrics
+// itself looked perfectly correct — so no test caught it, because the jsonb
+// column is marshalled directly and only the snapshot path goes through here.
+// These cases are the whole contract: a real zero survives, an absent metric
+// stays absent.
+func TestNumericFollowsMetricPointers(t *testing.T) {
+	zero, five := int64(0), int64(5)
+	for _, tc := range []struct {
+		name  string
+		in    any
+		want  int64
+		wantK bool
+	}{
+		{"reported zero is a measurement", &zero, 0, true},
+		{"reported value", &five, 5, true},
+		{"absent stays absent", (*int64)(nil), 0, false},
+		{"plain zero", 0, 0, true},
+	} {
+		got, ok := numeric(tc.in)
+		if got != tc.want || ok != tc.wantK {
+			t.Errorf("numeric(%s) = (%d, %v), want (%d, %v)", tc.name, got, ok, tc.want, tc.wantK)
+		}
+	}
+	// The end-to-end shape: a parser that reports 0 comments must yield a
+	// pointer to zero, not nil, or the snapshot stores NULL where a real
+	// measurement exists.
+	it := scrapeItem{Metrics: map[string]any{"comments": &zero}}
+	if p := it.metricsIntPtr("comments"); p == nil || *p != 0 {
+		t.Errorf("metricsIntPtr(comments) = %v, want a pointer to 0", p)
+	}
+	it = scrapeItem{Metrics: map[string]any{}}
+	if p := it.metricsIntPtr("comments"); p != nil {
+		t.Errorf("metricsIntPtr(comments) on an absent key = %v, want nil", p)
+	}
+}

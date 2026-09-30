@@ -203,17 +203,6 @@ export interface KeywordBatch {
   finishedAt: string | null;
 }
 
-// Keyword search scrape (hand-rolled, not in the contract). The result rows are
-// the same ScrapedPost shape the on-demand scrape returns.
-export interface KeywordScrapeResult {
-  posts: ScrapedPost[];
-  comments: number;
-  keywords: string[];
-  platform: string;
-  actorId: string;
-  itemsRead: number;
-}
-
 // Already-scraped history (the "recent posts" card on /actions).
 export interface RecentPostsResponse {
   posts: ScrapedPost[];

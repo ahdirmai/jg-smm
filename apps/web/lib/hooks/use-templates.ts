@@ -58,12 +58,23 @@ export function useTemplates(platform?: Platform): TemplatesState {
     async (id: string, body: CreateTemplateRequest) => {
       // Optimistic: swap the row so editing feels instant; the server's copy
       // is authoritative and a refresh reconciles on failure.
+      // Scoped to the edited row. This used to map over every template and
+      // spread the request body across all of them, so editing one comment
+      // variant painted its text, vars, weight, bannedWords and platform onto
+      // the whole table. `api.updateTemplate` persists only one row, so the
+      // corruption was invisible until the next refresh snapped the others
+      // back — and in between the operator was shown N identical variants with
+      // no way to tell which one actually changed.
       setTemplates((prev) =>
-        prev.map((t) => ({
-          ...t,
-          ...body,
-          ...(body.bannedWords ? { bannedWords: body.bannedWords } : {}),
-        })),
+        prev.map((t) =>
+          t.id === id
+            ? {
+                ...t,
+                ...body,
+                ...(body.bannedWords ? { bannedWords: body.bannedWords } : {}),
+              }
+            : t,
+        ),
       );
       try {
         await api.updateTemplate(id, body);

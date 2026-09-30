@@ -20,13 +20,30 @@ import { Check, Loader2 } from 'lucide-react';
 import { useState } from 'react';
 
 import { api, type Account } from '@/lib/api';
+import { PLATFORM_LABEL } from '@/lib/platforms';
 
 type Step = 'credentials' | 'proxy' | 'provisioning' | 'done';
 
-const PLATFORMS = [
-  { value: 'INSTAGRAM', label: 'Instagram' },
-  { value: 'THREADS', label: 'Threads' },
-] as const;
+// The API speaks lowercase: domain/platform.go declares
+// `PlatformInstagram Platform = "instagram"`, and account.Validate() rejects
+// anything else with "unknown platform". This list used to send UPPERCASE
+// values, which made every quick-add submit a 400 — the `as Account['platform']`
+// cast at the call site is what hid it from the compiler. Typing the state as
+// Account['platform'] removes both the cast and the ability to reintroduce it.
+//
+// Only the two platforms with a real login flow are offered. An account exists
+// to drive a Playwright container, and actorForPlatform (cmd/server/main.go)
+// returns a post actor for Instagram and Threads only — offering the other five
+// would create accounts that can never be scraped. The API would accept them;
+// that is a product gate, not a validation one.
+const ACCOUNT_PLATFORMS: readonly Account['platform'][] = ['instagram', 'threads'];
+
+// Radix's Select reports a plain string. Narrow it before it reaches state
+// rather than casting at the call site, so the state type stays the API's own
+// union and an unexpected value is dropped instead of forwarded.
+function isAccountPlatform(v: string): v is Account['platform'] {
+  return (ACCOUNT_PLATFORMS as readonly string[]).includes(v);
+}
 
 /**
  * Add Account is a short funnel (P1-15): pick platform + credentials, optional
@@ -41,7 +58,7 @@ export function AddAccountDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const [step, setStep] = useState<Step>('credentials');
-  const [platform, setPlatform] = useState<string>('INSTAGRAM');
+  const [platform, setPlatform] = useState<Account['platform']>('instagram');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [proxyGroup, setProxyGroup] = useState<string>('none');
@@ -50,7 +67,7 @@ export function AddAccountDialog({
 
   const reset = () => {
     setStep('credentials');
-    setPlatform('INSTAGRAM');
+    setPlatform('instagram');
     setUsername('');
     setPassword('');
     setProxyGroup('none');
@@ -65,7 +82,7 @@ export function AddAccountDialog({
     setError(null);
     try {
       const account = await api.createAccount({
-        platform: platform as Account['platform'],
+        platform,
         username: username.trim(),
         password,
         tags: [],
@@ -105,14 +122,19 @@ export function AddAccountDialog({
           <div className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="aa-platform">Platform</Label>
-              <Select value={platform} onValueChange={setPlatform}>
+              <Select
+                value={platform}
+                onValueChange={(v) => {
+                  if (isAccountPlatform(v)) setPlatform(v);
+                }}
+              >
                 <SelectTrigger id="aa-platform">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {PLATFORMS.map((p) => (
-                    <SelectItem key={p.value} value={p.value}>
-                      {p.label}
+                  {ACCOUNT_PLATFORMS.map((p) => (
+                    <SelectItem key={p} value={p}>
+                      {PLATFORM_LABEL[p]}
                     </SelectItem>
                   ))}
                 </SelectContent>

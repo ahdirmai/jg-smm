@@ -303,8 +303,19 @@ func (r *Runner) RunSearch(ctx context.Context, in port.ApifySearchInput) (port.
 		r.baseURL, pathSegment(actorID), r.token)
 
 	payload := r.searchInput(in, maxItems)
-
-	body, _ := json.Marshal(payload)
+	if payload == nil {
+		// searchInput returns nil for a platform it has no branch for, on
+		// purpose: the old if-chain silently sent the Instagram payload to
+		// anything missing from it, and an unknown key is answered 200 with the
+		// actor's own default — invisible. Marshal it and the nil map becomes
+		// the four bytes "null", the run is still POSTed and still billed, and the
+		// actor answers with defaults. So refuse before spending anything.
+		return port.ApifyOutput{}, fmt.Errorf("apify: no search input for platform %q", in.Platform)
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return port.ApifyOutput{}, fmt.Errorf("apify: encode search input: %w", err)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return port.ApifyOutput{}, fmt.Errorf("apify: build search request: %w", err)
@@ -452,7 +463,10 @@ func (r *Runner) runThreadsPost(ctx context.Context, actorID, scrapeJobID, targe
 		return port.ApifyOutput{}, fmt.Errorf("apify: threads scrape needs a post url")
 	}
 	payload := threadsPostInput(targetURL, maxItems)
-	body, _ := json.Marshal(payload)
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return port.ApifyOutput{}, fmt.Errorf("apify: encode threads input: %w", err)
+	}
 
 	startURL := fmt.Sprintf("%s/acts/%s/runs?token=%s&maxTotalChargeUsd=%s",
 		r.baseURL, pathSegment(actorID), r.token, threadsChargeCap)
@@ -485,7 +499,11 @@ func (r *Runner) runThreadsPost(ctx context.Context, actorID, scrapeJobID, targe
 	if err := json.Unmarshal(startBody, &started); err != nil || started.Data.ID == "" {
 		return port.ApifyOutput{
 			Status: statusFailed,
-			Error:  truncate(fmt.Sprintf("unexpected run body: %s", err), 500),
+			// %v, not %s: this branch is also reached when the body parses but
+			// carries no data.id, and then err is nil. %s rendered that as the
+			// literal "unexpected run body: %!s(<nil>)" — an error message that
+			// names neither the cause nor the missing id.
+			Error: truncate(fmt.Sprintf("unexpected run body: %v", err), 500),
 		}, nil
 	}
 	runID := started.Data.ID
@@ -596,7 +614,14 @@ func (r *Runner) storeItems(ctx context.Context, jobKey, runID string, items []j
 func (r *Runner) runSync(ctx context.Context, actorID string, payload map[string]any, maxItems int) ([]json.RawMessage, string, error) {
 	url := fmt.Sprintf("%s/acts/%s/run-sync-get-dataset-items?token=%s&maxItems=%d",
 		r.baseURL, pathSegment(actorID), r.token, maxItems)
-	body, _ := json.Marshal(payload)
+	body, err := json.Marshal(payload)
+	if err != nil {
+		// An unchecked error here would send an empty body, the actor would
+		// answer 200 with its own defaults, and the scrape would quietly return
+		// the wrong thing — the exact shape this package's comments keep
+		// warning about.
+		return nil, "", fmt.Errorf("apify: encode payload: %w", err)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, "", fmt.Errorf("apify: build request: %w", err)

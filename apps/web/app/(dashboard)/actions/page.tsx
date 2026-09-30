@@ -190,9 +190,16 @@ export default function ActionsPage() {
       />
 
       <ScrapeHistory
-        onPickPostAction={(platform, url) =>
-          formRef.current?.loadPost(platform as 'instagram' | 'threads', url)
-        }
+        onPickPostAction={(platform, url) => {
+          // The history list is all seven platforms; on-demand post scrape has
+          // an actor for two. This used to cast the value into the form's union
+          // unchecked, so picking a YouTube post sent platform:"youtube" and the
+          // API answered 400 "no actor configured". Narrowed instead: the call
+          // is made only when the platform is actually scrapable this way.
+          if (platform === 'instagram' || platform === 'threads') {
+            formRef.current?.loadPost(platform, url);
+          }
+        }}
         refreshKey={historyRefresh}
       />
 

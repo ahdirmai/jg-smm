@@ -101,7 +101,9 @@ export function TeamPanel({ admin }: { admin: boolean }) {
             ))}
             {users.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={4} className="py-10 text-center text-sm text-muted-foreground">
+                {/* 3 columns (Member / Role / Actions), not 4 — a wider span
+                    makes the empty-state cell overhang the table. */}
+                <TableCell colSpan={3} className="py-10 text-center text-sm text-muted-foreground">
                   {loading ? 'Loading team…' : 'No members yet.'}
                 </TableCell>
               </TableRow>

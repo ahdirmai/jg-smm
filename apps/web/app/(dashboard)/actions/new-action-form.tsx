@@ -32,7 +32,7 @@ import { forwardRef, useCallback, useImperativeHandle, useMemo, useState } from 
 import { api, type ScrapeTargetResponse } from '@/lib/api';
 import { useAccounts } from '@/lib/hooks/use-accounts';
 import { useActions } from '@/lib/hooks/use-actions';
-import { PLATFORM_LABEL } from '@/lib/platforms';
+import { PLATFORM_LABEL, platformLabel } from '@/lib/platforms';
 import type { ActionItem } from '@/lib/api';
 import { useSession } from '@/lib/auth/session-context';
 import { can } from '@/lib/auth/permissions';
@@ -91,9 +91,23 @@ function scrapedAgo(iso: string): string {
   return `${Math.round(mins / 60)}h ago`;
 }
 
+/**
+ * On-demand post scrape is wired to exactly two platforms, and that is a
+ * backend fact rather than a UI choice: `actorForPlatform` in
+ * cmd/server/main.go returns an actor for Instagram and Threads and "" for the
+ * other five, and ScrapeTarget turns an empty actor into a 400 "no actor
+ * configured". Listing the other five here would be five options that always
+ * fail. Keyword scrape is the surface that covers all seven.
+ *
+ * Named once because it was spelled out in four signatures and two more
+ * callbacks, and actions/page.tsx cast into it unchecked.
+ */
+const ON_DEMAND_PLATFORMS = ['instagram', 'threads'] as const;
+type OnDemandPlatform = (typeof ON_DEMAND_PLATFORMS)[number];
+
 export type NewActionFormHandle = {
   /** Fill the form with a platform + permalink and run the scrape (6h cache = instant for a stored post). */
-  loadPost: (platform: 'instagram' | 'threads', url: string) => void;
+  loadPost: (platform: OnDemandPlatform, url: string) => void;
 };
 
 export const NewActionForm = forwardRef<
@@ -107,7 +121,7 @@ export const NewActionForm = forwardRef<
   const canAct = can(role, 'act');
 
   // Step 1: platform + link.
-  const [platform, setPlatform] = useState<'instagram' | 'threads'>('instagram');
+  const [platform, setPlatform] = useState<OnDemandPlatform>('instagram');
   const [url, setUrl] = useState('');
 
   // Step 2: scrape result.
@@ -146,7 +160,7 @@ export const NewActionForm = forwardRef<
   // One scrape runner: explicit args so a history pick (platform/url set in
   // the same tick) scrapes the right post, not the previous state values.
   const runScrapeWith = useCallback(
-    async (p: 'instagram' | 'threads', u: string) => {
+    async (p: OnDemandPlatform, u: string) => {
       setScrapeError(null);
       setScrape(null);
       setFlow(null);
@@ -213,7 +227,7 @@ export const NewActionForm = forwardRef<
   // History card hands a stored post back: fill platform + link, scrape to
   // refresh the preview (instant — 6h cache), bump the history list.
   const loadPost = useCallback(
-    (p: 'instagram' | 'threads', u: string) => {
+    (p: OnDemandPlatform, u: string) => {
       setPlatform(p);
       setUrl(u);
       void runScrapeWith(p, u);
@@ -265,13 +279,24 @@ export const NewActionForm = forwardRef<
         <div className="space-y-2">
           <Label htmlFor="action-target-url">Target post</Label>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-[180px_1fr_auto]">
-            <Select value={platform} onValueChange={(v) => setPlatform(v as 'instagram' | 'threads')}>
+            <Select
+              value={platform}
+              onValueChange={(v) => {
+                if (v === 'instagram' || v === 'threads') setPlatform(v);
+              }}
+            >
               <SelectTrigger aria-label="Platform">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="instagram">Instagram</SelectItem>
-                <SelectItem value="threads">Threads</SelectItem>
+                {/* Rendered from the constant, so the options and the type
+                    cannot drift apart. Labels come from lib/platforms, the one
+                    canonical map. */}
+                {ON_DEMAND_PLATFORMS.map((p) => (
+                  <SelectItem key={p} value={p}>
+                    {PLATFORM_LABEL[p]}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
             <Input
@@ -311,7 +336,7 @@ export const NewActionForm = forwardRef<
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium">@{scrape.post.authorHandle}</p>
                 <p className="text-[11px] text-muted-foreground">
-                  {PLATFORM_LABEL[scrape.post.platform] ?? scrape.post.platform} · scraped{' '}
+                  {platformLabel(scrape.post.platform) ?? scrape.post.platform} · scraped{' '}
                   {scrapedAgo(scrape.post.scrapedAt)}
                 </p>
               </div>
@@ -391,7 +416,7 @@ export const NewActionForm = forwardRef<
           <div className="space-y-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <Label>
-                Accounts ({platformAccounts.length} on {PLATFORM_LABEL[platform] ?? platform})
+                Accounts ({platformAccounts.length} on {platformLabel(platform) ?? platform})
               </Label>
               {flow === 'comment' ? (
                 <div className="flex items-center gap-1.5">

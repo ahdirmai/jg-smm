@@ -28,6 +28,10 @@ import { useState } from 'react';
 import { TrendChart } from '@/components/trend-chart';
 import { api } from '@/lib/api';
 import { useAccounts } from '@/lib/hooks/use-accounts';
+// The metric list was re-declared here as five bare strings with no labels,
+// which meant `mentions` was missing from this report's picker while the
+// monitoring pages had it — two lists of one fact, silently disagreeing.
+import { ANALYTICS_METRICS } from '@/lib/platforms';
 import { useReports, type ReportResult, type ReportKind } from '@/lib/hooks/use-reports';
 import { useSession } from '@/lib/auth/session-context';
 import { can } from '@/lib/auth/permissions';
@@ -45,14 +49,6 @@ const KINDS: { value: ReportKind; label: string }[] = [
   { value: 'targets', label: 'Targets (posts)' },
   { value: 'analytics', label: 'Official account growth' },
 ];
-
-const ANALYTICS_METRICS = [
-  'followers',
-  'reach',
-  'views',
-  'engagements',
-  'profile_views',
-] as const;
 
 export default function ReportsPage() {
   const [kind, setKind] = useState<ReportKind>('actions');
@@ -175,8 +171,8 @@ export default function ReportsPage() {
                   </SelectTrigger>
                   <SelectContent>
                     {ANALYTICS_METRICS.map((m) => (
-                      <SelectItem key={m} value={m}>
-                        {capitalize(m)}
+                      <SelectItem key={m.key} value={m.key}>
+                        {m.label}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -345,10 +341,6 @@ function ReportBody({ kind, result }: { kind: ReportKind; result: ReportResult }
       </CardContent>
     </Card>
   );
-}
-
-function capitalize(s: string) {
-  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 function Empty() {

@@ -587,12 +587,15 @@ func actorForPlatform(cfg config.Config) func(domain.Platform) string {
 // publisher for Threads), so one prefix cannot express both.
 //
 // Actor picks (verified against the live input schemas, 2026-09):
-//   - Instagram: apify/instagram-scraper. `searchType:hashtag` +
-//     `resultsType:posts` returns posts for the keyword. NOT
-//     apify/instagram-search-scraper, which resolves a keyword to a *place or
-//     hashtag page* and returns that entity's own top posts (2018-era posts
+//   - Instagram: crawlerbros/instagram-keyword-search-scraper, which takes
+//     `keywords[]` + `maxPosts` and returns one flat snake_case row per post.
+//     It replaced apify/instagram-scraper (`searchType:hashtag`), and before
+//     that apify/instagram-search-scraper, which resolves a keyword to a *place
+//     or hashtag page* and returns that entity's own top posts (2018-era posts
 //     for a live keyword) — it ignores the keyword unless the field is named
-//     `search`, and its posts are not date-filterable.
+//     `search`, and its posts are not date-filterable. The runner sends
+//     `keywords`/`maxPosts`, not the `searchType` spellings; runner_test.go
+//     pins that the old ones are absent.
 //   - Threads: futurizerush/meta-threads-scraper in `mode:search`, which takes
 //     keywords[] plus start_date/end_date.
 //   - TikTok: xmolodtsov/tiktok-search-scraper, `keywords[]` plus `maxItems`

@@ -26,6 +26,7 @@ import { cn } from '@/lib/utils';
 import { api } from '@/lib/api';
 import { useSession } from '@/lib/auth/session-context';
 import { ROLE_LABEL, can } from '@/lib/auth/permissions';
+import { PLATFORMS, PLATFORM_LABEL, platformLabel } from '@/lib/platforms';
 import type { Permission } from '@/lib/auth/permissions';
 
 /**
@@ -41,15 +42,11 @@ type Group = {
   items: { href: string; label: string }[];
 };
 
-const PLATFORMS = [
-  'Instagram',
-  'Threads',
-  'Facebook',
-  'LinkedIn',
-  'X',
-  'YouTube',
-  'TikTok',
-] as const;
+// Platform ids and display names come from @/lib/platforms. This file used to
+// carry its own seven-item copy, which had already drifted: the /scrape subtitle
+// still read "Instagram and Threads" after TikTok, and then after four more
+// platforms, landed. One list, imported, cannot go stale.
+const PLATFORM_LIST = PLATFORMS.map((p) => PLATFORM_LABEL[p]).join(', ');
 
 const NAV: (Leaf | Group)[] = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -64,8 +61,8 @@ const NAV: (Leaf | Group)[] = [
     items: [
       { href: '/monitoring', label: 'Overview' },
       ...PLATFORMS.map((p) => ({
-        href: `/monitoring/${p.toLowerCase()}`,
-        label: p,
+        href: `/monitoring/${p}`,
+        label: PLATFORM_LABEL[p],
       })),
     ],
   },
@@ -84,7 +81,7 @@ const TITLES: Record<string, { title: string; subtitle: string }> = {
   '/workers': { title: 'Workers', subtitle: 'Containers, health, and anchored location' },
   '/accounts': { title: 'Accounts', subtitle: 'Click a row: live view during login, profile once authenticated' },
   '/actions': { title: 'Actions', subtitle: 'Targeted like, comment, and report jobs' },
-  '/scrape': { title: 'Scrape', subtitle: 'Keyword search over Instagram and Threads posts' },
+  '/scrape': { title: 'Scrape', subtitle: `Keyword search over ${PLATFORM_LIST} posts` },
   '/templates': { title: 'Templates', subtitle: 'Comment pool per platform' },
   '/monitoring': { title: 'Monitoring', subtitle: 'Official-account reach across platforms' },
   '/reports': { title: 'Reports', subtitle: 'Read-only pivots over executed work' },
@@ -104,7 +101,7 @@ function titleFor(pathname: string): { title: string; subtitle: string } {
   // /monitoring/<platform> → the platform's analytics page.
   if (pathname.startsWith('/monitoring/')) {
     const name = pathname.split('/')[2] || '';
-    const label = PLATFORMS.find((p) => p.toLowerCase() === name.toLowerCase());
+    const label = platformLabel(name);
     return {
       title: label ?? 'Analytics',
       subtitle: label ? `${label} · official account · reach & engagement` : '',

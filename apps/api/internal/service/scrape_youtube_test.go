@@ -615,39 +615,6 @@ func TestParseYouTubeOmittedCountersAreAbsent(t *testing.T) {
 	}
 }
 
-// The permalink has no column in the ingestor, exactly as X's does not. It is not
-// stored; this pins the precedence so a future field has something correct to
-// read, and asserts that a row carrying only embedUrl is not left with nothing.
-func TestYouTubePermalinkPrefersURLThenEmbedURL(t *testing.T) {
-	items, err := parseYouTubeItems(ytRow(t), ytWindow())
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	// The parser does NOT store the permalink — mediaUrls and metrics are the
-	// only row-derived string/blob fields, and neither is a permalink.
-	for _, u := range items[0].MediaURLs {
-		if strings.Contains(u, "watch?v=") || strings.Contains(u, "/embed/") {
-			t.Errorf("mediaUrls = %v, want thumbnails only — the permalink has no column", items[0].MediaURLs)
-		}
-	}
-
-	var src youTubeVideo
-	if err := json.Unmarshal(ytRow(t), &src); err != nil {
-		t.Fatalf("unmarshal into youTubeVideo: %v", err)
-	}
-	if got := youTubePermalink(src); got != "https://www.youtube.com/watch?v="+ytID {
-		t.Errorf("youTubePermalink = %q, want the row's `url`", got)
-	}
-	src.URL = ""
-	if got := youTubePermalink(src); got != src.EmbedURL {
-		t.Errorf("youTubePermalink = %q, want the embedUrl fallback %q", got, src.EmbedURL)
-	}
-	src.EmbedURL = ""
-	if got := youTubePermalink(src); got != "" {
-		t.Errorf("youTubePermalink = %q, want empty when neither field is present", got)
-	}
-}
-
 // streamingData and captions are large nested blobs whose only URLs are
 // short-lived signed ones (expiresInSeconds ≈ 6 hours) — storing anything from
 // them yields a dead link by the time the dashboard reads it. They are removed

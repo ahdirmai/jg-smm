@@ -29,27 +29,9 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 
 import { api, type KeywordBatch, type ScrapedComment, type ScrapedPost } from '@/lib/api';
-import { metricsLine, PLATFORM_LABEL } from '@/lib/platforms';
+import { metricsLine, platformLabel } from '@/lib/platforms';
+import { postPermalink } from '@/lib/permalink';
 import { PostMedia } from '@/components/post-media';
-
-/** The public permalink for a stored post, rebuilt from its platform + shortcode. */
-function postPermalink(p: ScrapedPost): string | null {
-  const code = p.externalId?.trim();
-  if (!code) return null;
-  // Platform arrives as the API's domain constant (INSTAGRAM/THREADS/TIKTOK).
-  const platform = p.platform?.toLowerCase();
-  if (platform === 'threads') return `https://www.threads.com/post/${code}`;
-  if (platform === 'instagram') return `https://www.instagram.com/p/${code}/`;
-  // TikTok's permalink is derived the same way as the other two. The actor
-  // also sends a ready-made `webVideoUrl` per row, but there is no column to
-  // store it and both parts it needs — handle and video id — already are.
-  if (platform === 'tiktok') {
-    const handle = p.authorHandle?.trim();
-    if (!handle || handle === 'unknown') return null;
-    return `https://www.tiktok.com/@${handle}/video/${code}`;
-  }
-  return null;
-}
 
 /** Copy-to-clipboard button. Falls back to a hidden textarea where the async
  *  Clipboard API is unavailable (non-secure origin), so it never silently no-ops. */
@@ -111,12 +93,18 @@ export default function BatchDetailPage() {
     }
   }
 
+  // Stops on a terminal status. The 3s interval previously ran for the life of
+  // the tab, so a finished batch — the state this page rests in almost all the
+  // time it is open — re-fetched the batch and its posts ~1,200 times an hour
+  // to redisplay identical rows.
+  const settled = batch !== null && (batch.status === 'SUCCEEDED' || batch.status === 'FAILED');
   useEffect(() => {
     void load();
+    if (settled) return;
     const t = setInterval(() => void load(), 3000);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
+  }, [id, settled]);
 
   async function openDetail(p: ScrapedPost) {
     setDetail(p);
@@ -200,7 +188,7 @@ export default function BatchDetailPage() {
             </Badge>
           </CardTitle>
           <CardDescription>
-            {PLATFORM_LABEL[batch.platform.toLowerCase()] ?? batch.platform} · {batch.actorId} · max {batch.maxPosts} ·{' '}
+            {platformLabel(batch.platform) ?? batch.platform} · {batch.actorId} · max {batch.maxPosts} ·{' '}
             {batch.windowFrom ? new Date(batch.windowFrom).toLocaleDateString() : '—'} →{' '}
             {batch.windowTo ? new Date(batch.windowTo).toLocaleDateString() : '—'} · created {new Date(batch.createdAt).toLocaleString()}
           </CardDescription>

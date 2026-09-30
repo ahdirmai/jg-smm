@@ -234,10 +234,16 @@ func searchInputFor(p domain.Platform, kw []string, w port.KeywordTimeWindow, n 
 	return r.searchInput(in, n)
 }
 
+// fullWindow is anchored to time.Now, never to a literal date. youTubeUploadDateBucket
+// compares time.Since(From) against bucket boundaries, so a fixed 2026-09-01
+// silently aged the window past 32 days on 2026-10-03 and turned the YouTube
+// uploadDate assertion into a permanent failure no code change could explain.
+// A 28-day-old lower bound sits inside the month bucket and always will.
 func fullWindow() port.KeywordTimeWindow {
+	now := time.Now()
 	return port.KeywordTimeWindow{
-		From: time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC),
-		To:   time.Date(2026, 9, 29, 0, 0, 0, 0, time.UTC),
+		From: now.Add(-28 * 24 * time.Hour),
+		To:   now,
 	}
 }
 
@@ -268,8 +274,13 @@ func TestSearchInputLinkedInPinsSearchQueriesAndMaxPosts(t *testing.T) {
 	if got["maxPosts"] != 10 {
 		t.Errorf("maxPosts = %v, want 10 — omitting it bills the actor's default of 100 per query", got["maxPosts"])
 	}
-	if got["postedLimitDate"] != "2026-09-01" {
-		t.Errorf("postedLimitDate = %v, want 2026-09-01 — a real server-side lower bound", got["postedLimitDate"])
+	// Derived from the window, not a literal: postedLimitDate is a date and a
+	// date does not age, but fullWindow() is anchored to time.Now so the YouTube
+	// bucket stays inside its enum. Deriving the expectation keeps the two tests
+	// from disagreeing about which day "now" is.
+	want := fullWindow().From.UTC().Format("2006-01-02")
+	if got["postedLimitDate"] != want {
+		t.Errorf("postedLimitDate = %v, want %s — a real server-side lower bound", got["postedLimitDate"], want)
 	}
 }
 

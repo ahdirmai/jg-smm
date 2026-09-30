@@ -10,8 +10,9 @@
  * platform, which is the part that genuinely differs.
  */
 
-import { Eye, Heart, PlayCircle, User, UserPlus } from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
+import { Eye, Heart, PlayCircle, User, UserPlus, type LucideIcon } from 'lucide-react';
+
+import type { Platform } from '@/lib/platforms';
 
 /** The six scalars the snapshot table stores, with a neutral label. */
 const SCALARS: Record<string, { icon: LucideIcon; label: string }> = {
@@ -26,7 +27,6 @@ const SCALARS: Record<string, { icon: LucideIcon; label: string }> = {
 };
 
 type PlatformSpec = {
-  label: string;
   /** KPI order, most important first. Every key must exist in SCALARS. */
   order: string[];
   /** The platform's own name for a scalar, where it differs from the neutral one. */
@@ -35,9 +35,8 @@ type PlatformSpec = {
   defaultMetric: string;
 };
 
-const SPECS: Record<string, PlatformSpec> = {
+const SPECS: Record<Platform, PlatformSpec> = {
   instagram: {
-    label: 'Instagram',
     order: ['reach', 'views', 'engagements', 'profile_views', 'followers'],
     rename: {
       engagements: 'Interactions',
@@ -46,37 +45,31 @@ const SPECS: Record<string, PlatformSpec> = {
     defaultMetric: 'reach',
   },
   threads: {
-    label: 'Threads',
     order: ['views', 'engagements', 'profile_views', 'followers'],
     rename: { engagements: 'Interactions' },
     defaultMetric: 'views',
   },
   facebook: {
-    label: 'Facebook',
     order: ['reach', 'views', 'engagements', 'followers'],
     rename: { views: 'Page views', engagements: 'Post engagements', followers: 'Page followers' },
     defaultMetric: 'reach',
   },
   linkedin: {
-    label: 'LinkedIn',
     order: ['views', 'engagements', 'followers'],
     rename: { views: 'Unique visitors' },
     defaultMetric: 'views',
   },
   x: {
-    label: 'X',
     order: ['reach', 'engagements', 'followers'],
     rename: { reach: 'Impressions' },
     defaultMetric: 'reach',
   },
   youtube: {
-    label: 'YouTube',
     order: ['views', 'engagements', 'followers'],
     rename: { engagements: 'Interactions', followers: 'Subscribers' },
     defaultMetric: 'views',
   },
   tiktok: {
-    label: 'TikTok',
     order: ['views', 'engagements', 'followers'],
     rename: { views: 'Video views', engagements: 'Interactions' },
     defaultMetric: 'views',
@@ -84,13 +77,12 @@ const SPECS: Record<string, PlatformSpec> = {
 };
 
 export type KpiDef = { label: string; icon: LucideIcon; metric: string };
-export type PlatformAnalyticsConfig = { label: string; kpis: KpiDef[]; defaultMetric: string };
+export type PlatformAnalyticsConfig = { kpis: KpiDef[]; defaultMetric: string };
 
 export const ANALYTICS_CONFIG: Record<string, PlatformAnalyticsConfig> = Object.fromEntries(
   Object.entries(SPECS).map(([key, spec]) => [
     key,
     {
-      label: spec.label,
       defaultMetric: spec.defaultMetric,
       kpis: spec.order.map((metric) => {
         const scalar = SCALARS[metric];

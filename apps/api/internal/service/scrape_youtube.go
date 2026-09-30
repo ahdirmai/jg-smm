@@ -37,11 +37,9 @@ type youTubeVideo struct {
 	Title string `json:"title"`
 	// URL is the permalink. The ingestor has no column for it (see
 	// youTubePermalink), so it is read only to pin the precedence in one place.
-	URL string `json:"url"`
 	// EmbedURL points at /embed/<id>, the player form of the same video. It is
 	// declared for the same reason as URL — to pin the permalink precedence —
 	// and is used only by youTubePermalink.
-	EmbedURL string `json:"embedUrl"`
 
 	// UploadDate is the video's publish instant, ISO WITH a timezone offset
 	// ("2026-09-13T01:25:08-07:00"). PublishDate and RelativeDate carry the SAME
@@ -247,27 +245,4 @@ func youTubeLargestThumbnail(thumbs []youTubeThumbnail) string {
 		}
 	}
 	return best
-}
-
-// youTubePermalink returns the video's permalink from the row's `url`.
-//
-// The ingestor has NO permalink column — scrapeItem carries externalId,
-// authorHandle, text, mediaUrls, metrics and publishedAt and nothing else — so
-// this value is deliberately not stored, exactly as xPermalink is not. It
-// exists so the precedence between the row's `url` and the `embedUrl` beside it
-// is pinned in one place (and tested), and so a future scrapeItem field has
-// something correct to read. The dashboard rebuilds the permalink from platform
-// + id today.
-//
-// `embedUrl` is the fallback, not a peer: it points at /embed/<id> rather than
-// the watch page, and resolving it into a watch URL is a transformation this
-// parser has no business performing on a value nothing reads.
-func youTubePermalink(src youTubeVideo) string {
-	if s := strings.TrimSpace(src.URL); s != "" {
-		return s
-	}
-	if s := strings.TrimSpace(src.EmbedURL); s != "" {
-		return s
-	}
-	return ""
 }

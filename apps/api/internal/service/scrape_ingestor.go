@@ -432,12 +432,15 @@ type tiktokPost struct {
 	// UploadedAt is the same instant as Unix seconds and is the fallback.
 	UploadedAtFormatted string `json:"uploadedAtFormatted"`
 	UploadedAt          int64  `json:"uploadedAt"`
-	Views               int    `json:"views"`
-	Likes               int    `json:"likes"`
-	Comments            int    `json:"comments"`
-	Shares              int    `json:"shares"`
-	Bookmarks           int    `json:"bookmarks"`
-	Video               struct {
+	// Pointers so a genuine 0 is stored and an absent field is not. A plain int
+	// plus a `!= 0` guard conflates the two, which made TikTok serialise a real
+	// zero differently from the other six parsers.
+	Views     *int64 `json:"views"`
+	Likes     *int64 `json:"likes"`
+	Comments  *int64 `json:"comments"`
+	Shares    *int64 `json:"shares"`
+	Bookmarks *int64 `json:"bookmarks"`
+	Video     struct {
 		// Both are plain TikTok CDN URLs present on every row, and neither is
 		// behind a billed flag: cover is the full-size frame, thumbnail the
 		// smaller one. cover is preferred.
@@ -477,27 +480,27 @@ func parseTikTokItems(raw []byte, window port.KeywordTimeWindow) ([]scrapeItem, 
 		media = append(media, cover)
 	}
 	metrics := map[string]any{}
-	if src.Likes != 0 {
-		metrics["likes"] = src.Likes
+	if src.Likes != nil {
+		metrics["likes"] = *src.Likes
 	}
-	if src.Comments != 0 {
-		metrics["comments"] = src.Comments
+	if src.Comments != nil {
+		metrics["comments"] = *src.Comments
 	}
-	if src.Shares != 0 {
-		metrics["shares"] = src.Shares
+	if src.Shares != nil {
+		metrics["shares"] = *src.Shares
 	}
-	if src.Bookmarks != 0 {
+	if src.Bookmarks != nil {
 		// Stored under the same key the previous actor's `collectCount` used.
 		// TikTok's save count is the same measure under the other name, and
 		// renaming the key would orphan the value on every stored post.
-		metrics["collects"] = src.Bookmarks
+		metrics["collects"] = *src.Bookmarks
 	}
-	if src.Views != 0 {
+	if src.Views != nil {
 		// `views`, not a new `plays` key. The snapshot writer reads
 		// metricsInt("views", "viewCount", "playCount") — an unfamiliar key is
 		// stored and then read by nobody, which is a stored view count of zero
 		// on a post that otherwise looks entirely correct.
-		metrics["views"] = src.Views
+		metrics["views"] = *src.Views
 	}
 	return []scrapeItem{{
 		Platform:     string(domain.PlatformTikTok),
@@ -559,7 +562,11 @@ func parseIGPostItems(raw []byte, window port.KeywordTimeWindow) ([]scrapeItem, 
 	if !inWindow(takenAt, window) {
 		return nil, nil
 	}
-	media := src.Images
+	// Copied, not aliased: an omitted or null `images` leaves src.Images nil,
+	// and a nil MediaURLs is marshalled as JSON null — the thing every other
+	// site guards against with make([]string, 0, n).
+	media := make([]string, 0, len(src.Images)+1)
+	media = append(media, src.Images...)
 	if len(media) == 0 && src.DisplayURL != "" {
 		media = []string{src.DisplayURL}
 	}
@@ -696,6 +703,7 @@ func parseIGSearchPost(raw []byte) (igSearchPost, error) {
 	} else if p.PlayCount != nil {
 		metrics["views"] = p.PlayCount
 	}
+	takenAt := time.Unix(p.TakenAt, 0).UTC()
 	item := scrapeItem{
 		Platform:     string(domain.PlatformInstagram),
 		ExternalID:   p.Code,
@@ -704,8 +712,14 @@ func parseIGSearchPost(raw []byte) (igSearchPost, error) {
 		Text:         p.Caption.Text,
 		MediaURLs:    media,
 		Metrics:      metrics,
+		// takenAt was computed on the next line and used ONLY for the inWindow
+		// check, so every search-page post stored published_at NULL even though
+		// the actor sent taken_at. The other six parsers all set it here; this
+		// literal is the one call site missed when scrapeItem.PublishedAt was
+		// introduced.
+		PublishedAt: publishedAtPtr(takenAt),
 	}
-	return igSearchPost{item: item, takenAt: time.Unix(p.TakenAt, 0).UTC()}, nil
+	return igSearchPost{item: item, takenAt: takenAt}, nil
 }
 
 // inWindow reports whether a post's taken_at falls inside the operator's
@@ -895,7 +909,11 @@ func parseThreadsItem(raw []byte, window port.KeywordTimeWindow, onlyCode string
 	text := orDefault(src.Text, src.TextContent)
 	// media_items are not a flat list: this actor sends media_urls[], usage sent
 	// images[] for an image post and video_versions[].url for a video one.
-	media := src.MediaURLs
+	// Copied, not aliased: an omitted media_urls leaves src.MediaURLs nil, and a
+	// nil MediaURLs marshals to JSON null. The append below would also write
+	// into the decoded slice's spare capacity.
+	media := make([]string, 0, len(src.MediaURLs)+len(src.VideoVersions))
+	media = append(media, src.MediaURLs...)
 	if len(media) == 0 {
 		media = src.Images
 		for _, v := range src.VideoVersions {
@@ -1022,6 +1040,16 @@ func (i scrapeItem) metricsIntPtr(keys ...string) *int64 {
 
 // numeric coerces a JSON number-ish value to int64. Apify datasets send numbers
 // as floats and sometimes as strings; both are accepted, anything else is not.
+//
+// The *int64 case exists because the Instagram and Threads wire structs use a
+// pointer to tell "the actor reported 0" from "the actor reported nothing", and
+// they put that pointer straight into scrapeItem.Metrics. Without this case
+// numeric returned (0,false) for all of them, so the snapshot writer stored a
+// real 0 for every IG and Threads post and ranked them all last in
+// TopPostsByMetric. Nothing caught it because post.metrics is marshalled
+// directly — json.Marshal follows the pointer — while the snapshot path goes
+// through here. A nil pointer stays absent, which is the whole point of the
+// pointer in the first place.
 func numeric(v any) (int64, bool) {
 	switch n := v.(type) {
 	case float64:
@@ -1030,6 +1058,11 @@ func numeric(v any) (int64, bool) {
 		return n, true
 	case int:
 		return int64(n), true
+	case *int64:
+		if n == nil {
+			return 0, false
+		}
+		return *n, true
 	case string:
 		// best-effort; a non-numeric string yields false
 		var f float64

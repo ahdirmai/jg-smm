@@ -227,18 +227,47 @@ func TestParseXRealActorRows(t *testing.T) {
 		checkMetric(t, mustJSON(t, it.Metrics), "views", want.views)
 	}
 
-	// Both captured rows are all-zero on every engagement count, and the zero
-	// path must not fabricate a metric: a stored `likes: 0` is a claim the actor
-	// never made.
+	// Both captured rows report 0 on every engagement count, and 0 is a real
+	// measurement: the actor sent the field, so it is stored. This test used to
+	// assert the opposite — that a zero-valued key must be absent — which is how
+	// X came to serialise "0 likes" differently from the other six parsers. The
+	// absent case is the one that must stay absent, and it is covered by the
+	// nil-field test below.
 	items, err := parseXItems(raw[0], xWindow())
 	if err != nil {
 		t.Fatalf("parse captured row: %v", err)
 	}
-	if _, ok := items[0].Metrics["likes"]; ok {
-		t.Errorf("metrics = %v, want no zero-valued likes key on a tweet with 0 likes", items[0].Metrics)
+	for _, k := range []string{"likes", "comments", "shares", "views"} {
+		if _, ok := items[0].Metrics[k]; !ok {
+			t.Errorf("metrics = %v, want a %q key: the actor reported it as 0", items[0].Metrics, k)
+		}
 	}
-	if got := len(items[0].Metrics); got != 1 {
-		t.Errorf("metrics = %v, want only views — the other three counts are zero", items[0].Metrics)
+}
+
+// The other half of the zero/absent contract: a count the actor did not send
+// stays out of the map entirely, so it renders as "—" rather than as a real 0.
+// This is the case the `!= 0` guard was accidentally getting right for the
+// wrong reason, and the one that must keep working after the pointer change.
+func TestParseXOmitsCountsTheActorDidNotSend(t *testing.T) {
+	raw := []byte(`{"id":"1","createdAt":"Sun Sep 27 13:23:06 +0000 2026",
+		"likeCount":0,"text":"hi",
+		"author":{"id":"7","userName":"someone"}}`)
+	items, err := parseXItems(raw, xWindow())
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("items = %d, want 1", len(items))
+	}
+	// The value is stored as int64, not int, so compare through a type
+	// assertion: `got != 0` on an `any` holding int64(0) is always true.
+	if got, ok := items[0].Metrics["likes"]; !ok || got != int64(0) {
+		t.Errorf("likes = %v (present=%v), want a stored int64(0) — the actor sent likeCount:0", got, ok)
+	}
+	for _, k := range []string{"comments", "shares", "views"} {
+		if _, ok := items[0].Metrics[k]; ok {
+			t.Errorf("metrics = %v, want no %q key: the actor never sent it", items[0].Metrics, k)
+		}
 	}
 }
 
@@ -485,27 +514,5 @@ func TestParseXMissingAuthorDegradesToUnknown(t *testing.T) {
 	}
 	if items[0].AuthorHandle != "unknown" {
 		t.Errorf("authorHandle = %q, want unknown", items[0].AuthorHandle)
-	}
-}
-
-// url is on x.com and twitterUrl on twitter.com; url is preferred. The value is
-// not stored today (no column), so this pins the precedence the moment a
-// permalink field gets added.
-func TestXPermalinkPrefersXURL(t *testing.T) {
-	row := realXRow(t, 0)
-	b, err := json.Marshal(row)
-	if err != nil {
-		t.Fatalf("marshal row: %v", err)
-	}
-	var one xTweet
-	if err := json.Unmarshal(b, &one); err != nil {
-		t.Fatalf("unmarshal row: %v", err)
-	}
-	if got := xPermalink(one); got != "https://x.com/kntngsy/status/2104200157558685805" {
-		t.Errorf("xPermalink = %q, want the x.com url", got)
-	}
-	one.URL = ""
-	if got := xPermalink(one); got != "https://twitter.com/kntngsy/status/2104200157558685805" {
-		t.Errorf("xPermalink = %q, want the twitterUrl fallback", got)
 	}
 }

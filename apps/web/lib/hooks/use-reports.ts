@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { api } from '@/lib/api';
 import type { ActionReport, AnalyticsReport, ReportQuery, TargetReport } from '@/lib/api';
@@ -27,21 +27,29 @@ export function useReports(kind: ReportKind): UseReports {
   const [result, setResult] = useState<ReportResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
+  // Last write wins. Changing a filter calls run() again immediately, so two
+  // requests are routinely in flight at once; without this the slower one can
+  // land last and repaint the table with the previous filter's numbers while
+  // the picker shows the new one — a report that silently reports the wrong
+  // window. Same seq guard use-accounts and use-actions already use.
+  const seq = useRef(0);
   const run = useCallback(
     async (next: ReportQuery) => {
+      const id = ++seq.current;
       const merged = { ...next, kind };
       setParams(merged);
       setLoading(true);
       setError(null);
       try {
         const fetched = await fetchByKind(kind, merged);
-        setResult(fetched);
+        if (id === seq.current) setResult(fetched);
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Report failed');
-        setResult(null);
+        if (id === seq.current) {
+          setError(err instanceof Error ? err.message : 'Report failed');
+          setResult(null);
+        }
       } finally {
-        setLoading(false);
+        if (id === seq.current) setLoading(false);
       }
     },
     [kind],

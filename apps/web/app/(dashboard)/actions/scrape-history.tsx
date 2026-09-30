@@ -18,7 +18,8 @@ import { ChevronDown, History, Layers } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
 import { api, type KeywordBatch, type ScrapedPost } from '@/lib/api';
-import { PLATFORM_LABEL } from '@/lib/platforms';
+import { metricsLine, platformLabel } from '@/lib/platforms';
+import { postPermalink } from '@/lib/permalink';
 
 type Group = {
   key: string;
@@ -196,7 +197,13 @@ function PostRow({
   return (
     <button
       type="button"
-      onClick={() => onPick(post.platform, permalinkFor(post))}
+      onClick={() => {
+        // postPermalink is nullable by design. Fabricating a URL to hand the
+        // on-demand scraper would fail server-side with "no actor configured"
+        // anyway, and used to send an instagram.com link for a YouTube id.
+        const url = postPermalink(post);
+        if (url) onPick(post.platform, url);
+      }}
       className="flex items-start gap-3 rounded-lg border border-border/60 bg-background p-2.5 text-left transition-colors hover:bg-secondary/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
     >
       {post.mediaUrls && post.mediaUrls.length > 0 ? (
@@ -220,7 +227,7 @@ function PostRow({
         <span className="flex items-center gap-2">
           <span className="truncate text-sm font-medium">@{post.authorHandle || 'unknown'}</span>
           <Badge variant="outline" className="shrink-0 font-normal">
-            {PLATFORM_LABEL[post.platform] ?? post.platform}
+            {platformLabel(post.platform) ?? post.platform}
           </Badge>
         </span>
         {/* Two lines of caption is enough to recognise a post; the
@@ -229,7 +236,7 @@ function PostRow({
           {post.text || '(no caption)'}
         </span>
         <span className="flex items-center gap-2 text-[11px] text-muted-foreground">
-          <span>{metricsShort(post.metrics)}</span>
+          <span>{metricsLine(post.platform, post.metrics)}</span>
           <span aria-hidden>·</span>
           <span>
             {post.publishedAt
@@ -267,7 +274,7 @@ function groupByBatch(
     out.push({
       key: batch.id,
       label: batch.keywords.join(', ') || '(no keywords)',
-      sublabel: `${PLATFORM_LABEL[batch.platform] ?? batch.platform} · ${new Date(batch.createdAt).toLocaleString()}`,
+      sublabel: `${platformLabel(batch.platform) ?? batch.platform} · ${new Date(batch.createdAt).toLocaleString()}`,
       batchId: batch.id,
       status: batch.status,
       posts: mine,
@@ -286,19 +293,4 @@ function groupByBatch(
   return out;
 }
 
-// Rebuild a canonical permalink from the stored post. The target table keeps
-// the original URL, but the row we render here is the post, and its (platform,
-// externalId) pair is the permalink itself.
-function permalinkFor(p: ScrapedPost): string {
-  if (p.platform === 'threads') {
-    return `https://www.threads.com/@${p.authorHandle || 'unknown'}/post/${p.externalId}`;
-  }
-  return `https://www.instagram.com/p/${p.externalId}/`;
-}
 
-function metricsShort(m: Record<string, number> | null): string {
-  if (!m) return '';
-  const likes = m.likes ?? m.likeCount;
-  if (typeof likes === 'number') return `${likes}♥`;
-  return '';
-}

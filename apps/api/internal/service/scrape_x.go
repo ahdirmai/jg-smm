@@ -46,15 +46,19 @@ type xTweet struct {
 	// URL is the permalink on the x.com domain; TwitterURL is the same post
 	// rehosted under twitter.com. URL is preferred, TwitterURL is the
 	// fallback, and a row carrying neither falls back to the derived form.
-	URL        string `json:"url"`
-	TwitterURL string `json:"twitterUrl"`
 	// CreatedAt is Twitter's legacy date format, parsed below with its own
 	// layout — see xTimeLayout.
-	CreatedAt    string `json:"createdAt"`
-	LikeCount    int    `json:"likeCount"`
-	RetweetCount int    `json:"retweetCount"`
-	ReplyCount   int    `json:"replyCount"`
-	ViewCount    int    `json:"viewCount"`
+	CreatedAt string `json:"createdAt"`
+	// Pointers, not plain ints, for the same reason the YouTube, LinkedIn and
+	// Facebook parsers use them: a tweet with genuinely 0 likes is a real
+	// measurement and must be stored, while an absent field is the actor's gap
+	// and must stay absent. A plain int cannot tell the two apart, so a
+	// `!= 0` guard silently dropped every real zero — which made the same
+	// logical state serialise differently on X than on the other six.
+	LikeCount    *int64 `json:"likeCount"`
+	RetweetCount *int64 `json:"retweetCount"`
+	ReplyCount   *int64 `json:"replyCount"`
+	ViewCount    *int64 `json:"viewCount"`
 	// Media and Videos are separate arrays; both are empty on a text-only
 	// tweet and both populate on a media tweet. Either may be absent.
 	Media []struct {
@@ -130,19 +134,19 @@ func parseXItems(raw []byte, window port.KeywordTimeWindow) ([]scrapeItem, error
 	}
 
 	metrics := map[string]any{}
-	if src.LikeCount != 0 {
-		metrics["likes"] = src.LikeCount
+	if src.LikeCount != nil {
+		metrics["likes"] = *src.LikeCount
 	}
 	// retweetCount is the share count; `shares` is also a key metricsInt reads
 	// directly, unlike a `retweets` spelling which only this parser would know.
-	if src.RetweetCount != 0 {
-		metrics["shares"] = src.RetweetCount
+	if src.RetweetCount != nil {
+		metrics["shares"] = *src.RetweetCount
 	}
-	if src.ReplyCount != 0 {
-		metrics["comments"] = src.ReplyCount
+	if src.ReplyCount != nil {
+		metrics["comments"] = *src.ReplyCount
 	}
-	if src.ViewCount != 0 {
-		metrics["views"] = src.ViewCount
+	if src.ViewCount != nil {
+		metrics["views"] = *src.ViewCount
 	}
 
 	author := strings.TrimPrefix(strings.TrimSpace(src.Author.UserName), "@")
@@ -164,17 +168,6 @@ func xTweetText(src xTweet) string {
 		return src.Text
 	}
 	return src.FullText
-}
-
-// xPermalink returns the post's permalink, preferring the actor's own `url`
-// (x.com) over `twitterUrl` (twitter.com). The ingestor has no column for it,
-// so the value is not stored — this helper exists to pin the precedence in one
-// place, and the batch page rebuilds the permalink from platform + handle + id.
-func xPermalink(src xTweet) string {
-	if s := strings.TrimSpace(src.URL); s != "" {
-		return s
-	}
-	return strings.TrimSpace(src.TwitterURL)
 }
 
 // firstNonEmpty returns the first non-blank candidate. Twitter sends the same

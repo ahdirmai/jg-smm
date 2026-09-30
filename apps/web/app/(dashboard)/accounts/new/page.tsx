@@ -11,18 +11,11 @@ import type { ApiSchemas } from '@smm/shared';
 type Platform = ApiSchemas['CreateAccountRequest']['platform'];
 type CreateAccountRequest = ApiSchemas['CreateAccountRequest'];
 
-// All seven platforms the product handles; the MVP ships IG + Threads active,
-// the rest are created but not yet provisioned (see PLATFORM_MATRIX).
-const PLATFORMS: { id: Platform; label: string }[] = [
-  { id: 'instagram', label: 'Instagram' },
-  { id: 'threads', label: 'Threads' },
-  { id: 'facebook', label: 'Facebook' },
-  { id: 'linkedin', label: 'LinkedIn' },
-  { id: 'x', label: 'X' },
-  { id: 'youtube', label: 'YouTube' },
-  { id: 'tiktok', label: 'TikTok' },
-];
-
+// The seven ids and their labels come from lib/platforms.ts. This page used to
+// re-type all seven as `{id, label}` pairs — a fourth hand-rolled copy of the
+// same fact — so the pair list and the label map could disagree with each
+// other and with the two other pages that declared the same thing.
+import { PLATFORMS, PLATFORM_LABEL } from '@/lib/platforms';
 const STEPS = ['Container', 'Platform', 'Credentials', 'Review'] as const;
 
 /**
@@ -203,22 +196,22 @@ export default function AddAccountPage() {
               </div>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                 {PLATFORMS.map((p) => {
-                  const taken = takenPlatforms.has(p.id);
+                  const taken = takenPlatforms.has(p);
                   return (
                     <button
-                      key={p.id}
+                      key={p}
                       type="button"
                       disabled={taken}
-                      onClick={() => setPlatform(p.id)}
+                      onClick={() => setPlatform(p)}
                       className={
                         'rounded-lg border px-3 py-2.5 text-left text-sm transition-colors ' +
-                        (platform === p.id
+                        (platform === p
                           ? 'border-primary bg-primary/5 ring-1 ring-primary'
                           : 'hover:bg-accent') +
                         (taken ? ' cursor-not-allowed opacity-40 hover:bg-transparent' : '')
                       }
                     >
-                      {p.label}
+                      {PLATFORM_LABEL[p]}
                       {taken ? (
                         <span className="mt-0.5 block text-xs text-muted-foreground">
                           Already added
@@ -294,7 +287,7 @@ export default function AddAccountPage() {
                 <div className="flex justify-between gap-4">
                   <dt className="text-muted-foreground">Platform</dt>
                   <dd className="font-medium">
-                    {PLATFORMS.find((p) => p.id === platform)?.label}
+                    {platform ? PLATFORM_LABEL[platform] : null}
                   </dd>
                 </div>
                 <div className="flex justify-between gap-4">

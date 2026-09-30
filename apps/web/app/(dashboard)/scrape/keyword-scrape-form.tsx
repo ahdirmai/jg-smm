@@ -14,7 +14,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 
 import { api, type KeywordBatch } from '@/lib/api';
-import { PLATFORMS, PLATFORM_LABEL, type Platform } from '@/lib/platforms';
+import { PLATFORMS, PLATFORM_LABEL, platformLabel, type Platform } from '@/lib/platforms';
 
 const MAX_KEYWORDS = 5;
 
@@ -40,11 +40,19 @@ export function KeywordScrapeForm() {
       // silent — polling
     }
   }
+  // Poll only while something is actually running. This used to arm a 4s timer
+  // on mount and never disarm it, so a tab left open after the last batch
+  // settled kept hitting /api/scrape/keyword-batches ~900 times an hour until
+  // the tab was closed — with no new data to show for any of it. The
+  // dependency flips the effect once the last in-flight batch reaches a
+  // terminal state, which clears the interval.
+  const hasActiveBatch = batches.some((b) => b.status === 'PENDING' || b.status === 'RUNNING');
   useEffect(() => {
     refreshBatches();
+    if (!hasActiveBatch) return;
     const id = setInterval(refreshBatches, 4000);
     return () => clearInterval(id);
-  }, []);
+  }, [hasActiveBatch]);
 
   async function runSearch() {
     setError(null);
@@ -80,6 +88,11 @@ export function KeywordScrapeForm() {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* A real <form>, so Enter in the keyword input searches. As a bare
+            div the keystroke did nothing: the operator had to find the button
+            with the mouse, on a form whose whole purpose is typing keywords.
+            The batch list below stays outside — it is navigation, not input. */}
+        <form className="space-y-4" onSubmit={(e) => { e.preventDefault(); void runSearch(); }}>
         <div className="grid gap-3 sm:grid-cols-3">
           <div className="space-y-1.5">
             <Label htmlFor="ks-platform">Platform</Label>
@@ -132,7 +145,7 @@ export function KeywordScrapeForm() {
         </div>
 
         <div className="flex items-center gap-3">
-          <Button onClick={runSearch} disabled={busy || deduped.length === 0 || tooMany}>
+          <Button type="submit" disabled={busy || deduped.length === 0 || tooMany}>
             {busy ? <Loader2 className="size-4 animate-spin" /> : <Search className="size-4" />}
             {busy ? 'Searching…' : 'Search'}
           </Button>
@@ -152,6 +165,7 @@ export function KeywordScrapeForm() {
             {error}
           </div>
         ) : null}
+        </form>
 
         {/* Batch list — background scrape. Klik batch → dashboard batch (beda dari satuan post). */}
         <div className="space-y-2">
@@ -169,7 +183,7 @@ export function KeywordScrapeForm() {
                     <div className="flex flex-wrap items-center gap-2">
                       <Badge variant={b.status === 'SUCCEEDED' ? 'default' : b.status === 'FAILED' ? 'destructive' : 'secondary'}>{b.status}</Badge>
                       <span className="text-sm font-medium">{b.keywords.join(', ')}</span>
-                      <Badge variant="outline">{PLATFORM_LABEL[b.platform] ?? b.platform}</Badge>
+                      <Badge variant="outline">{platformLabel(b.platform) ?? b.platform}</Badge>
                     </div>
                     <div className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">
                       <span>{b.postsCount} posts · {b.commentsCount} comments · {b.itemsRead} items</span>

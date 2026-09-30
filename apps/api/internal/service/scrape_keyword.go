@@ -206,7 +206,18 @@ func (s *KeywordScrapeService) CreateBatch(ctx context.Context, in KeywordScrape
 	return batch, nil
 }
 
+// processBatch runs on a detached goroutine: no request context, no recovery.
+// A panic anywhere in this stack — the store, the ingestor, the Apify runner —
+// would otherwise take the whole API process down over one batch, and leave the
+// batch row RUNNING forever with no trace of why. So the panic is contained
+// here, recorded, and the batch is failed like any other terminal state.
 func (s *KeywordScrapeService) processBatch(ctx context.Context, batchID string, platform domain.Platform, keywords []string, window KeywordWindow, maxPosts int, actorID string) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.log.Error("keyword batch: panic", "batch", batchID, "platform", platform, "panic", r)
+			s.failBatch(ctx, batchID, fmt.Sprintf("panic: %v", r))
+		}
+	}()
 	batch, err := s.batches.GetKeywordBatch(ctx, batchID)
 	if err != nil {
 		s.log.Error("keyword batch: fetch failed", "batch", batchID, "err", err)
@@ -214,9 +225,6 @@ func (s *KeywordScrapeService) processBatch(ctx context.Context, batchID string,
 	}
 	batch.Status = domain.KeywordBatchRunning
 	if _, err := s.batches.UpdateKeywordBatch(ctx, batch); err != nil {
-		s.log.Warn("keyword batch: mark running failed", "batch", batchID, "err", err)
-	}
-	if _, err := s.batches.UpdateKeywordBatch(ctx, domain.KeywordBatch{ID: batchID, Status: domain.KeywordBatchRunning}); err != nil {
 		s.log.Warn("keyword batch: mark running failed", "batch", batchID, "err", err)
 	}
 
@@ -251,7 +259,12 @@ func (s *KeywordScrapeService) processBatch(ctx context.Context, batchID string,
 	// posts instead would let a batch claim rows another batch (or a single
 	// post scrape) just wrote.
 	for _, postID := range res.PostIDs {
-		_ = s.batches.CreateKeywordBatchPost(ctx, batchID, postID)
+		// Logged, not discarded: a failed link means the post was paid for and
+		// stored but never appears in ListBatchPosts, so the batch dashboard
+		// under-reports with nothing on the run itself to explain why.
+		if err := s.batches.CreateKeywordBatchPost(ctx, batchID, postID); err != nil {
+			s.log.Warn("keyword batch: link post failed", "batch", batchID, "post", postID, "err", err)
+		}
 	}
 	n := time.Now().UTC()
 	if _, err := s.batches.UpdateKeywordBatch(ctx, domain.KeywordBatch{

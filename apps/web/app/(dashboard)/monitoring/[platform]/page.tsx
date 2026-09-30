@@ -31,7 +31,7 @@ import {
   useOfficialAccounts,
   usePlatformAnalytics,
 } from '@/lib/hooks/use-analytics';
-import { PLATFORMS, PLATFORM_LABEL } from '@/lib/platforms';
+import { PLATFORMS, PLATFORM_LABEL, platformLabel } from '@/lib/platforms';
 import { analyticsConfig } from '@/lib/analytics-config';
 
 /** The window the reader is looking at, and the one it is compared against. */
@@ -52,7 +52,7 @@ export default function PlatformAnalyticsPage({
 }) {
   const { platform } = use(params);
   const cfg = analyticsConfig(platform);
-  const label = PLATFORM_LABEL[platform] ?? platform;
+  const label = platformLabel(platform) ?? platform;
 
   // The metric drives the trend. It is a real control, not a constant: the API
   // serves one series per request, so this is how the reader compares reach

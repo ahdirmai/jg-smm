@@ -63,30 +63,14 @@ import { ImportAccountsDialog } from '@/components/import-accounts-dialog';
 import { LiveBrowserModal } from '@/components/live-browser-modal';
 import { useSession } from '@/lib/auth/session-context';
 import { can } from '@/lib/auth/permissions';
-
-// The API speaks lowercase platform codes (`instagram`, `threads`, …) — see
-// domain/platform.go. Keys here must match that exactly: keyed uppercase, the
-// filter never matches and every label falls through to the raw code.
-const PLATFORMS = [
-  'instagram',
-  'threads',
-  'facebook',
-  'tiktok',
-  'linkedin',
-  'x',
-  'youtube',
-] as const;
-type Platform = (typeof PLATFORMS)[number];
-
-const PLATFORM_LABEL: Record<Platform, string> = {
-  instagram: 'Instagram',
-  threads: 'Threads',
-  facebook: 'Facebook',
-  tiktok: 'TikTok',
-  linkedin: 'LinkedIn',
-  x: 'X',
-  youtube: 'YouTube',
-};
+// The platform list, the label map and the label lookup were all re-declared
+// here as a third hand-typed copy of the same seven ids, alongside two in
+// accounts/new and lib/analytics-config. Keyed off lib/platforms.ts, an eighth
+// platform added to the backend cannot land in this page silently missing a
+// label. The icon map below stays local: this is its only consumer, and moving
+// it would drag lucide-react into every server component that imports the
+// lib for a one-line lookup.
+import { PLATFORMS, PLATFORM_LABEL, platformLabel, type Platform } from '@/lib/platforms';
 
 /**
  * Per-platform glyph (DESIGN_SYSTEM principle 6: small monochrome icon in a
@@ -105,10 +89,6 @@ const PLATFORM_ICON: Record<Platform, LucideIcon> = {
 
 function platformIcon(platform: string): LucideIcon {
   return PLATFORM_ICON[platform as Platform] ?? AtSign;
-}
-
-function platformLabel(platform: string): string {
-  return PLATFORM_LABEL[platform as Platform] ?? platform;
 }
 
 const STATUSES = ['PENDING', 'ACTIVE', 'PAUSED', 'QUARANTINED', 'DEAD', 'ARCHIVED'] as const;
