@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"os"
 	"testing"
 	"time"
 
@@ -34,13 +33,7 @@ func p2Suffix(t *testing.T) string {
 
 func newP2TestRepos(t *testing.T) (*ScrapeRepo, *AnalyticsRepo) {
 	t.Helper()
-	if os.Getenv("SMM_TEST_DB") != "1" {
-		t.Skip("set SMM_TEST_DB=1 to run repository integration tests")
-	}
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://smm:smm@localhost:24543/smm?sslmode=disable"
-	}
+	dsn := testDSN(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	pool, err := pgxpool.New(ctx, dsn)
@@ -237,6 +230,61 @@ func TestScrapeCommentThread(t *testing.T) {
 	}
 	if n != 2 {
 		t.Fatalf("expected 2 comments, got %d", n)
+	}
+}
+
+// The Instagram actor returns no parent reference, so every production re-scrape
+// passes parent_id = NULL. With `parent_id = EXCLUDED.parent_id` in the DO
+// UPDATE, "the actor told us nothing" was indistinguishable from "this comment
+// has no parent", and every re-scrape erased a link that existed. Absence of
+// data must not destroy data.
+func TestScrapeCommentReScrapeDoesNotEraseParent(t *testing.T) {
+	scrape, _ := newP2TestRepos(t)
+	ctx := context.Background()
+	post, err := scrape.UpsertPost(ctx, domain.Post{
+		Platform:     domain.PlatformInstagram,
+		ExternalID:   "ig-post-reparent-" + p2Suffix(t),
+		AuthorHandle: "brand",
+	})
+	if err != nil {
+		t.Fatalf("upsert post: %v", err)
+	}
+	parent, err := scrape.UpsertComment(ctx, domain.Comment{
+		PostID:     post.ID,
+		Platform:   domain.PlatformInstagram,
+		ExternalID: "ig-c-parent-" + p2Suffix(t),
+		Text:       "top level",
+	})
+	if err != nil {
+		t.Fatalf("upsert parent: %v", err)
+	}
+	childID := "ig-c-child-" + p2Suffix(t)
+	if _, err := scrape.UpsertComment(ctx, domain.Comment{
+		PostID:     post.ID,
+		Platform:   domain.PlatformInstagram,
+		ExternalID: childID,
+		Text:       "reply",
+		ParentID:   &parent.ID,
+	}); err != nil {
+		t.Fatalf("upsert child: %v", err)
+	}
+	// The re-scrape: same comment, no parent reference from the actor.
+	got, err := scrape.UpsertComment(ctx, domain.Comment{
+		PostID:     post.ID,
+		Platform:   domain.PlatformInstagram,
+		ExternalID: childID,
+		Text:       "reply (edited)",
+		Metrics:    json.RawMessage(`{"likes":5}`),
+	})
+	if err != nil {
+		t.Fatalf("re-upsert child: %v", err)
+	}
+	if got.ParentID == nil || *got.ParentID != parent.ID {
+		t.Fatalf("re-scrape erased parent_id: %+v", got.ParentID)
+	}
+	var m map[string]int
+	if err := json.Unmarshal(got.Metrics, &m); err != nil || m["likes"] != 5 {
+		t.Fatalf("re-scrape did not apply new metrics: %s", got.Metrics)
 	}
 }
 
@@ -549,5 +597,96 @@ func TestAnalyticsMentionDedupe(t *testing.T) {
 	}
 	if len(list) != 1 {
 		t.Fatalf("expected 1 mention after dedupe, got %d", len(list))
+	}
+}
+
+// author_handle was insert-only on both post and comment, so the handle a
+// re-scrape carried was thrown away and the first value was frozen forever.
+// That is not cosmetic: apps/web/lib/permalink.ts builds TikTok and X URLs as
+// /@<handle>/video/<code> and /<handle>/status/<code>, so a stale handle (a
+// rename, or a bad first write) is a permalink that 404s and can never heal.
+func TestRescrapeRefreshesAuthorHandle(t *testing.T) {
+	scrape, _ := newP2TestRepos(t)
+	ctx := context.Background()
+	ext := "handle-post-" + p2Suffix(t)
+
+	first, err := scrape.UpsertPost(ctx, domain.Post{
+		Platform:     domain.PlatformTikTok,
+		ExternalID:   ext,
+		AuthorHandle: "oldname",
+		AuthorID:     "999",
+		Metrics:      json.RawMessage(`{"likes":1}`),
+	})
+	if err != nil {
+		t.Fatalf("upsert post: %v", err)
+	}
+	if _, err := scrape.UpsertPost(ctx, domain.Post{
+		Platform:     domain.PlatformTikTok,
+		ExternalID:   ext,
+		AuthorHandle: "newname",
+		AuthorID:     "999",
+		Metrics:      json.RawMessage(`{"likes":2}`),
+	}); err != nil {
+		t.Fatalf("re-scrape post: %v", err)
+	}
+	got, err := scrape.GetPostByExternalID(ctx, domain.PlatformTikTok, ext)
+	if err != nil {
+		t.Fatalf("get post: %v", err)
+	}
+	if got.AuthorHandle != "newname" {
+		t.Fatalf("post author_handle = %q, want %q — a stale handle builds a 404 permalink on TikTok and X",
+			got.AuthorHandle, "newname")
+	}
+	if got.ID != first.ID {
+		t.Fatalf("re-scrape created a duplicate post: %s != %s", got.ID, first.ID)
+	}
+}
+
+// Same defect, same fix, on the comment side.
+func TestRescrapeRefreshesCommentAuthorHandle(t *testing.T) {
+	scrape, _ := newP2TestRepos(t)
+	ctx := context.Background()
+	postExt := "handle-cmt-post-" + p2Suffix(t)
+	cmtExt := "handle-cmt-" + p2Suffix(t)
+
+	post, err := scrape.UpsertPost(ctx, domain.Post{
+		Platform:     domain.PlatformTikTok,
+		ExternalID:   postExt,
+		AuthorHandle: "brand",
+		Metrics:      json.RawMessage(`{"likes":0}`),
+	})
+	if err != nil {
+		t.Fatalf("upsert post: %v", err)
+	}
+	if _, err := scrape.UpsertComment(ctx, domain.Comment{
+		PostID:       post.ID,
+		Platform:     domain.PlatformTikTok,
+		ExternalID:   cmtExt,
+		AuthorHandle: "oldcommenter",
+		Text:         "hi",
+		Metrics:      json.RawMessage(`{"likes":0}`),
+	}); err != nil {
+		t.Fatalf("upsert comment: %v", err)
+	}
+	if _, err := scrape.UpsertComment(ctx, domain.Comment{
+		PostID:       post.ID,
+		Platform:     domain.PlatformTikTok,
+		ExternalID:   cmtExt,
+		AuthorHandle: "newcommenter",
+		Text:         "hi",
+		Metrics:      json.RawMessage(`{"likes":0}`),
+	}); err != nil {
+		t.Fatalf("re-scrape comment: %v", err)
+	}
+	lim, off := 10, 0
+	rows, err := scrape.ListCommentsByPost(ctx, post.ID, &lim, &off)
+	if err != nil {
+		t.Fatalf("list comments: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d comments, want 1", len(rows))
+	}
+	if rows[0].AuthorHandle != "newcommenter" {
+		t.Fatalf("comment author_handle = %q, want %q", rows[0].AuthorHandle, "newcommenter")
 	}
 }

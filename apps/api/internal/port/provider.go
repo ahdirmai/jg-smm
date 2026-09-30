@@ -72,12 +72,24 @@ type ApifyInput struct {
 	MaxItems int
 }
 
+// RawItem is one dataset row the runner wrote to object storage.
+type RawItem struct {
+	// Key is the S3 key the payload was stored under.
+	Key string
+	// Bytes is what storage.Put reported it wrote. It is carried rather than
+	// recomputed downstream because raw_payload.bytes is a per-row column:
+	// writing 0 there (which this used to do) makes the audit table lie about
+	// the size of every run it recorded.
+	Bytes int64
+}
+
 // ApifyOutput is the terminal state of one actor run.
 type ApifyOutput struct {
-	RunID    string
-	Status   string
-	ItemKeys []string // S3 keys of the raw dataset items.
-	Error    string
+	RunID  string
+	Status string
+	// Items are the raw dataset rows this run wrote, in dataset order.
+	Items []RawItem
+	Error string
 }
 
 // ScrapeIngestor normalizes raw actor output into domain entities. It is the

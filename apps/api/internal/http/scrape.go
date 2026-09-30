@@ -68,7 +68,7 @@ func (h *ScrapeHandler) scrapeTarget(c echo.Context) error {
 	if err := c.Bind(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
 	}
-	detail, err := h.scrapes.ScrapeTarget(c.Request().Context(), domain.Platform(req.Platform), req.URL, req.Force)
+	detail, err := h.scrapes.ScrapeTargetAs(c.Request().Context(), domain.Platform(req.Platform), req.URL, req.Force, c.RealIP())
 	if err != nil {
 		return scrapeError(err)
 	}
@@ -99,20 +99,28 @@ func (h *ScrapeHandler) scrapeKeywords(c echo.Context) error {
 		Platform: domain.Platform(req.Platform),
 		Keywords: req.Keywords,
 		MaxPosts: req.MaxPosts,
+		// The spend ceiling is keyed on the client IP, the same key the account
+		// import limiter uses: both are operator actions, and a shared-NAT office
+		// is the realistic worst case for a false refusal.
+		Caller: c.RealIP(),
 	}
-	for _, pair := range []struct {
-		raw string
-		dst *time.Time
-	}{{req.From, &in.Window.From}, {req.To, &in.Window.To}} {
-		v := strings.TrimSpace(pair.raw)
+	for _, bound := range []struct {
+		raw      string
+		dst      *time.Time
+		endOfDay bool
+	}{
+		{req.From, &in.Window.From, false},
+		{req.To, &in.Window.To, true},
+	} {
+		v := strings.TrimSpace(bound.raw)
 		if v == "" {
 			continue
 		}
-		t, err := parseWindowDate(v)
+		t, err := parseWindowDate(v, bound.endOfDay)
 		if err != nil {
 			return echo.NewHTTPError(http.StatusBadRequest, "invalid window date: "+v)
 		}
-		*pair.dst = t
+		*bound.dst = t
 	}
 	if claims, ok := ClaimsFrom(c); ok && claims.UserID != "" {
 		s := claims.UserID
@@ -221,11 +229,25 @@ func (h *ScrapeHandler) listRecent(c echo.Context) error {
 }
 
 // parseWindowDate accepts RFC3339 or a bare YYYY-MM-DD (dashboard date input).
-func parseWindowDate(v string) (time.Time, error) {
+//
+// endOfDay applies to the `To` bound only. The operator picks calendar days and
+// the ingestor's window is half-open (From inclusive, To exclusive), so a bare
+// "2026-09-30" parsed to midnight excluded everything published that day — a
+// 30-day window silently reported 27, while the batch header still rendered
+// 9/30. Stretch a bare date to the last instant of its day; an explicit RFC3339
+// instant is left exactly as the caller sent it.
+func parseWindowDate(v string, endOfDay bool) (time.Time, error) {
 	if t, err := time.Parse(time.RFC3339, v); err == nil {
 		return t, nil
 	}
-	return time.Parse("2006-01-02", v)
+	t, err := time.Parse("2006-01-02", v)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if endOfDay {
+		return t.Add(24*time.Hour - time.Nanosecond), nil
+	}
+	return t, nil
 }
 
 // generateCommentRequest is the AI-draft body: the scraped post's text, a
@@ -275,9 +297,19 @@ func scrapeError(err error) error {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	case errors.Is(err, domain.ErrUnavailable):
 		return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
+	// The two scrape endpoints that spend money are metered. Same status and
+	// message as the account import limiter, so the dashboard handles every
+	// spend refusal in one place.
+	case errors.Is(err, domain.ErrRateLimited):
+		return echo.NewHTTPError(http.StatusTooManyRequests, "scrape rate limit exceeded; try again in a minute")
 	case errors.Is(err, domain.ErrNotFound):
 		return echo.NewHTTPError(http.StatusNotFound, err.Error())
 	default:
-		return echo.NewHTTPError(http.StatusBadGateway, err.Error())
+		// Never echo the raw error: the Apify runner carries the API token in
+		// its query string, so a `*url.Error` from a timeout or DNS failure
+		// serialises the token into err.Error() and errorHandler copies a
+		// string message straight onto the wire. The detail is already stored
+		// on scrape_job.error and apify_run for triage.
+		return echo.NewHTTPError(http.StatusBadGateway, "scrape failed")
 	}
 }

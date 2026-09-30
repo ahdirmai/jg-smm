@@ -114,6 +114,23 @@ type Config struct {
 	// ScrapeMaxAttempts caps retries on a rate-limited scrape job before it
 	// fails permanently (P2-02 backoff).
 	ScrapeMaxAttempts int
+	// ScrapeRateLimit is the per-caller ceiling on PAID scrape runs inside
+	// ScrapeRateLimitWindowSeconds — one budget covering both spending
+	// endpoints (POST /scrape/target and POST /scrape/keywords). They are the
+	// only routes that buy Apify compute per click, they carry no charge cap,
+	// and `force` is a caller-controlled boolean that skips the 6h cache, so
+	// without this an OPERATOR can retry in a loop. Same shape and reason as
+	// ImportRateLimit. 0 (or a negative window) disables the ceiling, which is
+	// the self-hosted default: no ceiling configured is not a ceiling of zero.
+	ScrapeRateLimit              int
+	ScrapeRateLimitWindowSeconds int
+
+	// InternalAPISecret guards /internal/* — the machine-only worker ingress
+	// (callback, heartbeat, claim, session export). Those routes sit outside
+	// /api on purpose, so without this they are an unauthenticated write to
+	// the action verdict table. Empty disables the check, which is only safe
+	// when the API is unreachable from anything but its own workers.
+	InternalAPISecret string
 
 	// Apify base URL + token for the scrape actor runner (P2-03). The token is
 	// a secret injected via env; it is never logged.
@@ -248,6 +265,13 @@ func Load() (Config, error) {
 		ScrapeJitterMinSeconds: envInt("SCRAPE_JITTER_MIN_SECONDS", 5),
 		ScrapeJitterMaxSeconds: envInt("SCRAPE_JITTER_MAX_SECONDS", 15),
 		ScrapeMaxAttempts:      envInt("SCRAPE_MAX_ATTEMPTS", 3),
+		// The ceilings on the two endpoints that spend money. Default is "no
+		// ceiling" to keep the self-hosted path unchanged; a deployment that
+		// wants the guard sets the pair. Both are validated in Validate().
+		ScrapeRateLimit:              envInt("SCRAPE_RATE_LIMIT", 0),
+		ScrapeRateLimitWindowSeconds: envInt("SCRAPE_RATE_LIMIT_WINDOW_SECONDS", 60),
+
+		InternalAPISecret: os.Getenv("INTERNAL_API_SECRET"),
 
 		ApifyBaseURL:     env("APIFY_BASE_URL", "https://api.apify.com/v2"),
 		ApifyToken:       os.Getenv("APIFY_TOKEN"),
@@ -318,6 +342,12 @@ func Load() (Config, error) {
 	}
 	if cfg.ScrapeMaxAttempts < 1 {
 		return Config{}, fmt.Errorf("config: SCRAPE_MAX_ATTEMPTS must be >= 1, got %d", cfg.ScrapeMaxAttempts)
+	}
+	if cfg.ScrapeRateLimit < 0 {
+		return Config{}, fmt.Errorf("config: SCRAPE_RATE_LIMIT must be >= 0 (0 = no ceiling), got %d", cfg.ScrapeRateLimit)
+	}
+	if cfg.ScrapeRateLimitWindowSeconds < 1 {
+		return Config{}, fmt.Errorf("config: SCRAPE_RATE_LIMIT_WINDOW_SECONDS must be >= 1, got %d", cfg.ScrapeRateLimitWindowSeconds)
 	}
 	if cfg.AnalyticsIngestIntervalSeconds < 0 {
 		return Config{}, fmt.Errorf("config: ANALYTICS_INGEST_INTERVAL_SECONDS must be >= 0, got %d", cfg.AnalyticsIngestIntervalSeconds)

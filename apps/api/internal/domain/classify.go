@@ -36,6 +36,15 @@ func ClassifyActionError(msg string) ErrorClass {
 		"slow down", "spam", "few minutes", "temporarily blocked",
 	):
 		return ErrorClassRateLimit
+	// A reply whose composer never appears is not a race. The target comment
+	// is permanently gone — deleted, or its Reply affordance is not ours to
+	// click — so retrying cannot help. It has to be tested BEFORE the
+	// TRANSIENT case below, because the message contains "not found" and the
+	// retry is actively harmful: H-2 pins the target by comment id, but each
+	// attempt re-clicks `.first()` in DOM order, so three retries mean three
+	// replies posted to three different comments on a live account.
+	case containsAny(m, "reply composer not found"):
+		return ErrorClassUnknown
 	case containsAny(m,
 		"timeout", "timed out", "deadline", "connection", "network",
 		"navigation", "selector", "element not found", "detached",

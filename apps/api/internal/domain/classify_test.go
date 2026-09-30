@@ -41,6 +41,13 @@ func TestClassifyActionError(t *testing.T) {
 		{"button not found", "like button not found on the post", ErrorClassTransient},
 		{"state unchanged", "like state did not change (verification failed)", ErrorClassTransient},
 
+		// A reply whose composer never opens is permanent, even though the
+		// message contains "not found" and would otherwise be TRANSIENT. This
+		// must not retry: each attempt re-clicks the first Reply button in
+		// DOM order, so three retries post three replies to three different
+		// comments on a live account.
+		{"reply composer gone", "reply composer not found (after clicking Reply)", ErrorClassUnknown},
+
 		// Precedence: a banned account often presents as a login wall first.
 		// If BANNED were tested after AUTH this would misclassify as AUTH and
 		// waste a retry.
@@ -57,6 +64,12 @@ func TestClassifyActionError(t *testing.T) {
 				t.Fatalf("ClassifyActionError(%q) = %q, want %q", tc.msg, got, tc.want)
 			}
 		})
+	}
+
+	// L-1: the point of the terminal classification is that it must not be
+	// retried. The table above pins the class; this pins the consequence.
+	if ClassifyActionError("reply composer not found (after clicking Reply)").Retryable() {
+		t.Fatal("an un-replyable comment would be retried, posting to a different comment each attempt")
 	}
 }
 

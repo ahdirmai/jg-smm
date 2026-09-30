@@ -49,7 +49,10 @@ export function createSessionCallback(
       try {
         const res = await doFetch(url, {
           method: 'POST',
-          headers: { 'content-type': 'application/json' },
+          headers: {
+            'content-type': 'application/json',
+            'x-internal-secret': config.internalSecret,
+          },
           body,
           signal: AbortSignal.timeout(timeoutMs),
         });

@@ -2473,7 +2473,7 @@ components:
           type: string
         screenshotPath:
           type: string
-          description: File name only; the server applies path.Base and requires .png.
+          description: File name only; the server applies path.Base and requires .jpg (the format the worker's screenshot capture writes).
         error:
           type: string
           maxLength: 4096
@@ -2481,6 +2481,9 @@ components:
           type: string
           maxLength: 4096
           description: The final comment text the worker posted (template already rendered), stored on the attempt so a verdict replays without the pool.
+        templateId:
+          type: string
+          description: The comment_template the job's text came from, echoed from the dispatched job. Empty for an operator-supplied body. Recorded on the attempt so the 7-day per-target dedupe can see the variant as used.
         responseExcerpt:
           type: string
           maxLength: 1024

@@ -170,7 +170,12 @@ export const NewActionForm = forwardRef<
       }
       setScraping(true);
       try {
-        const res = await api.scrapeTarget(p, u.trim());
+        // force: a keyword batch ingests a post without its comment bodies but
+        // still stamps scraped_at, so the 6h cache would answer with the empty
+        // comment list it stored — and the form renders nothing for an empty
+        // list, leaving the operator no way to tell "no comments" from "cache
+        // hit". Here the operator explicitly asked to scrape; pay for it.
+        const res = await api.scrapeTarget(p, u.trim(), true);
         setScrape(res);
         onScraped?.();
         // A fresh target resets per-account selections.
@@ -313,8 +318,9 @@ export const NewActionForm = forwardRef<
             </Button>
           </div>
           <p className="text-xs text-muted-foreground">
-            Scrape pulls the post metadata, caption and existing comments (Apify). Already-stored
-            posts are reused for 6 hours.
+            Scrape pulls the post metadata, caption and existing comments (Apify). This always
+            runs a fresh scrape rather than reusing a stored post, so comments show up here even
+            for a post a batch ingested without them.
           </p>
         </div>
 
@@ -380,6 +386,15 @@ export const NewActionForm = forwardRef<
                 <p className="text-xs text-muted-foreground">
                   {scrape.comments.length} existing comment
                   {scrape.comments.length === 1 ? '' : 's'} loaded
+                </p>
+              ) : null}
+              {scrape.comments.length === 0 ? (
+                // Without this the empty case is indistinguishable from a cache
+                // hit, and the operator cannot tell whether there is anything to
+                // reply to.
+                <p className="text-xs text-muted-foreground">
+                  No existing comments on this post — a fresh scrape ran, so this is the real
+                  answer, not a cached one.
                 </p>
               ) : null}
             </div>

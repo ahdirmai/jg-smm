@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,18 +17,43 @@ import (
 	"github.com/ahdirmai/jg-smm/apps/api/internal/repository/sqlcgen"
 )
 
-// These tests exercise the generated SQL against a real Postgres instance. They
-// are skipped unless SMM_TEST_DB=1 is set (mirrors the SMM_TEST_REDIS convention)
-// so CI on a host without a database still passes.
-func testPool(t *testing.T) *pgxpool.Pool {
+// testDSN resolves the Postgres these tests may destroy.
+//
+// Every test in this package TRUNCATEs its tables. The helpers here used to
+// default to `localhost:24543/smm`, which is the dev stack's published port —
+// so `SMM_TEST_DB=1` with no DATABASE_URL silently wiped the running database.
+// That is no longer reachable:
+//
+//   - SMM_TEST_DB=1 is required (skip, not fail, so a host with no DB still
+//     passes CI);
+//   - DATABASE_URL must be set explicitly — there is no default to fall into;
+//   - and the database name must contain "test", so a real database cannot be
+//     wiped by accident.
+func testDSN(t *testing.T) string {
 	t.Helper()
 	if os.Getenv("SMM_TEST_DB") != "1" {
 		t.Skip("set SMM_TEST_DB=1 to run repository integration tests")
 	}
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
-		dsn = "postgres://smm:smm@localhost:5432/smm?sslmode=disable"
+		t.Fatalf("SMM_TEST_DB=1 but DATABASE_URL is empty: these tests TRUNCATE, so the target must be named explicitly — point it at a throwaway database whose name contains \"test\"")
 	}
+	name := dsn
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		name = name[i+1:]
+	}
+	if i := strings.IndexAny(name, "?"); i >= 0 {
+		name = name[:i]
+	}
+	if !strings.Contains(strings.ToLower(name), "test") {
+		t.Fatalf("refusing to TRUNCATE database %q: the name must contain \"test\" so a real one cannot be wiped by accident", name)
+	}
+	return dsn
+}
+
+func testPool(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	dsn := testDSN(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	pool, err := pgxpool.New(ctx, dsn)

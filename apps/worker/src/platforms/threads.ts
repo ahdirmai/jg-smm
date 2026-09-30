@@ -20,7 +20,6 @@ import {
   missingText,
   replyToComment,
   runAction,
-  waitForCommentText,
   failShot,
 } from './dom.js';
 import { META_OTP_SELECTOR, otpHandlers } from './otp.js';
@@ -61,14 +60,5 @@ export const threadsAdapter: PlatformAdapter = {
   // sel/index.ts once verified live against a healthy Threads account.
   likeComment(ctx: BrowserContext, job: ActionJob): Promise<AdapterResult> {
     return runAction(ctx, 'threads', job, likeComment);
-  },
-
-  verify(ctx: BrowserContext, job: ActionJob): Promise<AdapterResult> {
-    if (!job.text) return Promise.resolve(missingText());
-    return runAction(ctx, 'threads', job, async (d) => {
-      const rendered = await waitForCommentText(d, job.text as string);
-      if (rendered) return { ok: true, renderedText: rendered };
-      return failShot(d, 'comment not visible in feed (verification failed)');
-    });
   },
 };

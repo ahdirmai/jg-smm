@@ -1,6 +1,7 @@
 package http
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -20,6 +21,9 @@ import (
 // attempt. See P1-13.
 const MaxCallbackBytes = 64 << 10 // 64 KiB
 
+// internalSecretHeader carries the machine credential on every /internal call.
+const internalSecretHeader = "X-Internal-Secret"
+
 // maxErrorRunes is the truncation budget for free-text fields so a misbehaving
 // worker cannot store unbounded text in the DB.
 const maxErrorRunes = 4096
@@ -29,7 +33,7 @@ const maxErrorRunes = 4096
 const maxExcerptRunes = 1024
 
 // screenshotExt is the only accepted extension for evidence file names.
-const screenshotExt = ".png"
+const screenshotExt = ".jpg"
 
 // InternalHandler receives worker callbacks (action verdicts, auth outcomes,
 // heartbeats). Workers never touch the DB (ADR 0011): they SUBSCRIBE control and
@@ -37,6 +41,8 @@ const screenshotExt = ".png"
 type InternalHandler struct {
 	jobs     *service.JobService
 	sessions SessionExportSink
+	// secret guards every route on the group. Empty disables the check.
+	secret string
 }
 
 // SessionExportSink receives a session (cookies) a worker dumped in response to
@@ -49,8 +55,27 @@ type SessionExportSink interface {
 
 // NewInternalHandler builds the handler. A nil JobService keeps the API bootable
 // before the worker path is wired (routes then return 503).
-func NewInternalHandler(jobs *service.JobService) *InternalHandler {
-	return &InternalHandler{jobs: jobs}
+func NewInternalHandler(jobs *service.JobService, secret string) *InternalHandler {
+	return &InternalHandler{jobs: jobs, secret: secret}
+}
+
+// requireInternalSecret is the machine auth for the /internal group. These
+// routes write action verdicts, account status and worker heartbeats, so an
+// unauthenticated caller that reaches the API port can mark any job SUCCESS or
+// kill an executor account. The comparison is constant-time so a wrong secret
+// leaks no timing signal; an empty configured secret skips the check, which is
+// only safe when the API port is not reachable off-host.
+func (h *InternalHandler) requireInternalSecret(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		if h.secret == "" {
+			return next(c)
+		}
+		got := c.Request().Header.Get(internalSecretHeader)
+		if subtle.ConstantTimeCompare([]byte(got), []byte(h.secret)) != 1 {
+			return echo.NewHTTPError(http.StatusUnauthorized, "invalid internal secret")
+		}
+		return next(c)
+	}
 }
 
 // SetSessionExportSink wires the session-export callback target. Called after
@@ -60,11 +85,12 @@ func (h *InternalHandler) SetSessionExportSink(sink SessionExportSink) {
 	h.sessions = sink
 }
 
-// Register mounts the internal routes behind a body-size limit. Mounted on the
-// root echo (not the /api group): these are private-network calls from the
-// API's own worker containers, so they carry no session and no RBAC gate.
+// Register mounts the internal routes behind a body-size limit and the shared
+// secret. Mounted on the root echo (not the /api group): these are calls from
+// the API's own worker containers, so they carry no session and no RBAC gate —
+// the secret is what replaces the session.
 func (h *InternalHandler) Register(e *echo.Echo) {
-	g := e.Group("/internal", limitBody(MaxCallbackBytes))
+	g := e.Group("/internal", limitBody(MaxCallbackBytes), h.requireInternalSecret)
 	g.POST("/action-callback", h.actionCallback)
 	g.POST("/account-callback", h.accountCallback)
 	g.POST("/heartbeat", h.heartbeat)
@@ -139,6 +165,7 @@ func (h *InternalHandler) actionCallback(c echo.Context) error {
 		TargetURL:       req.TargetUrl,
 		WorkerID:        req.WorkerId,
 		RenderedText:    req.RenderedText,
+		TemplateID:      req.TemplateId,
 		ResponseExcerpt: truncatePtr(req.ResponseExcerpt, maxExcerptRunes),
 		DurationMs:      derefInt64(req.DurationMs),
 	})
@@ -301,7 +328,7 @@ func sanitiseScreenshot(p *string) (string, error) {
 	base := path.Base(*p)
 	if base == "." || base == "/" || len(base) < len(screenshotExt) ||
 		!strings.EqualFold(base[len(base)-len(screenshotExt):], screenshotExt) {
-		return "", errors.New("screenshot_path must be a .png file name")
+		return "", errors.New("screenshot_path must be a .jpg file name")
 	}
 	return base, nil
 }

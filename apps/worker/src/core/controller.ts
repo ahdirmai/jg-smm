@@ -44,7 +44,6 @@ export function createController(deps: ControllerDeps) {
       return {
         jobId: job.id,
         accountId: job.accountId,
-        workerId: '',
         attempt: job.attempt,
         status: 'failed',
         error: `no adapter for platform ${job.platform}`,
@@ -59,11 +58,14 @@ export function createController(deps: ControllerDeps) {
       return {
         jobId: job.id,
         accountId: job.accountId,
-        workerId: '',
         attempt: job.attempt,
         status: result.ok ? 'success' : 'failed',
         ...(result.renderedText !== undefined ? { renderedText: result.renderedText } : {}),
-        ...(result.screenshot !== undefined ? { screenshot: result.screenshot } : {}),
+        // Echo the variant the BE composed from, so the BE can record it on the
+        // attempt. The worker never decides this; it is a pure passthrough of
+        // what it was dispatched, which is why it survives a dry run too.
+        ...(job.templateId !== undefined ? { templateId: job.templateId } : {}),
+        ...(result.screenshot !== undefined ? { screenshotPath: result.screenshot } : {}),
         ...(result.error !== undefined ? { error: result.error } : {}),
         durationMs: Date.now() - startedAt,
       };
@@ -72,7 +74,6 @@ export function createController(deps: ControllerDeps) {
       return {
         jobId: job.id,
         accountId: job.accountId,
-        workerId: '',
         attempt: job.attempt,
         status: 'failed',
         error: (err as Error).message,

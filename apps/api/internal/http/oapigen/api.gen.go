@@ -307,11 +307,14 @@ type ActionCallback struct {
 	// ResponseExcerpt First runes of the platform response; the debug trail behind a verdict.
 	ResponseExcerpt *string `json:"responseExcerpt,omitempty"`
 
-	// ScreenshotPath File name only; the server applies path.Base and requires .png.
+	// ScreenshotPath File name only; the server applies path.Base and requires .jpg (the format the worker's screenshot capture writes).
 	ScreenshotPath *string       `json:"screenshotPath,omitempty"`
 	Status         AttemptStatus `json:"status"`
 	TargetUrl      *string       `json:"targetUrl,omitempty"`
-	WorkerId       *string       `json:"workerId,omitempty"`
+
+	// TemplateId The comment_template the job's text came from, echoed from the dispatched job. Empty for an operator-supplied body. Recorded on the attempt so the 7-day per-target dedupe can see the variant as used.
+	TemplateId *string `json:"templateId,omitempty"`
+	WorkerId   *string `json:"workerId,omitempty"`
 }
 
 // ActionItem defines model for ActionItem.

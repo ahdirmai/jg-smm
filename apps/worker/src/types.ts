@@ -14,6 +14,12 @@ export interface ActionJob {
   targetUrl: string;
   /** Rendered text for comment/reply jobs, already composed from a template. */
   text?: string;
+  /**
+   * The comment_template behind `text`, echoed from the BE. The BE stores it on
+   * the attempt so the 7-day per-target dedupe can see the variant as used;
+   * absent for an operator-supplied body.
+   */
+  templateId?: string;
   /** 1-based attempt counter used for idempotency and backoff. */
   attempt: number;
 }
@@ -32,14 +38,15 @@ export interface ControlMessage {
 export interface ActionResult {
   jobId: string;
   accountId: string;
-  workerId: string;
   attempt: number;
   /** `success` | `failed` | `running`. */
   status: 'running' | 'success' | 'failed';
   /** Rendered text seen on the feed, when applicable. */
   renderedText?: string;
+  /** The template the BE composed `text` from; echoed back, never set here. */
+  templateId?: string;
   /** Deterministic screenshot basename, never a path or URL. */
-  screenshot?: string;
+  screenshotPath?: string;
   /** Human-readable failure reason (truncated by the BE). */
   error?: string;
   durationMs?: number;
@@ -61,4 +68,10 @@ export interface WorkerConfig {
    * can open a LiveBrowserModal without guessing the host.
    */
   novncUrl: string | null;
+  /**
+   * Shared secret for the API's `/internal/*` machine routes. Sent on every
+   * call there. Empty when the API runs without `INTERNAL_API_SECRET` (the
+   * single-host dev case); the API skips the check in that case too.
+   */
+  internalSecret: string;
 }

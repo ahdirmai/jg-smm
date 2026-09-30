@@ -19,10 +19,19 @@ import (
 // up to this many intents, and the queue page shows the same window.
 const MaxActionBatch = 50
 
-// maxRunPendingRows bounds "Run pending now": the sweep pages forward in
-// MaxActionBatch-sized reads, so this is the largest queue one press drains
-// (50 * 40 = 2000 pending jobs). A short page exits early before reaching it.
-const maxRunPendingRows = 2000
+// Runner text is one line by construction: the worker types it with
+// pressSequentially, and a newline there is an Enter keypress — the comment is
+// submitted early, the composer clears, and the remainder is typed into the
+// fresh composer and abandoned. The reply then reports SUCCESS with the full
+// two-line string as renderedText, a string that was never posted. Rejecting it
+// is the honest answer: silently truncating would post a different comment than
+// the operator wrote, and accepting it would post a fragment of one.
+const newlineChars = "\n\r"
+
+// StaleRunningAfter is how long a job may sit in RUNNING before the scheduler
+// requeues it. A healthy action finishes in seconds; 15 minutes clears any
+// real slow render while still bounding the damage from a dead worker.
+const StaleRunningAfter = 15 * time.Minute
 
 // ActionService (P3-13) is the operator-facing side of the action engine: it
 // turns a paste of target URLs into PENDING jobs, and it reads the queue back
@@ -146,13 +155,36 @@ func (s *ActionService) Enqueue(ctx context.Context, items []ActionItem) ([]doma
 		if err := validateActionType(item.Type); err != nil {
 			return nil, fmt.Errorf("item %d: %w", i, err)
 		}
-		u, err := safeTargetURL(item.TargetURL)
+		// The account decides the platform, and the target must live on that
+		// platform's own host — so the account is resolved before the URL is
+		// validated, not after.
+		acc, err := s.accounts.GetByID(ctx, item.AccountID)
+		if err != nil {
+			return nil, fmt.Errorf("item %d: account lookup: %w", i, err)
+		}
+		if !acc.IsPackable() {
+			return nil, fmt.Errorf("item %d: %w: account %s is %s", i, domain.ErrValidation, acc.ID, acc.Status)
+		}
+		platforms[item.AccountID] = acc.Platform
+
+		u, err := safeTargetURL(item.TargetURL, acc.Platform)
 		if err != nil {
 			return nil, fmt.Errorf("item %d: %w", i, err)
+		}
+		// A reply must name the comment it answers. A bare post permalink used to
+		// pass here, and the worker then replied to whichever comment owned the
+		// first Reply button on the page.
+		if item.Type == domain.JobTypeActionReplyComment && commentIDFromURL(u.Path) == "" {
+			return nil, fmt.Errorf("%d: %w: a reply target must be a comment permalink (.../c/<commentId>/), got %q", i, domain.ErrValidation, u.Path)
 		}
 		if text := strings.TrimSpace(item.Text); text != "" {
 			if len(text) > MaxCommentTextLen {
 				return nil, fmt.Errorf("item %d: %w: comment text is %d chars, the cap is %d", i, domain.ErrValidation, len(text), MaxCommentTextLen)
+			}
+			// One line or nothing: the worker types the body into a composer
+			// where Enter submits (see newlineChars).
+			if strings.ContainsAny(text, newlineChars) {
+				return nil, fmt.Errorf("item %d: %w: comment text must be a single line (no newline or carriage return); a newline submits the comment early and abandons the rest", i, domain.ErrValidation)
 			}
 			// A supplied body only makes sense for an action that posts text.
 			if item.Type != domain.JobTypeActionComment && item.Type != domain.JobTypeActionReplyComment {
@@ -163,18 +195,6 @@ func (s *ActionService) Enqueue(ctx context.Context, items []ActionItem) ([]doma
 			}
 			texts[i] = text
 		}
-
-		// The account decides the platform, and a target must live under the
-		// same platform as the account acting on it.
-		acc, err := s.accounts.GetByID(ctx, item.AccountID)
-		if err != nil {
-			return nil, fmt.Errorf("item %d: account lookup: %w", i, err)
-		}
-		if !acc.IsPackable() {
-			return nil, fmt.Errorf("item %d: %w: account %s is %s", i, domain.ErrValidation, acc.ID, acc.Status)
-		}
-		platforms[item.AccountID] = acc.Platform
-
 		tgt, err := s.scrapes.UpsertTarget(ctx, domain.Target{
 			Kind:       domain.TargetKindPost,
 			Platform:   acc.Platform,
@@ -353,10 +373,32 @@ func (s *ActionService) Retry(ctx context.Context, jobID string) (domain.ActionJ
 	if job.Status != domain.JobStatusFailed {
 		return domain.ActionJob{}, fmt.Errorf("%w: only a failed job can be retried, %s is %s", domain.ErrValidation, jobID, job.Status)
 	}
+	// Keep the recorded variant across the retry. The id is written at dispatch
+	// and the queue UI (its report card) clears the column on every requeue; a
+	// cleared id would make the retried job look just like a fresh one, and
+	// PickForTarget — which joins action_log on template_id — would happily
+	// re-hand the same variant to the retry the dedupe exists to prevent.
+	var templateID *string
+	if job.TemplateID != "" {
+		templateID = &job.TemplateID
+	}
 	// Now, not now+backoff: the operator pressed the button because they want
 	// it to run, and the per-account velocity gate in the scheduler is the
 	// thing that should decide whether it is safe yet.
-	return s.actions.RescheduleActionJob(ctx, jobID, s.clock.Now())
+	rescheduled, err := s.actions.RescheduleActionJob(ctx, jobID, s.clock.Now())
+	if err != nil {
+		return domain.ActionJob{}, err
+	}
+	if templateID != nil {
+		if err := s.actions.SetActionJobTemplate(ctx, jobID, *templateID); err != nil {
+			// The log row still carries the id, so dedupe is intact; this is
+			// only the queue-side projection losing the label.
+			s.log.Warn("action: restore template id on retry failed", "job", jobID, "err", err)
+			return rescheduled, nil
+		}
+		rescheduled.TemplateID = *templateID
+	}
+	return rescheduled, nil
 }
 
 // RunPendingNow pulls every PENDING job forward to now, so the workers claim
@@ -370,36 +412,20 @@ func (s *ActionService) Retry(ctx context.Context, jobID string) (domain.ActionJ
 //
 // Idempotent and safe to press twice: jobs already RUNNING or terminal are not
 // touched, and a PENDING job already due is rewritten to the same instant.
+//
+// One statement, not a paged loop. The previous implementation read the PENDING
+// set with LIMIT/OFFSET and rescheduled row by row; because ORDER BY
+// scheduled_at was re-sorted by the very UPDATE it was walking, page 2 re-read
+// rows page 1 had already moved: with two due batches, every distinct row after
+// the first page was skipped while the moved ones were counted twice. The
+// button means "set every PENDING row to now", so that is the statement.
 func (s *ActionService) RunPendingNow(ctx context.Context) (int, error) {
 	now := s.clock.Now()
-	// Sweep the whole queue: the button promises "run pending now", and a cap
-	// here would leave a 60-job queue reporting "moved: 50" while 10 waited on.
-	// Page forward through MaxActionBatch rows at a time.
-	//
-	// The offset advances by the rows READ, not the rows moved: a row whose
-	// reschedule fails is still consumed, otherwise a permanently bad row would
-	// block the sweep at the same offset forever.
-	n := 0
-	for offset := 0; offset < maxRunPendingRows; offset += MaxActionBatch {
-		limit := MaxActionBatch
-		pending, err := s.actions.ListActionJobsByStatus(ctx, domain.JobStatusPending, &limit, &offset)
-		if err != nil {
-			return n, fmt.Errorf("run pending now: %w", err)
-		}
-		for _, job := range pending {
-			if _, err := s.actions.RescheduleActionJob(ctx, job.ID, now); err != nil {
-				// One bad row must not abandon the rest of the queue.
-				s.log.Warn("action: run-pending reschedule failed", "job", job.ID, "err", err)
-				continue
-			}
-			n++
-		}
-		if len(pending) < MaxActionBatch {
-			// A short page is the queue's end; a full one means more to sweep.
-			break
-		}
+	moved, err := s.actions.SetPendingActionJobsScheduledAt(ctx, now)
+	if err != nil {
+		return 0, fmt.Errorf("run pending now: %w", err)
 	}
-	return n, nil
+	return int(moved), nil
 }
 
 // List returns the queue newest-first with each job's latest attempt verdict.
@@ -457,12 +483,24 @@ func validateActionType(t domain.JobType) error {
 	return nil
 }
 
-// safeTargetURL is the enqueue floor (SSRF): only http/https on a host. The
-// worker later opens this URL in a browser, so a file:// or internal address
-// must never survive the API. The scheme check is deliberately strict rather
-// than a blocklist: a blocklist has to be kept current to be safe, a strict
-// allowlist cannot drift.
-func safeTargetURL(raw string) (*url.URL, error) {
+// platformHosts is the per-platform host allowlist. The worker opens a target
+// URL in the account's live, session-hydrated browser, so an operator-supplied
+// URL is a navigation primitive: without this, `act` can point a logged-in
+// Instagram Chromium at the cloud metadata endpoint and the worker's evidence
+// screenshot becomes a response body.
+//
+// ponytail: one map literal per platform. Move to config only when a platform
+// is added that cannot be enumerated here.
+var platformHosts = map[domain.Platform][]string{
+	domain.PlatformInstagram: {"instagram.com", "www.instagram.com"},
+	domain.PlatformThreads:   {"threads.net", "www.threads.net", "threads.com", "www.threads.com"},
+}
+
+// safeTargetURL is the enqueue floor (SSRF): http/https on a host that belongs
+// to the acting account's platform. The scheme check is deliberately strict
+// rather than a blocklist: a blocklist has to be kept current to be safe, a
+// strict allowlist cannot drift.
+func safeTargetURL(raw string, platform domain.Platform) (*url.URL, error) {
 	if strings.TrimSpace(raw) == "" {
 		return nil, fmt.Errorf("%w: target URL must not be blank", domain.ErrValidation)
 	}
@@ -473,8 +511,37 @@ func safeTargetURL(raw string) (*url.URL, error) {
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return nil, fmt.Errorf("%w: target URL scheme must be http or https, got %q", domain.ErrValidation, u.Scheme)
 	}
-	if u.Host == "" {
-		return nil, fmt.Errorf("%w: target URL must have a host", domain.ErrValidation)
+	hosts, ok := platformHosts[platform]
+	if !ok {
+		return nil, fmt.Errorf("%w: no target hosts configured for %q", domain.ErrValidation, platform)
+	}
+	host := strings.ToLower(u.Hostname())
+	match := false
+	for _, h := range hosts {
+		if host == h {
+			match = true
+			break
+		}
+	}
+	if !match {
+		return nil, fmt.Errorf("%w: %s host %q is not a %s target", domain.ErrValidation, platform, host, platform)
 	}
 	return u, nil
+}
+
+// commentIDFromURL extracts the `/c/<id>/` segment of an Instagram comment
+// permalink. Empty means the URL addresses a post, not a specific comment —
+// which is exactly the input a reply action must never accept (see Enqueue).
+func commentIDFromURL(raw string) string {
+	u := raw
+	if i := strings.IndexAny(u, "?#"); i >= 0 {
+		u = u[:i]
+	}
+	segs := strings.Split(strings.Trim(u, "/"), "/")
+	for i := 0; i+1 < len(segs); i++ {
+		if segs[i] == "c" {
+			return segs[i+1]
+		}
+	}
+	return ""
 }

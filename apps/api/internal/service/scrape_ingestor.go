@@ -113,11 +113,17 @@ func (s *ScrapeIngestor) IngestRun(ctx context.Context, runID string) (port.Scra
 			s.log.Warn("ingestor: payload parse failed", "key", key, "err", err)
 			continue
 		}
-		// Counted after parse, before ingest: this is the actor's delivered
-		// result size for this row. The window and the upsert can both reduce
-		// what is stored, and reporting the stored count as "items read" hid
-		// that drop on the dashboard (a batch reported 31 items read from 50).
-		res.ItemsRead += len(items)
+		// "items read" is what the actor delivered, and parseItems drops
+		// out-of-window rows internally — so len(items) made itemsRead identical
+		// to postsCount by construction, and a batch that fetched 150 and stored
+		// 27 reported 27/27. The operator then widened maxPosts and burned more
+		// compute, the exact opposite of the right advice. The same parse with
+		// the window opened recovers the delivered count.
+		read := len(items)
+		if unfiltered, err := parseItems(s.platform, raw, port.KeywordTimeWindow{}, s.onlyCode, run); err == nil {
+			read = len(unfiltered)
+		}
+		res.ItemsRead += read
 		for _, item := range items {
 			if err := s.ingestItem(ctx, item, &res); err != nil {
 				s.log.Warn("ingestor: item skipped", "key", key, "err", err)

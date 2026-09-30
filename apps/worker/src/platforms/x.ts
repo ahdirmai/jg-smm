@@ -1,6 +1,6 @@
 /**
  * X (Twitter) adapter. OTP-over-web is wired and real; credentialed login and
- * the like/comment/verify DOM automation are honest stubs (see `stub.ts`).
+ * the like/comment DOM automation are honest stubs (see `stub.ts`).
  */
 import type { PlatformAdapter } from './adapter.js';
 import { makeStubAdapter } from './stub.js';

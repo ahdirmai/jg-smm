@@ -24,6 +24,8 @@ export interface GeolocationReader {
 
 export interface GeolocationOptions {
   apiUrl: string;
+  /** Shared secret for the API's /internal routes; omitted when unset. */
+  internalSecret?: string;
   workerId: string;
   logger: Logger;
   /** A point already known at boot (from the claim response). Used while the
@@ -46,7 +48,10 @@ export function createGeolocation(
       options.workerId,
     )}/geolocation`;
     try {
-      const res = await doFetch(url, { signal: AbortSignal.timeout(5_000) });
+      const res = await doFetch(url, {
+        headers: options.internalSecret ? { 'x-internal-secret': options.internalSecret } : {},
+        signal: AbortSignal.timeout(5_000),
+      });
       if (res.status === 404) {
         logger.info('no location assigned; using the real device position', {
           workerId: options.workerId,

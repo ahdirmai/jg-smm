@@ -186,7 +186,12 @@ export function KeywordScrapeForm() {
                       <Badge variant="outline">{platformLabel(b.platform) ?? b.platform}</Badge>
                     </div>
                     <div className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">
-                      <span>{b.postsCount} posts · {b.commentsCount} comments · {b.itemsRead} items</span>
+                      {/* Same as the batch detail page: a keyword run stores post
+                          rows, not comment bodies, so a bare 0 here claims the
+                          posts have no comments rather than that they were not fetched. */}
+                      <span>
+                        {b.postsCount} posts · comment bodies not fetched · {b.itemsRead} items
+                      </span>
                       <span>· {new Date(b.createdAt).toLocaleString()}</span>
                       {b.error ? <span className="text-destructive">{b.error}</span> : null}
                     </div>

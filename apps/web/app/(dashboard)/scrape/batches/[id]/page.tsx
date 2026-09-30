@@ -33,6 +33,10 @@ import { metricsLine, platformLabel } from '@/lib/platforms';
 import { postPermalink } from '@/lib/permalink';
 import { PostMedia } from '@/components/post-media';
 
+/** Posts per page. The fetch asks for one more than this purely to detect a
+ *  next page, so the pager never offers one that does not exist. */
+const PAGE_SIZE = 50;
+
 /** Copy-to-clipboard button. Falls back to a hidden textarea where the async
  *  Clipboard API is unavailable (non-secure origin), so it never silently no-ops. */
 function CopyButton({ value, label }: { value: string; label: string }) {
@@ -69,7 +73,13 @@ function CopyButton({ value, label }: { value: string; label: string }) {
 export default function BatchDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [batch, setBatch] = useState<KeywordBatch | null>(null);
+  // Posts are paged client-side through the server's limit/offset. The fetch
+  // asks for PAGE_SIZE+1 and keeps the extra row only as a "there is more"
+  // flag, so there is no count query and no page that renders a phantom next
+  // button on a batch of exactly PAGE_SIZE posts.
+  const [page, setPage] = useState(0);
   const [posts, setPosts] = useState<ScrapedPost[]>([]);
+  const [hasMore, setHasMore] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   // Post whose comments are open. Null = dialog closed; the comments load on
   // open so the batch page does not pay for 50 comment fetches up front.
@@ -79,18 +89,39 @@ export default function BatchDetailPage() {
   // A paid actor run is in flight for this post (the comments button).
   const [fetchingComments, setFetchingComments] = useState(false);
 
-  async function load() {
+  // The batch header and the post page are fetched separately: the header is
+  // polled while the batch runs, the posts only when the batch has settled.
+  // Folding them together meant a page change could not refetch anything,
+  // because the polling effect below deliberately stops once `settled` is
+  // true — which is exactly the state a finished batch sits in.
+  async function loadBatch(): Promise<KeywordBatch | null> {
     try {
       const b = await api.getKeywordBatch(id);
       setBatch(b.batch);
-      if (b.batch.status === 'SUCCEEDED') {
-        const pr = await api.listKeywordBatchPosts(id, { limit: 100 });
-        setPosts(pr.posts);
-      }
       setErr(null);
+      return b.batch;
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      return null;
+    }
+  }
+
+  async function loadPosts() {
+    try {
+      const pr = await api.listKeywordBatchPosts(id, { limit: PAGE_SIZE + 1, offset: page * PAGE_SIZE });
+      setHasMore(pr.posts.length > PAGE_SIZE);
+      setPosts(pr.posts.slice(0, PAGE_SIZE));
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     }
+  }
+
+  // Reads the status off the response, not off the `batch` state: the closure
+  // would still hold the previous render's value, so the first load would skip
+  // the posts fetch entirely and leave the table empty.
+  async function load() {
+    const b = await loadBatch();
+    if (b === null || b.status === 'SUCCEEDED') await loadPosts();
   }
 
   // Stops on a terminal status. The 3s interval previously ran for the life of
@@ -105,6 +136,14 @@ export default function BatchDetailPage() {
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, settled]);
+
+  // Page changes must refetch on their own. This cannot hang off the polling
+  // effect above, which returns early the moment the batch is settled — and a
+  // settled batch is the only state in which the pager is reachable.
+  useEffect(() => {
+    if (settled) void loadPosts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, settled]);
 
   async function openDetail(p: ScrapedPost) {
     setDetail(p);
@@ -196,7 +235,11 @@ export default function BatchDetailPage() {
         <CardContent className="space-y-2 text-sm">
           <div className="flex flex-wrap gap-4 text-muted-foreground">
             <span>{batch.postsCount} posts</span>
-            <span>· {batch.commentsCount} comments</span>
+            {/* A keyword run stores the post rows but never their comment bodies,
+                so commentsCount is 0 for most batches. A bare 0 reads as "this
+                post has no comments", which is a different claim; the per-post
+                Detail → Fetch comments button is what actually fetches them. */}
+            <span>· comment bodies not fetched</span>
             <span>· {batch.itemsRead} items read</span>
             {batch.finishedAt ? <span>· finished {new Date(batch.finishedAt).toLocaleString()}</span> : <span>· running…</span>}
           </div>
@@ -284,6 +327,34 @@ export default function BatchDetailPage() {
               })}
             </div>
           )}
+          {posts.length > 0 ? (
+            <div className="mt-3 flex items-center justify-between gap-2 text-xs text-muted-foreground">
+              <span>
+                Menampilkan {page * PAGE_SIZE + 1}–{page * PAGE_SIZE + posts.length} dari {batch.postsCount}{' '}
+                post
+              </span>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={page === 0}
+                  onClick={() => setPage((p) => Math.max(0, p - 1))}
+                >
+                  Sebelumnya
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={!hasMore}
+                  onClick={() => setPage((p) => p + 1)}
+                >
+                  Berikutnya
+                </Button>
+              </div>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
 

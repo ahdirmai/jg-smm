@@ -35,6 +35,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
       DEFAULT_HEARTBEAT_INTERVAL_SEC,
     ),
     novncUrl: parseNovncUrl(env),
+    internalSecret: env.INTERNAL_API_SECRET?.trim() || '',
   };
 }
 

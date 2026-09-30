@@ -67,18 +67,36 @@ func (s *TemplateService) Pick(ctx context.Context, platform domain.Platform, ta
 		// posting nothing.
 		return PickOutcome{}, fmt.Errorf("%w: template %s left an unresolved placeholder in %q", domain.ErrValidation, t.ID, text)
 	}
-	// Denylist screen (P3-03): a banned comment is rejected here, before it can
-	// reach a worker queue. The patterns were compile-checked when the template
-	// was saved, so a compile error now is only a lost race with an edit — and
-	// the safe read then is to reject the comment rather than ship an unscreened
-	// one. The error names the pattern that fired: an operator staring at
-	// "rejected" with no rule cannot fix the denylist.
-	if patterns, err := domain.CompileBanned(t.BannedWords); err == nil {
-		if pattern, hit := domain.MatchBanned(text, patterns); hit {
-			return PickOutcome{}, fmt.Errorf("%w: template %s denylist pattern %q matched %q", domain.ErrBannedPattern, t.ID, pattern, text)
-		}
+	if err := screenBanned(text, t.BannedWords); err != nil {
+		return PickOutcome{}, err
 	}
 	return PickOutcome{TemplateID: t.ID, RenderedText: text}, nil
+}
+
+// bannedScreen only reports a hit: a screen is a yes/no question about the
+// text, and the caller labels the decision (which template, which operator
+// body) because the two entry points have different evidence to cite.
+func bannedScreen(text string, banned []string) (string, bool) {
+	// The patterns were compile-checked when the template was saved, so a
+	// compile error now is only a lost race with an edit — and the safe read
+	// then is to reject the comment rather than ship an unscreened one.
+	patterns, err := domain.CompileBanned(banned)
+	if err != nil {
+		return err.Error(), true
+	}
+	return domain.MatchBanned(text, patterns)
+}
+
+// screenBanned applies a denylist to text about to be posted and returns
+// ErrBannedPattern naming the offending rule (P3-03). Template picks and
+// operator-supplied bodies both funnel here: the screen is the same one, only
+// the denylist differs, and two implementations would be two chances to drift.
+func screenBanned(text string, banned []string) error {
+	pattern, hit := bannedScreen(text, banned)
+	if !hit {
+		return nil
+	}
+	return fmt.Errorf("%w: denylist pattern %q matched %q", domain.ErrBannedPattern, pattern, text)
 }
 
 // weightedPick draws one template with probability proportional to its weight.

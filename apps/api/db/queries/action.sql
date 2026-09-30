@@ -37,26 +37,69 @@ WHERE id = (
 )
 RETURNING *;
 
+-- name: SweepStaleRunningJobs :execrows
+-- One lost callback (OOM-killed worker, container evicted mid-action) leaves a
+-- job RUNNING forever: ClaimNextActionJob only selects PENDING, and Retry only
+-- accepts FAILED, so the queue shows it stuck in "Verifying" with no way out.
+-- Requeue it; the attempt counter is already bumped, so the existing
+-- max-attempts ceiling in the scheduler bounds how often this can fire.
+UPDATE action_job
+SET status       = 'PENDING',
+    scheduled_at = now()
+WHERE status     = 'RUNNING'
+  AND started_at < now() - make_interval(mins => $1::int);
+
 -- name: CompleteActionJob :one
 -- Terminal transition. The caller has already written the ActionLog row; this
 -- only projects the verdict onto the job so the queue can be listed without
 -- joining the log.
+--
+-- The status guard is load-bearing: /internal/* is machine ingress, so a
+-- replayed or forged callback must not be able to re-open or re-grade a job
+-- that already reached a terminal state.
 UPDATE action_job
 SET status      = $2,
     finished_at = now(),
     error       = $3
 WHERE id = $1
+  AND status IN ('PENDING', 'RUNNING')
 RETURNING *;
 
 -- name: RescheduleActionJob :one
 -- Backoff/jitter path (P3-11): the attempt failed with a retryable class, so
 -- the job goes back to PENDING at a future scheduled_at for the next tick.
+-- Also serves "run pending now", where the row is already PENDING.
+--
+-- Same guard as CompleteActionJob: a SUCCESS/FAILED/CANCELLED job is terminal
+-- and must never be pushed back into the queue.
 UPDATE action_job
 SET status       = 'PENDING',
     scheduled_at = $2,
     finished_at  = NULL
 WHERE id = $1
+  AND status IN ('PENDING', 'RUNNING')
 RETURNING *;
+
+-- name: SetActionJobTemplate :exec
+-- Records the pool variant a job's text came from. Written at dispatch, after
+-- the composer picks: the job row is created before any text exists (an
+-- operator body, or a variant drawn at dispatch time), so this cannot be an
+-- INSERT-time field. action_log.template_id is written separately from the
+-- worker's callback echo; this is the queue-side projection of the same fact.
+UPDATE action_job
+SET template_id = $2
+WHERE id = $1;
+
+-- name: SetPendingActionJobsScheduledAt :execrows
+-- "Run pending now": pull every PENDING row forward to one instant. One
+-- statement, not a paged LIMIT/OFFSET walk — the walk ordered by scheduled_at
+-- and then rewrote scheduled_at, re-sorting the set it was walking, so the
+-- second page re-read rows the first page had already moved and the rows behind
+-- them were never reached. Terminal and RUNNING rows are untouched; a PENDING
+-- row already at $1 is rewritten to the same value.
+UPDATE action_job
+SET scheduled_at = $1
+WHERE status = 'PENDING';
 
 -- name: ListActionJobs :many
 SELECT *

@@ -41,6 +41,12 @@ type KeywordScrapeService struct {
 	searchActorFor func(domain.Platform) string
 	storageRef     port.RawStorage
 	log            *slog.Logger
+	// spend caps how many PAID keyword batches one caller may start inside a
+	// window. A batch is the most expensive surface in the product (5 keywords ×
+	// 200 posts × 2 attempts per click), so it carries the same ceiling shape as
+	// the account import. nil means unlimited — only tests construct it that way;
+	// the wiring always attaches one.
+	spend *importLimiter
 }
 
 // NewKeywordScrapeService wires the keyword scraper. runner nil → 503.
@@ -71,6 +77,27 @@ func NewKeywordScrapeService(
 // SetBatchStore attaches the batch store (called from wiring after repo exists).
 func (s *KeywordScrapeService) SetBatchStore(b port.KeywordBatchStore) { s.batches = b }
 
+// SetSpendLimit attaches the per-caller ceiling on PAID keyword batches, reusing
+// the account-import limiter shape (an in-process fixed-window counter keyed by
+// caller). Called from wiring; a limit <= 0 leaves the surface unlimited so a
+// self-hosted deployment with no configured ceiling behaves as before.
+func (s *KeywordScrapeService) SetSpendLimit(limit int, window time.Duration) {
+	if limit <= 0 || window <= 0 {
+		s.spend = nil
+		return
+	}
+	s.spend = newImportLimiter(window, limit)
+}
+
+// allowSpend reports whether caller may start a paid batch now. A nil limiter is
+// unlimited (tests), so this can be called unconditionally.
+func (s *KeywordScrapeService) allowSpend(caller string) bool {
+	if s.spend == nil {
+		return true
+	}
+	return s.spend.Allow(caller, time.Now())
+}
+
 // KeywordWindow is the time filter the search runs under.
 type KeywordWindow struct {
 	From time.Time
@@ -85,6 +112,12 @@ type KeywordScrapeInput struct {
 	MaxPosts int
 	// CreatedBy is the authenticated user (audit, nullable).
 	CreatedBy *string
+	// Caller is the rate-limit key for the spend ceiling (the client IP at the
+	// HTTP boundary, the user id for internal callers). Empty means unlimited —
+	// an unattributable spend cannot be metered, and inventing a shared bucket
+	// for every anonymous caller would refuse the second operator on a shared
+	// host.
+	Caller string
 }
 
 // KeywordScrapeResult is the outcome (legacy sync, kept for tests).
@@ -170,6 +203,12 @@ func (s *KeywordScrapeService) CreateBatch(ctx context.Context, in KeywordScrape
 	actorID := s.searchActorFor(in.Platform)
 	if actorID == "" {
 		return domain.KeywordBatch{}, fmt.Errorf("%w: no search actor configured for %s", domain.ErrValidation, in.Platform)
+	}
+	// The ceiling goes here, before the batch row exists and long before the
+	// actor runs: every check above is free, and a refusal must not leave a
+	// PENDING row that a background goroutine would pay for anyway.
+	if in.Caller != "" && !s.allowSpend(in.Caller) {
+		return domain.KeywordBatch{}, fmt.Errorf("%w: keyword scrape rate limit exceeded; try again in a minute", domain.ErrRateLimited)
 	}
 	maxPosts := in.MaxPosts
 	if maxPosts <= 0 {
@@ -282,29 +321,56 @@ func (s *KeywordScrapeService) processBatch(ctx context.Context, batchID string,
 // runOnce drives the actor once and ingests what it returned. A non-SUCCEEDED
 // run is an error (the batch is terminal); zero posts is a result the caller
 // decides how to treat (see keywordScrapeAttempts).
+//
+// The apify_run audit row is closed on EVERY exit path, including the failure
+// ones. It previously sat after the SUCCEEDED check, so a transport error, an
+// HTTP 4xx/5xx (the runner reports those as Status: FAILED with a nil error),
+// or an ingest error each left the row RUNNING with finished_at NULL — the
+// audit table reporting the opposite of what happened, and attempt 1's run
+// never closed by the retry.
 func (s *KeywordScrapeService) runOnce(ctx context.Context, runID, actorID string, platform domain.Platform, keywords []string, window KeywordWindow, maxPosts int) (port.ScrapeIngestResult, error) {
+	// closeRun writes the terminal status and stamps finished_at. Called from
+	// every return below. The write is deliberately on a context that survives
+	// the run's cancellation: a batch goroutine can be cancelled mid-flight, and
+	// an audit row left RUNNING is exactly the bug this closes.
+	closeRun := func(status string) {
+		if _, err := s.scrapes.UpdateApifyRun(context.WithoutCancel(ctx), domain.ApifyRun{
+			ID: runID, Status: status,
+		}, true); err != nil {
+			s.log.Warn("keyword scrape: close run failed", "run", runID, "status", status, "err", err)
+		}
+	}
+
 	out, err := s.runner.RunSearch(ctx, port.ApifySearchInput{
 		RunID: runID, ActorID: actorID, Platform: platform, Keywords: keywords,
 		Window: port.KeywordTimeWindow{From: window.From, To: window.To}, MaxPosts: maxPosts,
 	})
 	if err != nil {
 		s.log.Warn("keyword scrape: run failed", "run", runID, "err", err)
+		closeRun("FAILED")
 		return port.ScrapeIngestResult{}, fmt.Errorf("run: %w", err)
 	}
 	if out.Status != "SUCCEEDED" {
+		closeRun(out.Status)
 		return port.ScrapeIngestResult{}, fmt.Errorf("actor %s: %s", out.Status, out.Error)
 	}
+	// Record the run id + dataset keys, then normalize the payload.
 	if _, err := s.scrapes.UpdateApifyRun(ctx, domain.ApifyRun{ID: runID, RunID: out.RunID, Status: out.Status}, true); err != nil {
 		s.log.Warn("keyword scrape: update run failed", "run", runID, "err", err)
 	}
-	for _, key := range out.ItemKeys {
-		if _, err := s.scrapes.CreateRawPayload(ctx, domain.RawPayload{ApifyRunID: runID, S3Key: key}); err != nil {
-			s.log.Warn("keyword scrape: payload pointer failed", "key", key, "err", err)
+	for _, item := range out.Items {
+		if _, err := s.scrapes.CreateRawPayload(ctx, domain.RawPayload{
+			ApifyRunID: runID, S3Key: item.Key, Bytes: item.Bytes,
+		}); err != nil {
+			s.log.Warn("keyword scrape: payload pointer failed", "key", item.Key, "err", err)
 		}
 	}
 	ingestor := NewSearchScrapeIngestor(s.scrapes, s.storageRef, platform, port.KeywordTimeWindow{From: window.From, To: window.To}, s.log)
 	res, err := ingestor.IngestRun(ctx, runID)
 	if err != nil {
+		// The actor succeeded; the ingest did not. The row must not stay RUNNING
+		// just because the failure happened one step later.
+		closeRun("FAILED")
 		return port.ScrapeIngestResult{}, fmt.Errorf("ingest: %w", err)
 	}
 	return res, nil

@@ -9,8 +9,8 @@
  * uniformly across all seven platforms, and `pollLoginOutcome` verifies the
  * session by the same cookie standard as Instagram/Threads.
  *
- * What is NOT real: the credentialed `login` and the `like`/`comment`/`verify`
- * DOM steps. Those need per-platform selectors and anti-bot handling that this
+ * What is NOT real: the credentialed `login` and the `like`/`comment` DOM
+ * steps. Those need per-platform selectors and anti-bot handling that this
  * milestone does not deliver, so they return a structured failure and log a
  * `not_implemented` line — never a fabricated success (DEVELOPMENT_RULE §7.4).
  */
@@ -89,9 +89,6 @@ export function makeStubAdapter(config: StubConfig): PlatformAdapter {
     },
     likeComment(_ctx: BrowserContext, _job: ActionJob): Promise<AdapterResult> {
       return Promise.resolve(notImplementedAction(platform, 'like_comment'));
-    },
-    verify(_ctx: BrowserContext, _job: ActionJob): Promise<AdapterResult> {
-      return Promise.resolve(notImplementedAction(platform, 'verify'));
     },
   };
 }

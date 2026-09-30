@@ -157,8 +157,8 @@ func TestScrapeKeywordsRetriesEmptyResult(t *testing.T) {
 	storage.items["run/post-0.json"] = post
 
 	runner := &fakeRunner{outs: []port.ApifyOutput{
-		{Status: "SUCCEEDED", RunID: "r1", ItemKeys: []string{"run/meta-0.json"}},
-		{Status: "SUCCEEDED", RunID: "r2", ItemKeys: []string{"run/post-0.json"}},
+		{Status: "SUCCEEDED", RunID: "r1", Items: []port.RawItem{{Key: "run/meta-0.json"}}},
+		{Status: "SUCCEEDED", RunID: "r2", Items: []port.RawItem{{Key: "run/post-0.json"}}},
 	}}
 	svc := NewKeywordScrapeService(store, runner,
 		func(domain.Platform) string { return "apify/instagram-scraper" }, storage, nil)
@@ -175,8 +175,11 @@ func TestScrapeKeywordsRetriesEmptyResult(t *testing.T) {
 	if len(runner.search) != 2 {
 		t.Fatalf("want 2 actor attempts (metadata-only then posts), got %d", len(runner.search))
 	}
+	// The retry's page delivered one postable row; the metadata-only first
+	// attempt delivered none. So 1 read, 1 stored — the count reflects the
+	// actor's rows, not the number of HTTP attempts.
 	if res.ItemsRead != 1 || len(res.Posts) != 1 || res.Posts[0].ExternalID != "Dretry" {
-		t.Fatalf("want the Dretry post from the retry, got items=%d posts=%+v", res.ItemsRead, res.Posts)
+		t.Fatalf("want 1 delivered / 1 stored (Dretry), got items=%d posts=%+v", res.ItemsRead, res.Posts)
 	}
 }
 
@@ -196,8 +199,9 @@ func TestScrapeKeywordsMetadataRowIsNotAnError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("metadata-only row must not error, got %v", err)
 	}
+	// A metadata row carries no posts, so the actor delivered nothing storable.
 	if res.ItemsRead != 0 || len(res.Posts) != 0 {
-		t.Fatalf("want 0 items from a metadata row, got %d / %d", res.ItemsRead, len(res.Posts))
+		t.Fatalf("want 0 delivered / 0 stored from a metadata row, got %d / %d", res.ItemsRead, len(res.Posts))
 	}
 }
 
@@ -289,7 +293,7 @@ func keywordRun(t *testing.T, pages ...map[string]any) (*KeywordScrapeService, *
 		storage.items[key] = body
 		keys[i] = key
 	}
-	runner := &fakeRunner{out: port.ApifyOutput{Status: "SUCCEEDED", RunID: "r1", ItemKeys: keys}}
+	runner := &fakeRunner{out: port.ApifyOutput{Status: "SUCCEEDED", RunID: "r1", Items: rawItems(keys)}}
 	svc := NewKeywordScrapeService(
 		store,
 		runner,
@@ -353,7 +357,7 @@ func TestScrapeKeywordsRunsAndIngests(t *testing.T) {
 // the window drops rows. This pin is what surfaced a real batch reporting
 // "31 items read" from a 50-item dataset: every window drop was invisible
 // because the reported number was the stored count.
-func TestScrapeKeywordsItemsReadCountsParsedItems(t *testing.T) {
+func TestScrapeKeywordsItemsReadCountsDeliveredRows(t *testing.T) {
 	svc, _, _, _ := keywordRun(t,
 		mkIGPostRow("Din", "2026-09-10T02:28:41.000Z"),  // in window
 		mkIGPostRow("Ddup", "2026-09-12T02:28:41.000Z"), // in window, same batch
@@ -371,8 +375,11 @@ func TestScrapeKeywordsItemsReadCountsParsedItems(t *testing.T) {
 	if len(res.Posts) != 2 {
 		t.Fatalf("posts: window should drop only Dout, got %d", len(res.Posts))
 	}
-	if res.ItemsRead != len(res.Posts) {
-		t.Fatalf("itemsRead should equal parsed-and-stored count: got %d, posts %d", res.ItemsRead, len(res.Posts))
+	// itemsRead is what the actor delivered (all three rows); the window, not
+	// the parser, is what reduced the stored set. Conflating the two made the
+	// dashboard's "N posts · N items read" read as "the window dropped nothing".
+	if res.ItemsRead != 3 {
+		t.Fatalf("itemsRead: want 3 delivered, got %d", res.ItemsRead)
 	}
 }
 
@@ -394,8 +401,8 @@ func TestScrapeKeywordsFiltersByWindow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("scrape: %v", err)
 	}
-	if res.ItemsRead != 1 {
-		t.Fatalf("itemsRead: want 1 (window drops Cout), got %d", res.ItemsRead)
+	if res.ItemsRead != 2 {
+		t.Fatalf("itemsRead: want 2 delivered (window drops Cout), got %d", res.ItemsRead)
 	}
 	if len(res.Posts) != 1 || res.Posts[0].ExternalID != "Cin" {
 		t.Fatalf("posts: got %+v", res.Posts)
@@ -424,8 +431,8 @@ func TestScrapeKeywordsFlatPostRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("scrape: %v", err)
 	}
-	if res.ItemsRead != 1 {
-		t.Fatalf("itemsRead: want 1 (only Din is inside the window), got %d", res.ItemsRead)
+	if res.ItemsRead != 3 {
+		t.Fatalf("itemsRead: want 3 delivered (only Din is inside the window), got %d", res.ItemsRead)
 	}
 	if len(res.Posts) != 1 || res.Posts[0].ExternalID != "Din" {
 		t.Fatalf("posts: got %+v", res.Posts)
@@ -587,8 +594,8 @@ func TestScrapeKeywordsThreadsWindow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("scrape: %v", err)
 	}
-	if res.ItemsRead != 1 {
-		t.Fatalf("itemsRead: want 1 (window drops Pout), got %d", res.ItemsRead)
+	if res.ItemsRead != 2 {
+		t.Fatalf("itemsRead: want 2 delivered (window drops Pout), got %d", res.ItemsRead)
 	}
 	if len(res.Posts) != 1 || res.Posts[0].ExternalID != "Pin" {
 		t.Fatalf("posts: got %+v", res.Posts)
@@ -631,7 +638,7 @@ func TestScrapeKeywordsCarouselMedia(t *testing.T) {
 	})
 	body, _ := json.Marshal(page)
 	storage.items["run/page-0.json"] = body
-	runner := &fakeRunner{out: port.ApifyOutput{Status: "SUCCEEDED", RunID: "r1", ItemKeys: []string{"run/page-0.json"}}}
+	runner := &fakeRunner{out: port.ApifyOutput{Status: "SUCCEEDED", RunID: "r1", Items: []port.RawItem{{Key: "run/page-0.json"}}}}
 	svc := NewKeywordScrapeService(store, runner, func(domain.Platform) string { return "apify/instagram-scraper" }, storage, nil)
 	svc.SetBatchStore(newFakeKeywordBatchStore())
 

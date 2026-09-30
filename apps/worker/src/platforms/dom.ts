@@ -43,6 +43,15 @@ export function postShortcode(url: string): string | undefined {
   return /\/(?:p|reel|tv|post|c)\/([A-Za-z0-9_-]+)/.exec(url)?.[1];
 }
 
+/**
+ * The comment id in a Meta comment permalink (`/p/<code>/c/<commentId>/`).
+ * Empty means the URL addresses a post, not a comment — the API rejects a
+ * reply job in that case, so this is the worker's half of the same contract.
+ */
+export function commentId(url: string): string | undefined {
+  return /\/c\/([A-Za-z0-9_-]+)/.exec(url)?.[1];
+}
+
 /** Bound for the account-chooser interstitial to appear/settle after a cold load. */
 const INTERSTITIAL_WAIT_MS = 4_000;
 
@@ -135,7 +144,7 @@ export async function openPost(page: Page, url: string): Promise<void> {
   // caller that reads the action bar immediately (likePost takes one look, it
   // does not poll) races the render. After a recovery, wait for the composer —
   // it mounts together with the post's action bar — so the post is interactive
-  // before we hand back. Bounded; a miss just means the action's own verify runs.
+  // before we hand back. Bounded; a miss just means the caller's own wait runs.
   if (recovered) {
     const renderBy = Date.now() + DEEPLINK_RECOVER_MS;
     while (Date.now() < renderBy) {
@@ -464,16 +473,32 @@ async function fillAndSubmit(d: DomDeps, box: Locator, text: string): Promise<Ad
 }
 
 /**
- * Reply to a specific comment. The target is a comment permalink
- * (`/p/<post>/c/<commentId>/` on IG) already open in the page, so the target
- * comment is focused and the first Reply affordance threads to it. Reuses the
- * same fill/submit/verify path as a top-level comment.
+ * Reply to a specific comment. The job's targetUrl is a comment permalink
+ * (`/p/<post>/c/<commentId>/` on IG); the check below confirms the browser
+ * actually landed on that comment before anything is clicked. Then clicking the
+ * focused comment's Reply affordance opens its reply box, which threads the
+ * answer under it. Reuses the same fill/submit/verify path as a top-level
+ * comment.
+ *
+ * ponytail: `.first()` still picks the first Reply affordance in DOM order, so
+ * a reply whose target is a NESTED comment (a second `/c/` segment) may attach
+ * to the parent. Anchor on the comment node's own id when that matters.
  */
 export async function replyToComment(d: DomDeps, text: string): Promise<AdapterResult> {
   const { page, sel } = d;
   const candidates = composerCandidates(sel);
   if (candidates.length === 0) {
     return { ok: false, error: 'no comment selectors pinned' };
+  }
+
+  // openPost can land somewhere else entirely: a deleted comment resolves to the
+  // plain post permalink (200, no "page isn't available" copy), and the cold-load
+  // deeplink recovery bounces through the feed. `.first()` below would then
+  // click the Reply button of whichever comment is at the top of the DOM — not
+  // the target. Refuse rather than reply to the wrong person.
+  const want = commentId(d.job.targetUrl);
+  if (want && !page.url().includes(`/c/${want}`)) {
+    return failShot(d, `comment ${want} is no longer on the page (landed on ${page.url()})`);
   }
 
   // Scroll first so a lazily-hydrated reply composer mounts (ref: jg/automation).
@@ -557,6 +582,13 @@ async function submitReply(
     sent = await composerCleared(box, text, VERIFY_TIMEOUT_MS);
   }
   if (!sent) return failShot(d, 'reply not submitted (composer still holds the text)');
+  // A cleared composer is a NEGATIVE signal, not proof. When the session dies
+  // mid-submit Meta swaps the SPA for the login route, and a detached
+  // contenteditable reads '' — which composerStillHas reports as "sent". So
+  // re-run the two guards before claiming success; otherwise the API records
+  // Verified: true and the operator gets SUCCESS with a login-page screenshot.
+  if (await needsLogin(page)) return failShot(d, 'auth: login required (session expired or login wall)');
+  if (await pageUnavailable(page)) return failShot(d, TARGET_UNAVAILABLE_ERROR);
   return { ok: true, renderedText: rendered };
 }
 
@@ -646,8 +678,8 @@ async function findComposer(
 
 /**
  * Ground-truth check for an already-submitted comment: poll the feed until the
- * exact rendered text appears, or the bound expires. Exported so `verify` is
- * the same code path `comment` used (DRY — one definition of "landed").
+ * exact rendered text appears, or the bound expires. Exported so the inline
+ * check inside `comment`/`replyComment` has one definition of "landed" (DRY).
  */
 export async function waitForCommentText(
   d: DomDeps,

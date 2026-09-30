@@ -103,6 +103,20 @@ func (r *ActionRepo) CompleteActionJob(ctx context.Context, id string, status do
 	return actionJobDomain(row), nil
 }
 
+// SetActionJobTemplate records which pool variant produced a job's text. The
+// scheduler calls it right after the composer picks, because the variant is not
+// known when the job row is inserted. A failure is not fatal to the dispatch
+// (the worker still echoes the id back and the log still records it).
+func (r *ActionRepo) SetActionJobTemplate(ctx context.Context, id, templateID string) error {
+	if err := r.q.SetActionJobTemplate(ctx, sqlcgen.SetActionJobTemplateParams{
+		ID:         uuidValue(id),
+		TemplateID: uuidValue(templateID),
+	}); err != nil {
+		return fmt.Errorf("repository.action.SetActionJobTemplate: %w", err)
+	}
+	return nil
+}
+
 // RescheduleActionJob returns a retryable job to the queue at a future time.
 func (r *ActionRepo) RescheduleActionJob(ctx context.Context, id string, scheduledAt time.Time) (domain.ActionJob, error) {
 	row, err := r.q.RescheduleActionJob(ctx, sqlcgen.RescheduleActionJobParams{
@@ -116,6 +130,31 @@ func (r *ActionRepo) RescheduleActionJob(ctx context.Context, id string, schedul
 		return domain.ActionJob{}, fmt.Errorf("repository.action.RescheduleActionJob: %w", err)
 	}
 	return actionJobDomain(row), nil
+}
+
+// SetPendingActionJobsScheduledAt moves every PENDING job to one instant and
+// reports the row count. The count is the whole answer the caller needs: a
+// PENDING row cannot be moved twice, so RowsAffected is the number of distinct
+// jobs that were pulled forward.
+func (r *ActionRepo) SetPendingActionJobsScheduledAt(ctx context.Context, scheduledAt time.Time) (int64, error) {
+	n, err := r.q.SetPendingActionJobsScheduledAt(ctx, tsPtr(&scheduledAt))
+	if err != nil {
+		return 0, fmt.Errorf("repository.action.SetPendingActionJobsScheduledAt: %w", err)
+	}
+	return n, nil
+}
+
+// SweepStaleRunningJobs requeues jobs whose worker never reported back.
+func (r *ActionRepo) SweepStaleRunningJobs(ctx context.Context, staleAfter time.Duration) (int64, error) {
+	mins := int(staleAfter / time.Minute)
+	if mins < 1 {
+		mins = 1
+	}
+	n, err := r.q.SweepStaleRunningJobs(ctx, int32(mins))
+	if err != nil {
+		return 0, fmt.Errorf("repository.action.SweepStaleRunningJobs: %w", err)
+	}
+	return n, nil
 }
 
 // ListActionJobs returns the newest actions first (the dashboard's queue view).

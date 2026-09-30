@@ -42,6 +42,8 @@ export interface ClaimResponse {
 export interface ClaimOptions {
   apiUrl: string;
   logger: Logger;
+  /** Shared secret for the API's /internal routes; omitted when unset. */
+  internalSecret?: string;
   /** Override for tests / DI. Defaults to global fetch. */
   fetchImpl?: typeof fetch;
 }
@@ -60,7 +62,10 @@ export async function claimRow(req: ClaimRequest, options: ClaimOptions): Promis
   try {
     const res = await doFetch(url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        ...(options.internalSecret ? { 'x-internal-secret': options.internalSecret } : {}),
+      },
       body: JSON.stringify({
         containerId: req.containerId,
         controlChannel: req.controlChannel,

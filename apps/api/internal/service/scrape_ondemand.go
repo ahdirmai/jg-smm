@@ -28,7 +28,12 @@ type ScrapeService struct {
 	storageRef port.RawStorage
 	// MaxItems caps one on-demand run (cost bound per click).
 	MaxItems int
-	log      *slog.Logger
+	// spend caps how many PAID on-demand runs one caller may start inside a
+	// window. `force` is a caller-controlled boolean that skips the only other
+	// cost guard (the 6h freshness cache), so without this the endpoint is an
+	// unmetered way to spend Apify credit in a loop. nil means unlimited.
+	spend *importLimiter
+	log   *slog.Logger
 }
 
 // NewScrapeService wires the on-demand scraper. runner/actorFor/storage may be
@@ -38,6 +43,26 @@ func NewScrapeService(store port.ScrapeStore, runner port.ApifyRunner, actorFor 
 		logger = slog.Default()
 	}
 	return &ScrapeService{scrapes: store, runner: runner, actorFor: actorFor, storageRef: storage, MaxItems: 100, log: logger}
+}
+
+// SetSpendLimit attaches the per-caller ceiling on PAID on-demand scrapes,
+// reusing the account-import limiter shape. Called from wiring; a limit <= 0
+// leaves the surface unlimited (a self-hosted host with no ceiling configured).
+func (s *ScrapeService) SetSpendLimit(limit int, window time.Duration) {
+	if limit <= 0 || window <= 0 {
+		s.spend = nil
+		return
+	}
+	s.spend = newImportLimiter(window, limit)
+}
+
+// allowSpend reports whether caller may start a paid run now. A nil limiter
+// means unlimited, so callers do not need to nil-check.
+func (s *ScrapeService) allowSpend(caller string) bool {
+	if s.spend == nil {
+		return true
+	}
+	return s.spend.Allow(caller, time.Now())
 }
 
 // PostDetail is one post plus its comments — the card the dashboard renders.
@@ -73,6 +98,20 @@ func platformFromURL(raw string) domain.Platform {
 // URL→post join) → scrape_job row (the run's anchor) → apify_run audit row →
 // actor run → ingest → read back through the target's post link.
 func (s *ScrapeService) ScrapeTarget(ctx context.Context, platform domain.Platform, rawURL string, force bool) (PostDetail, error) {
+	return s.scrapeTarget(ctx, platform, rawURL, force, "")
+}
+
+// ScrapeTargetAs is ScrapeTarget with an explicit spend-ceiling key (the
+// client IP from the HTTP boundary). An empty caller is unlimited.
+func (s *ScrapeService) ScrapeTargetAs(ctx context.Context, platform domain.Platform, rawURL string, force bool, caller string) (PostDetail, error) {
+	return s.scrapeTarget(ctx, platform, rawURL, force, caller)
+}
+
+// scrapeTarget carries the caller key for the spend ceiling. The public
+// entry point has no caller (internal callers, tests) and is therefore
+// unlimited; the HTTP handler passes the client IP so the ceiling is measured
+// on the one thing that spends money.
+func (s *ScrapeService) scrapeTarget(ctx context.Context, platform domain.Platform, rawURL string, force bool, caller string) (PostDetail, error) {
 	rawURL = strings.TrimSpace(rawURL)
 	if rawURL == "" {
 		return PostDetail{}, fmt.Errorf("%w: url is required", domain.ErrValidation)
@@ -90,6 +129,20 @@ func (s *ScrapeService) ScrapeTarget(ctx context.Context, platform domain.Platfo
 	if actorID == "" {
 		return PostDetail{}, fmt.Errorf("%w: no actor configured for %s", domain.ErrValidation, platform)
 	}
+	// One guard for both entry points: the operator's URL is validated the same
+	// way an action target is, so `ScrapeTarget` cannot be used to reach an
+	// arbitrary host. (It previously persisted rawURL unvalidated.)
+	u, err := safeTargetURL(rawURL, platform)
+	if err != nil {
+		return PostDetail{}, err
+	}
+	// The actor's `username` input also accepts profile and post URLs, so a
+	// profile link would silently buy a paid 100-post scrape that ingests 100
+	// unrelated rows before readBack fails. A target must address one post.
+	if postExternalIDFromURL(platform, u.String()) == "" {
+		return PostDetail{}, fmt.Errorf("%w: %q is not a post permalink for %s (expected /p/, /reel/ or /tv/ on instagram.com, /post/ on threads)", domain.ErrValidation, rawURL, platform)
+	}
+	rawURL = u.String()
 
 	// Find-or-create the target: on a repeat scrape this is the cache join
 	// (same (platform, external_id) never duplicates).
@@ -109,6 +162,14 @@ func (s *ScrapeService) ScrapeTarget(ctx context.Context, platform domain.Platfo
 		if detail, err := s.readBack(ctx, tgt); err == nil && time.Since(detail.Post.ScrapedAt) < 6*time.Hour {
 			return detail, nil
 		}
+	}
+
+	// Past this point the click costs money: the cache above is the only free
+	// exit, and `force` (caller-controlled) jumps it. Meter before creating the
+	// job row or the apify_run row, so a refused call leaves nothing behind and
+	// the actor is never reached.
+	if caller != "" && !s.allowSpend(caller) {
+		return PostDetail{}, fmt.Errorf("%w: scrape rate limit exceeded; try again in a minute", domain.ErrRateLimited)
 	}
 
 	job, err := s.scrapes.CreateScrapeJob(ctx, domain.ScrapeJob{
@@ -155,14 +216,33 @@ func (s *ScrapeService) ScrapeTarget(ctx context.Context, platform domain.Platfo
 	}, true); err != nil {
 		s.log.Warn("scrape: update run failed", "run", run.ID, "err", err)
 	}
-	for _, key := range out.ItemKeys {
-		if _, err := s.scrapes.CreateRawPayload(ctx, domain.RawPayload{ApifyRunID: run.ID, S3Key: key}); err != nil {
-			s.log.Warn("scrape: raw payload pointer failed", "key", key, "err", err)
+	for _, item := range out.Items {
+		if _, err := s.scrapes.CreateRawPayload(ctx, domain.RawPayload{
+			ApifyRunID: run.ID, S3Key: item.Key, Bytes: item.Bytes,
+		}); err != nil {
+			s.log.Warn("scrape: raw payload pointer failed", "key", item.Key, "err", err)
 		}
 	}
 	ingestor := NewPlatformScrapeIngestor(s.scrapes, s.storageRef, platform, postExternalIDFromURL(platform, rawURL), s.log)
-	if _, err := ingestor.IngestRun(ctx, run.ID); err != nil {
+	res, err := ingestor.IngestRun(ctx, run.ID)
+	if err != nil {
+		// The run was paid for and the actor succeeded; only the normalize step
+		// failed. Close the job here — this branch previously returned without
+		// touching the row, so a client that disconnected (ctx cancelled) left a
+		// scrape_job stuck in `running` forever, with target.post_id unlinked and
+		// the next scrape of the same URL paying again.
+		s.fail(ctx, job.ID, "ingest: "+err.Error())
 		return PostDetail{}, fmt.Errorf("scrape: ingest: %w", err)
+	}
+	// A run that delivered nothing is not a scrape that found nothing new. For a
+	// forced re-scrape of a deleted post the ingest is a clean no-op, and readBack
+	// would resolve tgt.PostID — the PRIOR scrape's link — and hand back the old
+	// comments as if this fetch had produced them: HTTP 200, job `success`, and a
+	// panel showing stale rows. Take the same miss branch a read-back failure
+	// takes, so an empty run can never be reported as fresh evidence.
+	if res.ItemsRead == 0 {
+		s.fail(ctx, job.ID, "actor output held no items for this URL")
+		return PostDetail{}, fmt.Errorf("%w: scrape produced no post for %s", domain.ErrValidation, rawURL)
 	}
 
 	detail, err := s.readBack(ctx, tgt)
@@ -181,9 +261,16 @@ func (s *ScrapeService) ScrapeTarget(ctx context.Context, platform domain.Platfo
 
 // fail marks the scrape_job FAILED with a reason (best-effort: the caller
 // already has the error to report).
+//
+// The write runs on a context detached from the request on purpose. The reason
+// this method exists is a client that disconnected mid-scrape, and by then the
+// request context is already cancelled — so a job write riding on it would fail
+// with context.Canceled and leave the row `running` permanently, the exact
+// outcome the call is here to prevent. Only the cancellation is dropped: values
+// (trace ids, the logger) still flow through.
 func (s *ScrapeService) fail(ctx context.Context, jobID, reason string) {
 	reason = truncateErr(reason)
-	if _, err := s.scrapes.CompleteScrapeJob(ctx, jobID, domain.JobStatusFailed, &reason); err != nil {
+	if _, err := s.scrapes.CompleteScrapeJob(context.WithoutCancel(ctx), jobID, domain.JobStatusFailed, &reason); err != nil {
 		s.log.Warn("scrape: fail job write failed", "job", jobID, "err", err)
 	}
 }

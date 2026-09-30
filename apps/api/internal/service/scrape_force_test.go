@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -89,5 +90,46 @@ func TestScrapeTargetForceBypassesFreshCache(t *testing.T) {
 
 	if runner.runs == 0 {
 		t.Error("force=true did not reach the actor run; the freshness cache was not bypassed")
+	}
+}
+
+// The actor's `username` input also accepts profile and post URLs, so a profile
+// link used to buy a paid run that ingested up to 100 of that profile's posts
+// before readBack failed — the operator paid, got an error, and 100 unrelated
+// rows polluted post and content_metric. Reject the URL before any run.
+func TestScrapeTargetRejectsNonPostURLsWithoutSpendingARun(t *testing.T) {
+	for _, tc := range []struct{ name, url string }{
+		{"profile", "https://www.instagram.com/nasa/"},
+		{"hashtag", "https://www.instagram.com/explore/tags/nasa/"},
+		{"reels profile path", "https://www.instagram.com/nasa/reels/"},
+		{"cloud metadata", "http://169.254.169.254/latest/meta-data/"},
+		{"cross-platform", "https://www.threads.net/post/ABC/"},
+		{"garbage", "not-a-url"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runner := &countingRunner{}
+			svc := NewScrapeService(newFakeScrapeStore(), runner, actorForAny, nil, nil)
+			_, err := svc.ScrapeTarget(context.Background(), domain.PlatformInstagram, tc.url, true)
+			if !errors.Is(err, domain.ErrValidation) {
+				t.Fatalf("ScrapeTarget(%q) err = %v, want ErrValidation", tc.url, err)
+			}
+			if runner.runs != 0 {
+				t.Fatalf("a rejected URL still cost %d paid actor runs", runner.runs)
+			}
+		})
+	}
+}
+
+// A real post permalink must still get through — the guard is a filter, not a
+// new rejection.
+func TestScrapeTargetStillAcceptsPostPermalinks(t *testing.T) {
+	runner := &countingRunner{}
+	svc := NewScrapeService(newFakeScrapeStore(), runner, actorForAny, nil, nil)
+	// The fake store has no apify_run/scrape_job rows, so this fails AFTER the
+	// guard; reaching the runner is the assertion.
+	_, _ = svc.ScrapeTarget(context.Background(), domain.PlatformInstagram,
+		"https://www.instagram.com/p/ABC123/", true)
+	if runner.runs == 0 {
+		t.Fatal("a valid post permalink was rejected by the URL guard")
 	}
 }

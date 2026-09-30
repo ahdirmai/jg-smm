@@ -232,7 +232,7 @@ func newTestInternal() (*InternalHandler, *service.JobService, *fakeWorkerStore,
 	workers := newMemWorkerStoreForHTTP()
 	accounts := newMemAccountStoreForHTTP()
 	jobs := service.NewJobService(workers, accounts, nil, nil, stubClock{t: time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)}, nil, nil, nil)
-	return NewInternalHandler(jobs), jobs, workers, accounts
+	return NewInternalHandler(jobs, ""), jobs, workers, accounts
 }
 
 // call runs a request against a fresh router with only the internal routes.
@@ -335,14 +335,14 @@ func TestActionCallbackScreenshotPathBase(t *testing.T) {
 	code, body := call(h, http.MethodPost, "/internal/action-callback",
 		`{"attemptId":"att1","status":"SUCCESS","screenshotPath":"/etc/passwd"}`)
 	if code != http.StatusBadRequest {
-		t.Fatalf("want 400 for non-png, got %d: %v", code, body)
+		t.Fatalf("want 400 for non-image name, got %d: %v", code, body)
 	}
-	// A .png path with traversal is accepted after path.Base (verdict is 202 due
+	// A .jpg path with traversal is accepted after path.Base (verdict is 202 due
 	// to deferred P3 persistence, proving sanitisation passed).
 	code, body = call(h, http.MethodPost, "/internal/action-callback",
-		`{"attemptId":"att1","status":"SUCCESS","screenshotPath":"../../evidence/shot.png"}`)
+		`{"attemptId":"att1","status":"SUCCESS","screenshotPath":"../../evidence/shot.jpg"}`)
 	if code != http.StatusAccepted {
-		t.Fatalf("want 202 for sanitised .png, got %d: %v", code, body)
+		t.Fatalf("want 202 for sanitised .jpg, got %d: %v", code, body)
 	}
 }
 
@@ -392,6 +392,39 @@ func TestBodyLimit(t *testing.T) {
 	e.ServeHTTP(rec, req)
 	if rec.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("want 413, got %d", rec.Code)
+	}
+}
+
+// The /internal group writes action verdicts, account status and heartbeats, so
+// a wrong secret must never reach the handler. Empty secret stays the disabled
+// case (single-host dev) and must keep working.
+func TestInternalSecretGuardsTheGroup(t *testing.T) {
+	h, _, _, _ := newTestInternal()
+	h.secret = "s3cret"
+	e := echo.New()
+	e.HideBanner = true
+	h.Register(e)
+
+	post := func(header string) int {
+		req := httptest.NewRequest(http.MethodPost, "/internal/heartbeat",
+			bytes.NewBufferString(`{"workerId":"w1"}`))
+		req.Header.Set(echo.HeaderContentType, "application/json")
+		if header != "" {
+			req.Header.Set(internalSecretHeader, header)
+		}
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	if code := post(""); code != http.StatusUnauthorized {
+		t.Fatalf("no secret: want 401, got %d", code)
+	}
+	if code := post("wrong"); code != http.StatusUnauthorized {
+		t.Fatalf("wrong secret: want 401, got %d", code)
+	}
+	if code := post("s3cret"); code == http.StatusUnauthorized {
+		t.Fatal("the correct secret must pass the guard")
 	}
 }
 

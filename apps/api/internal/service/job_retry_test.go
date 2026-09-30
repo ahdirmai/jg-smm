@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"sort"
 	"strconv"
 	"testing"
 	"time"
@@ -92,7 +93,62 @@ func (f *fakeActionStore) CompleteActionJob(_ context.Context, id string, status
 }
 func (f *fakeActionStore) RescheduleActionJob(_ context.Context, id string, at time.Time) (domain.ActionJob, error) {
 	f.rescheduled = append(f.rescheduled, rescheduledJob{id: id, at: at})
+	// Mirror the SQL: the requeue clears template_id and resets the row to
+	// PENDING. Without this the fake would be kinder than production and the
+	// Retry path's template restore would never be exercised.
+	for i := range f.pending {
+		if f.pending[i].ID == id {
+			f.pending[i].Status = domain.JobStatusPending
+			f.pending[i].ScheduledAt = at
+			f.pending[i].TemplateID = ""
+		}
+	}
 	return domain.ActionJob{ID: id, ScheduledAt: at}, nil
+}
+
+// SetActionJobTemplate mirrors the SQL's post-claim write of the variant id.
+func (f *fakeActionStore) SetActionJobTemplate(_ context.Context, id, templateID string) error {
+	for i := range f.pending {
+		if f.pending[i].ID == id {
+			f.pending[i].TemplateID = templateID
+			return nil
+		}
+	}
+	for i := range f.completed {
+		if f.completed[i].id == id {
+			return nil
+		}
+	}
+	return domain.ErrNotFound
+}
+
+// SetPendingActionJobsScheduledAt mirrors the single-statement sweep: every
+// PENDING row moves to one instant, and the count is the number of rows moved.
+// It is deliberately NOT a paged walk — the bug it replaces was in the caller's
+// paging, and a fake that reimplemented that paging would hide it.
+func (f *fakeActionStore) SetPendingActionJobsScheduledAt(_ context.Context, at time.Time) (int64, error) {
+	var n int64
+	for i := range f.pending {
+		if f.pending[i].Status != domain.JobStatusPending {
+			continue
+		}
+		f.pending[i].ScheduledAt = at
+		f.rescheduled = append(f.rescheduled, rescheduledJob{id: f.pending[i].ID, at: at})
+		n++
+	}
+	return n, nil
+}
+func (f *fakeActionStore) SweepStaleRunningJobs(_ context.Context, _ time.Duration) (int64, error) {
+	// Mirror the real sweep: RUNNING jobs older than the bound go back to PENDING.
+	var n int64
+	for i := range f.pending {
+		if f.pending[i].Status != domain.JobStatusRunning {
+			continue
+		}
+		f.pending[i].Status = domain.JobStatusPending
+		n++
+	}
+	return n, nil
 }
 func (f *fakeActionStore) GetActionLog(_ context.Context, jobID string, attempt int) (domain.ActionLog, error) {
 	if l, ok := f.logByAttempt[attemptKey(jobID, attempt)]; ok {
@@ -119,6 +175,11 @@ func (f *fakeActionStore) ListActionJobsByStatus(_ context.Context, status domai
 			out = append(out, j)
 		}
 	}
+	// ORDER BY scheduled_at, as the SQL does. A caller that mutates scheduled_at
+	// while walking this set with an OFFSET changes the order under its own feet
+	// in production; the fake has to reproduce that, or it would be kinder than
+	// the database and would hide exactly the bug M-4 fixed.
+	sort.SliceStable(out, func(i, j int) bool { return out[i].ScheduledAt.Before(out[j].ScheduledAt) })
 	// Honour the paging the real store applies, so a caller that walks the queue
 	// in MaxActionBatch-sized rounds sees the same rows as production. Without
 	// this the whole queue returns on every call and a looping caller re-reads
@@ -476,4 +537,55 @@ type erroringActionStore struct {
 
 func (e *erroringActionStore) UpsertActionLog(_ context.Context, l domain.ActionLog) (domain.ActionLog, error) {
 	return domain.ActionLog{}, errors.New("store is down")
+}
+
+// --- M-2: the template id lands on the attempt row -------------------------
+
+// The callback's templateId is what actually populates action_log.template_id,
+// the only column the 7-day per-target dedupe joins on (PickForTarget's NOT
+// EXISTS reads al.template_id). It was never written, so dedupe could never see
+// a variant as used and every account on a post drew from the full pool.
+func TestRecordAttemptStoresTemplateID(t *testing.T) {
+	store := newFakeActionStore()
+	svc := newRetryTestService(store)
+	ctx := context.Background()
+
+	err := svc.RecordAttempt(ctx, AttemptRecord{
+		AttemptID:    "job-tmpl:1",
+		Status:       domain.AttemptSuccess,
+		RenderedText: strPtr("nice post"),
+		TemplateID:   strPtr("11111111-1111-1111-1111-111111111111"),
+	})
+	if err != nil {
+		t.Fatalf("record: %v", err)
+	}
+	log, err := store.GetActionLog(ctx, "job-tmpl", 1)
+	if err != nil {
+		t.Fatalf("get log: %v", err)
+	}
+	if log.TemplateID != "11111111-1111-1111-1111-111111111111" {
+		t.Fatalf("action_log.template_id must be populated, got %q", log.TemplateID)
+	}
+}
+
+// A like or an operator-supplied body has no variant, so the id stays empty
+// rather than naming someone else's template.
+func TestRecordAttemptWithoutTemplateIDLeavesItEmpty(t *testing.T) {
+	store := newFakeActionStore()
+	svc := newRetryTestService(store)
+	ctx := context.Background()
+
+	if err := svc.RecordAttempt(ctx, AttemptRecord{
+		AttemptID: "job-notmpl:1",
+		Status:    domain.AttemptSuccess,
+	}); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+	log, err := store.GetActionLog(ctx, "job-notmpl", 1)
+	if err != nil {
+		t.Fatalf("get log: %v", err)
+	}
+	if log.TemplateID != "" {
+		t.Fatalf("an absent variant must stay empty, got %q", log.TemplateID)
+	}
 }

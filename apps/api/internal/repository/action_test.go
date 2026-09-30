@@ -2,7 +2,6 @@ package repository
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
@@ -24,13 +23,7 @@ func p3PtrInt(n int) *int { return &n }
 // tables so every test is deterministic against a shared dev database.
 func newP3TestRepo(t *testing.T) *ActionRepo {
 	t.Helper()
-	if os.Getenv("SMM_TEST_DB") != "1" {
-		t.Skip("set SMM_TEST_DB=1 to run repository integration tests")
-	}
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://smm:smm@localhost:24543/smm?sslmode=disable"
-	}
+	dsn := testDSN(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	pool, err := pgxpool.New(ctx, dsn)
@@ -270,6 +263,134 @@ func TestActionJobReschedule(t *testing.T) {
 	}
 	if claimed.Attempts != 1 {
 		t.Fatalf("claim after reschedule must count the attempt, got %d", claimed.Attempts)
+	}
+}
+
+// A job that already reached a terminal state must never be pushed back into
+// the queue or re-graded. /internal/* is machine ingress with no user auth, so
+// without this guard a replayed or forged callback re-queues a finished action
+// (the worker then posts the same Instagram comment a second time) and a
+// forged verdict re-grades a job the operator already read.
+func TestActionJobTerminalStatesAreImmutable(t *testing.T) {
+	repo := newP3TestRepo(t)
+	ctx := context.Background()
+	pool := testPool(t)
+
+	accountID := p2SeedAccount(t, pool, "act-term-"+p2Suffix(t))
+	targetID := p3SeedTarget(t, pool, "tgt-term-"+p2Suffix(t))
+	workerID := p3SeedWorker(t, pool, "wrk-term-"+p2Suffix(t))
+
+	for _, terminal := range []domain.JobStatus{
+		domain.JobStatusSuccess,
+		domain.JobStatusFailed,
+		domain.JobStatusCancelled,
+	} {
+		job, err := repo.CreateActionJob(ctx, domain.ActionJob{
+			Type:        domain.JobTypeActionComment,
+			TargetID:    targetID,
+			AccountID:   accountID,
+			ScheduledAt: time.Now().UTC().Add(-time.Hour),
+		})
+		if err != nil {
+			t.Fatalf("create: %v", err)
+		}
+		if _, err := repo.CompleteActionJob(ctx, job.ID, terminal, nil); err != nil {
+			t.Fatalf("complete %s: %v", terminal, err)
+		}
+
+		if _, err := repo.RescheduleActionJob(ctx, job.ID, time.Now().UTC()); err == nil {
+			t.Fatalf("%s job was rescheduled back into the queue", terminal)
+		}
+		if _, err := repo.CompleteActionJob(ctx, job.ID, domain.JobStatusFailed, nil); err == nil {
+			t.Fatalf("%s job was re-graded by a second terminal transition", terminal)
+		}
+
+		got, err := repo.GetActionJob(ctx, job.ID)
+		if err != nil {
+			t.Fatalf("read back: %v", err)
+		}
+		if got.Status != terminal {
+			t.Fatalf("%s job ended up %q", terminal, got.Status)
+		}
+	}
+
+	// The retry path reschedules a RUNNING job (the worker claimed it, then
+	// reported a retryable failure). That transition must still work, or the
+	// guard would have broken retries instead of forging them.
+	running, err := repo.CreateActionJob(ctx, domain.ActionJob{
+		Type:        domain.JobTypeActionComment,
+		TargetID:    targetID,
+		AccountID:   accountID,
+		ScheduledAt: time.Now().UTC().Add(-time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("create running: %v", err)
+	}
+	claimed, err := repo.ClaimNextActionJob(ctx, accountID, workerID)
+	if err != nil || claimed.ID != running.ID {
+		t.Fatalf("claim: %v (job %s)", err, claimed.ID)
+	}
+	back := time.Now().UTC().Add(-time.Minute)
+	rescheduled, err := repo.RescheduleActionJob(ctx, running.ID, back)
+	if err != nil {
+		t.Fatalf("a RUNNING job must still reschedule: %v", err)
+	}
+	if rescheduled.Status != domain.JobStatusPending {
+		t.Fatalf("retry reschedule must yield PENDING, got %q", rescheduled.Status)
+	}
+}
+
+// A worker that dies between the claim and its callback leaves the job RUNNING
+// with no writer left. ClaimNextActionJob only selects PENDING and Retry only
+// accepts FAILED, so without a sweep the queue shows it stuck in "Verifying"
+// forever and the operator has no way out.
+func TestActionJobSweepRequeuesStrandedRunning(t *testing.T) {
+	repo := newP3TestRepo(t)
+	ctx := context.Background()
+	pool := testPool(t)
+
+	accountID := p2SeedAccount(t, pool, "act-sweep-"+p2Suffix(t))
+	targetID := p3SeedTarget(t, pool, "tgt-sweep-"+p2Suffix(t))
+	workerID := p3SeedWorker(t, pool, "wrk-sweep-"+p2Suffix(t))
+
+	job, err := repo.CreateActionJob(ctx, domain.ActionJob{
+		Type:        domain.JobTypeActionComment,
+		TargetID:    targetID,
+		AccountID:   accountID,
+		ScheduledAt: time.Now().UTC().Add(-time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := repo.ClaimNextActionJob(ctx, accountID, workerID); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	// A job started a moment ago is a healthy long render, not a corpse.
+	if n, err := repo.SweepStaleRunningJobs(ctx, 15*time.Minute); err != nil || n != 0 {
+		t.Fatalf("a fresh RUNNING job was swept: n=%d err=%v", n, err)
+	}
+	// Age it past the bound, the way a dead worker would.
+	if _, err := pool.Exec(ctx,
+		`UPDATE action_job SET started_at = now() - interval '2 hours' WHERE id = $1`,
+		job.ID); err != nil {
+		t.Fatalf("age job: %v", err)
+	}
+	n, err := repo.SweepStaleRunningJobs(ctx, 15*time.Minute)
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("swept %d jobs, want the 1 stranded one", n)
+	}
+	got, err := repo.GetActionJob(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if got.Status != domain.JobStatusPending {
+		t.Fatalf("stranded job is %q, want PENDING so a worker can claim it again", got.Status)
+	}
+	if _, err := repo.ClaimNextActionJob(ctx, accountID, workerID); err != nil {
+		t.Fatalf("a swept job must be claimable again: %v", err)
 	}
 }
 

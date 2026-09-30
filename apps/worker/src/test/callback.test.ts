@@ -19,6 +19,7 @@ const cfg: WorkerConfig = {
   display: ':99',
   heartbeatIntervalSec: 30,
   novncUrl: null,
+  internalSecret: '',
 };
 
 const silentLogger: Logger = {
@@ -46,7 +47,6 @@ test('callback body carries the attemptId idempotency key "<jobId>:<attempt>"', 
   await cb.post({
     jobId: 'job-42',
     accountId: 'acct-1',
-    workerId: '',
     attempt: 3,
     status: 'success',
     renderedText: 'nice post',
@@ -59,8 +59,36 @@ test('callback body carries the attemptId idempotency key "<jobId>:<attempt>"', 
   const payload = JSON.parse(first.body);
   assert.equal(payload.attemptId, 'job-42:3', 'the API resolves job+attempt from this key');
   assert.equal(payload.jobId, 'job-42', 'jobId stays for operator logs');
-  assert.equal(payload.attempt, 3);
+  // `ActionResult` no longer carries a workerId (L-7): the controller cannot
+  // know it, and the transport overwrote whatever it put there anyway. This
+  // is the only place the container identity enters the payload, so this
+  // assertion is what keeps `worker_id` populated.
   assert.equal(payload.workerId, 'worker-1');
+});
+
+// The API reads evidence from `screenshotPath` (openapi ActionCallbackReq).
+// Sending `screenshot` instead left screenshot_url NULL on every real attempt,
+// so assert the wire name — not just the in-process field.
+test('evidence is sent as screenshotPath, the name the API binds', async () => {
+  const calls: { url: string; body: string }[] = [];
+  const cb = createCallback(cfg, silentLogger, {
+    maxAttempts: 1,
+    fetchImpl: recordingFetch(calls, 200) as unknown as typeof fetch,
+  });
+
+  await cb.post({
+    jobId: 'job-7',
+    accountId: 'acct-1',
+    attempt: 1,
+    status: 'failed',
+    screenshotPath: 'task-job-7-worker-1.jpg',
+  });
+
+  const first = calls[0];
+  if (!first) throw new Error('expected one callback call');
+  const payload = JSON.parse(first.body);
+  assert.equal(payload.screenshotPath, 'task-job-7-worker-1.jpg');
+  assert.equal(payload.screenshot, undefined, 'the unbound name must not ship');
 });
 
 test('a 4xx is permanent: the callback stops and does not retry', async () => {
@@ -73,7 +101,6 @@ test('a 4xx is permanent: the callback stops and does not retry', async () => {
   await cb.post({
     jobId: 'job-bad',
     accountId: 'acct-1',
-    workerId: '',
     attempt: 1,
     status: 'failed',
     error: 'malformed',
@@ -92,7 +119,6 @@ test('a 5xx retries up to the budget', async () => {
   await cb.post({
     jobId: 'job-flaky',
     accountId: 'acct-1',
-    workerId: '',
     attempt: 1,
     status: 'failed',
     error: 'server down',
@@ -120,7 +146,6 @@ test('a network failure retries like a 5xx and never throws', async () => {
   await cb.post({
     jobId: 'job-net',
     accountId: 'acct-1',
-    workerId: '',
     attempt: 1,
     status: 'failed',
     error: 'boom',

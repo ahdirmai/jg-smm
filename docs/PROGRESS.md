@@ -284,8 +284,15 @@ against the rebuilt `api` + `web` images; `make ci` green.
 - **Action job types (report + reply-comment)**: `job_type` gained
   `ACTION_REPORT` and `ACTION_REPLY_COMMENT` (migrations 000008/000009 — split
   because Postgres forbids *using* a new enum value inside the same transaction
-  that added it). The Actions page Report / Reply buttons now enqueue real
-  jobs; they returned 400 before.
+  that added it).
+  **Correction (2026-09-30, audit L-6):** the original entry here claimed "the
+  Actions page Report / Reply buttons now enqueue real jobs; they returned 400
+  before." That was only half true and the half that was false was the
+  headline. There are no Reply buttons. What exists is the job type, the worker
+  path that executes it, and the enqueue-time validation; the operator reaches
+  it through the existing comment flow, not a Reply button. The false claim
+  mattered because the audit's H-1..H-10 work was scoped against it — H-3 in
+  particular.
 - **Audit trail (P6-10, done)**: `GET /api/audit` returns Time / Actor / Action
   / Target / Result / IP with actor + action + date filters and pagination.
   Writes happen in one Echo middleware on the `/api` group — every

@@ -350,7 +350,7 @@ func (r *Runner) RunSearch(ctx context.Context, in port.ApifySearchInput) (port.
 		}, nil
 	}
 
-	keys := make([]string, 0, len(items))
+	stored := make([]port.RawItem, 0, len(items))
 	var total int64
 	for i, item := range items {
 		key := fmt.Sprintf("apify/search-%s/%d.json", in.RunID, i)
@@ -360,13 +360,13 @@ func (r *Runner) RunSearch(ctx context.Context, in port.ApifySearchInput) (port.
 			continue
 		}
 		total += n
-		keys = append(keys, key)
+		stored = append(stored, port.RawItem{Key: key, Bytes: n})
 	}
 	r.log("apify: search complete", "run", in.RunID, "keywords", in.Keywords, "items", len(items), "bytes", total)
 	return port.ApifyOutput{
-		RunID:    runID,
-		Status:   statusSucceeded,
-		ItemKeys: keys,
+		RunID:  runID,
+		Status: statusSucceeded,
+		Items:  stored,
 	}, nil
 }
 
@@ -589,7 +589,7 @@ func (r *Runner) fetchDataset(ctx context.Context, datasetID string) ([]json.Raw
 }
 
 func (r *Runner) storeItems(ctx context.Context, jobKey, runID string, items []json.RawMessage) (port.ApifyOutput, error) {
-	keys := make([]string, 0, len(items))
+	stored := make([]port.RawItem, 0, len(items))
 	var total int64
 	for i, item := range items {
 		key := fmt.Sprintf("apify/%s/%d.json", jobKey, i)
@@ -599,13 +599,13 @@ func (r *Runner) storeItems(ctx context.Context, jobKey, runID string, items []j
 			continue
 		}
 		total += n
-		keys = append(keys, key)
+		stored = append(stored, port.RawItem{Key: key, Bytes: n})
 	}
 	r.log("apify: run complete", "job", jobKey, "items", len(items), "bytes", total)
 	return port.ApifyOutput{
-		RunID:    runID,
-		Status:   statusSucceeded,
-		ItemKeys: keys,
+		RunID:  runID,
+		Status: statusSucceeded,
+		Items:  stored,
 	}, nil
 }
 

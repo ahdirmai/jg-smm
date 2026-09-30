@@ -1,6 +1,6 @@
 /**
  * YouTube adapter (authenticates through the Google account flow). OTP-over-web
- * is wired and real; credentialed login and the like/comment/verify DOM
+ * is wired and real; credentialed login and the like/comment DOM
  * automation are honest stubs (see `stub.ts`).
  */
 import type { PlatformAdapter } from './adapter.js';

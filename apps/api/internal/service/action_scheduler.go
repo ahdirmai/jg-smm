@@ -64,6 +64,11 @@ type ActionScheduler struct {
 	// flow). Optional: when a job has a stored body it is used verbatim instead
 	// of composing from the template pool; nil or a miss falls back to the pool.
 	texts port.ActionTextStore
+	// templates is the pool read used to screen an operator-supplied body
+	// against the denylists the pool declares. Optional: when it is nil the
+	// screen cannot name a rule to enforce, and composeText falls back to
+	// template composition — never to shipping the body unscreened.
+	templates port.TemplateStore
 }
 
 // ActionSchedulerConfig bounds the loop. Zero values fall back to documented
@@ -105,6 +110,7 @@ func NewActionScheduler(
 	limits port.RateLimiter,
 	transport port.Publisher,
 	texts port.ActionTextStore,
+	templates port.TemplateStore,
 	cfg ActionSchedulerConfig,
 ) *ActionScheduler {
 	if cfg.TickBudget <= 0 {
@@ -131,6 +137,7 @@ func NewActionScheduler(
 		limits:    limits,
 		transport: transport,
 		texts:     texts,
+		templates: templates,
 		cfg:       cfg,
 		clock:     cfg.Clock,
 		log:       cfg.Logger,
@@ -163,6 +170,17 @@ func (s *ActionScheduler) Run(ctx context.Context, interval time.Duration) {
 // Tick claims and dispatches as many due jobs as the budget allows. Exported so
 // tests exercise the policy without waiting on the ticker.
 func (s *ActionScheduler) Tick(ctx context.Context) error {
+	// Requeue jobs whose worker died before reporting back. A claim is the only
+	// writer that moves a job to RUNNING and only applyVerdict moves it out, so
+	// one lost callback used to strand it in "Verifying" forever — unclaimable
+	// (the claim query takes PENDING only) and un-retryable (Retry takes FAILED).
+	if n, err := s.actions.SweepStaleRunningJobs(ctx, StaleRunningAfter); err != nil {
+		// Never fatal: a sweep failure must not stop the tick from dispatching
+		// the jobs that are legitimately due.
+		s.log.Warn("action: stale-RUNNING sweep failed", "err", err)
+	} else if n > 0 {
+		s.log.Info("action: requeued stranded jobs", "count", n)
+	}
 	claimed := 0
 	for claimed < s.cfg.TickBudget {
 		if ctx.Err() != nil {
@@ -238,6 +256,20 @@ func (s *ActionScheduler) dispatchOne(ctx context.Context, job domain.ActionJob)
 		s.fail(ctx, job, truncateErr(err.Error()))
 		return
 	}
+	// Record which pool variant produced this body, so the dedupe query can see
+	// it as used against this target. Written before the gates: the job row is
+	// the durable half of the record, and the worker callback (the other half)
+	// can only echo back what it was sent. An operator body leaves it empty —
+	// there is no variant to claim.
+	if text.templateID != "" {
+		job.TemplateID = text.templateID
+		if err := s.actions.SetActionJobTemplate(ctx, job.ID, text.templateID); err != nil {
+			// Not fatal: the worker still echoes the id back on the callback, so
+			// action_log.template_id is still written and the dedupe still works.
+			// The job row is the nicer place to read it from, not the only one.
+			s.log.Warn("action: record template id on job failed", "job", job.ID, "template", text.templateID, "err", err)
+		}
+	}
 
 	// Gate 1: cooldown. A cooled-down target means we already acted on it
 	// recently; skipping now is the whole point of the gate.
@@ -299,14 +331,23 @@ func (s *ActionScheduler) dispatchOne(ctx context.Context, job domain.ActionJob)
 	s.log.Info("action published", "job", job.ID, "worker", workerID, "attempt", job.Attempts)
 }
 
-// composeText resolves the text a comment job will post, screened against the
-// denylist. Returns empty text for non-comment actions (a like posts nothing)
-// and when no composer is wired (local play / tests).
-func (s *ActionScheduler) composeText(ctx context.Context, job domain.ActionJob, platform domain.Platform) (string, error) {
+// composeText resolves the text a comment job will post, along with the pool
+// variant it came from (empty for an operator-supplied body), and screens the
+// text against the denylist. Returns no text for non-comment actions (a like
+// posts nothing) and when no composer is wired (local play / tests).
+//
+// Both branches are screened. The operator branch used to return the stored
+// body verbatim on the strength of a comment claiming it was "screened against
+// the denylist" — it was not: MatchBanned lives inside the template pick, so a
+// per-account body submitted through POST /api/actions reached a live account
+// with nothing but a length check behind it, while the same word inside a
+// template was rejected. The screen now runs on the composed text whoever
+// wrote it (P3-03).
+func (s *ActionScheduler) composeText(ctx context.Context, job domain.ActionJob, platform domain.Platform) (composedText, error) {
 	// Both a comment and a reply post text; a like/report posts nothing.
 	needsText := job.Type == domain.JobTypeActionComment || job.Type == domain.JobTypeActionReplyComment
 	if !needsText {
-		return "", nil
+		return composedText{}, nil
 	}
 	// An operator-supplied per-account body (region-select flow) wins over the
 	// template pool. A store miss or error falls through to composition, so the
@@ -315,36 +356,90 @@ func (s *ActionScheduler) composeText(ctx context.Context, job domain.ActionJob,
 		if text, ok, err := s.texts.Get(ctx, job.ID); err != nil {
 			s.log.Warn("read per-account comment text failed; falling back to template", "job", job.ID, "err", err)
 		} else if ok && strings.TrimSpace(text) != "" {
-			return text, nil
+			// The screen is not optional on this branch: the denylists the pool
+			// declares are the account's only policy about what may be posted,
+			// and an operator body is text posted to a live account like any
+			// other. An operator body has no per-template denylist of its own
+			// (that is a property of a pool row), so every declared pattern is
+			// enforced against it.
+			if s.templates == nil {
+				// No pool read means no denylist is available here. Posting an
+				// unscreened body would re-open this finding, so say so and fall
+				// through to the composer, which screens with the variant's own
+				// denylist.
+				s.log.Warn("per-account comment text not screened: no template store wired; composing instead", "job", job.ID)
+			} else {
+				patterns, err := s.poolBanned(ctx, platform)
+				if err != nil {
+					return composedText{}, fmt.Errorf("screen operator text: %w", err)
+				}
+				if err := screenBanned(text, patterns); err != nil {
+					return composedText{}, err
+				}
+				// No template id: the body came from the operator, not the pool.
+				// Recording the variant it most resembles would be a lie about
+				// the audit trail, and a wrong id would mark an unused variant
+				// as spent for the target under the 7-day dedupe.
+				return composedText{text: text}, nil
+			}
 		}
 	}
 	if s.composer == nil {
-		return "", nil
+		return composedText{}, nil
 	}
 	// ponytail: template var values ({topic}, {product}) come from Target.Meta
 	// once its shape is pinned; plain-text templates ship now, and a template
 	// with an unfilled var is rejected by the engine rather than posted raw.
 	out, err := s.composer.Pick(ctx, platform, job.TargetID, nil)
 	if err != nil {
-		return "", fmt.Errorf("compose: %w", err)
+		return composedText{}, fmt.Errorf("compose: %w", err)
 	}
-	return out.RenderedText, nil
+	return composedText{text: out.RenderedText, templateID: out.TemplateID}, nil
+}
+
+// poolBanned collects every denylist pattern the platform's pool declares, so
+// an operator-supplied body is held to the same rules a composed one is. The
+// pool is a curated set (templates are authored by the operator, not generated
+// at volume), so one page of listPageSize covers it; a pool that outgrows the
+// page has a pruning problem, not a paging one.
+func (s *ActionScheduler) poolBanned(ctx context.Context, platform domain.Platform) ([]string, error) {
+	templates, err := s.templates.ListTemplates(ctx, platform, false, &listPageSize, nil)
+	if err != nil {
+		return nil, fmt.Errorf("list templates: %w", err)
+	}
+	var banned []string
+	for _, t := range templates {
+		banned = append(banned, t.BannedWords...)
+	}
+	return banned, nil
+}
+
+// composedText is the result of the compose step: the body a worker will post,
+// and the pool variant it came from. TemplateID is empty for a like and for an
+// operator-supplied body, and it rides the payload so the worker echoes it back
+// on every callback — that echo is the only path by which action_log.template_id
+// gets a value, and without it the 7-day per-target dedupe (PickForTarget joins
+// action_log on template_id) can never see a variant as used.
+type composedText struct {
+	text       string
+	templateID string
 }
 
 // publish serialises the job exactly as the worker's ActionJob expects and
 // appends it to that worker's durable queue (FIFO).
-func (s *ActionScheduler) publish(ctx context.Context, job domain.ActionJob, acc domain.Account, workerID, targetURL, text string) error {
+func (s *ActionScheduler) publish(ctx context.Context, job domain.ActionJob, acc domain.Account, workerID, targetURL string, text composedText) error {
 	if s.transport == nil {
 		return errors.New("transport not configured")
 	}
 	payload, err := json.Marshal(workerActionJob{
-		ID:        job.ID,
-		AccountID: job.AccountID,
-		Platform:  string(acc.Platform),
-		Action:    actionName(job.Type),
-		TargetURL: targetURL,
-		Text:      text,
-		Attempt:   job.Attempts,
+		ID:         job.ID,
+		AccountID:  job.AccountID,
+		Platform:   string(acc.Platform),
+		Action:     actionName(job.Type),
+		TargetURL:  targetURL,
+		Text:       text.text,
+		TemplateID: text.templateID,
+		Attempt:    job.Attempts,
 	})
 	if err != nil {
 		return fmt.Errorf("marshal action job: %w", err)
@@ -377,16 +472,19 @@ func (s *ActionScheduler) fail(ctx context.Context, job domain.ActionJob, reason
 
 // workerActionJob is the wire shape the worker BLPOPs. Kept here so the
 // scheduler is the only place that decides what a worker sees. Text is the
-// already-composed, denylist-screened comment body; the worker never composes
-// or screens, only posts what it was given (ADR 0011: policy in the API).
+// composed, denylist-screened comment body — the worker never composes or
+// screens, only posts what it was given (ADR 0011: policy in the API).
+// TemplateID is the pool variant that produced the text, echoed back on the
+// callback so action_log records it; empty when the body is operator-supplied.
 type workerActionJob struct {
-	ID        string `json:"id"`
-	AccountID string `json:"accountId"`
-	Platform  string `json:"platform"`
-	Action    string `json:"action"`
-	TargetURL string `json:"targetUrl"`
-	Text      string `json:"text,omitempty"`
-	Attempt   int    `json:"attempt"`
+	ID         string `json:"id"`
+	AccountID  string `json:"accountId"`
+	Platform   string `json:"platform"`
+	Action     string `json:"action"`
+	TargetURL  string `json:"targetUrl"`
+	Text       string `json:"text,omitempty"`
+	TemplateID string `json:"templateId,omitempty"`
+	Attempt    int    `json:"attempt"`
 }
 
 // accountPaceKey is the fixed sentinel "target" the per-account pacing gate

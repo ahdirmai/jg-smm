@@ -2,7 +2,6 @@ package repository
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
@@ -20,13 +19,7 @@ func newTemplateTestRepo(t *testing.T) (*TemplateRepo, *ActionRepo) {
 	if testing.Short() {
 		t.Skip("skipping db integration test in -short mode")
 	}
-	if os.Getenv("SMM_TEST_DB") != "1" {
-		t.Skip("set SMM_TEST_DB=1 to run repository integration tests")
-	}
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://smm:smm@localhost:24543/smm?sslmode=disable"
-	}
+	dsn := testDSN(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	pool, err := pgxpool.New(ctx, dsn)
@@ -245,4 +238,161 @@ func TestTemplateSchemaGuards(t *testing.T) {
 	}); err == nil {
 		t.Fatal("expected error for declared-but-unused var, got nil")
 	}
+}
+
+// TestTemplateDedupeSeesDispatchRecordedVariant is the M-2 acceptance at the DB
+// layer: the variant is recorded the way the scheduler records it — a job row
+// whose template_id is written at dispatch (SetActionJobTemplate), then an
+// action_log row carrying the id the worker echoed back — and a second
+// PickForTarget for the same target must then treat it as used.
+//
+// Before the fix neither write carried an id, so action_log.template_id was
+// always NULL, the NOT EXISTS in PickForTarget was never satisfied, and a
+// second pick returned the full pool.
+func TestTemplateDedupeSeesDispatchRecordedVariant(t *testing.T) {
+	tplRepo, actionRepo := newTemplateTestRepo(t)
+	ctx := context.Background()
+	pool := testPool(t)
+
+	accountID := p2SeedAccount(t, pool, "act-tpl2-"+p2Suffix(t))
+	target := p3SeedTarget(t, pool, "tgt-tpl2-"+p2Suffix(t))
+	workerID := p3SeedWorker(t, pool, "wrk-tpl2-"+p2Suffix(t))
+
+	picked, err := tplRepo.CreateTemplate(ctx, domain.CommentTemplate{
+		Platform: domain.PlatformInstagram,
+		Text:     "the only variant",
+		Weight:   1,
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// Before any dispatch the pool holds the variant.
+	before, err := tplRepo.PickForTarget(ctx, domain.PlatformInstagram, target)
+	if err != nil {
+		t.Fatalf("pick before: %v", err)
+	}
+	if len(before) != 1 {
+		t.Fatalf("a fresh target must see the variant, got %d", len(before))
+	}
+
+	if _, err := actionRepo.CreateActionJob(ctx, domain.ActionJob{
+		Type:      domain.JobTypeActionComment,
+		TargetID:  target,
+		AccountID: accountID,
+	}); err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+	claimed, err := actionRepo.ClaimNextActionJob(ctx, accountID, workerID)
+	if err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+
+	// The dispatch hop: the scheduler records the variant it picked.
+	if err := actionRepo.SetActionJobTemplate(ctx, claimed.ID, picked.ID); err != nil {
+		t.Fatalf("set job template: %v", err)
+	}
+	stored, err := actionRepo.GetActionJob(ctx, claimed.ID)
+	if err != nil {
+		t.Fatalf("get job: %v", err)
+	}
+	if stored.TemplateID != picked.ID {
+		t.Fatalf("job row must record the variant, got %q", stored.TemplateID)
+	}
+
+	// The callback hop: the worker echoes the same id back, and it lands on the
+	// log row the dedupe joins on.
+	if _, err := actionRepo.UpsertActionLog(ctx, domain.ActionLog{
+		ActionJobID:  claimed.ID,
+		Attempt:      claimed.Attempts,
+		Status:       domain.AttemptSuccess,
+		WorkerID:     workerID,
+		TemplateID:   picked.ID,
+		RenderedText: "the only variant",
+	}); err != nil {
+		t.Fatalf("upsert log: %v", err)
+	}
+	log, err := actionRepo.GetActionLog(ctx, claimed.ID, claimed.Attempts)
+	if err != nil {
+		t.Fatalf("get log: %v", err)
+	}
+	if log.TemplateID != picked.ID {
+		t.Fatalf("action_log.template_id must be populated, got %q", log.TemplateID)
+	}
+
+	// The dedupe now bites: the same (platform, target) pool is empty.
+	after, err := tplRepo.PickForTarget(ctx, domain.PlatformInstagram, target)
+	if err != nil {
+		t.Fatalf("pick after: %v", err)
+	}
+	if len(after) != 0 {
+		t.Fatalf("a used variant must be excluded for the target, got %d", len(after))
+	}
+}
+
+// TestSetPendingActionJobsScheduledAtMovesEveryPendingRow is the M-4 statement
+// against real SQL: one UPDATE pulls every PENDING row to one instant, and the
+// count is the number of distinct rows, none moved twice.
+func TestSetPendingActionJobsScheduledAtMovesEveryPendingRow(t *testing.T) {
+	_, actionRepo := newTemplateTestRepo(t)
+	ctx := context.Background()
+	pool := testPool(t)
+
+	accountID := p2SeedAccount(t, pool, "act-runpending-"+p2Suffix(t))
+	workerID := p3SeedWorker(t, pool, "wrk-runpending-"+p2Suffix(t))
+	t0 := time.Now().UTC().Add(-time.Hour)
+
+	// Two batches with different scheduled_at, one full page apart.
+	total := 0
+	makeBatch := func(prefix string, at time.Time, n int) {
+		for i := 0; i < n; i++ {
+			tgt := p3SeedTarget(t, pool, prefix+"-"+p2Suffix(t))
+			if _, err := actionRepo.CreateActionJob(ctx, domain.ActionJob{
+				Type:        domain.JobTypeActionComment,
+				TargetID:    tgt,
+				AccountID:   accountID,
+				ScheduledAt: at,
+			}); err != nil {
+				t.Fatalf("create %s job %d: %v", prefix, i, err)
+			}
+			total++
+		}
+	}
+	makeBatch("rp-a", t0, 55)
+	makeBatch("rp-b", t0.Add(10*time.Second), 45)
+
+	now := time.Now().UTC()
+	moved, err := actionRepo.SetPendingActionJobsScheduledAt(ctx, now)
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if moved != int64(total) {
+		t.Fatalf("swept %d rows, want %d distinct", moved, total)
+	}
+	// A second press moves the same rows again (idempotent, still all of them).
+	again, err := actionRepo.SetPendingActionJobsScheduledAt(ctx, now)
+	if err != nil {
+		t.Fatalf("second sweep: %v", err)
+	}
+	if again != int64(total) {
+		t.Fatalf("second sweep moved %d rows, want %d", again, total)
+	}
+
+	// Every row, both batches, is due now — the half the paged loop never
+	// reached (batch B) included.
+	pending, err := actionRepo.ListActionJobsByStatus(ctx, domain.JobStatusPending, nil, nil)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(pending) != total {
+		t.Fatalf("want %d pending rows, got %d", total, len(pending))
+	}
+	for _, j := range pending {
+		// Postgres stores microsecond precision; compare at that granularity
+		// rather than nanosecond, or the truncation reads as a failure.
+		if !j.ScheduledAt.Truncate(time.Microsecond).Equal(now.Truncate(time.Microsecond)) {
+			t.Fatalf("job %s still at %v, want %v", j.ID, j.ScheduledAt, now)
+		}
+	}
+	_ = workerID
 }

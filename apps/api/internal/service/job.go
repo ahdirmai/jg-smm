@@ -99,6 +99,13 @@ type AttemptRecord struct {
 	// RenderedText is the final comment text the worker posted; the log stores
 	// it so a verdict is replayable without the template pool.
 	RenderedText *string
+	// TemplateID is the pool variant the job's text came from, echoed back from
+	// the dispatched job. It is what makes the 7-day per-target dedupe real:
+	// PickForTarget joins action_log on template_id, so a log row without one
+	// leaves the variant looking unused and the pool free to hand the same
+	// comment to every account on the same post. Nil for an operator body and
+	// for a like — there is no variant to name.
+	TemplateID *string
 	// ResponseExcerpt is the first runes of the platform response (debug trail).
 	ResponseExcerpt *string
 	// DurationMs is the measured run time of the attempt.
@@ -159,6 +166,7 @@ func (s *JobService) RecordAttempt(ctx context.Context, r AttemptRecord) error {
 		Status:          r.Status,
 		Verified:        r.Status == domain.AttemptSuccess,
 		WorkerID:        derefStrPtr(r.WorkerID),
+		TemplateID:      derefStrPtr(r.TemplateID),
 		RenderedText:    derefStrPtr(r.RenderedText),
 		ResponseExcerpt: derefStrPtr(r.ResponseExcerpt),
 		ErrorClass:      string(r.ErrorClass),

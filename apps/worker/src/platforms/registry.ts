@@ -4,7 +4,7 @@
  *
  * All seven platforms have an adapter so the OTP-over-web surface (login URL,
  * proof cookies, 2FA detect/submit) is uniform across the fleet. Only Instagram
- * and Threads carry *real* like/comment/verify automation, though — the other
+ * and Threads carry *real* like/comment automation, though — the other
  * five are honest stubs (see `stub.ts`). `automatedPlatforms()` is the single
  * source of that distinction, so callers never imply the stubs work.
  */
@@ -30,7 +30,7 @@ const ADAPTERS: Partial<Record<Platform, PlatformAdapter>> = {
 };
 
 /**
- * Platforms whose like/comment/verify automation is real (the MVP rollout).
+ * Platforms whose like/comment automation is real (the MVP rollout).
  * The others are registered and OTP-capable but their actions are stubs, so a
  * caller wanting to promise "this will execute" must gate on this set.
  */
@@ -46,7 +46,7 @@ export function supportedPlatforms(): Platform[] {
   return Object.keys(ADAPTERS) as Platform[];
 }
 
-/** True when the platform's like/comment/verify automation is real, not a stub. */
+/** True when the platform's like/comment automation is real, not a stub. */
 export function isFullyAutomated(platform: Platform): boolean {
   return AUTOMATED.has(platform);
 }

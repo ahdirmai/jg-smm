@@ -169,7 +169,7 @@ func TestActionEnqueueCreatesPendingJobs(t *testing.T) {
 
 	jobs, err := svc.Enqueue(t.Context(), []ActionItem{
 		{AccountID: "acc-1", TargetURL: "https://www.instagram.com/p/abc/", Type: domain.JobTypeActionLike},
-		{AccountID: "acc-1", TargetURL: "https://www.threads.net/p/def/", Type: domain.JobTypeActionComment},
+		{AccountID: "acc-1", TargetURL: "https://www.instagram.com/p/def/", Type: domain.JobTypeActionComment},
 	})
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
@@ -194,6 +194,51 @@ func TestActionEnqueueCreatesPendingJobs(t *testing.T) {
 	}
 	if jobs[0].ID == jobs[1].ID {
 		t.Error("two jobs share an ID; list pairing would be ambiguous")
+	}
+}
+
+// A target must live on its own platform's host. The worker opens this URL in
+// the account's live, session-hydrated browser, so accepting an arbitrary host
+// turns `act` into "navigate the authenticated browser anywhere" — e.g. at the
+// cloud metadata endpoint — and the evidence screenshot would be the response
+// body.
+func TestActionEnqueueRejectsForeignAndInternalHosts(t *testing.T) {
+	for _, tc := range []struct{ name, url string }{
+		{"cross-platform", "https://www.threads.net/p/def/"},
+		{"cloud metadata", "http://169.254.169.254/latest/meta-data/"},
+		{"loopback", "http://127.0.0.1:8080/internal/action-callback"},
+		{"file scheme", "file:///etc/passwd"},
+		{"lookalike host", "https://instagram.com.evil.test/p/abc/"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newActionStore()
+			accs := &actionAccounts{acc: domain.Account{Platform: domain.PlatformInstagram, Status: domain.AccountActive}}
+			svc := newActionService(store, accs, &actionTargets{ups: targetUpsert{id: "tgt-1"}})
+			if _, err := svc.Enqueue(t.Context(), []ActionItem{
+				{AccountID: "acc-1", TargetURL: tc.url, Type: domain.JobTypeActionLike},
+			}); !errors.Is(err, domain.ErrValidation) {
+				t.Fatalf("enqueue(%q) err = %v, want ErrValidation", tc.url, err)
+			}
+		})
+	}
+}
+
+// A reply must address a specific comment. A bare post permalink used to be
+// accepted, and the worker then replied to whichever comment owned the first
+// Reply button on the page.
+func TestActionEnqueueRejectsReplyWithoutCommentID(t *testing.T) {
+	store := newActionStore()
+	accs := &actionAccounts{acc: domain.Account{Platform: domain.PlatformInstagram, Status: domain.AccountActive}}
+	svc := newActionService(store, accs, &actionTargets{ups: targetUpsert{id: "tgt-1"}})
+	if _, err := svc.Enqueue(t.Context(), []ActionItem{
+		{AccountID: "acc-1", TargetURL: "https://www.instagram.com/p/abc/", Type: domain.JobTypeActionReplyComment},
+	}); !errors.Is(err, domain.ErrValidation) {
+		t.Fatal("a reply to a bare post permalink must be rejected")
+	}
+	if _, err := svc.Enqueue(t.Context(), []ActionItem{
+		{AccountID: "acc-1", TargetURL: "https://www.instagram.com/p/abc/c/1789xyz/", Type: domain.JobTypeActionReplyComment},
+	}); err != nil {
+		t.Fatalf("a reply to a comment permalink must be accepted: %v", err)
 	}
 }
 

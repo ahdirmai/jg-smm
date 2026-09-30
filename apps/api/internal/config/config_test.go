@@ -206,3 +206,50 @@ func TestLoad_ReportEmailOptIn(t *testing.T) {
 		t.Fatal("want error for negative REPORT_EMAIL_WINDOW_DAYS")
 	}
 }
+
+// TestLoad_ScrapeRateLimit pins the ceiling on the two endpoints that spend
+// money. The default is deliberately 0 = no ceiling, so the self-hosted path is
+// unchanged; a deployment that wants the guard sets the pair. The failure mode
+// this guards is an unset variable silently becoming "refuse everything", which
+// is why SetSpendLimit treats <= 0 as unlimited rather than as a budget of zero.
+func TestLoad_ScrapeRateLimit(t *testing.T) {
+	t.Setenv("PROVISIONER_MODE", "")
+	t.Setenv("SCRAPE_RATE_LIMIT", "")
+	t.Setenv("SCRAPE_RATE_LIMIT_WINDOW_SECONDS", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.ScrapeRateLimit != 0 {
+		t.Errorf("default SCRAPE_RATE_LIMIT = %d, want 0 (no ceiling)", cfg.ScrapeRateLimit)
+	}
+	if cfg.ScrapeRateLimitWindowSeconds != 60 {
+		t.Errorf("default window = %d, want 60", cfg.ScrapeRateLimitWindowSeconds)
+	}
+
+	// Both are env-overridable.
+	t.Setenv("SCRAPE_RATE_LIMIT", "20")
+	t.Setenv("SCRAPE_RATE_LIMIT_WINDOW_SECONDS", "120")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.ScrapeRateLimit != 20 || cfg.ScrapeRateLimitWindowSeconds != 120 {
+		t.Errorf("overridden ceiling = %d/%ds, want 20/120s", cfg.ScrapeRateLimit, cfg.ScrapeRateLimitWindowSeconds)
+	}
+}
+
+// A negative limit or a sub-second window is a config mistake, not a policy.
+func TestLoad_ScrapeRateLimitRejectsGarbage(t *testing.T) {
+	t.Setenv("PROVISIONER_MODE", "")
+	t.Setenv("SCRAPE_RATE_LIMIT", "-1")
+	if _, err := Load(); err == nil {
+		t.Fatal("want error for negative SCRAPE_RATE_LIMIT")
+	}
+
+	t.Setenv("SCRAPE_RATE_LIMIT", "5")
+	t.Setenv("SCRAPE_RATE_LIMIT_WINDOW_SECONDS", "0")
+	if _, err := Load(); err == nil {
+		t.Fatal("want error for SCRAPE_RATE_LIMIT_WINDOW_SECONDS < 1")
+	}
+}

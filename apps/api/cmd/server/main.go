@@ -138,7 +138,7 @@ func main() {
 		logRepo := repository.NewProvisionLogRepo(pg.Queries())
 		actionRepo := repository.NewActionRepo(pg.Queries())
 		jobSvc := service.NewJobService(workerRepo, accountRepo, logRepo, actionRepo, adapter.SystemClock{}, hub, metrics, logger)
-		deps.Internal = apihttp.NewInternalHandler(jobSvc)
+		deps.Internal = apihttp.NewInternalHandler(jobSvc, cfg.InternalAPISecret)
 
 		// One live-view port allocator for both paths: the manual container API
 		// and the packer's AUTO fallback. Sharing it is what keeps a manual
@@ -337,8 +337,18 @@ func main() {
 			)
 			kwSvc := service.NewKeywordScrapeService(scrapeRepo, runner, searchActorForPlatform(cfg), rawStorage, logger)
 			kwSvc.SetBatchStore(repository.NewKeywordBatchRepo(pg.Queries()))
+			scrapeSvc := service.NewScrapeService(scrapeRepo, runner, actorForPlatform(cfg), rawStorage, logger)
+			// The two endpoints that spend money share one per-caller ceiling.
+			// SCRAPE_RATE_LIMIT=0 leaves them unlimited, which is the self-hosted
+			// default; a deployment that wants the guard sets it once.
+			if cfg.ScrapeRateLimit > 0 {
+				w := time.Duration(cfg.ScrapeRateLimitWindowSeconds) * time.Second
+				scrapeSvc.SetSpendLimit(cfg.ScrapeRateLimit, w)
+				kwSvc.SetSpendLimit(cfg.ScrapeRateLimit, w)
+				logger.Info("scrape spend ceiling enabled", "limit", cfg.ScrapeRateLimit, "window", w)
+			}
 			deps.Scrapes = apihttp.NewScrapeHandler(
-				service.NewScrapeService(scrapeRepo, runner, actorForPlatform(cfg), rawStorage, logger),
+				scrapeSvc,
 				kwSvc,
 				gen,
 			)
@@ -375,6 +385,11 @@ func main() {
 				adapter.NewRateLimiter(redisClient, "smm:ratelimit"),
 				publisher,
 				actionTexts,
+				// The same pool read the composer uses: composeText needs it to
+				// screen an operator-supplied body against the denylists the
+				// pool declares, so the operator branch is held to the same
+				// rules the pick is.
+				repository.NewTemplateRepo(pg.Queries()),
 				service.ActionSchedulerConfig{
 					TickBudget:  cfg.ActionBatchParallelism * 10,
 					Cooldown:    time.Duration(cfg.ActionCooldownSeconds) * time.Second,
@@ -534,15 +549,16 @@ func provisionDriver(ctx context.Context, cfg config.Config, workers port.Worker
 		// (REMEDIATION_PLAN §1.5): k8s stays the production path.
 		logger.Info("provisioner: docker driver", "socket", cfg.DockerSocket, "network", cfg.DockerNetwork)
 		return dockerprovisioner.New(dockerprovisioner.Config{
-			SocketPath: cfg.DockerSocket,
-			Network:    cfg.DockerNetwork,
-			Image:      cfg.WorkerImage,
-			PublicHost: cfg.DockerPublicHost,
-			PortMin:    cfg.NovncPortMin,
-			PortMax:    cfg.NovncPortMax,
-			Platforms:  cfg.WorkerPlatforms,
-			DryRun:     cfg.ActionDryRun,
-			Logger:     logger,
+			SocketPath:     cfg.DockerSocket,
+			Network:        cfg.DockerNetwork,
+			Image:          cfg.WorkerImage,
+			PublicHost:     cfg.DockerPublicHost,
+			PortMin:        cfg.NovncPortMin,
+			PortMax:        cfg.NovncPortMax,
+			Platforms:      cfg.WorkerPlatforms,
+			DryRun:         cfg.ActionDryRun,
+			InternalSecret: cfg.InternalAPISecret,
+			Logger:         logger,
 		})
 	default:
 		logger.Info("provisioner: static driver (no cluster); scale locally with docker compose")

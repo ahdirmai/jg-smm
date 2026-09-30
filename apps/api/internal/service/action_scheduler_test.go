@@ -121,7 +121,44 @@ func (c *schedComposer) Pick(_ context.Context, _ domain.Platform, _ string, val
 	return PickOutcome{TemplateID: "tmpl-1", RenderedText: c.text}, nil
 }
 
+// schedTemplates is a scripted port.TemplateStore for the scheduler's operator-
+// text screen (M-1). Only the pool read is implemented: the scheduler never
+// writes templates, and a screen test needs nothing else from the interface.
+type schedTemplates struct {
+	rows []domain.CommentTemplate
+	err  error
+}
+
+func (s *schedTemplates) ListTemplates(_ context.Context, platform domain.Platform, _ bool, _, _ *int) ([]domain.CommentTemplate, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	out := make([]domain.CommentTemplate, 0, len(s.rows))
+	for _, t := range s.rows {
+		if t.Platform == platform {
+			out = append(out, t)
+		}
+	}
+	return out, nil
+}
+
+func (s *schedTemplates) CreateTemplate(_ context.Context, t domain.CommentTemplate) (domain.CommentTemplate, error) {
+	return t, nil
+}
+func (s *schedTemplates) GetTemplate(_ context.Context, _ string) (domain.CommentTemplate, error) {
+	return domain.CommentTemplate{}, domain.ErrNotFound
+}
+func (s *schedTemplates) UpdateTemplate(_ context.Context, t domain.CommentTemplate) (domain.CommentTemplate, error) {
+	return t, nil
+}
+func (s *schedTemplates) DeleteTemplate(_ context.Context, _ string) error { return nil }
+func (s *schedTemplates) PickForTarget(_ context.Context, _ domain.Platform, _ string) ([]domain.CommentTemplate, error) {
+	return nil, nil
+}
+
 // newSched builds a scheduler over the scripted fakes with deterministic time.
+// templates is the pool read the operator-text screen needs; nil means "no
+// denylist source available", which composeText treats as "compose instead".
 func newSched(t *testing.T, actions *fakeActionStore, cd *schedCooldown, lm *schedLimits, tr *schedTransport, composer narrowComposer) *ActionScheduler {
 	t.Helper()
 	now := time.Unix(2_000_000, 0).UTC()
@@ -129,7 +166,7 @@ func newSched(t *testing.T, actions *fakeActionStore, cd *schedCooldown, lm *sch
 		actions,
 		&schedAccounts{workerID: "worker-1"},
 		&schedTargets{url: "https://instagram.com/p/x"},
-		composer, cd, lm, tr, nil,
+		composer, cd, lm, tr, nil, nil,
 		ActionSchedulerConfig{
 			TickBudget: 5,
 			Cooldown:   60 * time.Second,
@@ -199,7 +236,7 @@ func TestActionSchedulerAccountPaceBlocks(t *testing.T) {
 		store,
 		&schedAccounts{workerID: "worker-1"},
 		&schedTargets{url: "https://instagram.com/p/x"},
-		nil, cd, lm, tr, nil,
+		nil, cd, lm, tr, nil, nil,
 		ActionSchedulerConfig{
 			TickBudget:  5,
 			Cooldown:    60 * time.Second,
@@ -235,7 +272,7 @@ func TestActionSchedulerAccountPaceAllowsWhenFree(t *testing.T) {
 		store,
 		&schedAccounts{workerID: "worker-1"},
 		&schedTargets{url: "https://instagram.com/p/x"},
-		nil, cd, lm, tr, nil,
+		nil, cd, lm, tr, nil, nil,
 		ActionSchedulerConfig{
 			TickBudget:  5,
 			Cooldown:    60 * time.Second,
@@ -549,5 +586,161 @@ func TestActionSchedulerEmptyPoolFailsNotLoops(t *testing.T) {
 	}
 	if len(store.rescheduled) != 0 {
 		t.Fatalf("an empty pool must not loop forever, got %v", store.rescheduled)
+	}
+}
+
+// --- M-1: the operator-supplied body is screened too -----------------------
+
+// A per-account body supplied through POST /api/actions is held to the same
+// denylist a composed one is. The screen used to live only inside the template
+// pick, so the operator branch returned the stored body verbatim: the same word
+// that was rejected inside a template was published and posted live when typed
+// by an operator.
+func TestActionSchedulerScreensOperatorSuppliedText(t *testing.T) {
+	store := newFakeActionStore()
+	store.logByAttempt = map[string]domain.ActionLog{}
+	cd := &schedCooldown{allow: true}
+	lm := &schedLimits{allow: true}
+	tr := &schedTransport{}
+	texts := newFakeActionText()
+
+	s := newSched(t, store, cd, lm, tr, nil)
+	s.texts = texts
+	// The pool declares what may not be said; an operator body has no variant of
+	// its own to carry a denylist, so every declared pattern is enforced on it.
+	s.templates = &schedTemplates{rows: []domain.CommentTemplate{
+		{ID: "tmpl-a", Platform: domain.PlatformInstagram, BannedWords: []string{`cheap\s+followers`}},
+	}}
+
+	seedPending(store, "job-op-banned")
+	texts.byJob["job-op-banned"] = "buy cheap followers now"
+
+	if err := s.Tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if len(tr.jobs) != 0 {
+		t.Fatalf("an operator body on the denylist must never reach a worker queue, got %d", len(tr.jobs))
+	}
+	if len(store.completed) != 1 || store.completed[0].status != domain.JobStatusFailed {
+		t.Fatalf("the job must be failed terminally, got %v", store.completed)
+	}
+	if store.completed[0].err == nil || !strings.Contains(*store.completed[0].err, "banned") {
+		t.Fatalf("the failure must name the denylist, got %v", store.completed[0].err)
+	}
+	if cd.calls != 0 || len(lm.platforms) != 0 {
+		t.Fatalf("a banned body must spend no budget, got cooldown=%d rate=%v", cd.calls, lm.platforms)
+	}
+}
+
+// The same body with a clean screen still ships: the fix rejects the word, not
+// the operator flow.
+func TestActionSchedulerShipsCleanOperatorSuppliedText(t *testing.T) {
+	store := newFakeActionStore()
+	store.logByAttempt = map[string]domain.ActionLog{}
+	tr := &schedTransport{}
+	texts := newFakeActionText()
+
+	s := newSched(t, store, &schedCooldown{allow: true}, &schedLimits{allow: true}, tr, nil)
+	s.texts = texts
+	s.templates = &schedTemplates{rows: []domain.CommentTemplate{
+		{ID: "tmpl-a", Platform: domain.PlatformInstagram, BannedWords: []string{"followers"}},
+	}}
+	seedPending(store, "job-op-clean")
+	texts.byJob["job-op-clean"] = "what a shot"
+
+	if err := s.Tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if len(tr.jobs) != 1 {
+		t.Fatalf("a clean operator body must publish, got %d", len(tr.jobs))
+	}
+	if tr.jobs[0].Text != "what a shot" {
+		t.Fatalf("the operator body must ride the payload verbatim, got %q", tr.jobs[0].Text)
+	}
+	// No variant produced it, so nothing may claim one.
+	if tr.jobs[0].TemplateID != "" {
+		t.Fatalf("an operator body must not claim a template id, got %q", tr.jobs[0].TemplateID)
+	}
+}
+
+// With no pool read wired the screen has no rules to apply. Shipping the body
+// anyway would silently re-open the hole, so the scheduler composes instead.
+func TestActionSchedulerOperatorTextWithoutTemplateStoreComposes(t *testing.T) {
+	store := newFakeActionStore()
+	store.logByAttempt = map[string]domain.ActionLog{}
+	tr := &schedTransport{}
+	texts := newFakeActionText()
+
+	s := newSched(t, store, &schedCooldown{allow: true}, &schedLimits{allow: true}, tr,
+		&schedComposer{text: "composed instead"})
+	s.texts = texts
+	seedPending(store, "job-op-nostore")
+	texts.byJob["job-op-nostore"] = "an unscreened operator body"
+
+	if err := s.Tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if len(tr.jobs) != 1 {
+		t.Fatalf("the job must still ship, got %d", len(tr.jobs))
+	}
+	if tr.jobs[0].Text != "composed instead" {
+		t.Fatalf("with no denylist source the scheduler must compose, got %q", tr.jobs[0].Text)
+	}
+}
+
+// --- M-2: the template id reaches the job, the payload and the log ---------
+
+// The variant chosen for a comment rides the payload so the worker can echo it
+// back, and is written onto the job row. action_log.template_id is the only
+// thing the 7-day per-target dedupe joins on, and it was never populated.
+func TestActionSchedulerCarriesTemplateID(t *testing.T) {
+	store := newFakeActionStore()
+	store.logByAttempt = map[string]domain.ActionLog{}
+	tr := &schedTransport{}
+	s := newSched(t, store, &schedCooldown{allow: true}, &schedLimits{allow: true}, tr,
+		&schedComposer{text: "nice post"})
+
+	seedPending(store, "job-tmpl")
+
+	if err := s.Tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if len(tr.jobs) != 1 {
+		t.Fatalf("one job must reach the transport, got %d", len(tr.jobs))
+	}
+	if tr.jobs[0].TemplateID != "tmpl-1" {
+		t.Fatalf("the payload must carry the chosen template id, got %q", tr.jobs[0].TemplateID)
+	}
+	// The job row is the queue-side half of the record: the log row is written
+	// by the callback, and the callback can only echo what it was sent.
+	var found bool
+	for _, j := range store.pending {
+		if j.ID == "job-tmpl" {
+			found = true
+			if j.TemplateID != "tmpl-1" {
+				t.Fatalf("the job row must record the template id, got %q", j.TemplateID)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("job row disappeared")
+	}
+}
+
+// A like composes nothing, so it must not carry or claim a template id.
+func TestActionSchedulerLikeCarriesNoTemplateID(t *testing.T) {
+	store := newFakeActionStore()
+	store.logByAttempt = map[string]domain.ActionLog{}
+	tr := &schedTransport{}
+	s := newSched(t, store, &schedCooldown{allow: true}, &schedLimits{allow: true}, tr,
+		&schedComposer{text: "irrelevant"})
+	seedPending(store, "job-like-tmpl")
+	store.pending[0].Type = domain.JobTypeActionLike
+
+	if err := s.Tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if len(tr.jobs) != 1 || tr.jobs[0].TemplateID != "" {
+		t.Fatalf("a like must carry no template id, got %+v", tr.jobs)
 	}
 }

@@ -19,10 +19,23 @@ type ActionStore interface {
 	GetActionJob(ctx context.Context, id string) (domain.ActionJob, error)
 	ClaimNextActionJob(ctx context.Context, accountID, workerID string) (domain.ActionJob, error)
 	CompleteActionJob(ctx context.Context, id string, status domain.JobStatus, errMsg *string) (domain.ActionJob, error)
+	// SetActionJobTemplate records which template produced a job's text, once a
+	// template exists to record. The row is created before the text is composed,
+	// so this is a post-claim write rather than an INSERT field.
+	SetActionJobTemplate(ctx context.Context, id, templateID string) error
 	RescheduleActionJob(ctx context.Context, id string, scheduledAt time.Time) (domain.ActionJob, error)
+	// SetPendingActionJobsScheduledAt pulls every PENDING job forward to one
+	// instant in a single statement and reports how many rows moved. It is the
+	// whole of "run pending now": paging a set while rewriting its sort key is
+	// how the previous implementation both double-counted and skipped rows.
+	SetPendingActionJobsScheduledAt(ctx context.Context, scheduledAt time.Time) (int64, error)
 	ListActionJobs(ctx context.Context, limit, offset *int) ([]domain.ActionJob, error)
 	ListActionJobsByStatus(ctx context.Context, status domain.JobStatus, limit, offset *int) ([]domain.ActionJob, error)
 	ListActionJobsByAccount(ctx context.Context, accountID string, limit, offset *int) ([]domain.ActionJob, error)
+	// SweepStaleRunningJobs requeues jobs stuck in RUNNING for longer than
+	// staleAfter. A worker that dies before its callback leaves no other
+	// writer, so without this a job is stranded in "Verifying" permanently.
+	SweepStaleRunningJobs(ctx context.Context, staleAfter time.Duration) (int64, error)
 
 	// Action logs (the verdict). UpsertActionLog is the callback heart: RUNNING
 	// and its terminal verdict write the same (job, attempt) row.

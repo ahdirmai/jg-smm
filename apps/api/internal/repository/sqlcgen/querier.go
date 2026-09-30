@@ -62,6 +62,10 @@ type Querier interface {
 	// Terminal transition. The caller has already written the ActionLog row; this
 	// only projects the verdict onto the job so the queue can be listed without
 	// joining the log.
+	//
+	// The status guard is load-bearing: /internal/* is machine ingress, so a
+	// replayed or forged callback must not be able to re-open or re-grade a job
+	// that already reached a terminal state.
 	CompleteActionJob(ctx context.Context, arg CompleteActionJobParams) (ActionJob, error)
 	CompleteScrapeJob(ctx context.Context, arg CompleteScrapeJobParams) (ScrapeJob, error)
 	CountAccountsByWorker(ctx context.Context, workerID pgtype.UUID) (int64, error)
@@ -273,6 +277,10 @@ type Querier interface {
 	PickForTarget(ctx context.Context, arg PickForTargetParams) ([]CommentTemplate, error)
 	// Backoff/jitter path (P3-11): the attempt failed with a retryable class, so
 	// the job goes back to PENDING at a future scheduled_at for the next tick.
+	// Also serves "run pending now", where the row is already PENDING.
+	//
+	// Same guard as CompleteActionJob: a SUCCESS/FAILED/CANCELLED job is terminal
+	// and must never be pushed back into the queue.
 	RescheduleActionJob(ctx context.Context, arg RescheduleActionJobParams) (ActionJob, error)
 	// Moves a job back into the queue at a later time. Used by the scheduler's
 	// backoff/jitter path: the job is set PENDING and its scheduled_at pushed out,
@@ -280,6 +288,25 @@ type Querier interface {
 	RescheduleScrapeJob(ctx context.Context, arg RescheduleScrapeJobParams) (ScrapeJob, error)
 	RevokeAllUserSessions(ctx context.Context, arg RevokeAllUserSessionsParams) error
 	RevokeAuthSession(ctx context.Context, arg RevokeAuthSessionParams) error
+	// Records the pool variant a job's text came from. Written at dispatch, after
+	// the composer picks: the job row is created before any text exists (an
+	// operator body, or a variant drawn at dispatch time), so this cannot be an
+	// INSERT-time field. action_log.template_id is written separately from the
+	// worker's callback echo; this is the queue-side projection of the same fact.
+	SetActionJobTemplate(ctx context.Context, arg SetActionJobTemplateParams) error
+	// "Run pending now": pull every PENDING row forward to one instant. One
+	// statement, not a paged LIMIT/OFFSET walk — the walk ordered by scheduled_at
+	// and then rewrote scheduled_at, re-sorting the set it was walking, so the
+	// second page re-read rows the first page had already moved and the rows behind
+	// them were never reached. Terminal and RUNNING rows are untouched; a PENDING
+	// row already at $1 is rewritten to the same value.
+	SetPendingActionJobsScheduledAt(ctx context.Context, scheduledAt pgtype.Timestamptz) (int64, error)
+	// One lost callback (OOM-killed worker, container evicted mid-action) leaves a
+	// job RUNNING forever: ClaimNextActionJob only selects PENDING, and Retry only
+	// accepts FAILED, so the queue shows it stuck in "Verifying" with no way out.
+	// Requeue it; the attempt counter is already bumped, so the existing
+	// max-attempts ceiling in the scheduler bounds how often this can fire.
+	SweepStaleRunningJobs(ctx context.Context, dollar_1 int32) (int64, error)
 	// P2-05 aggregation: top-100 posts by a metric over a trailing window, via a
 	// continuous-look-alike query on the latest snapshot per post.
 	TopPostsByMetric(ctx context.Context, arg TopPostsByMetricParams) ([]TopPostsByMetricRow, error)
@@ -327,6 +354,11 @@ type Querier interface {
 	// filter on `ts >= X` alone is enough for chunk exclusion; the upper bound is
 	// stated explicitly so `time_bucket_gapfill` can infer its range).
 	UpsertAnalyticsSnapshot(ctx context.Context, arg UpsertAnalyticsSnapshotParams) (AnalyticsSnapshot, error)
+	// parent_id is deliberately NOT overwritten. The Instagram actor does not
+	// return a parent reference, so EXCLUDED.parent_id is always NULL: keeping
+	// `parent_id = EXCLUDED.parent_id` made every re-scrape erase a link that some
+	// other writer had established. Drop the assignment once the parser can supply
+	// one; until then, absence of data must not mean "erase what exists".
 	UpsertComment(ctx context.Context, arg UpsertCommentParams) (Comment, error)
 	// Per-content metrics are a lifetime gauge, so a re-ingest refreshes the row
 	// for a media id in place. The unique index on

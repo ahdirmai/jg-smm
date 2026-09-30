@@ -51,7 +51,7 @@ const claimed = await claimRow(
     sessionPvc: process.env.SESSION_PVC,
     novncUrl: config.novncUrl,
   },
-  { apiUrl: config.apiUrl, logger },
+  { apiUrl: config.apiUrl, logger, internalSecret: config.internalSecret },
 );
 // The resolved id is what the rest of the process addresses; the boot id is
 // kept only for the log line above and the fallback in claim.ts.
@@ -81,6 +81,7 @@ const control = createControlSubscriber(config.redisUrl, workerId, logger);
 // keeps the real device position (see geolocation.ts).
 const geolocation = createGeolocation({
   apiUrl: config.apiUrl,
+  internalSecret: config.internalSecret,
   workerId,
   logger,
   initial: claimedLocation ?? undefined,
@@ -265,7 +266,6 @@ async function runActionLoop(): Promise<void> {
       await callback.post({
         jobId: job.id,
         accountId: job.accountId,
-        workerId: config.workerId,
         attempt: job.attempt,
         status: 'success',
         durationMs: 0,

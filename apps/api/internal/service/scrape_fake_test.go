@@ -16,27 +16,35 @@ import (
 // tests. It implements exactly the methods the scheduler calls, plus the list
 // helpers; a nil-safe zero value is not needed because every test builds one.
 type fakeScrapeStore struct {
-	mu         sync.Mutex
-	targets    map[string]domain.Target
-	posts      map[string]domain.Post
-	comments   map[string]domain.Comment
-	jobs       []domain.ScrapeJob
-	snapshots  []domain.MetricSnapshot
-	payloads   map[string][]byte // s3 key -> body
-	runPayload map[string][]string
-	claimCalls int
+	mu           sync.Mutex
+	targets      map[string]domain.Target
+	posts        map[string]domain.Post
+	comments     map[string]domain.Comment
+	jobs         []domain.ScrapeJob
+	runs         map[string]domain.ApifyRun
+	snapshots    []domain.MetricSnapshot
+	payloads     map[string][]byte // s3 key -> body
+	payloadBytes map[string]int64  // s3 key -> bytes reported at write time
+	runPayload   map[string][]string
+	claimCalls   int
 	// failSnapshotFor, when set, makes CreateMetricSnapshot fail for this one
 	// post id — a failure-injection hook for the aggregator's per-post skip.
 	failSnapshotFor string
+	// completeErr, when set, makes CompleteScrapeJob fail — a hook for the
+	// cancelled-request path, where the real store's context-error return is the
+	// whole point.
+	completeErr error
 }
 
 func newFakeScrapeStore() *fakeScrapeStore {
 	return &fakeScrapeStore{
-		targets:    map[string]domain.Target{},
-		posts:      map[string]domain.Post{},
-		comments:   map[string]domain.Comment{},
-		payloads:   map[string][]byte{},
-		runPayload: map[string][]string{},
+		targets:      map[string]domain.Target{},
+		posts:        map[string]domain.Post{},
+		comments:     map[string]domain.Comment{},
+		runs:         map[string]domain.ApifyRun{},
+		payloads:     map[string][]byte{},
+		payloadBytes: map[string]int64{},
+		runPayload:   map[string][]string{},
 	}
 }
 
@@ -295,6 +303,9 @@ func (f *fakeScrapeStore) RescheduleScrapeJob(ctx context.Context, id string, sc
 func (f *fakeScrapeStore) CompleteScrapeJob(ctx context.Context, id string, status domain.JobStatus, err *string) (domain.ScrapeJob, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.completeErr != nil {
+		return domain.ScrapeJob{}, f.completeErr
+	}
 	for i, j := range f.jobs {
 		if j.ID == id {
 			f.jobs[i].Status = status
@@ -312,17 +323,56 @@ func (f *fakeScrapeStore) CreateApifyRun(ctx context.Context, r domain.ApifyRun)
 	if r.ID == "" {
 		r.ID = fakeID("run", r.ActorID+":"+r.RunID+":"+r.Status)
 	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.runs[r.ID] = r
 	return r, nil
 }
+
+// UpdateApifyRun mutates the stored row rather than echoing the argument. It
+// used to return r unchanged after recording nothing, which made the fake
+// structurally incapable of observing whether a run was ever closed — the
+// reason a run left RUNNING on every failure path (M-7) had no test.
 func (f *fakeScrapeStore) UpdateApifyRun(ctx context.Context, r domain.ApifyRun, finished bool) (domain.ApifyRun, error) {
-	return r, nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	cur, ok := f.runs[r.ID]
+	if !ok {
+		return domain.ApifyRun{}, domain.ErrNotFound
+	}
+	if r.Status != "" {
+		cur.Status = r.Status
+	}
+	// COALESCE semantics: an empty id leaves the stored value alone (the row is
+	// created before the actor reports its run id).
+	if r.RunID != "" {
+		cur.RunID = r.RunID
+	}
+	if finished {
+		now := time.Now().UTC()
+		cur.FinishedAt = &now
+	}
+	f.runs[r.ID] = cur
+	return cur, nil
 }
 func (f *fakeScrapeStore) CreateRawPayload(ctx context.Context, p domain.RawPayload) (domain.RawPayload, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.payloads[p.S3Key] = nil
 	f.runPayload[p.ApifyRunID] = append(f.runPayload[p.ApifyRunID], p.S3Key)
+	if p.Bytes != 0 {
+		f.payloadBytes[p.S3Key] = p.Bytes
+	}
 	return p, nil
+}
+
+// payloadBytesOf reports the size CreateRawPayload was handed for a key. The
+// fake records it because raw_payload.bytes is otherwise written as a
+// constant 0 and no test could tell a real size from a placeholder.
+func (f *fakeScrapeStore) payloadBytesOf(key string) int64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.payloadBytes[key]
 }
 func (f *fakeScrapeStore) ListRawPayloadsByRunID(ctx context.Context, runID string) ([]string, error) {
 	f.mu.Lock()

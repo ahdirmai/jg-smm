@@ -25,7 +25,12 @@ SET text               = EXCLUDED.text,
     metrics            = EXCLUDED.metrics,
     scraped_at         = now(),
     author_account_id  = EXCLUDED.author_account_id,
-    published_at        = COALESCE(EXCLUDED.published_at, post.published_at)
+    published_at        = COALESCE(EXCLUDED.published_at, post.published_at),
+    -- author_handle used to be insert-only, so a rename (or a bad first write)
+    -- was permanent. It is not cosmetic: postPermalink builds TikTok and X URLs
+    -- out of it, so a stale handle is a permalink that 404s forever. The
+    -- CHECK (author_handle <> '') already keeps an empty value out.
+    author_handle       = EXCLUDED.author_handle
 RETURNING id, platform, external_id, author_handle, author_id, text, media_urls,
           metrics, scraped_at, author_account_id, published_at;
 
@@ -79,7 +84,14 @@ ON CONFLICT (platform, external_id) DO UPDATE
 SET text       = EXCLUDED.text,
     metrics    = EXCLUDED.metrics,
     scraped_at = now(),
-    parent_id  = EXCLUDED.parent_id
+    -- Same reason as UpsertPost: a handle correction must not be frozen at the
+    -- value the first scrape happened to see.
+    author_handle = EXCLUDED.author_handle
+-- parent_id is deliberately NOT overwritten. The Instagram actor does not
+-- return a parent reference, so EXCLUDED.parent_id is always NULL: keeping
+-- `parent_id = EXCLUDED.parent_id` made every re-scrape erase a link that some
+-- other writer had established. Drop the assignment once the parser can supply
+-- one; until then, absence of data must not mean "erase what exists".
 RETURNING id, post_id, platform, external_id, author_handle, text, metrics,
           scraped_at, parent_id;
 
@@ -88,7 +100,7 @@ SELECT id, post_id, platform, external_id, author_handle, text, metrics,
        scraped_at, parent_id
 FROM comment
 WHERE post_id = $1
-ORDER BY scraped_at DESC
+ORDER BY scraped_at DESC, id
 LIMIT $2 OFFSET $3;
 
 -- name: CountCommentsByPost :one

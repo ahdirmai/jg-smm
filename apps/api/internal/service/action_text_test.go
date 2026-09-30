@@ -30,7 +30,7 @@ func (f *fakeActionText) Get(_ context.Context, jobID string) (string, bool, err
 // reads it at dispatch instead of composing from a template.
 func TestActionEnqueueStoresPerAccountText(t *testing.T) {
 	store := newActionStore()
-	accs := &actionAccounts{}
+	accs := &actionAccounts{acc: domain.Account{Platform: domain.PlatformInstagram, Status: domain.AccountActive}}
 	texts := newFakeActionText()
 	svc := NewActionService(store, accs, &actionTargets{ups: targetUpsert{id: "tgt-1"}}, fixedClock{}, nil, texts, nil, nil)
 
@@ -85,5 +85,55 @@ func TestActionEnqueueRejectsTooLongText(t *testing.T) {
 	})
 	if !errors.Is(err, domain.ErrValidation) {
 		t.Fatalf("want ErrValidation for over-long text, got %v", err)
+	}
+}
+
+// --- M-3: a newline in the body is rejected, not silently posted in halves --
+
+// The worker types the body with pressSequentially, where "\n" is an Enter
+// keypress: "Great shot!\nDM me at foo@bar" submits "Great shot!", clears the
+// composer, types the rest into the fresh one and abandons it — then reports
+// SUCCESS with the full two-line string as renderedText, a string that was
+// never posted. Rejected at the boundary instead.
+func TestActionEnqueueRejectsNewlineInText(t *testing.T) {
+	for name, body := range map[string]string{
+		"newline":         "Great shot!\nDM me at foo@bar",
+		"carriage return": "Great shot!\rDM me at foo@bar",
+		"crlf":            "Great shot!\r\nDM me at foo@bar",
+	} {
+		t.Run(name, func(t *testing.T) {
+			store := newActionStore()
+			texts := newFakeActionText()
+			svc := NewActionService(store, &actionAccounts{acc: domain.Account{Platform: domain.PlatformInstagram, Status: domain.AccountActive}}, &actionTargets{ups: targetUpsert{id: "tgt-1"}}, fixedClock{}, nil, texts, nil, nil)
+
+			_, err := svc.Enqueue(context.Background(), []ActionItem{
+				{AccountID: "acct-1", TargetURL: "https://instagram.com/p/abc", Type: domain.JobTypeActionComment, Text: body},
+			})
+			if !errors.Is(err, domain.ErrValidation) {
+				t.Fatalf("want ErrValidation for %q, got %v", body, err)
+			}
+			// Nothing may have been written: the batch is all-or-nothing.
+			if len(store.pending) != 0 || len(texts.byJob) != 0 {
+				t.Fatalf("a rejected body must not be stored, jobs=%d texts=%v", len(store.pending), texts.byJob)
+			}
+		})
+	}
+}
+
+// The rejection is for the newline, not for multi-word text: a one-line body
+// still enqueues.
+func TestActionEnqueueAcceptsSingleLineText(t *testing.T) {
+	store := newActionStore()
+	texts := newFakeActionText()
+	svc := NewActionService(store, &actionAccounts{acc: domain.Account{Platform: domain.PlatformInstagram, Status: domain.AccountActive}}, &actionTargets{ups: targetUpsert{id: "tgt-1"}}, fixedClock{}, nil, texts, nil, nil)
+
+	jobs, err := svc.Enqueue(context.Background(), []ActionItem{
+		{AccountID: "acct-1", TargetURL: "https://instagram.com/p/abc", Type: domain.JobTypeActionComment, Text: "Great shot! DM me at foo@bar"},
+	})
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("want 1 job, got %d", len(jobs))
 	}
 }

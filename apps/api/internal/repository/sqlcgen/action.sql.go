@@ -66,6 +66,7 @@ SET status      = $2,
     finished_at = now(),
     error       = $3
 WHERE id = $1
+  AND status IN ('PENDING', 'RUNNING')
 RETURNING id, type, target_id, account_id, worker_id, status, scheduled_at, started_at, finished_at, attempts, error, created_at, template_id
 `
 
@@ -78,6 +79,10 @@ type CompleteActionJobParams struct {
 // Terminal transition. The caller has already written the ActionLog row; this
 // only projects the verdict onto the job so the queue can be listed without
 // joining the log.
+//
+// The status guard is load-bearing: /internal/* is machine ingress, so a
+// replayed or forged callback must not be able to re-open or re-grade a job
+// that already reached a terminal state.
 func (q *Queries) CompleteActionJob(ctx context.Context, arg CompleteActionJobParams) (ActionJob, error) {
 	row := q.db.QueryRow(ctx, completeActionJob, arg.ID, arg.Status, arg.Error)
 	var i ActionJob
@@ -496,6 +501,7 @@ SET status       = 'PENDING',
     scheduled_at = $2,
     finished_at  = NULL
 WHERE id = $1
+  AND status IN ('PENDING', 'RUNNING')
 RETURNING id, type, target_id, account_id, worker_id, status, scheduled_at, started_at, finished_at, attempts, error, created_at, template_id
 `
 
@@ -506,6 +512,10 @@ type RescheduleActionJobParams struct {
 
 // Backoff/jitter path (P3-11): the attempt failed with a retryable class, so
 // the job goes back to PENDING at a future scheduled_at for the next tick.
+// Also serves "run pending now", where the row is already PENDING.
+//
+// Same guard as CompleteActionJob: a SUCCESS/FAILED/CANCELLED job is terminal
+// and must never be pushed back into the queue.
 func (q *Queries) RescheduleActionJob(ctx context.Context, arg RescheduleActionJobParams) (ActionJob, error) {
 	row := q.db.QueryRow(ctx, rescheduleActionJob, arg.ID, arg.ScheduledAt)
 	var i ActionJob
@@ -525,6 +535,68 @@ func (q *Queries) RescheduleActionJob(ctx context.Context, arg RescheduleActionJ
 		&i.TemplateID,
 	)
 	return i, err
+}
+
+const setActionJobTemplate = `-- name: SetActionJobTemplate :exec
+UPDATE action_job
+SET template_id = $2
+WHERE id = $1
+`
+
+type SetActionJobTemplateParams struct {
+	ID         pgtype.UUID `json:"id"`
+	TemplateID pgtype.UUID `json:"template_id"`
+}
+
+// Records the pool variant a job's text came from. Written at dispatch, after
+// the composer picks: the job row is created before any text exists (an
+// operator body, or a variant drawn at dispatch time), so this cannot be an
+// INSERT-time field. action_log.template_id is written separately from the
+// worker's callback echo; this is the queue-side projection of the same fact.
+func (q *Queries) SetActionJobTemplate(ctx context.Context, arg SetActionJobTemplateParams) error {
+	_, err := q.db.Exec(ctx, setActionJobTemplate, arg.ID, arg.TemplateID)
+	return err
+}
+
+const setPendingActionJobsScheduledAt = `-- name: SetPendingActionJobsScheduledAt :execrows
+UPDATE action_job
+SET scheduled_at = $1
+WHERE status = 'PENDING'
+`
+
+// "Run pending now": pull every PENDING row forward to one instant. One
+// statement, not a paged LIMIT/OFFSET walk — the walk ordered by scheduled_at
+// and then rewrote scheduled_at, re-sorting the set it was walking, so the
+// second page re-read rows the first page had already moved and the rows behind
+// them were never reached. Terminal and RUNNING rows are untouched; a PENDING
+// row already at $1 is rewritten to the same value.
+func (q *Queries) SetPendingActionJobsScheduledAt(ctx context.Context, scheduledAt pgtype.Timestamptz) (int64, error) {
+	result, err := q.db.Exec(ctx, setPendingActionJobsScheduledAt, scheduledAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const sweepStaleRunningJobs = `-- name: SweepStaleRunningJobs :execrows
+UPDATE action_job
+SET status       = 'PENDING',
+    scheduled_at = now()
+WHERE status     = 'RUNNING'
+  AND started_at < now() - make_interval(mins => $1::int)
+`
+
+// One lost callback (OOM-killed worker, container evicted mid-action) leaves a
+// job RUNNING forever: ClaimNextActionJob only selects PENDING, and Retry only
+// accepts FAILED, so the queue shows it stuck in "Verifying" with no way out.
+// Requeue it; the attempt counter is already bumped, so the existing
+// max-attempts ceiling in the scheduler bounds how often this can fire.
+func (q *Queries) SweepStaleRunningJobs(ctx context.Context, dollar_1 int32) (int64, error) {
+	result, err := q.db.Exec(ctx, sweepStaleRunningJobs, dollar_1)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const upsertActionLog = `-- name: UpsertActionLog :one

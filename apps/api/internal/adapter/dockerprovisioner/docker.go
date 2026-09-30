@@ -36,16 +36,17 @@ const (
 // Client talks to a local Docker daemon. It is one more port.K8sClient peer —
 // the reconciler and services never branch on the tier.
 type Client struct {
-	http       *http.Client
-	endpoint   string // scheme+host for the socket-muxed transport, not a real URL
-	network    string // compose network the worker joins to reach api/redis/minio.
-	image      string
-	publicHost string // host the browser resolves; becomes NOVNC_URL.
-	portMin    int
-	portMax    int
-	platforms  string
-	dryRun     bool
-	logger     *slog.Logger
+	http           *http.Client
+	endpoint       string // scheme+host for the socket-muxed transport, not a real URL
+	network        string // compose network the worker joins to reach api/redis/minio.
+	image          string
+	publicHost     string // host the browser resolves; becomes NOVNC_URL.
+	portMin        int
+	portMax        int
+	platforms      string
+	dryRun         bool
+	internalSecret string
+	logger         *slog.Logger
 }
 
 // Config tunes the driver.
@@ -69,7 +70,11 @@ type Config struct {
 	Platforms string
 	// DryRun keeps the worker from committing real actions (like/comment).
 	DryRun bool
-	Logger *slog.Logger
+	// InternalSecret is handed to the container so it can authenticate on the
+	// API's /internal routes. Empty leaves the API's guard disabled, which is
+	// only acceptable when the API port is unreachable off-host.
+	InternalSecret string
+	Logger         *slog.Logger
 }
 
 // DefaultNetwork matches the network `docker compose up` creates for this
@@ -108,16 +113,17 @@ func New(cfg Config) (*Client, error) {
 		},
 	}
 	return &Client{
-		http:       &http.Client{Transport: transport, Timeout: 60 * time.Second},
-		endpoint:   "http://docker",
-		network:    cfg.Network,
-		image:      cfg.Image,
-		publicHost: cfg.PublicHost,
-		portMin:    cfg.PortMin,
-		portMax:    cfg.PortMax,
-		platforms:  cfg.Platforms,
-		dryRun:     cfg.DryRun,
-		logger:     logger,
+		http:           &http.Client{Transport: transport, Timeout: 60 * time.Second},
+		endpoint:       "http://docker",
+		network:        cfg.Network,
+		image:          cfg.Image,
+		publicHost:     cfg.PublicHost,
+		portMin:        cfg.PortMin,
+		portMax:        cfg.PortMax,
+		platforms:      cfg.Platforms,
+		dryRun:         cfg.DryRun,
+		internalSecret: cfg.InternalSecret,
+		logger:         logger,
 	}, nil
 }
 
@@ -166,6 +172,9 @@ func (c *Client) CreateWorker(ctx context.Context, w domain.Worker) error {
 		"PLATFORMS=" + c.platforms,
 		"ACTION_DRY_RUN=" + boolStr(c.dryRun),
 		"NOVNC_URL=http://" + c.publicHost + ":" + fmt.Sprintf("%d", hostPort),
+	}
+	if c.internalSecret != "" {
+		env = append(env, "INTERNAL_API_SECRET="+c.internalSecret)
 	}
 	body := map[string]any{
 		"Image":  c.image,

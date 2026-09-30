@@ -2,6 +2,14 @@
  * The single adapter contract every platform implements (LSP). The controller
  * only ever talks to this interface, never to a platform's DOM details (DIP),
  * and adding a platform means adding a file + one registry entry (OCP).
+ *
+ * Verification is not a separate method: each action's own implementation
+ * confirms the effect before returning `ok: true` — `comment`/`replyComment`
+ * do it inline via `waitForCommentText` (dom.ts), which waits for the rendered
+ * text to appear in the feed. There is deliberately no `verify()` member: no
+ * caller ever invoked one, and a required-but-uncalled ground-truth method
+ * invites a platform author to implement only that and report success on a
+ * compose that never posted.
  */
 import type { BrowserContext } from 'playwright';
 
@@ -51,8 +59,6 @@ export interface PlatformAdapter {
   replyComment(ctx: BrowserContext, job: ActionJob): Promise<AdapterResult>;
   /** Like a comment on the target post (not the post itself). */
   likeComment(ctx: BrowserContext, job: ActionJob): Promise<AdapterResult>;
-  /** Confirm the effect actually landed (ground truth). */
-  verify(ctx: BrowserContext, job: ActionJob): Promise<AdapterResult>;
   /**
    * True when a 2FA / checkpoint field is showing and the operator must supply a
    * code. The Meta adapters use the shared default (`otpHandlers`); a platform

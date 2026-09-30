@@ -26,6 +26,7 @@ import { threadsAdapter } from '../platforms/threads.js';
 import {
   commentOnPost,
   likePost,
+  replyToComment,
   runAction,
   waitForCommentText,
   type DomDeps,
@@ -60,7 +61,30 @@ interface Story {
   submitLands: boolean;
   /** Whether the composer is mounted; false until the comment affordance is clicked. */
   composerOpen: boolean;
+  /** Text currently in the composer. Clears on a landed submit, like the real box. */
   composed: string;
+  /** Count of Reply-affordance clicks. H-2 asserts the guard blocks the click. */
+  replyClicks: number;
+  /** Capture the element the last call touched (`fill`/`pressSequentially`/`press`). */
+  lastTouched: string;
+  /**
+   * Story flips to the login route at reply-submit time, AFTER `openPost`'s
+   * pre-action guard already passed. Models the session dying mid-flow — the H-3
+   * case where the composer clears but the post never landed.
+   */
+  loginWallOnSubmit: boolean;
+  /** As above, for the "page isn't available" screen (H-3, second guard). */
+  unavailableOnSubmit: boolean;
+  /** Fails every candidate composer lookup (the "reply composer not found" path). */
+  composerMissing: boolean;
+  /** The reply box pre-fills this "@mention"; its presence proves a threaded box. */
+  mentionPrefill: string;
+  /** A mention is required for the composer to count as the threaded reply box. */
+  requireMention: boolean;
+  /** `pressSequentially` types into the box. False models a rollout that rejects it. */
+  sequentialTypes: boolean;
+  /** A submit has been attempted (flips the URL/body for the H-3 races). */
+  submitStarted: boolean;
 }
 
 function makeStory(over: Partial<Story> = {}): Story {
@@ -78,6 +102,15 @@ function makeStory(over: Partial<Story> = {}): Story {
     submitLands: true,
     composerOpen: true,
     composed: '',
+    replyClicks: 0,
+    lastTouched: '',
+    loginWallOnSubmit: false,
+    unavailableOnSubmit: false,
+    composerMissing: false,
+    mentionPrefill: '',
+    requireMention: false,
+    sequentialTypes: true,
+    submitStarted: false,
     ...over,
   };
 }
@@ -119,9 +152,21 @@ function fakePage(story: Story, sel: SelectorSet): Page {
   };
 
   const composer = (): Locator => {
+    // A landed submit does TWO observable things on the real page: the composer
+    // CLEARS, and the text renders in the FEED. The comment path verifies via the
+    // feed (`waitForCommentText`); the reply path verifies via the clear
+    // (`composerCleared`). The fake must produce both — clearing alone silently
+    // broke every comment test, because a fake that empties the box without
+    // rendering stops modelling a real submit.
+    const landed = (): void => {
+      story.feedText = story.composed;
+      story.composed = '';
+    };
     const loc: Locator = {
       count: async () => (story.composerOpen ? 1 : 0),
-      click: async () => undefined,
+      click: async () => {
+        story.lastTouched = 'composer';
+      },
       getAttribute: async () => null,
       // The IG/Threads composer is a contenteditable, not an <input>: real
       // Playwright `inputValue()` REJECTS on it, and `composerStillHas` relies on
@@ -131,12 +176,26 @@ function fakePage(story: Story, sel: SelectorSet): Page {
         throw new Error('Node is not an <input>, <textarea> or <select> element');
       },
       fill: async (text: string) => {
+        story.lastTouched = 'fill';
         story.composed = text;
       },
-      press: async () => {
-        if (story.pressLands) story.feedText = story.composed;
+      // The reply's MENTION model types with pressSequentially (fill() would
+      // wipe the prefilled "@mention"). Appends, like a real box. Without this
+      // method the reply path could not be driven at all.
+      pressSequentially: async (text: string) => {
+        story.lastTouched = 'pressSequentially';
+        if (story.sequentialTypes) story.composed += text;
       },
-      innerText: async () => story.composed,
+      press: async (key: string) => {
+        story.lastTouched = `press:${key}`;
+        // 'End' only moves the caret; a submit key accepts the composer and
+        // clears it. A rejected submit key leaves the text in place, which
+        // composerStillHas then reads — exactly the real guard's contract.
+        if (key === 'End') return;
+        story.submitStarted = true;
+        if (story.pressLands) landed();
+      },
+      innerText: async () => story.composed || story.mentionPrefill,
       first: () => loc,
       last: () => loc,
       filter: () => loc,
@@ -150,6 +209,29 @@ function fakePage(story: Story, sel: SelectorSet): Page {
       count: async () => 1,
       click: async () => {
         story.composerOpen = true;
+        // Threads has no separate replyButton, so its reply path falls back to
+        // THIS affordance (`sel.replyButton ?? sel.commentButton`); counting the
+        // click here is what lets the Threads reply test observe it.
+        story.replyClicks += 1;
+      },
+      getAttribute: async () => null,
+      fill: async () => undefined,
+      press: async () => undefined,
+      innerText: async () => story.feedText,
+      first: () => loc,
+      last: () => loc,
+      filter: () => loc,
+    } as unknown as Locator;
+    return loc;
+  };
+
+  // The per-comment Reply affordance. Its click is what H-2's guard is meant to
+  // block, so it counts every click — a test can then assert the guard held.
+  const replyButton = (): Locator => {
+    const loc: Locator = {
+      count: async () => 1,
+      click: async () => {
+        story.replyClicks += 1;
       },
       getAttribute: async () => null,
       fill: async () => undefined,
@@ -166,7 +248,13 @@ function fakePage(story: Story, sel: SelectorSet): Page {
     const loc: Locator = {
       count: async () => 1,
       click: async () => {
-        if (story.submitLands) story.feedText = story.composed;
+        story.lastTouched = 'submitButton';
+        // Same two effects as the keyboard path: render in the feed and clear
+        // the box. submitReply reads the clear; the comment path reads the feed.
+        if (story.submitLands) {
+          story.feedText = story.composed;
+          story.composed = '';
+        }
       },
       getAttribute: async () => null,
       fill: async () => undefined,
@@ -205,7 +293,14 @@ function fakePage(story: Story, sel: SelectorSet): Page {
       getAttribute: async () => null,
       fill: async () => undefined,
       press: async () => undefined,
-      innerText: async () => `${story.bodyText}\n${story.feedText}`,
+      innerText: async () => {
+        // unavailableOnSubmit flips the body to Meta's "isn't available" screen
+        // at reply-submit time — pageUnavailable reads exactly this.
+        if (story.unavailableOnSubmit && story.submitStarted) {
+          return `Sorry, this page isn't available.\n${story.bodyText}`;
+        }
+        return `${story.bodyText}\n${story.feedText}`;
+      },
       first: () => loc,
       last: () => loc,
       filter: () => loc,
@@ -217,6 +312,7 @@ function fakePage(story: Story, sel: SelectorSet): Page {
     if (selector === 'body') return body();
     if (selector === sel.likeButton) return likeButton();
     if (selector === sel.likeButtonActive) return plain(activeCount(story));
+    if (selector === sel.replyButton) return replyButton();
     if (selector === sel.commentButton) return commentButton();
     // The composer is a contenteditable on the current Meta rollout; the
     // textarea candidates are absent, so findComposer walks past them (this
@@ -229,6 +325,18 @@ function fakePage(story: Story, sel: SelectorSet): Page {
     return plain(1);
   };
 
+  // A story that fails every candidate composer lookup. `findComposer` skips a
+  // zero-count candidate immediately and burns its whole bound on the rest, so
+  // this is reached with the fastClock (one poll) rather than a real 8s wait.
+  const noComposer = (selector: string): Locator => {
+    if (selector === 'body') return body();
+    if (selector === sel.replyButton) return replyButton();
+    if (selector === sel.commentButton) return commentButton();
+    return plain(0);
+  };
+  const locate = (selector: string): Locator =>
+    story.composerMissing ? noComposer(selector) : resolveLocator(selector);
+
   // The like-button scope (IG action bar). likeRoot takes `.last()` of it and
   // resolves the like selectors within — so the scope delegates `.locator()`
   // straight back to the resolver, making scoping transparent to these tests
@@ -239,7 +347,7 @@ function fakePage(story: Story, sel: SelectorSet): Page {
       first: () => loc,
       last: () => loc,
       filter: () => loc,
-      locator: (s: string) => resolveLocator(s),
+      locator: (s: string) => locate(s),
     } as unknown as Locator;
     return loc;
   };
@@ -250,7 +358,15 @@ function fakePage(story: Story, sel: SelectorSet): Page {
       // content renders — the URL after navigation is what needsLogin sees.
       story.url = story.loginRedirect ? 'https://www.instagram.com/accounts/login/' : url;
     },
-    url: () => story.url,
+    url: () => {
+      // loginWallOnSubmit models the session dying MID-SUBMIT. It must not flip
+      // before the Reply click, or H-2's URL guard fires first and the test
+      // would exercise the wrong guard. page.goto already ran with the good URL.
+      if (story.loginWallOnSubmit && story.submitStarted) {
+        return 'https://www.instagram.com/accounts/login/';
+      }
+      return story.url;
+    },
     // In-page scripts (scrollToLoadComposer's scroll-to-bottom, deep-link
     // recovery probes) run against a real DOM in the browser; the fake has none,
     // so evaluate is a no-op. The flow treats it as best-effort (`.catch`), so a
@@ -258,8 +374,15 @@ function fakePage(story: Story, sel: SelectorSet): Page {
     evaluate: async () => undefined,
     waitForTimeout: async () => undefined,
     locator: (selector: string): Locator => {
+      if (story.requireMention && selector.includes('contenteditable')) {
+        // The MENTION model mounts the threaded reply box only after the Reply
+        // affordance was clicked. Modelled as an order-dependent mount, so a
+        // refactor that drops the Reply click loses the composer AND the
+        // mention and fails the test — it cannot pass by accident.
+        return story.replyClicks > 0 ? composer() : plain(0);
+      }
       if (sel.likeButtonScope && selector === sel.likeButtonScope) return scope();
-      return resolveLocator(selector);
+      return locate(selector);
     },
     close: async () => undefined,
   } as unknown as Page;
@@ -334,7 +457,12 @@ test('comment: text lands in the feed ⇒ ok + renderedText', async () => {
   const result = await commentOnPost(deps(story, job(), IG), 'great post');
   assert.equal(result.ok, true);
   assert.equal(result.renderedText, 'great post');
-  assert.equal(story.composed, 'great post', 'the composer was filled');
+  // The composer is EMPTY now and the text is in the feed — the two observable
+  // effects of a real landed submit. Asserting the composer still held the text
+  // was an artefact of the old fake never clearing; it proved the fill, not the
+  // submit, and would have passed on a submit that never happened.
+  assert.equal(story.composed, '', 'the composer cleared on the landed submit');
+  assert.equal(story.feedText, 'great post', 'the text rendered in the feed');
 });
 
 test('comment: text never lands ⇒ ok:false + screenshot', async () => {
@@ -361,7 +489,7 @@ test('comment: composer hidden until the affordance is clicked ⇒ ok', async ()
   const result = await commentOnPost(deps(story, job(), IG), 'great post');
   assert.equal(result.ok, true, 'the affordance was clicked and the composer filled');
   assert.equal(story.composerOpen, true, 'the comment affordance was clicked to reveal the composer');
-  assert.equal(story.composed, 'great post');
+  assert.equal(story.feedText, 'great post', 'the text landed in the feed after the submit');
 });
 
 test('comment: composer never appears ⇒ ok:false + screenshot', async () => {
@@ -520,4 +648,168 @@ test('runAction: a post whose body merely contains similar words is NOT gated', 
   const ctx = fakeContext(story, IG);
   const result = await runAction(ctx, 'instagram', job({ action: 'like' }), async () => ({ ok: true }));
   assert.equal(result.ok, true, 'a normal post still runs the action');
+});
+
+// --- reply: replyToComment + submitReply (L-6) ---------------------------
+//
+// These drive `replyToComment` directly rather than through `runAction`. That
+// is deliberate, not a shortcut: `runAction` runs needsLogin/pageUnavailable
+// BEFORE the action, so routing these through it would swallow the H-3 case —
+// the page dying *during* submit — and the test would pass on the pre-action
+// guard alone, never reaching the guard under test. The `reply_comment`
+// dispatch through the public interface is covered separately below.
+
+/** A reply job whose targetUrl carries the `/c/<id>/` comment permalink. */
+function replyJob(over: Partial<ActionJob> = {}): ActionJob {
+  return job({
+    action: 'reply_comment',
+    targetUrl: 'https://www.instagram.com/p/abc123/c/1789/',
+    text: 'nice one',
+    ...over,
+  });
+}
+
+test('replyToComment: refuses to click Reply when the URL no longer carries /c/<id> (H-2)', async () => {
+  // The comment vanished (deleted, or the permalink degraded to the post), so
+  // the page is on the bare post URL. Clicking `.first()` Reply here would
+  // answer whichever comment sits at the top of the DOM — a different person.
+  const story = makeStory({ url: 'https://www.instagram.com/p/abc123/' });
+  const result = await replyToComment(deps(story, replyJob(), IG), 'nice one');
+
+  assert.equal(result.ok, false);
+  assert.match(result.error ?? '', /no longer on the page/, 'names the comment it could not find');
+  assert.match(result.error ?? '', /1789/, 'and the id it was looking for');
+  assert.equal(story.replyClicks, 0, 'the Reply affordance was NEVER clicked');
+  assert.equal(story.composed, '', 'nothing was typed');
+});
+
+test('replyToComment: clicks Reply when the URL does carry /c/<id> (the guard is not a blanket refusal)', async () => {
+  // The positive case. Without it, a guard that refused EVERYTHING would still
+  // pass the test above — and a permanently broken reply path looks green.
+  const story = makeStory({
+    url: 'https://www.instagram.com/p/abc123/c/1789/',
+    mentionPrefill: '@someone',
+    requireMention: true,
+  });
+  const result = await replyToComment(deps(story, replyJob(), IG), 'nice one');
+
+  assert.equal(story.replyClicks, 1, 'the target comment Reply affordance was clicked');
+  assert.equal(story.composed, '', 'the submit cleared the composer');
+  assert.equal(result.ok, true, 'the reply path completes against the right comment');
+});
+
+test('replyToComment: submitReply fails when the session dies at submit time (H-3)', async () => {
+  // The URL is correct when the reply STARTS, so the H-2 guard passes and the
+  // Reply affordance is clicked. The session then dies mid-submit: the page
+  // flips to the login route and the composer clears — which, before H-3, was
+  // the ONLY success signal, so this reported ok:true on a reply that never
+  // posted. This asserts the login re-check now catches it.
+  const story = makeStory({
+    url: 'https://www.instagram.com/p/abc123/c/1789/',
+    mentionPrefill: '@someone',
+    requireMention: true,
+    loginWallOnSubmit: true,
+  });
+  const result = await replyToComment(deps(story, replyJob(), IG), 'nice one');
+
+  assert.equal(result.ok, false, 'a cleared composer on a login wall is NOT success');
+  assert.match(result.error ?? '', /login required/, 'reports the real cause (auth), not a submit failure');
+  assert.ok(result.screenshot, 'a failure carries a screenshot of the login page');
+  assert.equal(story.replyClicks, 1, 'the reply did start before the session died');
+});
+
+test('replyToComment: submitReply fails when the target goes unavailable at submit time (H-3)', async () => {
+  // Same shape as above via the second H-3 guard: the composer clears but the
+  // page is Meta's "isn't available" screen, so the text was never posted.
+  const story = makeStory({
+    url: 'https://www.instagram.com/p/abc123/c/1789/',
+    mentionPrefill: '@someone',
+    requireMention: true,
+    unavailableOnSubmit: true,
+  });
+  const result = await replyToComment(deps(story, replyJob(), IG), 'nice one');
+
+  assert.equal(result.ok, false, 'a cleared composer on a dead page is NOT success');
+  assert.match(result.error ?? '', /target unavailable/, 'names the target, not the composer');
+  assert.ok(result.screenshot);
+});
+
+test('replyToComment: a reply that never clears the composer is a failure, not a success', async () => {
+  // The inverse of H-3: guards are healthy, but the submit simply did not land.
+  // A fake whose composer kept the text would let this pass — this proves the
+  // "cleared → sent" signal is what submitReply actually reads.
+  const story = makeStory({
+    url: 'https://www.instagram.com/p/abc123/c/1789/',
+    mentionPrefill: '@someone',
+    requireMention: true,
+    pressLands: false,
+    submitLands: false,
+  });
+  const result = await replyToComment(deps(story, replyJob(), IG), 'nice one');
+
+  assert.equal(result.ok, false);
+  assert.match(result.error ?? '', /reply not submitted/, 'reports the composer never cleared');
+});
+
+test('replyToComment: the reply composer never mounting is a failure, never a phantom success', async () => {
+  const story = makeStory({
+    url: 'https://www.instagram.com/p/abc123/c/1789/',
+    composerMissing: true,
+  });
+  const result = await replyToComment(deps(story, replyJob(), IG), 'nice one');
+
+  assert.equal(result.ok, false);
+  assert.match(result.error ?? '', /reply composer not found/);
+  assert.equal(story.composed, '', 'nothing was typed');
+});
+
+test('adapter replyComment dispatches to the reply path through the public interface (L-6)', async () => {
+  // The dispatch half: `action: 'reply_comment'` must reach replyComment, which
+  // is what `dispatch` in controller.ts switches on. Before this, NO test
+  // exercised the reply action end to end, so a broken wiring was invisible.
+  const story = makeStory({
+    url: 'https://www.instagram.com/p/abc123/c/1789/',
+    mentionPrefill: '@someone',
+    requireMention: true,
+  });
+  const result = await instagramAdapter.replyComment(fakeContext(story, IG), replyJob());
+
+  assert.equal(result.ok, true, 'the reply posted through the public adapter');
+  assert.equal(story.replyClicks, 1, 'the target comment was the one replied to');
+});
+
+test('adapter replyComment: a deleted comment that lands on the post fails without clicking (H-2)', async () => {
+  // The refusal must survive the whole stack. Via openPost the browser REQUESTED
+  // the comment permalink, but IG served the bare post (deleted comment → 200 on
+  // the post URL, no "isn't available" copy). The guard reads page.url() after
+  // navigation, sees no /c/<id>, and refuses — so `.first()` Reply never fires.
+  const story = makeStory({ url: 'https://www.instagram.com/p/abc123/' });
+  const landedOnPost = {
+    ...story,
+  };
+  const page = fakePage(landedOnPost, IG);
+  // openPost would normally set the URL to what it requested; here the page
+  // stays on the post permalink, which is exactly the deleted-comment behaviour.
+  page.goto = (async () => null) as unknown as typeof page.goto;
+  const ctx = { newPage: async () => page } as unknown as BrowserContext;
+
+  const result = await instagramAdapter.replyComment(ctx, replyJob());
+
+  assert.equal(result.ok, false);
+  assert.match(result.error ?? '', /no longer on the page/, 'names the missing comment');
+  assert.equal(landedOnPost.replyClicks, 0, 'no Reply affordance was clicked');
+});
+
+test('threads replyComment: takes the PERMALINK model, no mention required (OCP)', async () => {
+  // Threads threads by the comment permalink and ships NO mention prefill, so
+  // the mention requirement must be IG-only. A shared helper that demanded a
+  // mention on both platforms would fail every Threads reply.
+  const story = makeStory({ url: 'https://www.threads.net/@user/post/xyz/c/42/' });
+  const result = await threadsAdapter.replyComment(
+    fakeContext(story, TH),
+    replyJob({ platform: 'threads', targetUrl: 'https://www.threads.net/@user/post/xyz/c/42/' }),
+  );
+
+  assert.equal(result.ok, true, 'a Threads reply needs no @mention');
+  assert.equal(story.replyClicks, 1);
 });
