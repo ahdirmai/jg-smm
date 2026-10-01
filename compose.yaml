@@ -140,7 +140,12 @@ services:
       JWT_ISSUER: ${JWT_ISSUER:-smm-api}
       CREDENTIAL_KEY: ${CREDENTIAL_KEY:-v0k2nMVGJAq5Ta69vg36gcxNB4wiClCeOFMC6WBemH8=}
       SECURE_COOKIES: ${SECURE_COOKIES:-false}
-      LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Machine credential for the /internal group: the shared secret a worker
+      # sends as X-Internal-Secret. Those routes carry no session and no RBAC
+      # (they are worker->API calls), so this is the only thing between the
+      # published API port and "mark this job SUCCESS". Empty disables the
+      # check, which is only safe while the API port is unreachable off-host.
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-}
       # P5-08 cost ceilings. 0 publishes no gauge and disables the budget alert;
       # set them in production so the 90% alert has a real number to divide.
       APIFY_BUDGET_USD: ${APIFY_BUDGET_USD:-0}
