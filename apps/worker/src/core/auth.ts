@@ -58,6 +58,9 @@ export interface AuthDeps {
   now?: () => number;
   /** Injectable hook to override the per-platform login URL (tests). */
   loginUrlFor?: (platform: Platform) => string;
+  /** Diagnostics sink: the operator only sees the final verdict, so the
+   * failure reason must at least reach the container log. */
+  log?: (msg: string, data?: Record<string, unknown>) => void;
 }
 
 /**
@@ -191,7 +194,13 @@ export async function runLogin(
   try {
     await page.goto(await loginUrlFor(platform, deps), { waitUntil: 'domcontentloaded' });
     return await waitForOutcome(accountId, platform, ctx, deps);
-  } catch {
+  } catch (err) {
+    // Swallowing this was the "login did not complete" mystery: the operator
+    // sees the verdict, the container log must carry the reason.
+    deps.log?.('auth-login: navigation or session probe failed', {
+      accountId,
+      error: err instanceof Error ? err.message : String(err),
+    });
     return failedResult(accountId);
   }
 }

@@ -136,6 +136,7 @@ setInterval(async () => {
 const authDeps = {
   browser,
   geolocation: () => geolocation.get(),
+  log: (msg: string, data?: Record<string, unknown>) => logger.warn(msg, data),
   workerId: config.workerId,
   ...(process.env.SCREENSHOT_DIR ? { screenshotDir: process.env.SCREENSHOT_DIR } : {}),
 };
