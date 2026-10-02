@@ -296,6 +296,10 @@ func (s *JobService) RecordAuthOutcome(ctx context.Context, o AuthOutcome) error
 		"authStatus", o.AuthStatus,
 		"handle", deref(o.Handle),
 	)
+	// Fan the new auth state out so a watching dashboard settles the row and
+	// its open detail panel without a manual refresh (ADR 0010: the worker's
+	// callback is the authority; the UI must not outlive it by one tick).
+	s.publishAccountView(ctx, acc)
 	return nil
 }
 

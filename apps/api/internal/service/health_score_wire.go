@@ -68,7 +68,7 @@ func (s *JobService) applyHealth(ctx context.Context, jobID string, r AttemptRec
 		s.logger.Warn("account auto-quarantined", "accountId", acc.ID, "score", acc.HealthScore, "errorClass", string(r.ErrorClass))
 	}
 	s.observeOutcome(acc, r)
-	s.publishAccountHealth(ctx, acc)
+	s.publishAccountView(ctx, acc)
 }
 
 // observeOutcome records the verdict as Prometheus metrics (P5-03): one counter
@@ -97,10 +97,10 @@ func (s *JobService) observeOutcome(acc domain.Account, r AttemptRecord) {
 	s.metrics.WorkerHealth.WithLabelValues(acc.ID, string(acc.Platform)).Set(float64(acc.HealthScore))
 }
 
-// publishAccountHealth fans the new health state to dashboards. Reuses the
+// publishAccountView fans the freshly-written row out to dashboards on the
 // account-updated channel: the row is the source of truth, so the browser just
 // reconciles the same way it does for a pause or a resume.
-func (s *JobService) publishAccountHealth(ctx context.Context, acc domain.Account) {
+func (s *JobService) publishAccountView(ctx context.Context, acc domain.Account) {
 	if s.stream == nil {
 		return
 	}

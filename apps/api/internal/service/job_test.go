@@ -114,3 +114,31 @@ func TestRecordAttemptPublishesActionFrame(t *testing.T) {
 		}
 	}
 }
+
+// TestRecordAuthOutcomePublishesAccountFrame pins the cockpit's live update:
+// the worker's auth callback must fan the row out on account-updated, or a
+// dashboard watching the login keeps showing the pre-callback state (the
+// panel says "the state settles when the worker reports back" — it must).
+func TestRecordAuthOutcomePublishesAccountFrame(t *testing.T) {
+	accounts := newFakeAccountStore()
+	accounts.seed(accountFixture("a-cb", domain.PlatformInstagram))
+	stream := &captureStream{}
+	svc := NewJobService(newFakeWorkerStore(), accounts, nil, nil, nil, stream, nil, nil)
+
+	if err := svc.RecordAuthOutcome(context.Background(), AuthOutcome{
+		AccountID:  "a-cb",
+		AuthStatus: domain.AuthNeedsInput,
+		Error:      strPtr("2FA required"),
+	}); err != nil {
+		t.Fatalf("RecordAuthOutcome: %v", err)
+	}
+	if got, _ := accounts.GetByID(context.Background(), "a-cb"); got.AuthStatus != domain.AuthNeedsInput {
+		t.Fatalf("authStatus = %q, want NEEDS_INPUT", got.AuthStatus)
+	}
+	for _, f := range stream.frames {
+		if f.kind == port.EventAccountUpdated && strings.Contains(f.body, `"id":"a-cb"`) {
+			return
+		}
+	}
+	t.Fatalf("no account-updated frame published; frames = %+v", stream.frames)
+}
