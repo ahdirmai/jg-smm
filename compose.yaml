@@ -34,7 +34,7 @@ services:
       retries: 10
 
   minio:
-    image: quay.io/minio/minio:RELEASE.2024-10-13T13-34-11Z
+    image: pgsty/minio:latest
     command: ['server', '/data', '--console-address', ':9001']
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-smm}
@@ -52,7 +52,7 @@ services:
 
   # Creates the buckets the API/workers expect. Idempotent.
   minio-init:
-    image: quay.io/minio/mc:RELEASE.2024-10-08T09-37-26Z
+    image: pgsty/mc:latest
     depends_on:
       minio:
         condition: service_healthy
@@ -237,6 +237,9 @@ services:
       S3_ENDPOINT: http://minio:9000
       ACTION_DRY_RUN: ${ACTION_DRY_RUN:-true}
       PLATFORMS: ${WORKER_PLATFORMS:-instagram,threads}
+      # Machine credential for the /internal routes. Empty (unset in .env)
+      # disables the guard on both sides, which is only safe off-host.
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-}
       # P4-08 live view. NOVNC_URL wins when the operator knows the exact
       # reachable address; NOVNC_BASE_URL + the container's NOVNC_PORT is the
       # shared-host form. Empty = unpublished; the dashboard disables the button.
