@@ -705,11 +705,12 @@ export default function AccountsPage() {
                                   </DropdownMenuItem>
                                 ) : null}
                                 {/*
-                              The live view is also reachable from the menu for an
-                              authenticated account, so an operator can still
-                              watch a running session without starting a login.
+                              The live view is reachable from the menu in any auth
+                              state as long as the worker publishes a noVNC URL: an
+                              operator can watch the browser on demand (e.g. to
+                              re-check a failed login) without starting a new one.
                             */}
-                                {a.authStatus === 'AUTHENTICATED' && novncFor(a) ? (
+                                {novncFor(a) ? (
                                   <DropdownMenuItem onClick={() => setDetail({ id: a.id, watch: true })}>
                                     <MonitorPlay />
                                     Live view
