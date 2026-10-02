@@ -8,28 +8,8 @@ import {
   DialogTitle,
 } from '@smm/ui';
 import { ExternalLink, MonitorPlay } from 'lucide-react';
-import { useEffect, useState } from 'react';
 
-/**
- * Turn a heartbeat URL into a noVNC client page the iframe can load directly.
- *
- * The heartbeat reports host:port (or a bare root), and noVNC serves a
- * directory listing there. `vnc.html` is the client; `autoconnect=1` skips the
- * Connect dialog so the screen streams immediately. A URL already pointing at
- * the client is left alone — only its query params are merged.
- */
-function novncClientUrl(url: string): string {
-  const cleaned = url.trim().replace(/\/+$/, '');
-  const qIndex = cleaned.indexOf('?');
-  const path = qIndex === -1 ? cleaned : cleaned.slice(0, qIndex);
-  const query = qIndex === -1 ? '' : cleaned.slice(qIndex + 1);
-  const params = new URLSearchParams(query);
-  params.set('autoconnect', '1');
-  if (!path.endsWith('vnc.html')) {
-    return `${path}/vnc.html?${params.toString()}`;
-  }
-  return `${path}?${params.toString()}`;
-}
+import { LiveView, novncClientUrl } from './live-view';
 
 /**
  * LiveBrowserModal (P4-08). Embeds a worker's noVNC view in an iframe so an
@@ -40,13 +20,11 @@ function novncClientUrl(url: string): string {
  * hidden rather than linking to a dead URL.
  *
  * The heartbeat publishes the *host:port*, not a path. noVNC's root is a
- * directory listing, so the client page is appended here (`vnc.html`) — one
- * normalization point, and the operator lands on the screen instead of a file
- * index they then have to click into. `autoconnect=1` takes it the rest of the
- * way: no "Connect" button, the framebuffer streams as soon as the socket is
- * up.
+ * directory listing, so the client page is appended in `novncClientUrl` and
+ * `autoconnect=1` takes the rest of the way: no "Connect" button, the
+ * framebuffer streams as soon as the socket is up.
  *
- * The iframe is only mounted while the modal is open — a hidden noVNC client
+ * `LiveView` is only mounted while the modal is open — a hidden noVNC client
  * still holds a websocket open and would pin a worker display forever.
  */
 export function LiveBrowserModal({
@@ -60,14 +38,6 @@ export function LiveBrowserModal({
   url: string;
   workerName: string;
 }) {
-  // Loaded only after the dialog is actually open, so a closed modal never
-  // opens a websocket to the worker.
-  const [src, setSrc] = useState<string | null>(null);
-  useEffect(() => {
-    if (open) setSrc(url ? novncClientUrl(url) : null);
-    else setSrc(null);
-  }, [open, url]);
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90vh] gap-0 overflow-hidden p-0 sm:max-w-[900px]">
@@ -81,7 +51,7 @@ export function LiveBrowserModal({
               </div>
             </div>
             <a
-              href={src ?? url}
+              href={url ? novncClientUrl(url) : undefined}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
@@ -91,16 +61,7 @@ export function LiveBrowserModal({
             </a>
           </div>
         </DialogHeader>
-        <div className="relative aspect-[16/10] w-full bg-black/95">
-          {src ? (
-            <iframe
-              src={src}
-              title={`Live browser — ${workerName}`}
-              className="absolute inset-0 size-full border-0"
-              allow="clipboard-read; clipboard-write"
-            />
-          ) : null}
-        </div>
+        {open ? <LiveView url={url} title={`Live browser — ${workerName}`} /> : null}
       </DialogContent>
     </Dialog>
   );
