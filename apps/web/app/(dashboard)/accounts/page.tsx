@@ -28,27 +28,18 @@ import {
 } from '@smm/ui';
 import {
   AlertCircle,
-  Archive,
-  AtSign,
   CheckCircle2,
-  Clock,
   ExternalLink,
-  Facebook,
-  Instagram,
   KeyRound,
-  Linkedin,
-  type LucideIcon,
   MonitorPlay,
   MoreVertical,
-  Music2,
   Pause,
   Play,
   Trash2,
-  Twitter,
   Upload,
   UserPlus,
   Users,
-  Youtube,
+  type LucideIcon,
 } from 'lucide-react';
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
@@ -67,103 +58,12 @@ import { can } from '@/lib/auth/permissions';
 // here as a third hand-typed copy of the same seven ids, alongside two in
 // accounts/new and lib/analytics-config. Keyed off lib/platforms.ts, an eighth
 // platform added to the backend cannot land in this page silently missing a
-// label. The icon map below stays local: this is its only consumer, and moving
-// it would drag lucide-react into every server component that imports the
-// lib for a one-line lookup.
+// label.
 import { PLATFORMS, PLATFORM_LABEL, platformLabel, type Platform } from '@/lib/platforms';
-
-/**
- * Per-platform glyph (DESIGN_SYSTEM principle 6: small monochrome icon in a
- * soft rounded square). lucide dropped brand marks for some networks, so the
- * fallback is the neutral @ rather than a missing icon.
- */
-const PLATFORM_ICON: Record<Platform, LucideIcon> = {
-  instagram: Instagram,
-  threads: AtSign,
-  facebook: Facebook,
-  tiktok: Music2,
-  linkedin: Linkedin,
-  x: Twitter,
-  youtube: Youtube,
-};
-
-function platformIcon(platform: string): LucideIcon {
-  return PLATFORM_ICON[platform as Platform] ?? AtSign;
-}
+import { AuthBadge, StatusBadge } from '@/components/account-badges';
+import { platformIcon } from '@/components/platform-icon';
 
 const STATUSES = ['PENDING', 'ACTIVE', 'PAUSED', 'QUARANTINED', 'DEAD', 'ARCHIVED'] as const;
-
-function statusTone(
-  status: Account['status'],
-): 'success' | 'outline' | 'secondary' | 'destructive' {
-  switch (status) {
-    case 'ACTIVE':
-      return 'success';
-    case 'PAUSED':
-      return 'secondary';
-    case 'ARCHIVED':
-    case 'DEAD':
-      return 'destructive';
-    default:
-      return 'outline';
-  }
-}
-
-function authTone(status: Account['authStatus']): 'success' | 'outline' | 'destructive' {
-  switch (status) {
-    case 'AUTHENTICATED':
-      return 'success';
-    case 'FAILED':
-      return 'destructive';
-    default:
-      return 'outline';
-  }
-}
-
-/**
- * Lifecycle glyph, same rule as `AuthBadge` below: §10 gives a tinted pill a
- * glyph *and* a label, and the two pills sit side by side in the table — one
- * with an icon and one without reads as an oversight, not a distinction.
- *
- * Keyed by string on purpose: the generated schema lags the API enum
- * (`domain/account.go` also has PENDING and QUARANTINED), so keying this off
- * `Account['status']` would be a lie the first time the schema is regenerated.
- * An unknown status falls back to a neutral glyph.
- */
-const STATUS_ICON: Record<string, LucideIcon> = {
-  PENDING: Clock,
-  ACTIVE: Play,
-  PAUSED: Pause,
-  QUARANTINED: AlertCircle,
-  DEAD: Trash2,
-  ARCHIVED: Archive,
-};
-
-/**
- * Auth pill. DESIGN_SYSTEM §10: a status colour never travels alone — every
- * tinted pill carries a glyph and a label, so the state survives a colourblind
- * read and a greyscale print.
- */
-function AuthBadge({ status }: { status: Account['authStatus'] }) {
-  const Icon = status === 'AUTHENTICATED' ? CheckCircle2 : KeyRound;
-  return (
-    <Badge variant={authTone(status)}>
-      <Icon className="size-3" />
-      {status}
-    </Badge>
-  );
-}
-
-/** Lifecycle pill; carries `STATUS_ICON` for the same reason `AuthBadge` does. */
-function StatusBadge({ status }: { status: Account['status'] }) {
-  const Icon = STATUS_ICON[status] ?? Clock;
-  return (
-    <Badge variant={statusTone(status)}>
-      <Icon className="size-3" />
-      {status}
-    </Badge>
-  );
-}
 
 /** One hero number (principle 4: number large and bold, label small beneath). */
 function Stat({
