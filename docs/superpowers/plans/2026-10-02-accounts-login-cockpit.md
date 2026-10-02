@@ -2,35 +2,30 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Consolidate the whole operator login lifecycle (start login, watch the live browser, send the 2FA/CAPTCHA code) into `/accounts` as a per-account detail drawer, replacing `window.prompt` and the scattered modals — so one page carries the entire flow.
+**Goal:** Consolidate the whole operator login lifecycle (start login, watch the live browser, send the 2FA/CAPTCHA code) into `/accounts` as a detail panel rendered in-page above the table, replacing `window.prompt` and the scattered modals — so one page carries the entire flow.
 
-**Architecture:** All backend contracts already exist (`POST /api/accounts/{id}/login`, `POST /api/accounts/{id}/input`, the account list with `authStatus`, the container list with `novncUrl`). This plan is web-only: it extracts reusable primitives (`LiveView`, shared badges, platform glyph) out of `live-browser-modal.tsx` and `accounts/page.tsx`, builds a right-anchored detail drawer (a `Dialog`, because `@smm/ui` ships no Sheet), and rewires the accounts table: row click → drawer, an auth-status filter, an action-first sort order, and a clickable "Needs input" stat.
+**Architecture:** All backend contracts already exist (`POST /api/accounts/{id}/login`, `POST /api/accounts/{id}/input`, the account list with `authStatus`, the container list with `novncUrl`). This plan is web-only: it extracts reusable primitives (`LiveView`, shared badges, platform glyph) out of `live-browser-modal.tsx` and `accounts/page.tsx`, renders a detail panel **directly on the page** (operator decision 2026-10-02: no modal, no overlay — the table stays in the same view and keeps updating while a login is in flight), and rewires the accounts table: row click selects/closes the panel, an auth-status filter, an action-first sort order, and a clickable "Needs input" stat. The standalone `LiveBrowserModal` remains on the Workers page only (container-level monitoring, not the account login flow).
 
 **Tech Stack:** Next.js 15, React client components, shadcn/ui via `@smm/ui` (Radix Dialog), Tailwind, lucide icons. No new dependencies.
 
 **Spec:** Operator requirement agreed 2026-10-02: *"semua prosesnya di /accounts agar mempermudah UI/UX; UI list account bisa diupdate."* Prior research in this session: worker auto-login + CAPTCHA handling (Work package 2 below, deferred).
 
 ## Global Constraints
-
+- The noVNC websocket must not be held while no panel is open: the iframe mounts only while the panel is rendered AND the live view is shown.
 - **No API / OpenAPI / DB changes in work package 1.** Every endpoint used already exists in `apps/web/lib/api.ts` (`startAccountLogin`, `submitAccountInput`, account + container lists).
-- The noVNC websocket must not be held while the drawer is closed: the iframe mounts only while the dialog is open AND the live view is shown.
-- Existing design system only (DESIGN_SYSTEM §10 / principle 6 as cited throughout `accounts/page.tsx`): tinted pills always carry a glyph + label, platform glyph is a monochrome icon in a soft rounded square, no new palette colors.
-- No new dependencies: `@smm/ui` has no Sheet/Drawer — the detail panel is a right-anchored `Dialog` (Radix Dialog is already a dependency).
-- Credentials and cookies never appear in the DOM or in logs; the drawer carries only `authStatus`, `username`, `handle`, `lastError` (already in the API response).
+- No new dependencies: `@smm/ui` has no Sheet/Drawer, and the overlay approach was rejected anyway — the panel is a plain `Card` section on the page.
+- Credentials and cookies never appear in the DOM or in logs; the panel carries only `authStatus`, `username`, `handle`, `lastError` (already in the API response).
 - One commit per task. `pnpm typecheck` and `pnpm lint` must pass at the end of each task.
 
 ## Review Focus
 
 The failure modes the requirement implies but no type-level check would catch — most dangerous first, each pinned by the browser smoke in Task 5:
 
-- **Row click double-firing.** The table row carries `onClick`; the checkbox and the dropdown must keep their existing `stopPropagation` pattern, and the new drawer must not inherit a second trigger. Clicking the checkbox selects without opening the drawer.
+- **Row click double-firing.** The table row carries `onClick`; the checkbox and the dropdown must keep their existing `stopPropagation` pattern, and the panel must not inherit a second trigger. Clicking the checkbox selects without opening the panel; clicking the selected row again closes it.
 - **Empty code submit.** The 2FA form must not fire `submitAccountInput` with an empty/whitespace-only value; the button is disabled on `code.trim() === ''`.
-- **Broken iframe when no live view is published yet.** A freshly created container has no `novncUrl` until its first heartbeat; the drawer must render a hint, not an empty/black iframe box.
+- **Broken iframe when no live view is published yet.** A freshly created container has no `novncUrl` until its first heartbeat; the panel must render a hint, not a dead black box.
 - **Stat click target.** "Needs input" must toggle the AUTH filter, not the lifecycle-status filter, and its count stays the fleet-wide NEEDS_INPUT number.
-- **Sort mutating the hook's array.** The filtered list is sorted on a copy; `useAccounts()` state must not be reordered in place.
-
----
-
+- **Panel outliving its row.** The panel reads the selected row live from the `accounts` list by id; deleting the row while the panel is open must unmount it, not crash on a stale object.
 ### Task 0: Wire `INTERNAL_API_SECRET` to the scaled worker (prerequisite)
 
 **Files:**
@@ -132,24 +127,23 @@ git commit -m "refactor(web): hoist account badges and platform glyph to shared 
 
 ---
 
-### Task 3: Build the `AccountDetailDrawer`
+### Task 3: Build the `AccountDetailPanel`
 
 **Files:**
-- Create: `apps/web/components/account-detail-drawer.tsx`
+- Create: `apps/web/components/account-detail-panel.tsx`
 
 **Interfaces:**
 - Consumes: `LiveView` + `novncClientUrl` (Task 1), `AuthBadge`/`StatusBadge` (Task 2), `platformIcon` (Task 2), `Account` from `@/lib/api`.
 - Produces:
 
 ```tsx
-export function AccountDetailDrawer(props: {
-  account: Account;                 // the open row; parent guards open on it
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
+export function AccountDetailPanel(props: {
+  account: Account;
   novncUrl: string | null;          // the worker's published live view, or null
   showLiveView: boolean;            // auth in flight, or the operator chose to watch
   canAct: boolean;
   busy: boolean;                    // this account's op in flight (page's `busy === account.id`)
+  onClose: () => void;              // the X in the panel header; closes the selection
   onStartLogin: (id: string) => void;
   onSubmitInput: (id: string, value: string) => void;
   onToggleWatch: () => void;        // only used by the AUTHENTICATED "Live view" button
@@ -158,15 +152,15 @@ export function AccountDetailDrawer(props: {
 
 - [ ] **Step 1: Implement the component**
 
-Right-anchored panel: `DialogContent` with `ml-auto sm:max-w-[520px] sm:rounded-l-2xl` (no Sheet in `@smm/ui`; the dialog overlay dims the table behind it). Content rules, each pinned by the Task 5 smoke:
+Plain `Card` content rendered **in the page** above the table (no overlay; the operator rejected the modal/drawer on 2026-10-02). Header row, then a `md:grid-cols-2` body: live view on the left, state-specific affordances on the right. Content rules, each pinned by the Task 5 smoke:
 
-1. **Header** — platform square (`platformIcon`), `@username`, handle-or-worker-id subtitle, then `AuthBadge` + `StatusBadge`.
+1. **Header** — platform square (`platformIcon`), `@username`, handle-or-worker-id subtitle, `AuthBadge` + `StatusBadge` + platform badge, and a close (`X`) button that calls `onClose`.
 2. **Live view block** — `showLiveView && novncUrl` → `<LiveView url={novncUrl} title={...} />` plus an "Open in tab" link built from `novncClientUrl`. `showLiveView && !novncUrl` → the hint "No live view yet — the worker has not published its noVNC port" (never a dead black box).
 3. **`authStatus === 'NEEDS_INPUT'`** → the code form replacing `window.prompt`: an `Input` (`inputMode="numeric"`, `maxLength={8}`, autofocused) + a "Send" `Button` disabled unless `code.trim() !== '' && canAct && !busy`. Submit calls `onSubmitInput(account.id, code.trim())` and clears the field. Hint line: "Type the code shown in the live view — or solve the challenge directly in the live view."
 4. **`authStatus === 'AUTHENTICATING'`** → status line "Login in progress — the state settles when the worker reports back."
-5. **`authStatus === 'AUTHENTICATED'`** → external profile link (`target="_blank"`, `rel="noopener noreferrer"` — reuse `profileUrlFor` from the page by moving it into this file's neighbours: put it in `account-detail-drawer.tsx` and import from there), the `lastVerifiedAt` stamp when present, and a "Live view" ghost button (disabled when `!novncUrl`) that calls `onToggleWatch`.
+5. **`authStatus === 'AUTHENTICATED'`** → external profile link (`target="_blank"`, `rel="noopener noreferrer"` — `profileUrlFor` moves into this file and the page imports it from here), and a "Live view" ghost button (disabled when `!novncUrl`) that calls `onToggleWatch`.
 6. **`authStatus === 'FAILED'`** → `lastError` (nullable) in a destructive-toned block, then the retry affordance below.
-7. **Footer** — "Log in" button (`onStartLogin(account.id)`), visible for every state except `QUARANTINED`, disabled while `busy` or `!canAct`.
+7. **Bottom** — "Log in" button (`onStartLogin(account.id)`), visible for every state except `QUARANTINED`, disabled while `busy` or `!canAct`.
 
 No credentials, cookies or secret material in the DOM (Global Constraints).
 
@@ -181,8 +175,8 @@ Expected: PASS. (No web unit-test harness exists; the behavioural gate is the Ta
 - [ ] **Step 3: Commit**
 
 ```bash
-git add apps/web/components/account-detail-drawer.tsx
-git commit -m "feat(web): per-account detail drawer with live view and code input"
+git add apps/web/components/account-detail-panel.tsx
+git commit -m "feat(web): in-page account detail panel with live view and code input"
 ```
 
 ---
@@ -193,26 +187,28 @@ git commit -m "feat(web): per-account detail drawer with live view and code inpu
 - Modify: `apps/web/app/(dashboard)/accounts/page.tsx`
 
 **Interfaces:**
-- Consumes: `AccountDetailDrawer` (Task 3), `AuthBadge`/`StatusBadge`/`platformIcon` (Task 2), `profileUrlFor` (now in Task 3's file).
+- Consumes: `AccountDetailPanel` + `profileUrlFor` (Task 3), `AuthBadge`/`StatusBadge`/`platformIcon` (Task 2).
 - Produces: the `/accounts` page as the single login surface.
 
-- [ ] **Step 1: Swap the modal state for the drawer state**
+- [ ] **Step 1: Swap the modal state for the panel selection**
 
 Replace `const [live, setLive] = useState<{ name; url } | null>(null)` with:
 
 ```tsx
-const [detail, setDetail] = useState<{ account: Account; watch: boolean } | null>(null);
+const [detail, setDetail] = useState<{ id: string; watch: boolean } | null>(null);
+const detailAccount = detail ? accounts.find((a) => a.id === detail.id) ?? null : null;
+const isWatching = detail?.watch ?? false;
 ```
 
-Render `<AccountDetailDrawer>` where `<LiveBrowserModal>` was; drop the `LiveBrowserModal` import.
+Render `<Card><AccountDetailPanel …/></Card>` **in the page, between the stat strip and the table** (no overlay — the operator rejected the modal on 2026-10-02). `LiveBrowserModal` leaves the accounts page entirely (it stays on the Workers page).
 
-- [ ] **Step 2: Row click opens the drawer; drop `openAccount`**
+- [ ] **Step 2: Row click selects / deselects; drop `openAccount`**
 
-`onClick={() => setDetail({ account: a, watch: needsLiveView(a) })}`. Delete `openAccount` (profile opening now lives in the row's icon link and inside the drawer). Delete the standalone `MonitorPlay` icon button on the row — the row click covers it; keep the `ExternalLink` profile button and the dropdown untouched except the changes below.
+`onClick={() => setDetail(detail?.id === a.id ? null : { id: a.id, watch: needsLiveView(a) })}` — clicking the open row again closes the panel. Delete `openAccount` (profile opening now lives in the row's icon link and inside the panel). Delete the standalone `MonitorPlay` icon button on the row — the row click covers it; keep the `ExternalLink` profile button and the dropdown untouched except the changes below.
 
 - [ ] **Step 3: Reroute the dropdown items**
 
-"Enter code" → `setDetail({ account: a, watch: true })` (the form is in the drawer; delete the `window.prompt`-based `submitInput` body, keep a page-level `submitInput(id, value)` wrapper around `api.submitAccountInput` + `refresh`). "Live view" (authenticated) → `setDetail({ account: a, watch: true })`.
+"Enter code" → `setDetail({ id: a.id, watch: true })` (the form is in the panel; delete the `window.prompt`-based `submitInput` body, keep a page-level `submitInput(id, value)` wrapper around `api.submitAccountInput` + `refresh`). "Live view" (authenticated) → `setDetail({ id: a.id, watch: true })`.
 
 - [ ] **Step 4: Add the auth-status filter**
 
@@ -248,7 +244,7 @@ Expected: PASS.
 
 ```bash
 git add 'apps/web/app/(dashboard)/accounts/page.tsx'
-git commit -m "feat(web): /accounts is now the login cockpit (drawer, auth filter, action-first sort)"
+git commit -m "feat(web): /accounts is now the login cockpit (in-page panel, auth filter, action-first sort)"
 ```
 
 ---
@@ -274,9 +270,9 @@ curl -I http://localhost:24081 | head -1   # expect HTTP/1.1 200 OK
 
 1. Log in at `http://localhost:24081/login` with the seeded owner (`owner@smm.local` / the `.env` seed password) — the dashboard requires a session.
 2. Create a throwaway account on `/accounts/new` bound to a running worker (any platform; `instagram` is the default).
-3. Row click opens the right-anchored drawer; the checkbox click does NOT open it (Review Focus 1).
-4. With the new row (no heartbeat yet), the drawer shows the "No live view yet" hint, not a dead box (Review Focus 3).
-5. Click "Log in" in the drawer footer → `authStatus` moves to `AUTHENTICATING`; the drawer's live view streams the worker's browser on the platform login page; the table row stays in place with the AUTHENTICATING badge.
+3. Row click opens the in-page panel above the table; clicking the same row again closes it; the checkbox click does NOT open it (Review Focus 1).
+4. With the new row (no heartbeat yet), the panel shows the "No live view yet" hint, not a dead box (Review Focus 3).
+5. Click "Log in" in the panel → `authStatus` moves to `AUTHENTICATING`; the panel's live view streams the worker's browser on the platform login page; the table row updates in place with the AUTHENTICATING badge.
 6. Auth filter: select `NEEDS_INPUT` → only those rows show; the "Needs input" stat reflects it (toggle on/off works, Review Focus 4).
 7. If the row reaches `NEEDS_INPUT` (OTP wall), the code form is present; the "Send" button is disabled on empty input (Review Focus 2). (Not guaranteed on a live platform — the form's disabled state is asserted in the AUTHENTICATING view's sibling state or with a parked login.)
 8. No `window.prompt` anywhere on the page; no console errors on the page.

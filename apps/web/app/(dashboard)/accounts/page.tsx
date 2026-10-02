@@ -25,6 +25,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  cn,
 } from '@smm/ui';
 import {
   AlertCircle,
@@ -51,7 +52,7 @@ import { useContainers } from '@/lib/hooks/use-containers';
 import type { Account } from '@/lib/api';
 import { AddAccountDialog } from '@/components/add-account-dialog';
 import { ImportAccountsDialog } from '@/components/import-accounts-dialog';
-import { LiveBrowserModal } from '@/components/live-browser-modal';
+import { AccountDetailPanel, profileUrlFor } from '@/components/account-detail-panel';
 import { useSession } from '@/lib/auth/session-context';
 import { can } from '@/lib/auth/permissions';
 // The platform list, the label map and the label lookup were all re-declared
@@ -59,38 +60,71 @@ import { can } from '@/lib/auth/permissions';
 // accounts/new and lib/analytics-config. Keyed off lib/platforms.ts, an eighth
 // platform added to the backend cannot land in this page silently missing a
 // label.
-import { PLATFORMS, PLATFORM_LABEL, platformLabel, type Platform } from '@/lib/platforms';
+import { PLATFORMS, PLATFORM_LABEL, platformLabel } from '@/lib/platforms';
 import { AuthBadge, StatusBadge } from '@/components/account-badges';
 import { platformIcon } from '@/components/platform-icon';
 
 const STATUSES = ['PENDING', 'ACTIVE', 'PAUSED', 'QUARANTINED', 'DEAD', 'ARCHIVED'] as const;
 
+const AUTH_STATUSES = ['AUTHENTICATING', 'NEEDS_INPUT', 'AUTHENTICATED', 'FAILED', 'QUARANTINED'] as const;
+
+// Action-first ordering: accounts that need the operator sit on top, a failed
+// login next, the healthy fleet underneath. Ties break by platform, then name.
+const AUTH_RANK: Record<Account['authStatus'], number> = {
+  AUTHENTICATING: 0,
+  NEEDS_INPUT: 0,
+  FAILED: 1,
+  QUARANTINED: 2,
+  AUTHENTICATED: 3,
+};
+
 /** One hero number (principle 4: number large and bold, label small beneath). */
+/**
+ * One hero number (principle 4: number large and bold, label small beneath).
+ * With `onSelect` the card becomes a filter toggle — the number stays
+ * fleet-wide; only the table below obeys it.
+ */
 function Stat({
   label,
   value,
   hint,
   icon: Icon,
+  onSelect,
+  active,
 }: {
   label: string;
   value: number;
   hint?: string;
   icon: LucideIcon;
+  onSelect?: () => void;
+  active?: boolean;
 }) {
+  const inner = (
+    <div className="flex items-start gap-3 p-5">
+      <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-secondary text-muted-foreground">
+        <Icon className="size-4" />
+      </span>
+      <div className="min-w-0 space-y-1">
+        <div className="text-2xl leading-none font-semibold tracking-tight tabular-nums">{value}</div>
+        <div className="text-xs tracking-wide text-muted-foreground uppercase">{label}</div>
+        {hint ? <div className="truncate text-xs text-muted-foreground">{hint}</div> : null}
+      </div>
+    </div>
+  );
   return (
-    <Card>
-      <CardContent className="flex items-start gap-3 p-5">
-        <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-secondary text-muted-foreground">
-          <Icon className="size-4" />
-        </span>
-        <div className="min-w-0 space-y-1">
-          <div className="text-2xl leading-none font-semibold tracking-tight tabular-nums">
-            {value}
-          </div>
-          <div className="text-xs tracking-wide text-muted-foreground uppercase">{label}</div>
-          {hint ? <div className="truncate text-xs text-muted-foreground">{hint}</div> : null}
-        </div>
-      </CardContent>
+    <Card className={cn('overflow-hidden', active && 'ring-2 ring-ring/60')}>
+      {onSelect ? (
+        <button
+          type="button"
+          aria-pressed={active}
+          onClick={onSelect}
+          className="block w-full text-left transition-colors hover:bg-accent/40"
+        >
+          {inner}
+        </button>
+      ) : (
+        inner
+      )}
     </Card>
   );
 }
@@ -107,9 +141,14 @@ export default function AccountsPage() {
   const [importOpen, setImportOpen] = useState(false);
   const [platform, setPlatform] = useState<string>('all');
   const [status, setStatusFilter] = useState<string>('all');
+  const [auth, setAuthFilter] = useState<string>('all');
   const [busy, setBusy] = useState<string | null>(null);
-  // The live-view modal is shared by the row action and the dropdown item.
-  const [live, setLive] = useState<{ name: string; url: string } | null>(null);
+  // The detail drawer is shared by the row click and the dropdown items. The
+  // row is addressed by id so the panel re-renders from the live `accounts`
+  // list (an in-flight login settling is visible without reopening). `watch`
+  // forces the live view for an authenticated account the operator chose to
+  // monitor.
+  const [detail, setDetail] = useState<{ id: string; watch: boolean } | null>(null);
   // P6 parity: bulk select over the filtered set. Ops pause/resume/remove
   // many accounts at once; each call hits the real per-id endpoints.
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -136,12 +175,26 @@ export default function AccountsPage() {
   );
 
   const filtered = useMemo(() => {
-    return accounts.filter((a) => {
-      if (platform !== 'all' && a.platform !== platform) return false;
-      if (status !== 'all' && a.status !== status) return false;
-      return true;
-    });
-  }, [accounts, platform, status]);
+    return accounts
+      .filter((a) => {
+        if (platform !== 'all' && a.platform !== platform) return false;
+        if (status !== 'all' && a.status !== status) return false;
+        if (auth !== 'all' && a.authStatus !== auth) return false;
+        return true;
+      })
+      .slice()
+      .sort(
+        (a, b) =>
+          AUTH_RANK[a.authStatus] - AUTH_RANK[b.authStatus] ||
+          a.platform.localeCompare(b.platform) ||
+          a.username.localeCompare(b.username),
+      );
+  }, [accounts, platform, status, auth]);
+
+  // The open panel's row, read live from the list (null = closed, or the row
+  // was deleted while open — the panel unmounts in that case).
+  const detailAccount = detail ? accounts.find((a) => a.id === detail.id) ?? null : null;
+  const isWatching = detail?.watch ?? false;
 
   const visibleIds = useMemo(() => new Set(filtered.map((a) => a.id)), [filtered]);
   // Drop selections that the current filter hid, so the bulk bar never
@@ -198,37 +251,20 @@ export default function AccountsPage() {
     refresh();
   };
 
-  // Submit a 2FA / checkpoint code to a parked login. The browser prompt is the
-  // MVP input affordance; a dedicated dialog can replace it without changing
-  // the contract.
-  const submitInput = async (id: string) => {
-    const value = window.prompt('Enter the verification code shown in the live view:');
-    if (!value) return;
+  // Submit a 2FA / checkpoint code to a parked login. The value arrives from
+  // the detail drawer's form; the window.prompt version is gone with it.
+  const submitInput = async (id: string, value: string) => {
     await api.submitAccountInput(id, value);
     refresh();
   };
 
-  // The primary row action depends on where the account is in its login life:
-  // an account that needs the operator (challenge in progress, or a live
-  // session they want to watch) opens the worker's live browser; an already
-  // authenticated account opens its public profile instead — the two things an
-  // operator actually wants one click away from this list.
+  // Accounts that need the operator (a challenge in flight, or a live session
+  // they want to watch) show the live view inside the drawer; a logged-in
+  // account shows its profile instead — the two things an operator wants one
+  // click away from this list.
   const needsLiveView = (a: Account): boolean =>
     a.authStatus === 'AUTHENTICATING' || a.authStatus === 'NEEDS_INPUT';
 
-  const openAccount = (a: Account) => {
-    // During a login the only useful destination is the worker's screen —
-    // watching or driving the challenge. Once authenticated the account's
-    // public profile is the destination.
-    if (needsLiveView(a)) {
-      const url = novncFor(a);
-      if (url) setLive({ name: a.username, url });
-      return;
-    }
-    if (a.authStatus === 'AUTHENTICATED') {
-      window.open(profileUrlFor(a), '_blank', 'noopener,noreferrer');
-    }
-  };
 
   // Fleet rollup for the stat strip. Counted over ALL accounts, not the
   // filtered view: the numbers answer "how healthy is the fleet", and a filter
@@ -288,6 +324,8 @@ export default function AccountsPage() {
             {...(stats.failed > 0
               ? { hint: `${stats.failed} failed` }
               : { hint: '2FA / checkpoint' })}
+            onSelect={() => setAuthFilter(auth === 'NEEDS_INPUT' ? 'all' : 'NEEDS_INPUT')}
+            active={auth === 'NEEDS_INPUT'}
           />
           <Stat
             icon={Pause}
@@ -296,6 +334,25 @@ export default function AccountsPage() {
             {...(stats.unassigned > 0 ? { hint: `${stats.unassigned} unassigned` } : {})}
           />
         </section>
+      ) : null}
+
+      {/* Login cockpit: selecting a row puts the whole login lifecycle on the
+          page — live view, code input, next step — without an overlay, so the
+          table below stays in the same view and keeps updating. */}
+      {detailAccount ? (
+        <Card>
+          <AccountDetailPanel
+            account={detailAccount}
+            novncUrl={novncFor(detailAccount)}
+            showLiveView={isWatching || needsLiveView(detailAccount)}
+            canAct={canAct}
+            busy={busy === detailAccount.id}
+            onClose={() => setDetail(null)}
+            onStartLogin={(id) => void onAct(id, startLogin)}
+            onSubmitInput={(id, value) => void onAct(id, (x) => submitInput(x, value))}
+            onToggleWatch={() => setDetail({ id: detailAccount.id, watch: !isWatching })}
+          />
+        </Card>
       ) : null}
 
       <ImportAccountsDialog
@@ -379,6 +436,20 @@ export default function AccountsPage() {
                     {STATUSES.map((s) => (
                       <SelectItem key={s} value={s}>
                         {s[0] + s.slice(1).toLowerCase()}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                <Select value={auth} onValueChange={setAuthFilter}>
+                  <SelectTrigger className="w-44" aria-label="All auth statuses">
+                    <SelectValue placeholder="All auth statuses" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All auth statuses</SelectItem>
+                    {AUTH_STATUSES.map((s) => (
+                      <SelectItem key={s} value={s}>
+                        {s}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -479,7 +550,7 @@ export default function AccountsPage() {
                           <div className="space-y-1">
                             <p className="font-medium">Nothing matches</p>
                             <p className="text-sm text-muted-foreground">
-                              Clear the platform or status filter to see the rest of the fleet.
+                              Clear the filters to see the rest of the fleet.
                             </p>
                           </div>
                         </div>
@@ -489,14 +560,18 @@ export default function AccountsPage() {
                     filtered.map((a) => (
                       <TableRow
                         key={a.id}
-                        // The row is the primary action: one click opens the live
-                        // view during a login, or the profile once authenticated.
-                        // Controls inside stopPropagation so they keep working.
-                        // (role/tabIndex stay off a <tr> — ARIA forbids it — and
-                        // the icon buttons in the last cell are real buttons, so
+                        // The row is the primary action: one click opens the
+                        // account panel above the table (live view during a
+                        // login, profile for an authenticated account); the
+                        // same row again closes it. Controls inside
+                        // stopPropagation so they keep working. (role/tabIndex
+                        // stay off a <tr> — ARIA forbids it — and the icon
+                        // buttons in the last cell are real buttons, so
                         // keyboard users have the same actions one Tab away.)
                         className="cursor-pointer transition-colors hover:bg-accent/60"
-                        onClick={() => openAccount(a)}
+                        onClick={() =>
+                          setDetail(detail?.id === a.id ? null : { id: a.id, watch: needsLiveView(a) })
+                        }
                       >
                         <TableCell>
                           <input
@@ -558,28 +633,6 @@ export default function AccountsPage() {
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center justify-end gap-1">
-                            {/*
-                            The row click is the primary action now; these are
-                            affordances, not the only path. An icon button is
-                            shown only when there is something to open — a
-                            login with a published noVNC URL, or an authenticated
-                            account.
-                          */}
-                            {needsLiveView(a) && novncFor(a) ? (
-                              <Button
-                                variant="outline"
-                                size="icon"
-                                className="h-8 w-8"
-                                aria-label="Live view"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  const url = novncFor(a);
-                                  if (url) setLive({ name: a.username, url });
-                                }}
-                              >
-                                <MonitorPlay className="size-3.5" />
-                              </Button>
-                            ) : null}
                             {a.authStatus === 'AUTHENTICATED' ? (
                               <Button
                                 asChild
@@ -646,7 +699,7 @@ export default function AccountsPage() {
                                   Log in
                                 </DropdownMenuItem>
                                 {a.authStatus === 'NEEDS_INPUT' ? (
-                                  <DropdownMenuItem onClick={() => void onAct(a.id, submitInput)}>
+                                  <DropdownMenuItem onClick={() => setDetail({ id: a.id, watch: true })}>
                                     <KeyRound />
                                     Enter code
                                   </DropdownMenuItem>
@@ -657,11 +710,7 @@ export default function AccountsPage() {
                               watch a running session without starting a login.
                             */}
                                 {a.authStatus === 'AUTHENTICATED' && novncFor(a) ? (
-                                  <DropdownMenuItem
-                                    onClick={() =>
-                                      setLive({ name: a.username, url: novncFor(a) as string })
-                                    }
-                                  >
+                                  <DropdownMenuItem onClick={() => setDetail({ id: a.id, watch: true })}>
                                     <MonitorPlay />
                                     Live view
                                   </DropdownMenuItem>
@@ -690,44 +739,7 @@ export default function AccountsPage() {
 
       <AddAccountDialog open={addOpen} onOpenChange={setAddOpen} />
 
-      <LiveBrowserModal
-        open={live !== null}
-        onOpenChange={(open) => {
-          if (!open) setLive(null);
-        }}
-        url={live?.url ?? ''}
-        workerName={live?.name ?? ''}
-      />
     </div>
   );
 }
 
-/**
- * The public profile URL for a worker account. Worker accounts carry no
- * profileUrl in the contract (that field is official-account analytics only),
- * so the URL is derived from platform + handle/username — the same link the
- * worker itself would open.
- */
-function profileUrlFor(a: Account): string {
-  // Prefer the handle (canonical, may differ from the login username); fall
-  // back to it when the platform never reported one.
-  const handle = a.handle || a.username;
-  switch (a.platform) {
-    case 'instagram':
-      return `https://www.instagram.com/${handle}/`;
-    case 'threads':
-      return `https://www.threads.net/@${handle}`;
-    case 'tiktok':
-      return `https://www.tiktok.com/@${handle}`;
-    case 'linkedin':
-      return `https://www.linkedin.com/in/${handle}`;
-    case 'x':
-      return `https://x.com/${handle}`;
-    case 'youtube':
-      return `https://www.youtube.com/@${handle}`;
-    case 'facebook':
-      return `https://www.facebook.com/${handle}`;
-    default:
-      return `https://${handle}`;
-  }
-}
