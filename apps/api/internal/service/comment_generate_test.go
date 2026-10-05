@@ -12,13 +12,15 @@ import (
 // capturingLLM is the minimal port.LLMCompleter for prompt-shaping tests: it
 // records the user prompt and answers with one line per requested variant.
 type capturingLLM struct {
-	user string
+	user   string
+	budget int
 }
 
 func (c *capturingLLM) Available() bool { return true }
 
-func (c *capturingLLM) Complete(_ context.Context, _, user string, _ float64, _ int) (string, error) {
+func (c *capturingLLM) Complete(_ context.Context, _, user string, _ float64, maxTokens int) (string, error) {
 	c.user = user
+	c.budget = maxTokens
 	return "satu\ndua", nil
 }
 
@@ -82,5 +84,24 @@ func TestGenerateRejectsUnknownIntensity(t *testing.T) {
 	})
 	if !errors.Is(err, domain.ErrValidation) {
 		t.Fatalf("want ErrValidation, got %v", err)
+	}
+}
+
+// The completion budget must scale with the requested variant count: a
+// reasoning model spends its thinking before the answer, and the thinking
+// grows with the count. A flat budget is exhausted inside the thinking on a
+// large request (finish_reason:length, empty content) — the 502 this test
+// guards against.
+func TestTokenBudgetScalesWithCount(t *testing.T) {
+	if tokenBudget(1) >= tokenBudget(10) {
+		t.Fatalf("budget must grow with count: count=1 %d, count=10 %d", tokenBudget(1), tokenBudget(10))
+	}
+	if tokenBudget(10) >= tokenBudget(50) {
+		t.Fatalf("budget must grow with count: count=10 %d, count=50 %d", tokenBudget(10), tokenBudget(50))
+	}
+	// The cap keeps a caller bug (or a future MaxAICommentVariants bump) from
+	// asking the gateway for more than it accepts.
+	if got := tokenBudget(100000); got != 16000 {
+		t.Fatalf("tokenBudget(huge) = %d, want the 16000 cap", got)
 	}
 }
