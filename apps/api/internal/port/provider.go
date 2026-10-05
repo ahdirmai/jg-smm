@@ -149,6 +149,10 @@ type AnalyticsProvider interface {
 type LLMCompleter interface {
 	// Available reports whether enough config exists to attempt a call.
 	Available() bool
-	// Complete sends one chat completion and returns the assistant message.
-	Complete(ctx context.Context, system, user string, temperature float64) (string, error)
+	// Complete sends one chat completion with a caller-sized completion budget
+	// (max_tokens) and returns the assistant message. The caller sizes the
+	// budget to how much output it asked for: a reasoning model spends its
+	// thinking BEFORE the answer, so a fixed budget is exhausted by the
+	// thinking on a large request and the answer comes back empty.
+	Complete(ctx context.Context, system, user string, temperature float64, maxTokens int) (string, error)
 }

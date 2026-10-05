@@ -25,7 +25,7 @@ func TestCompleteToleratesTrailingSSETerminator(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	got, err := New(srv.URL, "k", "m").Complete(context.Background(), "sys", "usr", 0.7)
+	got, err := New(srv.URL, "k", "m").Complete(context.Background(), "sys", "usr", 0.7, 800)
 	if err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
@@ -41,7 +41,7 @@ func TestCompletePlainJSON(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	got, err := New(srv.URL, "k", "m").Complete(context.Background(), "s", "u", 0.7)
+	got, err := New(srv.URL, "k", "m").Complete(context.Background(), "s", "u", 0.7, 800)
 	if err != nil || got != "hi" {
 		t.Fatalf("got %q, err %v", got, err)
 	}
@@ -57,7 +57,7 @@ func TestCompleteReasoningBudgetExhausted(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := New(srv.URL, "k", "m").Complete(context.Background(), "s", "u", 0.7)
+	_, err := New(srv.URL, "k", "m").Complete(context.Background(), "s", "u", 0.7, 800)
 	if err == nil {
 		t.Fatal("want error for budget-exhausted completion, got nil")
 	}
@@ -74,7 +74,7 @@ func TestCompleteTruncatedStillFails(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, err := New(srv.URL, "k", "m").Complete(context.Background(), "s", "u", 0.7); err == nil {
+	if _, err := New(srv.URL, "k", "m").Complete(context.Background(), "s", "u", 0.7, 800); err == nil {
 		t.Fatal("want error for truncated body, got nil")
 	}
 }

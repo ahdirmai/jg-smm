@@ -144,7 +144,7 @@ func (g *CommentGenerator) Generate(ctx context.Context, in GenerateInput) ([]st
 	}
 
 	system := "You write short social-media comments for a social media management team. You never mention being an AI."
-	out, err := g.llm.Complete(ctx, system, user, 0.9)
+	out, err := g.llm.Complete(ctx, system, user, 0.9, tokenBudget(in.Count))
 	if err != nil {
 		return nil, err
 	}
@@ -194,6 +194,25 @@ func authorSuffix(handle string) string {
 		return " by @" + handle
 	}
 	return ""
+}
+
+// tokenBudget sizes the completion budget (max_tokens) for one generation.
+// The configured gateway fronts a REASONING model that emits its thinking
+// before its answer, and the thinking grows with how many variants are asked
+// for: measured against the live gateway, one variant spends a few hundred
+// tokens thinking, ten spend up to ~2000. A flat budget therefore runs out in
+// the thinking on a large request and the answer comes back empty
+// (`finish_reason: "length"`), which the caller would misread as a screening
+// failure. The budget is a ceiling, not a target — the model stops early when
+// it is done — so sizing it generously costs nothing for a small count and
+// only saves the large ones. 500 + 300/variant leaves headroom over the
+// measured tail; the adapter clamps it to the gateway's hard cap.
+func tokenBudget(count int) int {
+	budget := 500 + 300*count
+	if budget > 16000 {
+		budget = 16000
+	}
+	return budget
 }
 
 func truncateText(s string, n int) string {

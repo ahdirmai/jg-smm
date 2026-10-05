@@ -17,7 +17,7 @@ type capturingLLM struct {
 
 func (c *capturingLLM) Available() bool { return true }
 
-func (c *capturingLLM) Complete(_ context.Context, _, user string, _ float64) (string, error) {
+func (c *capturingLLM) Complete(_ context.Context, _, user string, _ float64, _ int) (string, error) {
 	c.user = user
 	return "satu\ndua", nil
 }

@@ -67,14 +67,17 @@ type chatMessage struct {
 // arrived late. Sized so the observed tail lands with room to spare.
 const requestTimeout = 180 * time.Second
 
-// maxTokens is the generation ceiling for one completion. Sized for reasoning
-// models: the budget covers `reasoning_content` BEFORE any answer tokens, so a
-// value sized for the answer alone (a few 1-2 line comments ≈ 80 tokens) on a
-// reasoning model can be spent entirely on thinking. When that happens the
-// choices come back with `content: null` and `finish_reason: "length"`, which
-// the caller cannot distinguish from a genuinely empty completion. Measured
-// against the configured gateway: 300 → null, 800 → a complete answer.
-const maxTokens = 1500
+// maxTokensCap is the hard ceiling the client will ever send as max_tokens.
+// It is a CLAMP, not a target: the caller (service) sizes the completion
+// budget to how much output it asked for, and the client only refuses to
+// exceed this cap. A reasoning model spends its `reasoning_content` BEFORE
+// any answer tokens, so a budget sized for the answer alone can be spent
+// entirely on thinking — the choices then come back with `content: null` and
+// `finish_reason: "length"`, which the caller cannot distinguish from a
+// genuinely empty completion. The cap is the largest the configured gateway
+// accepts; the per-request budget is always well below it, so it only guards
+// a caller bug, never a real request.
+const maxTokensCap = 16384
 
 // chatResponse carries only the fields read back.
 type chatResponse struct {
@@ -88,9 +91,14 @@ type chatResponse struct {
 }
 
 // Complete sends one chat completion and returns the assistant message.
-func (c *Client) Complete(ctx context.Context, system, user string, temperature float64) (string, error) {
+// maxTokens is the caller's completion budget; it is clamped to the gateway's
+// hard cap so a caller bug cannot ask for more than the gateway accepts.
+func (c *Client) Complete(ctx context.Context, system, user string, temperature float64, maxTokens int) (string, error) {
 	if !c.Available() {
 		return "", fmt.Errorf("llm: client is not configured")
+	}
+	if maxTokens > maxTokensCap {
+		maxTokens = maxTokensCap
 	}
 	body, err := json.Marshal(chatRequest{
 		Model:       c.model,

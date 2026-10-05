@@ -171,6 +171,19 @@
     looks thin, re-run it before trusting the count.
 
 ### Fixed
+- **AI comment generation 502'd on any batch of ~3+ drafts.** The LLM client
+  sent a flat `max_tokens: 1500`, but the configured gateway fronts a
+  REASONING model that spends its thinking tokens before the answer — and the
+  thinking grows with how many variants are requested (measured: ~300 for one,
+  up to ~2000 for ten). For `count >= 3` the flat budget ran out inside the
+  thinking, the completion came back `content: null` with
+  `finish_reason: "length"`, and the request surfaced as a 502 "scrape failed"
+  (or, when a sliver of answer survived, a 200 with a truncated comment). The
+  budget is now sized per request in the service — `500 + 300 × count`,
+  clamped to 16000 — and passed through the `LLMCompleter` port; the adapter
+  keeps a hard cap (16384, the gateway's largest accepted value) as a
+  caller-bug guard only. A ceiling costs nothing for small counts: the model
+  stops early when it is done.
 - **The noVNC live view clipped the remote screen.** noVNC defaults to
   `resize=off`, so the 1280×800 Xvfb framebuffer rendered at native size and
   got cut off at the iframe edge. The live-view URL now sets `resize=scale`,
