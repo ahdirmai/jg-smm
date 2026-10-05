@@ -306,8 +306,10 @@ export const api = {
     authorHandle?: string;
     existingComments?: string[];
     mode: 'support' | 'counter';
-    // How hard the draft pushes; empty = medium (the server default).
-    intensity?: 'soft' | 'medium' | 'bold';
+    // How hard the draft pushes, 1 (gentle) to 5 (sharp); 0 = server default.
+    intensity?: number;
+    // How long each comment is; empty = medium (the server default).
+    length?: 'short' | 'medium' | 'long';
     count?: number;
     language?: string;
   }) =>

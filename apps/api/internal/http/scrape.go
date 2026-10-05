@@ -256,7 +256,8 @@ type generateCommentRequest struct {
 	AuthorHandle     string   `json:"authorHandle"`
 	ExistingComments []string `json:"existingComments"`
 	Mode             string   `json:"mode"`      // support | counter
-	Intensity        string   `json:"intensity"` // soft | medium | bold; empty = medium
+	Intensity        int      `json:"intensity"` // 1-5 slider; 0 = medium (3)
+	Length           string   `json:"length"`    // short | medium | long; empty = medium
 	Count            int      `json:"count"`
 	Language         string   `json:"language"`
 }
@@ -279,6 +280,7 @@ func (h *ScrapeHandler) generateComment(c echo.Context) error {
 		Count:            req.Count,
 		Language:         req.Language,
 		Intensity:        service.CommentIntensity(req.Intensity),
+		Length:           service.CommentLength(req.Length),
 	})
 	if err != nil {
 		return scrapeError(err)

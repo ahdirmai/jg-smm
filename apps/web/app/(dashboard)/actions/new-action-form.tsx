@@ -45,13 +45,19 @@ const MAX_BATCH = 50;
 const MAX_COMMENT_LEN = 2200;
 
 type Flow = 'comment' | 'like';
-// How hard the AI draft may push. Empty on the wire = medium (server default).
-type Intensity = 'soft' | 'medium' | 'bold';
-const INTENSITIES: { value: Intensity; label: string }[] = [
-  { value: 'soft', label: 'Soft' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'bold', label: 'Bold' },
-];
+// How hard the AI draft may push: a 1-5 slider, 3 = balanced (server default).
+const INTENSITY_MIN = 1;
+const INTENSITY_MAX = 5;
+const INTENSITY_DEFAULT = 3;
+const INTENSITY_LABELS: Record<number, string> = {
+  1: 'Gentle',
+  2: 'Soft',
+  3: 'Balanced',
+  4: 'Pointed',
+  5: 'Sharp',
+};
+// How long each generated comment is; empty on the wire = medium.
+type CommentLength = 'short' | 'medium' | 'long';
 
 /**
  * Metrics arrive as raw Apify keys (`likeCount`, `playCount`, `views` …) with
@@ -143,8 +149,10 @@ export const NewActionForm = forwardRef<
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   // AI generation state.
   const [aiMode, setAiMode] = useState<'support' | 'counter'>('support');
-  // How hard the AI draft may push; medium is the server default.
-  const [intensity, setIntensity] = useState<Intensity>('medium');
+  // How hard the AI draft may push; 3 is the server default.
+  const [intensity, setIntensity] = useState<number>(INTENSITY_DEFAULT);
+  // How long each draft is; medium is the server default.
+  const [length, setLength] = useState<CommentLength>('medium');
   const [aiBusy, setAiBusy] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   // Accounts grouped by the worker's location (city; region fallback,
@@ -260,6 +268,7 @@ export const NewActionForm = forwardRef<
         existingComments: scrape.comments.slice(0, 10).map((c) => c.text),
         mode: aiMode,
         intensity,
+        length,
         count: want,
       });
       const drafts = res.comments.length ? res.comments : [''];
@@ -493,31 +502,34 @@ export const NewActionForm = forwardRef<
                       <SelectItem value="counter">Counter</SelectItem>
                     </SelectContent>
                   </Select>
-                  {/* How hard the AI draft may push. Segmented buttons, the
-                      same pattern as the Comment/Like toggle above: three
-                      discrete levels, not a slider whose middle values mean
-                      nothing. */}
-                  <div className="flex items-center gap-1" role="group" aria-label="Comment intensity">
-                    {INTENSITIES.map((it) => (
-                      <Button
-                        key={it.value}
-                        type="button"
-                        variant={intensity === it.value ? 'default' : 'outline'}
-                        size="sm"
-                        className="h-8 px-2.5 text-xs"
-                        aria-pressed={intensity === it.value}
-                        title={
-                          it.value === 'soft'
-                            ? 'Safe, neutral: no sarcasm or edge'
-                            : it.value === 'medium'
-                              ? 'Balanced, like today'
-                              : 'Pointed, slightly sarcastic, still civil'
-                        }
-                        onClick={() => setIntensity(it.value)}
-                      >
-                        {it.label}
-                      </Button>
-                    ))}
+                  {/* How long each draft is; medium is the server default. */}
+                  <Select value={length} onValueChange={(v) => setLength(v as CommentLength)}>
+                    <SelectTrigger className="h-8 w-24" aria-label="Comment length">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="short">Short</SelectItem>
+                      <SelectItem value="medium">Medium</SelectItem>
+                      <SelectItem value="long">Long</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {/* How hard the draft may push: a 1-5 slider, 3 = balanced.
+                      The value label sits next to the track so the operator
+                      sees which end of the scale they are on. */}
+                  <div className="flex items-center gap-1.5" aria-label="Comment intensity">
+                    <input
+                      type="range"
+                      min={INTENSITY_MIN}
+                      max={INTENSITY_MAX}
+                      step={1}
+                      value={intensity}
+                      onChange={(e) => setIntensity(Number(e.target.value))}
+                      className="h-2 w-24 cursor-pointer accent-primary"
+                      aria-label="Comment intensity"
+                    />
+                    <span className="w-16 text-xs text-muted-foreground" title="How hard the draft may push">
+                      {INTENSITY_LABELS[intensity]}
+                    </span>
                   </div>
                   <Button type="button" variant="outline" size="sm" onClick={generateAI} disabled={aiBusy || selectedAccounts.length === 0}>
                     {aiBusy ? <Loader2 className="animate-spin" /> : <Sparkles />}

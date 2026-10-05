@@ -192,6 +192,15 @@
   reassembles the delta content across events (and strips inline
   `<thinking>…</thinking>` blocks a reasoning model can leak into the answer).
   Both shapes are covered by tests; the single-JSON path is unchanged.
+- **AI comment drafts gained a length picker and a 5-step intensity slider.**
+  The dashboard's "AI generate" row now has a Short / Medium / Long select and
+  a 1-5 slider (Gentle → Sharp, 3 = balanced) instead of the old three-button
+  soft/medium/bold control. `POST /api/comments/generate` accepts `intensity`
+  as an int (0-5, 0 = default 3; out of range = 400) and `length`
+  (short/medium/long; empty = medium; unknown = 400). The prompt also now asks
+  for human-like phrasing: varied openings so no two candidates start the
+  same way, and everyday Indonesian abbreviations and light slang ("nggak",
+  "bgt", "sih") where they fit.
 - **The noVNC live view clipped the remote screen.** noVNC defaults to
   `resize=off`, so the 1280×800 Xvfb framebuffer rendered at native size and
   got cut off at the iframe edge. The live-view URL now sets `resize=scale`,

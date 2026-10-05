@@ -24,17 +24,27 @@ func (c *capturingLLM) Complete(_ context.Context, _, user string, _ float64, ma
 	return "satu\ndua", nil
 }
 
-func TestGenerateIntensityShapesPrompt(t *testing.T) {
+// The 1-5 intensity slider and the length setting must each steer the prompt:
+// the low end goes gentle, the high end may push the edge, the middle stays
+// balanced, and 0 (unset) defaults to the middle.
+func TestGenerateIntensityAndLengthShapePrompt(t *testing.T) {
 	cases := []struct {
 		intensity CommentIntensity
+		length    CommentLength
 		want      string // substring that must appear in the user prompt
 		absent    string // substring that must NOT appear
 	}{
-		{CommentIntensitySoft, "safe and neutral", "slightly sarcastic"},
-		{CommentIntensityMedium, "", "safe and neutral"},
-		{CommentIntensityBold, "slightly sarcastic", "safe and neutral"},
-		// Empty intensity = medium: byte-identical to the pre-intensity prompt.
-		{"", "", "safe and neutral"},
+		{1, CommentLengthMedium, "gentle and agreeable", "pointed"},
+		{2, CommentLengthMedium, "gentle and agreeable", "pointed"},
+		{3, CommentLengthMedium, "balanced", "gentle and agreeable"},
+		{4, CommentLengthMedium, "pointed", "gentle and agreeable"},
+		{5, CommentLengthMedium, "pointed", "gentle and agreeable"},
+		// Unset intensity defaults to the balanced middle.
+		{0, CommentLengthMedium, "balanced", "gentle and agreeable"},
+		{3, CommentLengthShort, "one sentence", "2-3 sentences"},
+		{3, CommentLengthLong, "2-3 sentences", "one sentence"},
+		// Unset length defaults to medium.
+		{3, "", "1-2 sentences", "one sentence"},
 	}
 	for _, tc := range cases {
 		c := &capturingLLM{}
@@ -44,21 +54,22 @@ func TestGenerateIntensityShapesPrompt(t *testing.T) {
 			Mode:      CommentModeSupport,
 			Count:     2,
 			Intensity: tc.intensity,
+			Length:    tc.length,
 		}); err != nil {
-			t.Fatalf("Generate(%q): %v", tc.intensity, err)
+			t.Fatalf("Generate(intensity=%d, length=%q): %v", tc.intensity, tc.length, err)
 		}
-		if tc.want != "" && !strings.Contains(c.user, tc.want) {
-			t.Errorf("intensity %q: prompt missing %q\nprompt: %s", tc.intensity, tc.want, c.user)
+		if !strings.Contains(c.user, tc.want) {
+			t.Errorf("intensity=%d length=%q: prompt missing %q\nprompt: %s", tc.intensity, tc.length, tc.want, c.user)
 		}
 		if tc.absent != "" && strings.Contains(c.user, tc.absent) {
-			t.Errorf("intensity %q: prompt must not contain %q\nprompt: %s", tc.intensity, tc.absent, c.user)
+			t.Errorf("intensity=%d length=%q: prompt must not contain %q\nprompt: %s", tc.intensity, tc.length, tc.absent, c.user)
 		}
 	}
 }
 
-func TestGenerateIntensityMediumIsLegacyPrompt(t *testing.T) {
-	// The default (medium) must be the exact pre-intensity prompt, so a
-	// dashboard that never picks a level gets the old behaviour.
+// The default (intensity 0, length unset) must produce the balanced, medium,
+// human-like prompt: a caller that sets nothing gets the canonical shape.
+func TestGenerateDefaultPromptIsBalancedMediumHumanLike(t *testing.T) {
 	c := &capturingLLM{}
 	g := NewCommentGenerator(c, nil, nil)
 	if _, err := g.Generate(context.Background(), GenerateInput{
@@ -68,30 +79,48 @@ func TestGenerateIntensityMediumIsLegacyPrompt(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	want := "Write 2 distinct comment candidate(s) for the post above. Supportive: you agree with the post and amplify its point. Stay sincere, never sycophantic.\nRules: natural, human, 1-2 sentences each, no hashtags, no emojis, no quotes around the comment, no numbering. Reply with one comment per line and nothing else.\nWrite in Bahasa Indonesia, casual but polite."
+	want := "Write 2 distinct comment candidate(s) for the post above. Supportive: you agree with the post and amplify its point. Stay sincere, never sycophantic.\nLength: medium: 1-2 sentences. Rules: sound like a real person typing in a comment section"
 	if !strings.Contains(c.user, want) {
-		t.Errorf("medium prompt drifted from the legacy shape:\n%s", c.user)
+		t.Errorf("default prompt drifted from the canonical shape:\n%s", c.user)
+	}
+	// The Indonesian language line must invite natural, human phrasing.
+	if !strings.Contains(c.user, "casual and natural") {
+		t.Errorf("prompt missing the human-like language line:\n%s", c.user)
 	}
 }
 
-func TestGenerateRejectsUnknownIntensity(t *testing.T) {
+func TestGenerateRejectsOutOfRangeIntensity(t *testing.T) {
+	g := NewCommentGenerator(&capturingLLM{}, nil, nil)
+	for _, bad := range []CommentIntensity{-1, 6} {
+		_, err := g.Generate(context.Background(), GenerateInput{
+			PostText:  "a post",
+			Mode:      CommentModeSupport,
+			Count:     1,
+			Intensity: bad,
+		})
+		if !errors.Is(err, domain.ErrValidation) {
+			t.Fatalf("intensity %d: want ErrValidation, got %v", bad, err)
+		}
+	}
+}
+
+func TestGenerateRejectsUnknownLength(t *testing.T) {
 	g := NewCommentGenerator(&capturingLLM{}, nil, nil)
 	_, err := g.Generate(context.Background(), GenerateInput{
-		PostText:  "a post",
-		Mode:      CommentModeSupport,
-		Count:     1,
-		Intensity: "extreme",
+		PostText: "a post",
+		Mode:     CommentModeSupport,
+		Count:    1,
+		Length:   "gigantic",
 	})
 	if !errors.Is(err, domain.ErrValidation) {
 		t.Fatalf("want ErrValidation, got %v", err)
 	}
 }
 
-// The completion budget must scale with the requested variant count: a
-// reasoning model spends its thinking before the answer, and the thinking
-// grows with the count. A flat budget is exhausted inside the thinking on a
-// large request (finish_reason:length, empty content) — the 502 this test
-// guards against.
+// The completion budget must scale with the requested variant count: a large
+// request (many long variants) can outgrow a flat budget and come back empty
+// (finish_reason:length), which the caller would misread as a screening
+// failure.
 func TestTokenBudgetScalesWithCount(t *testing.T) {
 	if tokenBudget(1) >= tokenBudget(10) {
 		t.Fatalf("budget must grow with count: count=1 %d, count=10 %d", tokenBudget(1), tokenBudget(10))

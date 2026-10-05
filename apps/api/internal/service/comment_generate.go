@@ -54,21 +54,37 @@ func (m CommentMode) Valid() bool {
 	return m == CommentModeSupport || m == CommentModeCounter
 }
 
-// CommentIntensity is how hard the generated comment pushes. It is orthogonal
-// to the stance (support/counter): the same stance can be written gently or
-// sharply. It steers the prompt only — the denylist screen and the length
-// cap apply to every level, so a "bold" draft can never ship a banned word.
-type CommentIntensity string
+// CommentIntensity is how hard the generated comment pushes, on a 1-5 scale
+// the dashboard exposes as a slider. It is orthogonal to the stance
+// (support/counter): the same stance can be written gently or sharply. It
+// steers the prompt only — the denylist screen and the length cap apply to
+// every level, so a "5" draft can never ship a banned word.
+type CommentIntensity int
 
 const (
-	CommentIntensitySoft   CommentIntensity = "soft"
-	CommentIntensityMedium CommentIntensity = "medium"
-	CommentIntensityBold   CommentIntensity = "bold"
+	CommentIntensityMin    CommentIntensity = 1 // gentle, agreeable
+	CommentIntensityMedium CommentIntensity = 3 // balanced, natural
+	CommentIntensityMax    CommentIntensity = 5 // sharp, push the edge
 )
 
-// Valid reports whether i is a known intensity.
+// Valid reports whether i is a usable slider position.
 func (i CommentIntensity) Valid() bool {
-	return i == CommentIntensitySoft || i == CommentIntensityMedium || i == CommentIntensityBold
+	return i >= CommentIntensityMin && i <= CommentIntensityMax
+}
+
+// CommentLength is how long each generated comment should be. It steers the
+// prompt only; the platform length cap (MaxCommentTextLen) still applies.
+type CommentLength string
+
+const (
+	CommentLengthShort  CommentLength = "short"
+	CommentLengthMedium CommentLength = "medium"
+	CommentLengthLong   CommentLength = "long"
+)
+
+// Valid reports whether l is a known length.
+func (l CommentLength) Valid() bool {
+	return l == CommentLengthShort || l == CommentLengthMedium || l == CommentLengthLong
 }
 
 // GenerateInput is one generation request: the post being replied to, what the
@@ -90,11 +106,12 @@ type GenerateInput struct {
 	// Language steers the output language ("id" → Bahasa Indonesia, the
 	// dashboard default).
 	Language string
-	// Intensity steers how hard the comment pushes (soft/medium/bold).
-	// Empty means medium: the prompt is byte-identical to the pre-intensity
-	// one, so a caller that does not pick a level gets exactly the old
-	// behaviour.
+	// Intensity steers how hard the comment pushes, 1 (gentle) to 5 (sharp).
+	// 0 means the dashboard default, 3 (balanced).
 	Intensity CommentIntensity
+	// Length steers how long each comment is (short/medium/long). Empty means
+	// medium: a one-or-two sentence reply, the old behaviour.
+	Length CommentLength
 }
 
 // Generate returns Count comment candidates. Every variant is distinct,
@@ -106,8 +123,17 @@ func (g *CommentGenerator) Generate(ctx context.Context, in GenerateInput) ([]st
 	if !in.Mode.Valid() {
 		return nil, fmt.Errorf("%w: mode must be support or counter, got %q", domain.ErrValidation, in.Mode)
 	}
-	if in.Intensity != "" && !in.Intensity.Valid() {
-		return nil, fmt.Errorf("%w: intensity must be soft, medium or bold, got %q", domain.ErrValidation, in.Intensity)
+	if in.Intensity == 0 {
+		in.Intensity = CommentIntensityMedium
+	}
+	if !in.Intensity.Valid() {
+		return nil, fmt.Errorf("%w: intensity must be 1-5, got %d", domain.ErrValidation, in.Intensity)
+	}
+	if in.Length != "" && !in.Length.Valid() {
+		return nil, fmt.Errorf("%w: length must be short, medium or long, got %q", domain.ErrValidation, in.Length)
+	}
+	if in.Length == "" {
+		in.Length = CommentLengthMedium
 	}
 	if in.Count < 1 {
 		in.Count = 1
@@ -126,22 +152,18 @@ func (g *CommentGenerator) Generate(ctx context.Context, in GenerateInput) ([]st
 	}
 	comments := strings.TrimSpace(strings.Join(prefixEach(in.ExistingComments, "- "), "\n"))
 	user := fmt.Sprintf(
-		"Post%s:\n%s\n\nExisting comments:\n%s\n\nWrite %d distinct comment candidate(s) for the post above. %s\nRules: natural, human, 1-2 sentences each, no hashtags, no emojis, no quotes around the comment, no numbering. Reply with one comment per line and nothing else.",
+		"Post%s:\n%s\n\nExisting comments:\n%s\n\nWrite %d distinct comment candidate(s) for the post above. %s\nLength: %s. Rules: sound like a real person typing in a comment section, not a brand account: vary the wording so no two candidates start the same way, write naturally, no hashtags, no quotes around the comment, no numbering. Reply with one comment per line and nothing else.",
 		authorSuffix(in.AuthorHandle),
 		truncateText(strings.TrimSpace(in.PostText), 1200),
 		truncateText(comments, 800),
 		in.Count,
 		stance,
+		lengthInstruction(in.Length),
 	)
 	if lang == "id" {
-		user += "\nWrite in Bahasa Indonesia, casual but polite."
+		user += "\nWrite in Bahasa Indonesia, casual and natural: everyday abbreviations and light slang are fine (e.g. 'nggak', 'bgt', 'sih', 'gimana', 'gw/aku' where it fits), but keep it readable."
 	}
-	switch in.Intensity {
-	case CommentIntensitySoft:
-		user += "\nKeep it safe and neutral: no sarcasm, no edge, nothing that could read as provocation."
-	case CommentIntensityBold:
-		user += "\nYou may be pointed, slightly sarcastic, and push the edge, but stay civil and never name-and-shame."
-	}
+	user += "\n" + intensityInstruction(in.Intensity)
 
 	system := "You write short social-media comments for a social media management team. You never mention being an AI."
 	out, err := g.llm.Complete(ctx, system, user, 0.9, tokenBudget(in.Count))
@@ -196,17 +218,37 @@ func authorSuffix(handle string) string {
 	return ""
 }
 
+// lengthInstruction turns the length setting into one prompt line.
+func lengthInstruction(l CommentLength) string {
+	switch l {
+	case CommentLengthShort:
+		return "short: one sentence, a few words, the way a quick reply reads"
+	case CommentLengthLong:
+		return "longer: 2-3 sentences, a real thought, still one comment"
+	default:
+		return "medium: 1-2 sentences"
+	}
+}
+
+// intensityInstruction turns the 1-5 slider into one prompt line. The middle
+// of the scale is deliberately unmarked: it is the natural default, so the
+// prompt adds nothing there.
+func intensityInstruction(i CommentIntensity) string {
+	switch {
+	case i <= 2:
+		return "Keep it gentle and agreeable: no sarcasm, no edge, nothing that could read as provocation."
+	case i >= 4:
+		return "You may be pointed, a bit sarcastic, and push the edge, but stay civil and never name-and-shame."
+	default:
+		return "Keep it balanced: natural, a little opinion, no edge."
+	}
+}
+
 // tokenBudget sizes the completion budget (max_tokens) for one generation.
-// The configured gateway fronts a REASONING model that emits its thinking
-// before its answer, and the thinking grows with how many variants are asked
-// for: measured against the live gateway, one variant spends a few hundred
-// tokens thinking, ten spend up to ~2000. A flat budget therefore runs out in
-// the thinking on a large request and the answer comes back empty
-// (`finish_reason: "length"`), which the caller would misread as a screening
-// failure. The budget is a ceiling, not a target — the model stops early when
-// it is done — so sizing it generously costs nothing for a small count and
-// only saves the large ones. 500 + 300/variant leaves headroom over the
-// measured tail; the adapter clamps it to the gateway's hard cap.
+// It is a ceiling, not a target — the model stops early when it is done — so
+// sizing it generously costs nothing for a small count and only protects the
+// large ones: 500 + 300/variant leaves headroom over the measured tail for a
+// long-variant request, and the adapter clamps it to the gateway's hard cap.
 func tokenBudget(count int) int {
 	budget := 500 + 300*count
 	if budget > 16000 {
