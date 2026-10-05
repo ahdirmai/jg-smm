@@ -69,6 +69,10 @@ func (s *ScrapeService) allowSpend(caller string) bool {
 type PostDetail struct {
 	Post     domain.Post      `json:"post"`
 	Comments []domain.Comment `json:"comments"`
+	// Cached is true when this came straight from the 6h freshness cache
+	// instead of a paid actor run. The dashboard uses it to say "served from
+	// storage, re-scrape to refresh" rather than implying a fresh fetch.
+	Cached bool `json:"cached"`
 }
 
 // platformFromURL infers the platform from a post permalink. The dashboard
@@ -87,12 +91,12 @@ func platformFromURL(raw string) domain.Platform {
 // post with its comments. Synchronous: the HTTP request lasts as long as the
 // actor run (tens of seconds); the dashboard shows a loader for it.
 //
-// force skips the 6h freshness short-circuit. It exists because a keyword batch
-// scrape updates post.scraped_at for every post it ingests (UpsertPost sets it
-// to now()) without ever fetching their comments — the search actor returns no
-// comment bodies. So a post the operator just scraped in a batch looks "fresh"
-// and the button would silently return zero comments forever. The operator
-// asking for comments means a paid run is what they want.
+// force skips the 6h freshness short-circuit. The cache already refuses to
+// serve a post whose comments were never fetched (see the CommentsFetched
+// gate below), so force now means "the operator wants fresh data on purpose"
+// — the dashboard's Re-scrape button — rather than "escape a stale empty
+// comment list". A fresh, comment-complete post is otherwise served from
+// storage for free.
 //
 // Step order mirrors the scheduler path: target upsert (find-or-create, the
 // URL→post join) → scrape_job row (the run's anchor) → apify_run audit row →
@@ -156,10 +160,16 @@ func (s *ScrapeService) scrapeTarget(ctx context.Context, platform domain.Platfo
 		return PostDetail{}, fmt.Errorf("scrape: target upsert: %w", err)
 	}
 
-	// Short-circuit cache: a fresh scrape (< 6h) returns the stored post
-	// without spending an actor run. Skipped on force — see the doc comment.
+	// Short-circuit cache: a fresh scrape (< 6h) whose comments were actually
+	// fetched returns the stored post without spending an actor run. Skipped on
+	// force — see the doc comment. The CommentsFetched gate is what makes the
+	// cache honest: a keyword-batch ingest stamps scraped_at too, but its actor
+	// returns no comment bodies, so such a row must still pay for a real scrape
+	// instead of answering "no comments" for six hours.
 	if !force {
-		if detail, err := s.readBack(ctx, tgt); err == nil && time.Since(detail.Post.ScrapedAt) < 6*time.Hour {
+		if detail, err := s.readBack(ctx, tgt); err == nil &&
+			time.Since(detail.Post.ScrapedAt) < 6*time.Hour && detail.Post.CommentsFetched {
+			detail.Cached = true
 			return detail, nil
 		}
 	}
@@ -253,6 +263,12 @@ func (s *ScrapeService) scrapeTarget(ctx context.Context, platform domain.Platfo
 		return PostDetail{}, fmt.Errorf("%w: scrape produced no post for %s", domain.ErrValidation, rawURL)
 	}
 	s.scrapes.LinkTargetPost(ctx, tgt.ID, detail.Post.ID)
+	// A permalink scrape fetched the comment bodies even when the post has
+	// none, so the row is now cache-eligible for the next 6h. Without this the
+	// operator would pay for the same empty answer again on every repeat.
+	if err := s.scrapes.MarkPostCommentsFetched(ctx, detail.Post.ID); err != nil {
+		s.log.Warn("scrape: mark comments fetched failed", "post", detail.Post.ID, "err", err)
+	}
 	if _, err := s.scrapes.CompleteScrapeJob(ctx, job.ID, domain.JobStatusSuccess, nil); err != nil {
 		s.log.Warn("scrape: complete job failed", "job", job.ID, "err", err)
 	}

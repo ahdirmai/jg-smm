@@ -178,6 +178,12 @@ type Post struct {
 	// posted.
 	PublishedAt     *time.Time `json:"publishedAt"`
 	AuthorAccountID *string    `json:"authorAccountId"`
+	// CommentsFetched is true when the row was ingested by a path that actually
+	// fetched the comment bodies (a permalink scrape). A keyword-batch ingest
+	// stamps scraped_at too but its actor returns no comment bodies, so it
+	// leaves this false — the on-demand 6h cache must not serve such a row as a
+	// fresh "no comments" answer.
+	CommentsFetched bool `json:"commentsFetched"`
 }
 
 // Comment is a scraped comment, optionally a reply (ParentID chain). JSON tags

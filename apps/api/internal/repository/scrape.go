@@ -205,6 +205,16 @@ func (r *ScrapeRepo) ListRecentPosts(ctx context.Context, p domain.Platform, lim
 	return out, nil
 }
 
+// MarkPostCommentsFetched records that a permalink scrape fetched this post's
+// comment bodies, so the on-demand 6h cache may serve the row. A no-op on a
+// missing row (the caller just upserted it, so this is a guard, not a lookup).
+func (r *ScrapeRepo) MarkPostCommentsFetched(ctx context.Context, postID string) error {
+	if err := r.q.MarkPostCommentsFetched(ctx, uuidValue(postID)); err != nil {
+		return fmt.Errorf("repository.scrape.MarkPostCommentsFetched: %w", err)
+	}
+	return nil
+}
+
 func (r *ScrapeRepo) UpsertComment(ctx context.Context, c domain.Comment) (domain.Comment, error) {
 	row, err := r.q.UpsertComment(ctx, sqlcgen.UpsertCommentParams{
 		PostID:       uuidValue(c.PostID),

@@ -982,6 +982,7 @@ type Post struct {
 	ScrapedAt       pgtype.Timestamptz `json:"scraped_at"`
 	AuthorAccountID pgtype.UUID        `json:"author_account_id"`
 	PublishedAt     pgtype.Timestamptz `json:"published_at"`
+	CommentsFetched bool               `json:"comments_fetched"`
 }
 
 type ProvisionLog struct {

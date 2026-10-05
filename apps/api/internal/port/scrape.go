@@ -32,6 +32,11 @@ type ScrapeStore interface {
 	ListPosts(ctx context.Context, limit, offset *int) ([]domain.Post, error)
 	ListTopPosts(ctx context.Context, p domain.Platform, metric string, limit int) ([]domain.Post, error)
 	ListRecentPosts(ctx context.Context, p domain.Platform, limit int) ([]domain.Post, error)
+	// MarkPostCommentsFetched records that a permalink scrape fetched this
+	// post's comment bodies, so the 6h freshness cache may serve the row.
+	// Keyword-batch ingests never call it (their actor returns no comment
+	// bodies), so their rows stay unservable from the cache.
+	MarkPostCommentsFetched(ctx context.Context, postID string) error
 	UpsertComment(ctx context.Context, c domain.Comment) (domain.Comment, error)
 	GetComment(ctx context.Context, id string) (domain.Comment, error)
 	ListCommentsByPost(ctx context.Context, postID string, limit, offset *int) ([]domain.Comment, error)

@@ -79,7 +79,7 @@ func (q *Queries) GetCommentByPlatformExternalID(ctx context.Context, arg GetCom
 const getPostByID = `-- name: GetPostByID :one
 
 SELECT id, platform, external_id, author_handle, author_id, text, media_urls,
-       metrics, scraped_at, author_account_id, published_at
+       metrics, scraped_at, author_account_id, published_at, comments_fetched
 FROM post
 WHERE id = $1
 `
@@ -102,13 +102,14 @@ func (q *Queries) GetPostByID(ctx context.Context, id pgtype.UUID) (Post, error)
 		&i.ScrapedAt,
 		&i.AuthorAccountID,
 		&i.PublishedAt,
+		&i.CommentsFetched,
 	)
 	return i, err
 }
 
 const getPostByPlatformExternalID = `-- name: GetPostByPlatformExternalID :one
 SELECT id, platform, external_id, author_handle, author_id, text, media_urls,
-       metrics, scraped_at, author_account_id, published_at
+       metrics, scraped_at, author_account_id, published_at, comments_fetched
 FROM post
 WHERE platform = $1 AND external_id = $2
 `
@@ -133,6 +134,7 @@ func (q *Queries) GetPostByPlatformExternalID(ctx context.Context, arg GetPostBy
 		&i.ScrapedAt,
 		&i.AuthorAccountID,
 		&i.PublishedAt,
+		&i.CommentsFetched,
 	)
 	return i, err
 }
@@ -184,7 +186,7 @@ func (q *Queries) ListCommentsByPost(ctx context.Context, arg ListCommentsByPost
 
 const listPosts = `-- name: ListPosts :many
 SELECT id, platform, external_id, author_handle, author_id, text, media_urls,
-       metrics, scraped_at, author_account_id, published_at
+       metrics, scraped_at, author_account_id, published_at, comments_fetched
 FROM post
 ORDER BY published_at DESC NULLS LAST, scraped_at DESC
 LIMIT $1 OFFSET $2
@@ -216,6 +218,7 @@ func (q *Queries) ListPosts(ctx context.Context, arg ListPostsParams) ([]Post, e
 			&i.ScrapedAt,
 			&i.AuthorAccountID,
 			&i.PublishedAt,
+			&i.CommentsFetched,
 		); err != nil {
 			return nil, err
 		}
@@ -229,7 +232,7 @@ func (q *Queries) ListPosts(ctx context.Context, arg ListPostsParams) ([]Post, e
 
 const listRecentPostsByPlatform = `-- name: ListRecentPostsByPlatform :many
 SELECT id, platform, external_id, author_handle, author_id, text, media_urls,
-       metrics, scraped_at, author_account_id, published_at
+       metrics, scraped_at, author_account_id, published_at, comments_fetched
 FROM post
 WHERE platform = $1
 ORDER BY published_at DESC NULLS LAST, scraped_at DESC
@@ -266,6 +269,7 @@ func (q *Queries) ListRecentPostsByPlatform(ctx context.Context, arg ListRecentP
 			&i.ScrapedAt,
 			&i.AuthorAccountID,
 			&i.PublishedAt,
+			&i.CommentsFetched,
 		); err != nil {
 			return nil, err
 		}
@@ -279,7 +283,7 @@ func (q *Queries) ListRecentPostsByPlatform(ctx context.Context, arg ListRecentP
 
 const listTopPostsByPlatform = `-- name: ListTopPostsByPlatform :many
 SELECT id, platform, external_id, author_handle, author_id, text, media_urls,
-       metrics, scraped_at, author_account_id, published_at
+       metrics, scraped_at, author_account_id, published_at, comments_fetched
 FROM post
 WHERE platform = $1
 ORDER BY (metrics->>$2::text)::bigint DESC NULLS LAST
@@ -316,6 +320,7 @@ func (q *Queries) ListTopPostsByPlatform(ctx context.Context, arg ListTopPostsBy
 			&i.ScrapedAt,
 			&i.AuthorAccountID,
 			&i.PublishedAt,
+			&i.CommentsFetched,
 		); err != nil {
 			return nil, err
 		}
@@ -325,6 +330,21 @@ func (q *Queries) ListTopPostsByPlatform(ctx context.Context, arg ListTopPostsBy
 		return nil, err
 	}
 	return items, nil
+}
+
+const markPostCommentsFetched = `-- name: MarkPostCommentsFetched :exec
+UPDATE post
+SET comments_fetched = true
+WHERE id = $1
+`
+
+// A permalink scrape always fetches the comment bodies, so the post row may be
+// served from the 6h freshness cache afterwards. Keyword-batch ingests never
+// call this (their actor returns no comment bodies), so their rows stay
+// unfetched and the cache keeps paying for them until a real scrape lands.
+func (q *Queries) MarkPostCommentsFetched(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, markPostCommentsFetched, id)
+	return err
 }
 
 const upsertComment = `-- name: UpsertComment :one
@@ -400,7 +420,7 @@ SET text               = EXCLUDED.text,
     -- CHECK (author_handle <> '') already keeps an empty value out.
     author_handle       = EXCLUDED.author_handle
 RETURNING id, platform, external_id, author_handle, author_id, text, media_urls,
-          metrics, scraped_at, author_account_id, published_at
+          metrics, scraped_at, author_account_id, published_at, comments_fetched
 `
 
 type UpsertPostParams struct {
@@ -440,6 +460,7 @@ func (q *Queries) UpsertPost(ctx context.Context, arg UpsertPostParams) (Post, e
 		&i.ScrapedAt,
 		&i.AuthorAccountID,
 		&i.PublishedAt,
+		&i.CommentsFetched,
 	)
 	return i, err
 }

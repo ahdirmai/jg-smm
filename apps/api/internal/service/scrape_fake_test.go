@@ -146,6 +146,18 @@ func (f *fakeScrapeStore) GetPostByExternalID(ctx context.Context, p domain.Plat
 	}
 	return domain.Post{}, domain.ErrNotFound
 }
+func (f *fakeScrapeStore) MarkPostCommentsFetched(ctx context.Context, postID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, p := range f.posts {
+		if p.ID == postID {
+			p.CommentsFetched = true
+			f.posts[string(p.Platform)+"|"+p.ExternalID] = p
+			return nil
+		}
+	}
+	return nil
+}
 func (f *fakeScrapeStore) ListPosts(ctx context.Context, limit, offset *int) ([]domain.Post, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -111,7 +111,7 @@ func (q *Queries) GetKeywordBatchByID(ctx context.Context, id pgtype.UUID) (Keyw
 }
 
 const listKeywordBatchPosts = `-- name: ListKeywordBatchPosts :many
-SELECT p.id, p.platform, p.external_id, p.author_handle, p.author_id, p.text, p.media_urls, p.metrics, p.scraped_at, p.author_account_id, p.published_at
+SELECT p.id, p.platform, p.external_id, p.author_handle, p.author_id, p.text, p.media_urls, p.metrics, p.scraped_at, p.author_account_id, p.published_at, p.comments_fetched
 FROM post p
 JOIN keyword_batch_post kbp ON kbp.post_id = p.id
 WHERE kbp.keyword_batch_id = $1
@@ -146,6 +146,7 @@ func (q *Queries) ListKeywordBatchPosts(ctx context.Context, arg ListKeywordBatc
 			&i.ScrapedAt,
 			&i.AuthorAccountID,
 			&i.PublishedAt,
+			&i.CommentsFetched,
 		); err != nil {
 			return nil, err
 		}

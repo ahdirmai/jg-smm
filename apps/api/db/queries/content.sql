@@ -4,13 +4,13 @@
 
 -- name: GetPostByID :one
 SELECT id, platform, external_id, author_handle, author_id, text, media_urls,
-       metrics, scraped_at, author_account_id, published_at
+       metrics, scraped_at, author_account_id, published_at, comments_fetched
 FROM post
 WHERE id = $1;
 
 -- name: GetPostByPlatformExternalID :one
 SELECT id, platform, external_id, author_handle, author_id, text, media_urls,
-       metrics, scraped_at, author_account_id, published_at
+       metrics, scraped_at, author_account_id, published_at, comments_fetched
 FROM post
 WHERE platform = $1 AND external_id = $2;
 
@@ -32,11 +32,11 @@ SET text               = EXCLUDED.text,
     -- CHECK (author_handle <> '') already keeps an empty value out.
     author_handle       = EXCLUDED.author_handle
 RETURNING id, platform, external_id, author_handle, author_id, text, media_urls,
-          metrics, scraped_at, author_account_id, published_at;
+          metrics, scraped_at, author_account_id, published_at, comments_fetched;
 
 -- name: ListPosts :many
 SELECT id, platform, external_id, author_handle, author_id, text, media_urls,
-       metrics, scraped_at, author_account_id, published_at
+       metrics, scraped_at, author_account_id, published_at, comments_fetched
 FROM post
 ORDER BY published_at DESC NULLS LAST, scraped_at DESC
 LIMIT $1 OFFSET $2;
@@ -46,7 +46,7 @@ LIMIT $1 OFFSET $2;
 -- the dashboard's "top posts" table. metric_key must be a jsonb text field;
 -- `->>` keeps the bind a plain text parameter (no jsonb literal assembly).
 SELECT id, platform, external_id, author_handle, author_id, text, media_urls,
-       metrics, scraped_at, author_account_id, published_at
+       metrics, scraped_at, author_account_id, published_at, comments_fetched
 FROM post
 WHERE platform = $1
 ORDER BY (metrics->>$2::text)::bigint DESC NULLS LAST
@@ -58,11 +58,20 @@ LIMIT $3;
 -- keyword-scrape read-back uses it to show this run's rows in the order they
 -- were posted, not the order we happened to fetch them.
 SELECT id, platform, external_id, author_handle, author_id, text, media_urls,
-       metrics, scraped_at, author_account_id, published_at
+       metrics, scraped_at, author_account_id, published_at, comments_fetched
 FROM post
 WHERE platform = $1
 ORDER BY published_at DESC NULLS LAST, scraped_at DESC
 LIMIT $2;
+
+-- name: MarkPostCommentsFetched :exec
+-- A permalink scrape always fetches the comment bodies, so the post row may be
+-- served from the 6h freshness cache afterwards. Keyword-batch ingests never
+-- call this (their actor returns no comment bodies), so their rows stay
+-- unfetched and the cache keeps paying for them until a real scrape lands.
+UPDATE post
+SET comments_fetched = true
+WHERE id = $1;
 
 -- name: GetCommentByID :one
 SELECT id, post_id, platform, external_id, author_handle, text, metrics,

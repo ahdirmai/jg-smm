@@ -110,6 +110,7 @@ func toPost(row sqlcgen.Post) domain.Post {
 		ScrapedAt:       tsTimeOrZero(row.ScrapedAt),
 		PublishedAt:     tsTimePtr(row.PublishedAt),
 		AuthorAccountID: uuidStrPtr(row.AuthorAccountID),
+		CommentsFetched: row.CommentsFetched,
 	}
 }
 

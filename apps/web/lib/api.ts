@@ -173,11 +173,19 @@ export interface ScrapedPost {
    *  000016 — the date was read, used to evaluate the window, and discarded.
    *  `scrapedAt` is the fallback and is NOT the same thing. */
   publishedAt: string | null;
+  /** True when a permalink scrape fetched this post's comment bodies. A
+   *  keyword-batch row is false: its search actor returns no comment bodies,
+   *  so the on-demand cache will not serve it as a "no comments" answer. */
+  commentsFetched: boolean;
 }
 
 export interface ScrapeTargetResponse {
   post: ScrapedPost;
   comments: ScrapedComment[];
+  /** True when this was served from the 6h freshness cache instead of a paid
+   *  actor run. The dashboard uses it to say "served from storage" and offer a
+   *  re-scrape rather than implying a fresh fetch. */
+  cached: boolean;
 }
 
 export interface GenerateCommentResponse {

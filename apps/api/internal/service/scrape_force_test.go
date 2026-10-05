@@ -32,7 +32,9 @@ func (c *countingRunner) RunSearch(context.Context, port.ApifySearchInput) (port
 }
 
 // freshStore returns a post scraped one minute ago — inside the 6h window.
-func freshStore(t *testing.T) *fakeScrapeStore {
+// commentsFetched mirrors whether a permalink scrape (true) or a keyword-batch
+// ingest (false) produced the row; the cache only serves the former.
+func freshStore(t *testing.T, commentsFetched bool) *fakeScrapeStore {
 	t.Helper()
 	store := newFakeScrapeStore()
 	const url = "https://www.instagram.com/p/ABC123/"
@@ -46,10 +48,11 @@ func freshStore(t *testing.T) *fakeScrapeStore {
 		PostID:     strptr("post-1"),
 	}
 	store.posts["post-1"] = domain.Post{
-		ID:         "post-1",
-		Platform:   domain.PlatformInstagram,
-		ExternalID: "ABC123",
-		ScrapedAt:  time.Now().Add(-time.Minute),
+		ID:              "post-1",
+		Platform:        domain.PlatformInstagram,
+		ExternalID:      "ABC123",
+		ScrapedAt:       time.Now().Add(-time.Minute),
+		CommentsFetched: commentsFetched,
 	}
 	return store
 }
@@ -58,27 +61,50 @@ func strptr(s string) *string { return &s }
 
 func actorForAny(domain.Platform) string { return "test/actor" }
 
-// A post inside the freshness window is served from cache with force=false —
-// the batch case that makes the button useless.
+// A post inside the freshness window whose comments were fetched is served
+// from cache with force=false — the repeat-scrape case that used to pay.
 func TestScrapeTargetCachesFreshPostWithoutForce(t *testing.T) {
-	store := freshStore(t)
+	store := freshStore(t, true)
 	runner := &countingRunner{}
 	svc := NewScrapeService(store, runner, actorForAny, nil, nil)
 
-	if _, err := svc.ScrapeTarget(context.Background(), domain.PlatformInstagram,
-		"https://www.instagram.com/p/ABC123/", false); err != nil {
+	detail, err := svc.ScrapeTarget(context.Background(), domain.PlatformInstagram,
+		"https://www.instagram.com/p/ABC123/", false)
+	if err != nil {
 		t.Fatalf("ScrapeTarget: %v", err)
 	}
 	if runner.runs != 0 {
-		t.Errorf("made %d actor runs, want 0 (a fresh post must be served from cache)", runner.runs)
+		t.Errorf("made %d actor runs, want 0 (a fresh comment-complete post must be served from cache)", runner.runs)
+	}
+	if !detail.Cached {
+		t.Error("a cache-served post must report Cached=true so the dashboard can say it is stale")
 	}
 }
 
-// force=true spends a run even on a fresh post. This is the whole point of the
-// flag: the operator pressed the comments button, and a cached "no comments"
-// is indistinguishable from a broken one.
+// A keyword-batch row is fresh but its comments were never fetched, so the
+// cache must NOT serve it: the operator would otherwise get "no comments"
+// treated as a fresh answer for six hours. This is the case that forced the
+// old force=true hack.
+func TestScrapeTargetPaysForFreshPostWithoutComments(t *testing.T) {
+	store := freshStore(t, false)
+	runner := &countingRunner{}
+	svc := NewScrapeService(store, runner, actorForAny, nil, nil)
+
+	// The fake store has no apify_run/scrape_job rows, so ScrapeTarget fails
+	// after the runner — which is fine: the assertion is that the runner was
+	// reached at all, i.e. the cache did not short-circuit a comment-less row.
+	_, _ = svc.ScrapeTarget(context.Background(), domain.PlatformInstagram,
+		"https://www.instagram.com/p/ABC123/", false)
+
+	if runner.runs == 0 {
+		t.Error("a fresh post without fetched comments must still run the actor, not serve the empty cache")
+	}
+}
+
+// force=true spends a run even on a fresh, comment-complete post. The operator
+// pressed "re-scrape" and wants fresh data, not the cached copy.
 func TestScrapeTargetForceBypassesFreshCache(t *testing.T) {
-	store := freshStore(t)
+	store := freshStore(t, true)
 	runner := &countingRunner{}
 	svc := NewScrapeService(store, runner, actorForAny, nil, nil)
 

@@ -26,7 +26,7 @@ import {
   SelectValue,
   Textarea,
 } from '@smm/ui';
-import { AlertCircle, AtSign, Heart, Loader2, MessageSquare, Search, Sparkles } from 'lucide-react';
+import { AlertCircle, AtSign, Heart, Loader2, MessageSquare, RefreshCw, Search, Sparkles } from 'lucide-react';
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from 'react';
 
 import { api, type AccountsByRegionResponse, type ScrapeTargetResponse } from '@/lib/api';
@@ -214,8 +214,11 @@ export const NewActionForm = forwardRef<
 
   // One scrape runner: explicit args so a history pick (platform/url set in
   // the same tick) scrapes the right post, not the previous state values.
+  // force=false is the default: a post already scraped within 6h (with its
+  // comments) is served straight from storage — no paid actor run. The
+  // "Re-scrape" button passes force=true to fetch fresh data on purpose.
   const runScrapeWith = useCallback(
-    async (p: OnDemandPlatform, u: string) => {
+    async (p: OnDemandPlatform, u: string, force = false) => {
       setScrapeError(null);
       setScrape(null);
       setFlow(null);
@@ -225,12 +228,7 @@ export const NewActionForm = forwardRef<
       }
       setScraping(true);
       try {
-        // force: a keyword batch ingests a post without its comment bodies but
-        // still stamps scraped_at, so the 6h cache would answer with the empty
-        // comment list it stored — and the form renders nothing for an empty
-        // list, leaving the operator no way to tell "no comments" from "cache
-        // hit". Here the operator explicitly asked to scrape; pay for it.
-        const res = await api.scrapeTarget(p, u.trim(), true);
+        const res = await api.scrapeTarget(p, u.trim(), force);
         setScrape(res);
         onScraped?.();
         // A fresh target resets per-account selections.
@@ -246,7 +244,13 @@ export const NewActionForm = forwardRef<
   );
 
   function runScrape() {
-    void runScrapeWith(platform, url);
+    void runScrapeWith(platform, url, false);
+  }
+
+  // Re-scrape spends a paid actor run even when the post is fresh in storage.
+  // It is the escape hatch when the operator wants live data, not the cache.
+  function runScrapeForce() {
+    void runScrapeWith(platform, url, true);
   }
 
   async function generateAI() {
@@ -375,9 +379,9 @@ export const NewActionForm = forwardRef<
             </Button>
           </div>
           <p className="text-xs text-muted-foreground">
-            Scrape pulls the post metadata, caption and existing comments (Apify). This always
-            runs a fresh scrape rather than reusing a stored post, so comments show up here even
-            for a post a batch ingested without them.
+            Scrape pulls the post metadata, caption and existing comments (Apify). A post already
+            scraped within 6h is reused from storage — no paid run; only a new post, a stale one, or a
+            batch-ingested post without comments triggers a fresh scrape.
           </p>
         </div>
 
@@ -391,7 +395,8 @@ export const NewActionForm = forwardRef<
         {/* 2. Scraped post preview */}
         {scrape ? (
           <div className="overflow-hidden rounded-xl border border-border/60 bg-secondary/30">
-            {/* Header: who posted it, and how fresh this read is. */}
+            {/* Header: who posted it, how fresh this read is, and a way to
+                force a fresh run when the operator wants live data. */}
             <div className="flex items-center gap-2.5 border-b border-border/60 px-3 py-2.5">
               <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-secondary">
                 <AtSign className="size-4 text-muted-foreground" />
@@ -401,8 +406,21 @@ export const NewActionForm = forwardRef<
                 <p className="text-[11px] text-muted-foreground">
                   {platformLabel(scrape.post.platform) ?? scrape.post.platform} · scraped{' '}
                   {scrapedAgo(scrape.post.scrapedAt)}
+                  {scrape.cached ? ' · served from storage' : ''}
                 </p>
               </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 shrink-0 px-2 text-xs"
+                onClick={runScrapeForce}
+                disabled={scraping || !canAct}
+                title="Run a fresh paid scrape even if the post is already in storage"
+              >
+                {scraping ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+                Re-scrape
+              </Button>
             </div>
 
             <div className="space-y-3 p-3">
@@ -446,12 +464,13 @@ export const NewActionForm = forwardRef<
                 </p>
               ) : null}
               {scrape.comments.length === 0 ? (
-                // Without this the empty case is indistinguishable from a cache
-                // hit, and the operator cannot tell whether there is anything to
-                // reply to.
+                // The 6h cache only serves posts whose comments were actually
+                // fetched, so an empty list here is always the real answer, not
+                // a cached "no comments" placeholder. Without this the operator
+                // cannot tell whether there is anything to reply to.
                 <p className="text-xs text-muted-foreground">
-                  No existing comments on this post — a fresh scrape ran, so this is the real
-                  answer, not a cached one.
+                  No existing comments on this post — the comments were fetched, so this is the
+                  real answer, not a cached placeholder.
                 </p>
               ) : null}
             </div>

@@ -171,6 +171,24 @@
     looks thin, re-run it before trusting the count.
 
 ### Fixed
+- **The single-post "Scrape" button no longer pays for a run when the post is
+  already scraped and fresh.** It always sent `force: true`, so re-scraping a
+  post within the 6h window re-bought the same data from Apify every time. The
+  button now defaults to `force: false` and the 6h freshness cache is actually
+  used: a post that is fresh *and* whose comments were fetched is served from
+  storage for free, and the card says "served from storage" with a separate
+  **Re-scrape** button for an intentional paid run.
+  - The cache had a hole that forced the old `force: true` hack: a keyword
+    batch stamps `post.scraped_at = now()` for every post it ingests, but the
+    search actor returns no comment bodies — so a just-scraped post looked
+    "fresh" and the cache would answer "no comments" as if it were a real
+    answer for six hours. A new `post.comments_fetched` column (migration
+    000018, additive + down-migration) separates "we looked at this post"
+    (`scraped_at`) from "we fetched its comments". A permalink scrape always
+    fetches comments and marks the post `comments_fetched = true`; a
+    keyword-batch ingest never does, so its rows stay `false` and the cache
+    correctly declines to serve them. Rows that already have stored comments
+    are backfilled to `true`.
 - **AI comment generation 502'd on any batch of ~3+ drafts.** The LLM client
   sent a flat `max_tokens: 1500`, but the configured gateway fronts a
   REASONING model that spends its thinking tokens before the answer — and the

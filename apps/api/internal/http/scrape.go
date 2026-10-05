@@ -51,10 +51,10 @@ func (h *ScrapeHandler) Register(g *echo.Group) {
 type scrapeTargetRequest struct {
 	Platform string `json:"platform"`
 	URL      string `json:"url"`
-	// Force skips the 6h freshness cache. Set when the operator explicitly asks
-	// for comments: a keyword batch marks its posts fresh without ever fetching
-	// their comment bodies, so the cache alone would answer "no comments" for
-	// posts the operator just scraped.
+	// Force skips the 6h freshness cache. The cache already refuses to serve a
+	// post whose comments were never fetched, so force now means "I want fresh
+	// data on purpose" — the Re-scrape button — not "escape a stale empty
+	// comment list".
 	Force bool `json:"force"`
 }
 

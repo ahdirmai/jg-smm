@@ -276,6 +276,11 @@ type Querier interface {
 	ListTopPostsByPlatform(ctx context.Context, arg ListTopPostsByPlatformParams) ([]Post, error)
 	ListUsers(ctx context.Context, arg ListUsersParams) ([]ListUsersRow, error)
 	ListWorkers(ctx context.Context, arg ListWorkersParams) ([]Worker, error)
+	// A permalink scrape always fetches the comment bodies, so the post row may be
+	// served from the 6h freshness cache afterwards. Keyword-batch ingests never
+	// call this (their actor returns no comment bodies), so their rows stay
+	// unfetched and the cache keeps paying for them until a real scrape lands.
+	MarkPostCommentsFetched(ctx context.Context, id pgtype.UUID) error
 	// The dedupe pool for one (platform, target): every active template that has
 	// NOT been used against this target in the last 7 days, heaviest first. The
 	// caller does the weighted random pick over this candidate set (see the
