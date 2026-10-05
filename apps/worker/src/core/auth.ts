@@ -7,7 +7,7 @@
  * follow-up `auth-input`: both must address the SAME context, so the parked
  * context is keyed by accountId and kept alive across the gap.
  */
-import type { Browser, BrowserContext, Page } from 'playwright';
+import type { Browser, BrowserContext } from 'playwright';
 
 import type { Platform } from '@smm/shared';
 

@@ -26,7 +26,6 @@ import {
   missingText,
   replyToComment,
   runAction,
-  failShot,
 } from './dom.js';
 import { META_OTP_SELECTOR, otpHandlers } from './otp.js';
 
