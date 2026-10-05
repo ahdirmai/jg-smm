@@ -64,6 +64,12 @@ func (f *fakeRefreshStore) BeginRefresh(_ context.Context, accountID string) err
 	return nil
 }
 
+// GetPasswordEnc delegates to the underlying account store: the refresher's
+// delivery uses the same narrow read as the operator login.
+func (f *fakeRefreshStore) GetPasswordEnc(ctx context.Context, id string) ([]byte, error) {
+	return f.accounts.GetPasswordEnc(ctx, id)
+}
+
 // refreshFixture wires the refresher + the JobService that consumes its
 // callbacks over one store and one clock — the full loop the AC describes.
 // Moving `now` forward stands in for the passage of time.
@@ -76,6 +82,7 @@ func refreshFixture(t *testing.T) (*SessionRefresher, *JobService, *fakeRefreshS
 	refresher := NewSessionRefresher(store, pub, SessionRefreshConfig{
 		Clock:  func() time.Time { return now },
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Sealer: stubSealer{},
 	})
 	jobs := NewJobService(nil, accounts, nil, nil, fixedClockFn(func() time.Time { return now }),
 		nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -92,10 +99,12 @@ func (f fixedClockFn) Now() time.Time { return f() }
 func seedExpiring(accounts *fakeAccountStore, id string, in time.Duration) domain.Account {
 	expiry := refreshStart.Add(in)
 	worker := "worker-1"
+	enc, _ := stubSealer{}.Seal([]byte("refresh-pw"))
 	return accounts.seedLocked(domain.Account{
 		ID:             id,
 		Platform:       domain.PlatformInstagram,
 		Username:       "growthco-" + id,
+		PasswordEnc:    enc,
 		AuthStatus:     domain.AuthAuthenticated,
 		Status:         domain.AccountActive,
 		WorkerID:       &worker,
@@ -129,6 +138,11 @@ func TestSessionRefreshTriggersInsideLeadWindow(t *testing.T) {
 	}
 	if msg.Type != "auth-login" || msg.AccountID != due.ID {
 		t.Fatalf("control = %+v, want auth-login for %s", msg, due.ID)
+	}
+	// The refresh delivers the unsealed credential (P1-11 extension) so the
+	// worker's autofill can complete a re-login with no human in the loop.
+	if msg.Payload["username"] != due.Username || msg.Payload["password"] != "refresh-pw" {
+		t.Fatalf("payload = %v, want the unsealed credentials", msg.Payload)
 	}
 	// The DB write precedes the publish, so a crash between the two cannot
 	// leave a message in flight for an account still marked AUTHENTICATED.

@@ -90,6 +90,33 @@
   refreshing looks exactly like one where every post is dead. **TikTok is
   doubly blocked here**: no per-post insights tool at all, and the reach it
   would need is unobtainable too.
+- **The operator's "Log in" now fills the credential form automatically.**
+  The `auth-login` dispatch unseals the account's stored password once
+  (`account.password_enc` gains its single narrow reader,
+  `GetAccountPasswordEnc`) and rides it on the private per-worker control
+  channel — the same wire that already carries 2FA codes — so the worker's
+  headful browser autofills the login form before the cookie poll runs. A
+  fill failure (checkpoint wall, markup change) never aborts the login: the
+  operator can still type in the noVNC view, and the cookie poll remains the
+  only verdict. The plaintext crosses exactly one hop and lives in the
+  worker's memory for the login only; no API log, control log line, read
+  model or response ever carries it. The P2-06 session refresher reuses the
+  same delivery, so a dead session re-logs in with no human in the loop
+  instead of parking at `needs_input` until an operator sits in the live
+  view. The Meta adapters resolve the identifier field by candidate
+  selectors (`username` → `email` → `input[type=text]`) because Meta
+  re-names the attribute between rollouts.
+- **"Open profile" opens in the account's worker browser, not the
+  operator's tab.** The row and panel buttons now dispatch
+  `POST /api/containers/{id}/browser` (documented in the OpenAPI contract as
+  `openContainerBrowser`): the API SSRF-guards the URL to the account's
+  platform hosts, publishes `browser-open` on the control channel, and the
+  worker navigates its live, session-hydrated Chromium on the Xvfb display —
+  the operator watches the logged-in profile in the noVNC live view instead
+  of a logged-out tab on their own machine. The worker keeps one live-view
+  context across calls, so repeated opens navigate one window rather than
+  stacking Chrome windows. An account without a worker or live view falls
+  back to the operator tab; a failed dispatch does the same.
 ### Changed
 - **TikTok scraping moved to `xmolodtsov/tiktok-search-scraper` — 83× cheaper
   per post that is actually stored.** The old actor billed **$0.0037 per
@@ -129,6 +156,11 @@
     looks thin, re-run it before trusting the count.
 
 ### Fixed
+- **The noVNC live view clipped the remote screen.** noVNC defaults to
+  `resize=off`, so the 1280×800 Xvfb framebuffer rendered at native size and
+  got cut off at the iframe edge. The live-view URL now sets `resize=scale`,
+  which fits the whole remote display into the frame (aspect-preserved, no
+  letterboxing — the display and the frame share the 16:10 ratio).
 - **No scraped TikTok post ever stored its media.** The parser read
   `mediaUrls`, which the actor documents as an **empty array** unless a
   `shouldDownload*` flag is on — and those flags are separately billed events

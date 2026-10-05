@@ -131,8 +131,26 @@ curl -s -b jar.txt localhost:24080/api/auth/me
 Set `JWT_SECRET` (>= 16 bytes) via env before running the API with a database;
 compose provides a dev default. Roles: `OWNER` / `STRATEGIST` / `OPERATOR` /
 `ANALYST` (see `apps/api/internal/domain/role.go` for the permission matrix).
-
 See `docs/DEVELOPMENT_RULE.md` for conventions and `docs/DEVELOPMENT_PHASE.md` for the roadmap.
+
+## Operator login & live view
+
+Worker accounts log in through the dashboard's `/accounts` page (the login
+cockpit), never through the API:
+
+- **Log in** dispatches `auth-login` to the account's worker; the worker's
+  headful Chromium (on Xvfb) opens the platform login page and autofills the
+  stored credential, and the operator completes any 2FA/checkpoint in the
+  noVNC live view the panel embeds. The credential crosses exactly one
+  private hop (the per-worker control channel) and is never logged.
+- **Open profile** (an authenticated account) dispatches `browser-open`: the
+  worker navigates its live, session-hydrated browser to the public profile,
+  so the operator watches the logged-in profile in the noVNC live view — not
+  a logged-out tab in their own browser. The URL is SSRF-guarded to the
+  account's platform hosts by the API (`POST /api/containers/{id}/browser`).
+
+The live view is published per worker on `127.0.0.1:24100–24299`
+(`NOVNC_PORT_MIN/MAX` in `compose.yaml`).
 
 Manual, end-to-end run-through of the live stack (containers up, no mocks):
 `docs/MANUAL_TESTING.md`.

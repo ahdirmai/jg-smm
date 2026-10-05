@@ -1074,6 +1074,15 @@ type ListContainerLogsParams struct {
 	Limit *LogLimit `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// OpenContainerBrowserJSONBody defines parameters for OpenContainerBrowser.
+type OpenContainerBrowserJSONBody struct {
+	// Platform The account's platform; required when url is set.
+	Platform *string `json:"platform,omitempty"`
+
+	// Url Page to open. Empty/absent opens about:blank.
+	Url *string `json:"url,omitempty"`
+}
+
 // ListOfficialAccountsParams defines parameters for ListOfficialAccounts.
 type ListOfficialAccountsParams struct {
 	Platform *Platform `form:"platform,omitempty" json:"platform,omitempty"`
@@ -1145,6 +1154,9 @@ type LoginJSONRequestBody = LoginRequest
 
 // CreateContainerJSONRequestBody defines body for CreateContainer for application/json ContentType.
 type CreateContainerJSONRequestBody = CreateContainerRequest
+
+// OpenContainerBrowserJSONRequestBody defines body for OpenContainerBrowser for application/json ContentType.
+type OpenContainerBrowserJSONRequestBody OpenContainerBrowserJSONBody
 
 // CreateOfficialAccountJSONRequestBody defines body for CreateOfficialAccount for application/json ContentType.
 type CreateOfficialAccountJSONRequestBody = CreateOfficialAccountRequest

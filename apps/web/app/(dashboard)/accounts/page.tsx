@@ -258,6 +258,29 @@ export default function AccountsPage() {
     refresh();
   };
 
+  // Open the account's public profile in the account's WORKER virtual browser
+  // (the noVNC live view), logged in through the account's session — not in
+  // the operator's own browser. The dashboard sends the URL through the API
+  // (SSRF-guarded to the platform hosts) and the worker navigates its live
+  // Chromium; this page then opens the live view so the operator watches it.
+  // No worker / no live view yet: fall back to an operator tab.
+  const openProfile = async (a: Account) => {
+    const novnc = novncFor(a);
+    if (!a.workerId || !novnc) {
+      window.open(profileUrlFor(a), '_blank', 'noopener,noreferrer');
+      return;
+    }
+    setDetail({ id: a.id, watch: true });
+    try {
+      await api.openBrowser(a.workerId, profileUrlFor(a), a.platform);
+    } catch (err) {
+      // The live view is already open above; surface the dispatch failure and
+      // let the operator open the profile in their own tab instead.
+      console.error('open profile in live view failed', err);
+      window.open(profileUrlFor(a), '_blank', 'noopener,noreferrer');
+    }
+  };
+
   // Accounts that need the operator (a challenge in flight, or a live session
   // they want to watch) show the live view inside the drawer; a logged-in
   // account shows its profile instead — the two things an operator wants one
@@ -351,6 +374,7 @@ export default function AccountsPage() {
             onStartLogin={(id) => void onAct(id, startLogin)}
             onSubmitInput={(id, value) => void onAct(id, (x) => submitInput(x, value))}
             onToggleWatch={() => setDetail({ id: detailAccount.id, watch: !isWatching })}
+            onOpenProfile={(a) => void openProfile(a)}
           />
         </Card>
       ) : null}
@@ -635,20 +659,18 @@ export default function AccountsPage() {
                           <div className="flex items-center justify-end gap-1">
                             {a.authStatus === 'AUTHENTICATED' ? (
                               <Button
-                                asChild
                                 variant="ghost"
                                 size="icon"
                                 className="h-8 w-8"
-                                aria-label="Open profile"
+                                aria-label="Open profile in live view"
+                                title="Open the profile in this account's worker browser (live view)"
+                                disabled={busy === a.id || !canAct}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void onAct(a.id, () => openProfile(a));
+                                }}
                               >
-                                <a
-                                  href={profileUrlFor(a)}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  onClick={(e) => e.stopPropagation()}
-                                >
-                                  <ExternalLink className="size-3.5" />
-                                </a>
+                                <ExternalLink className="size-3.5" />
                               </Button>
                             ) : null}
                             <DropdownMenu>

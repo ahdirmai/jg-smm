@@ -194,3 +194,93 @@ func TestImportSessionValidatesObject(t *testing.T) {
 		t.Fatalf("session = %s, want %s", msg.Payload.Session, session)
 	}
 }
+
+// TestLoginDeliversUnsealedCredentials proves the operator's "Log in" button
+// carries the stored credentials: the auth-login control payload holds the
+// username and the unsealed password (the same wire hop that carries 2FA
+// codes via auth-input), while the row keeps holding only the sealed blob.
+func TestLoginDeliversUnsealedCredentials(t *testing.T) {
+	accounts := newFakeAccountStore()
+	workers := newFakeWorkerStore()
+	pub := &recordingPublisher{}
+	svc := NewAccountService(accounts, workers, nil, AccountConfig{Sealer: stubSealer{}, Control: pub})
+
+	workerID := "worker-1"
+	novnc := "http://127.0.0.1:24100"
+	workers.seed(domain.Worker{ID: workerID, NoVNCService: &novnc})
+	enc, err := stubSealer{}.Seal([]byte("hunter2"))
+	if err != nil {
+		t.Fatalf("seal: %v", err)
+	}
+	a := accounts.seedLockedForTest(domain.Account{
+		Platform:    domain.PlatformInstagram,
+		Username:    "growthco",
+		PasswordEnc: enc,
+		WorkerID:    &workerID,
+	})
+
+	view, err := svc.Login(context.Background(), a.ID)
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	if view.AuthStatus != domain.AuthAuthenticating {
+		t.Fatalf("authStatus = %s, want authenticating", view.AuthStatus)
+	}
+	raw := pub.last()
+	if raw == nil {
+		t.Fatal("login published no control message")
+	}
+	var msg struct {
+		Type    string            `json:"type"`
+		Payload map[string]string `json:"payload"`
+	}
+	if err := json.Unmarshal(raw, &msg); err != nil {
+		t.Fatalf("unmarshal control: %v", err)
+	}
+	if msg.Type != "auth-login" {
+		t.Fatalf("type = %q, want auth-login", msg.Type)
+	}
+	if msg.Payload["username"] != "growthco" || msg.Payload["password"] != "hunter2" {
+		t.Fatalf("payload = %v, want the unsealed credentials", msg.Payload)
+	}
+}
+
+// TestLoginWithoutStoredPasswordSendsNoPayload proves the manual path is
+// unchanged: an account without a stored credential gets an empty payload, so
+// the worker's autofill is skipped and the operator types in the live view.
+func TestLoginWithoutStoredPasswordSendsNoPayload(t *testing.T) {
+	accounts := newFakeAccountStore()
+	workers := newFakeWorkerStore()
+	pub := &recordingPublisher{}
+	svc := NewAccountService(accounts, workers, nil, AccountConfig{Sealer: stubSealer{}, Control: pub})
+
+	workerID := "worker-1"
+	novnc := "http://127.0.0.1:24100"
+	workers.seed(domain.Worker{ID: workerID, NoVNCService: &novnc})
+	a := accounts.seedLockedForTest(domain.Account{
+		Platform: domain.PlatformInstagram,
+		Username: "growthco",
+		WorkerID: &workerID,
+	})
+
+	if _, err := svc.Login(context.Background(), a.ID); err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	raw := pub.last()
+	if raw == nil {
+		t.Fatal("login published no control message")
+	}
+	var msg struct {
+		Type    string            `json:"type"`
+		Payload map[string]string `json:"payload"`
+	}
+	if err := json.Unmarshal(raw, &msg); err != nil {
+		t.Fatalf("unmarshal control: %v", err)
+	}
+	if msg.Type != "auth-login" {
+		t.Fatalf("type = %q, want auth-login", msg.Type)
+	}
+	if len(msg.Payload) != 0 {
+		t.Fatalf("payload = %v, want empty (operator types manually)", msg.Payload)
+	}
+}

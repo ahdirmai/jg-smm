@@ -23,15 +23,19 @@ type fakeAccountStore struct {
 	accounts   map[string]domain.Account
 	byWorker   map[string][]string // workerID -> accountIDs in insertion order
 	uniqueKeys map[string]bool     // "platform|username"
-	failAssign bool
-	nextID     int
+	// passwordEnc mirrors the DB's write-only column: the blob is kept here,
+	// never on the row, and returned only by GetPasswordEnc.
+	passwordEnc map[string][]byte
+	failAssign  bool
+	nextID      int
 }
 
 func newFakeAccountStore() *fakeAccountStore {
 	return &fakeAccountStore{
-		accounts:   map[string]domain.Account{},
-		byWorker:   map[string][]string{},
-		uniqueKeys: map[string]bool{},
+		accounts:    map[string]domain.Account{},
+		byWorker:    map[string][]string{},
+		uniqueKeys:  map[string]bool{},
+		passwordEnc: map[string][]byte{},
 	}
 }
 
@@ -58,6 +62,12 @@ func (s *fakeAccountStore) seedLocked(a domain.Account) domain.Account {
 	if a.CreatedAt.IsZero() {
 		a.CreatedAt = time.Now().UTC()
 	}
+	// Mirror the real DB: password_enc is write-only and no row read returns it
+	// (the blob lives in its own map, reachable only via GetPasswordEnc).
+	if len(a.PasswordEnc) > 0 {
+		s.passwordEnc[a.ID] = a.PasswordEnc
+	}
+	a.PasswordEnc = nil
 	s.accounts[a.ID] = a
 	s.uniqueKeys[fakeAccountUniqueKey(a.Platform, a.Username)] = true
 	if a.WorkerID != nil {
@@ -80,6 +90,15 @@ func (s *fakeAccountStore) GetByID(ctx context.Context, id string) (domain.Accou
 		return domain.Account{}, domain.ErrNotFound
 	}
 	return a, nil
+}
+
+func (s *fakeAccountStore) GetPasswordEnc(ctx context.Context, id string) ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.accounts[id]; !ok {
+		return nil, domain.ErrNotFound
+	}
+	return s.passwordEnc[id], nil
 }
 
 func (s *fakeAccountStore) List(ctx context.Context, f port.AccountFilter) ([]domain.Account, error) {

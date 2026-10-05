@@ -8,7 +8,7 @@
  * a comment only when its text is visible in the feed (§7.4). A dead session
  * is reported as AUTH (never retried) by the shared wrapper.
  */
-import type { BrowserContext } from 'playwright';
+import type { BrowserContext, Page } from 'playwright';
 
 import type { ActionJob } from '../types.js';
 import type {
@@ -20,6 +20,7 @@ import type {
 import {
   commentOnPost,
   credentialLogin,
+  fillMetaCredentials,
   likeComment,
   likePost,
   missingText,
@@ -43,6 +44,10 @@ export const instagramAdapter: PlatformAdapter = {
 
   login(ctx: BrowserContext, credentials: LoginCredentials): Promise<LoginResultLike> {
     return credentialLogin(ctx, 'instagram', credentials, LOGIN_URL);
+  },
+
+  autofill(page: Page, credentials: LoginCredentials): Promise<void> {
+    return fillMetaCredentials(page, credentials);
   },
 
   like(ctx: BrowserContext, job: ActionJob): Promise<AdapterResult> {

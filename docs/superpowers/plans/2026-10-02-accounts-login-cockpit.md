@@ -300,4 +300,34 @@ Worker-side challenge detection (the CAPTCHA half of the earlier research):
 1. **WP-2.1 (worker only, no API/DB change):** in `apps/worker/src/core/auth.ts`, `pollLoginOutcome`/`waitForOutcome` treat a challenge wall — URL patterns (`/challenge/`, `/checkpoint`, `/two_factor`, `/login/challenge`) plus a reCAPTCHA/hCaptcha iframe in any open page — as `needs_input` (screenshot taken, context parked) instead of burning the full `LOGIN_TIMEOUT_MS` and reporting `FAILED`. The dashboard already renders `NEEDS_INPUT`, so the cockpit picks it up unchanged.
 2. **WP-2.2 (optional, needs migration + OpenAPI):** persist `account.last_auth_reason` so the drawer can distinguish "Captcha challenge" from "OTP code" in its hint. Only if operators actually need the distinction.
 
-Out of scope for both packages: credential auto-login (password delivery to the worker) and external CAPTCHA solver services — decisions from the 2026-10-02 research, to be revisited as their own plans.
+Out of scope for both packages: external CAPTCHA solver services (and worker-side challenge detection above).
+
+## Addendum 2026-10-02 — executed: credential autofill + noVNC fit
+
+The operator's "Log in" button now fills the login form automatically, so the
+password no longer needs to be typed in the live view:
+
+- **API (`service/account.go`):** `Login()` unseals `password_enc` once, at
+  dispatch, and carries `{username, password}` on the `auth-login` control
+  payload — the same private per-worker channel that carries 2FA codes. No
+  sealer or blob → empty payload → the manual flow is unchanged. The P2-06
+  `SessionRefresher` uses the same `authLoginPayload` helper, so a refresh of a
+  dead session is now fully autonomous too.
+- **Narrow read:** `password_enc` stays write-only in the read model, but the
+  dispatch needs the blob, so a single dedicated query
+  (`GetAccountPasswordEnc`, `port.AccountStore.GetPasswordEnc`) exists purely
+  for that path — no list/read model/API response/log ever selects the column,
+  and the unsealed value is marshalled only into the control message.
+- **Worker:** the Meta adapters (IG + Threads) gained `autofill` (the form
+  steps live once in `dom.ts` — `fillMetaCredentials`, shared with
+  `credentialLogin`); `runLogin` calls it after `goto` and a fill failure only
+  logs — the cookie poll remains the verdict authority. The payload is never
+  logged (the control log line carries type + accountId only). Live
+  verification exposed a stale selector — Meta renamed the form fields
+  (`username`/`password` to `email`/`pass`) — so `fillMetaCredentials`
+  resolves each field through an ordered candidate list (the `name` variants,
+  then the type-level fallback) instead of a single hard selector.
+- **Web (`components/live-view.tsx`):** the noVNC client URL gained
+  `resize=scale`. noVNC's default `resize=off` rendered the 1280x800 Xvfb
+  framebuffer at native size, clipping it at the iframe edge; `resize=scale`
+  fits the whole remote into the frame (16:10 matches the container ratio).

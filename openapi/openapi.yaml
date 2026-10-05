@@ -611,6 +611,49 @@ paths:
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
+    post:
+      tags: [containers]
+      summary: Open a URL in the container's live browser
+      description: |
+        Publishes `browser-open` on the container's control channel. The worker
+        navigates its live, session-hydrated Chromium on the Xvfb display to
+        the URL, so the noVNC live view shows the page already logged in —
+        used by the dashboard's "Open profile". The URL is SSRF-guarded to the
+        account's platform hosts; an empty URL opens about:blank. Requires the
+        `act` permission and a published live-view URL.
+      operationId: openContainerBrowser
+      security:
+        - accessCookie: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                url:
+                  type: string
+                  description: Page to open. Empty/absent opens about:blank.
+                platform:
+                  type: string
+                  description: The account's platform; required when url is set.
+      responses:
+        '200':
+          description: Instruction dispatched to the worker.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
 
   /api/admin/ping:
     get:

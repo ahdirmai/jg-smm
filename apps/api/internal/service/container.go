@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand"
+	"net/url"
 	"strings"
 	"time"
 
@@ -336,12 +337,62 @@ func isDomainConflict(err error) bool {
 	return err == domain.ErrConflict
 }
 
-// OpenBrowser asks the worker to launch Chrome on its Xvfb display and open
-// a page, so the noVNC view shows a real browser immediately for manual
-// testing. url may be empty (about:blank). Requires a published noVNC URL.
-func (s *ContainerService) OpenBrowser(ctx context.Context, workerID string, url string) error {
+// profileHosts is the per-platform host allowlist for the "open profile in the
+// virtual browser" path. The dashboard derives the profile URL from
+// platform + handle and the worker opens it in the account's live,
+// session-hydrated Chromium — so an operator-supplied URL is a navigation
+// primitive. Without this allowlist, a request could point a logged-in
+// browser at the cloud metadata endpoint. Mirrors the FE profileUrlFor hosts;
+// kept separate from action.go's platformHosts because that one is scoped to
+// the MVP action platforms only.
+var profileHosts = map[domain.Platform][]string{
+	domain.PlatformInstagram: {"instagram.com", "www.instagram.com"},
+	domain.PlatformThreads:   {"threads.net", "www.threads.net", "threads.com", "www.threads.com"},
+	domain.PlatformTikTok:    {"tiktok.com", "www.tiktok.com"},
+	domain.PlatformLinkedIn:  {"linkedin.com", "www.linkedin.com"},
+	domain.PlatformX:         {"x.com", "www.x.com"},
+	domain.PlatformYouTube:   {"youtube.com", "www.youtube.com"},
+	domain.PlatformFacebook:  {"facebook.com", "www.facebook.com"},
+}
+
+// safeProfileURL is the open-profile SSRF floor: http/https on a host that
+// belongs to the account's platform. A strict allowlist cannot drift the way
+// a blocklist does. An empty url is valid (the worker opens about:blank).
+func safeProfileURL(raw string, platform domain.Platform) (string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return "", nil
+	}
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return "", fmt.Errorf("%w: invalid profile URL: %v", domain.ErrValidation, err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", fmt.Errorf("%w: profile URL scheme must be http or https, got %q", domain.ErrValidation, u.Scheme)
+	}
+	hosts, ok := profileHosts[platform]
+	if !ok {
+		return "", fmt.Errorf("%w: no profile hosts configured for %q", domain.ErrValidation, platform)
+	}
+	host := strings.ToLower(u.Hostname())
+	for _, h := range hosts {
+		if host == h {
+			return raw, nil
+		}
+	}
+	return "", fmt.Errorf("%w: %q host %q is not a %s profile", domain.ErrValidation, platform, host, platform)
+}
+
+// OpenBrowser asks the worker to open a page in the account's live,
+// session-hydrated browser on its Xvfb display, so the noVNC live view shows
+// the profile logged in. url may be empty (the worker opens about:blank, and
+// no platform is needed for that). When a URL is present it is SSRF-guarded
+// to the account's platform hosts. Requires a published noVNC URL.
+func (s *ContainerService) OpenBrowser(ctx context.Context, workerID string, platform domain.Platform, url string) error {
 	if s.control == nil {
 		return fmt.Errorf("%w: control channel is not configured", domain.ErrUnavailable)
+	}
+	if strings.TrimSpace(url) != "" && !platform.Valid() {
+		return fmt.Errorf("%w: unknown platform %q", domain.ErrValidation, platform)
 	}
 	w, err := s.workers.GetByID(ctx, workerID)
 	if err != nil {
@@ -350,6 +401,9 @@ func (s *ContainerService) OpenBrowser(ctx context.Context, workerID string, url
 	if w.NoVNCService == nil || *w.NoVNCService == "" {
 		return fmt.Errorf("%w: worker has no live view to open a browser on", domain.ErrConflict)
 	}
+	if _, err := safeProfileURL(url, platform); err != nil {
+		return err
+	}
 	payload := map[string]string{}
 	if url != "" {
 		payload["url"] = url
@@ -357,7 +411,7 @@ func (s *ContainerService) OpenBrowser(ctx context.Context, workerID string, url
 	msg, err := json.Marshal(map[string]any{
 		"type":      "browser-open",
 		"accountId": workerID,
-		"platform":  "instagram",
+		"platform":  platform,
 		"payload":   payload,
 	})
 	if err != nil {
@@ -366,7 +420,7 @@ func (s *ContainerService) OpenBrowser(ctx context.Context, workerID string, url
 	if err := s.control.PublishControl(ctx, w.ID, msg); err != nil {
 		return fmt.Errorf("container service: publish browser-open: %w", err)
 	}
-	s.logger.Info("browser-open dispatched", "workerId", w.ID, "url", url)
+	s.logger.Info("browser-open dispatched", "workerId", w.ID, "platform", platform, "url", url)
 	return nil
 }
 

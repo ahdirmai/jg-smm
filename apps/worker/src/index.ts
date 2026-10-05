@@ -8,12 +8,13 @@
  * endpoint must not crash the container.
  */
 import { loadConfig } from './core/config.js';
+import type { BrowserContext, Page } from 'playwright';
 import { createLogger } from './core/logger.js';
 import { createHeartbeat, type HeartbeatPayload } from './core/heartbeat.js';
 import { claimRow } from './core/claim.js';
 import { createController } from './core/controller.js';
 import { clearAuthContext, runLogin, submitAuthInput } from './core/auth.js';
-import { launchBrowser, newAccountContext, pinGeolocation, type BrowserHandle } from './core/browser.js';
+import { launchBrowser, newAccountContext, type BrowserHandle } from './core/browser.js';
 import { createGeolocation } from './core/geolocation.js';
 import { readSession, writeSession } from './core/session.js';
 import { createCallback } from './transport/callback.js';
@@ -94,6 +95,9 @@ async function browser() {
   if (!browserHandle) browserHandle = await launchBrowser({ display: config.display });
   return browserHandle.browser;
 }
+// The live-view context, kept open across "open profile" calls so repeated
+// clicks navigate one window instead of stacking new Chrome windows.
+let manualContext: BrowserContext | undefined;
 
 const controller = createController({
   logger,
@@ -158,11 +162,20 @@ void control
     }
     logger.info('control message', { type: message.type, accountId: message.accountId });
     switch (message.type) {
-      case 'auth-login':
-        // Operator headful login: the credential is typed in the noVNC view,
-        // never held by the worker. The context is parked for auth-input.
-        await authCallback.post(message.accountId, await runLogin(message.accountId, message.platform, authDeps));
+      case 'auth-login': {
+        // The API delivers the operator's credentials (unsealed at dispatch)
+        // so the form can be filled; absent, the operator types in the noVNC
+        // view as before. The payload is never logged (line above logs type +
+        // accountId only).
+        const username = typeof message.payload?.username === 'string' ? message.payload.username : '';
+        const password = typeof message.payload?.password === 'string' ? message.payload.password : '';
+        const credentials = username && password ? { username, password } : undefined;
+        await authCallback.post(
+          message.accountId,
+          await runLogin(message.accountId, message.platform, authDeps, credentials),
+        );
         break;
+      }
       case 'auth-input': {
         const code = typeof message.payload?.value === 'string' ? message.payload.value : '';
         if (!code) {
@@ -217,21 +230,36 @@ void control
         break;
       }
       case 'browser-open': {
-        // Manual testing: open Chrome on the Xvfb display so the noVNC view
-        // shows a live browser immediately. One context, one page; the surface
-        // stays up because the browser process is kept alive.
+        // Open the target in the account's LIVE, session-hydrated browser on
+        // the Xvfb display, so the noVNC live view shows the profile already
+        // logged in. The context is kept across calls: a second "open
+        // profile" navigates the same window instead of stacking a second
+        // Chrome window on the display.
         const url = typeof message.payload?.url === 'string' ? message.payload.url : '';
         const target = url || 'about:blank';
         try {
           const b = await browser();
-          const ctx = await b.newContext({ viewport: { width: 1280, height: 800 } });
-          // Pin the live view to the same frozen point the action contexts use:
-          // the operator opens this to verify the setup, so a datacentre
-          // position here would contradict what the actions report.
-          await pinGeolocation(ctx, await geolocation.get());
-          const page = await ctx.newPage();
+          if (!manualContext) {
+            // Hydrate the persisted session when the message names a platform
+            // this worker serves — the operator then sees the logged-in
+            // profile, not a login wall. A bare "Live view" (no platform)
+            // keeps the old behaviour: a fresh, session-less context.
+            // newAccountContext pins the context to the worker's frozen GPS
+            // point — the same position the actions report.
+            if (config.platforms.includes(message.platform)) {
+              manualContext = await newAccountContext(
+                b,
+                message.platform,
+                await readSession(message.platform).catch(() => undefined),
+                await geolocation.get(),
+              );
+            } else {
+              manualContext = await b.newContext({ viewport: { width: 1280, height: 800 } });
+            }
+          }
+          const page: Page = manualContext.pages()[0] ?? (await manualContext.newPage());
           await page.goto(target, { waitUntil: 'domcontentloaded' }).catch(() => undefined);
-          logger.info('browser-open: Chrome opened', { url: target });
+          logger.info('browser-open: opened in live view', { url: target, platform: message.platform });
         } catch (err) {
           logger.warn('browser-open failed', { error: (err as Error).message, url: target });
         }

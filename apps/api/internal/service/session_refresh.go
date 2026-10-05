@@ -20,11 +20,12 @@ import (
 //   - the ticket says "re-login via control", and the control channel is the
 //     only path that can carry an interactive login. A scrape job has no worker
 //     context and no way to reach a browser.
-//   - the credential is never in play. The worker hydrates the session it
-//     already has on disk (core/auth.ts), so a live cookie renews with no human
-//     and a dead one parks for an operator in the noVNC view. The API never
-//     holds or transmits a password (see port/account.go: password_enc is
-//     write-only, and no accessor for it exists).
+//   - the credential rides the dispatch: `authLoginPayload` unseals it once so
+//     the worker's autofill can complete a re-login with no human in the loop
+//     (the same delivery as an operator's Log in). Without it a dead session
+//     would park at needs_input until an operator sat in the noVNC view; the
+//     live-cookie case stays autonomous because the worker hydrates the session
+//     it already has on disk (core/auth.ts).
 //
 // Failure accounting lives here rather than on the job queue because there is
 // no job: a refresh either verifies (reset the streak) or does not (count it,
@@ -35,6 +36,7 @@ type SessionRefresher struct {
 	cfg       SessionRefreshConfig
 	clock     func() time.Time
 	log       *slog.Logger
+	sealer    port.Sealer
 }
 
 // narrowRefreshStore is the slice of the account store this loop needs. Narrow
@@ -48,6 +50,9 @@ type narrowRefreshStore interface {
 	// BeginRefresh marks a refresh in flight so the next tick does not
 	// re-dispatch the same account while the worker is still logging in.
 	BeginRefresh(ctx context.Context, accountID string) error
+	// GetPasswordEnc reads the write-only credential blob so the refresh can
+	// deliver it to the worker's autofill (same delivery as an operator login).
+	GetPasswordEnc(ctx context.Context, id string) ([]byte, error)
 }
 
 // SessionRefreshConfig bounds the loop. Zero values fall back to defaults.
@@ -69,6 +74,9 @@ type SessionRefreshConfig struct {
 	Clock func() time.Time
 	// Logger defaults to slog.Default.
 	Logger *slog.Logger
+	// Sealer unseals the account password for the dispatch (P1-11 extension);
+	// nil keeps the legacy manual-only behavior.
+	Sealer port.Sealer
 }
 
 func (c SessionRefreshConfig) withDefaults() SessionRefreshConfig {
@@ -106,6 +114,7 @@ func NewSessionRefresher(
 		cfg:       cfg,
 		clock:     cfg.Clock,
 		log:       cfg.Logger,
+		sealer:    cfg.Sealer,
 	}
 }
 
@@ -179,10 +188,15 @@ func (s *SessionRefresher) dispatch(ctx context.Context, acc domain.Account) err
 	if err := s.accounts.BeginRefresh(ctx, acc.ID); err != nil {
 		return fmt.Errorf("mark refresh in flight: %w", err)
 	}
+	enc, err := s.accounts.GetPasswordEnc(ctx, acc.ID)
+	if err != nil {
+		return fmt.Errorf("get credential: %w", err)
+	}
 	msg, err := json.Marshal(controlMessage{
 		Type:      "auth-login",
 		AccountID: acc.ID,
 		Platform:  string(acc.Platform),
+		Payload:   authLoginPayload(s.sealer, acc, enc, s.log),
 	})
 	if err != nil {
 		return fmt.Errorf("marshal control: %w", err)

@@ -219,8 +219,9 @@ type GetAccountByIDRow struct {
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 }
 
-// Account (executor identity) queries. password_enc is WRITE-ONLY: no query
-// here ever selects it. UNIQUE(platform, username) + UNIQUE(worker_id, platform).
+// Account (executor identity) queries. password_enc is WRITE-ONLY: it is
+// never selected into an Account row, with one narrow exception below
+// (GetAccountPasswordEnc) that exists solely for the auth-login dispatch.
 func (q *Queries) GetAccountByID(ctx context.Context, id pgtype.UUID) (GetAccountByIDRow, error) {
 	row := q.db.QueryRow(ctx, getAccountByID, id)
 	var i GetAccountByIDRow
@@ -244,6 +245,22 @@ func (q *Queries) GetAccountByID(ctx context.Context, id pgtype.UUID) (GetAccoun
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const getAccountPasswordEnc = `-- name: GetAccountPasswordEnc :one
+SELECT password_enc FROM account
+WHERE id = $1
+`
+
+// The single narrow read of the credential blob: the auth-login dispatch
+// unseals it once and rides it on the private per-worker control channel so
+// the worker can fill the login form. No read model, API response, or log
+// line ever carries the value.
+func (q *Queries) GetAccountPasswordEnc(ctx context.Context, id pgtype.UUID) ([]byte, error) {
+	row := q.db.QueryRow(ctx, getAccountPasswordEnc, id)
+	var password_enc []byte
+	err := row.Scan(&password_enc)
+	return password_enc, err
 }
 
 const listAccounts = `-- name: ListAccounts :many

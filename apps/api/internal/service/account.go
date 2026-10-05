@@ -303,6 +303,14 @@ func (s *AccountService) Login(ctx context.Context, accountID string) (AccountSu
 	if err != nil {
 		return AccountSummary{}, fmt.Errorf("account service: get: %w", err)
 	}
+	// The credential blob is write-only in the read model: fetch it once, here,
+	// for the dispatch only. The unsealed value never enters the row, a log,
+	// or a response — it crosses exactly one private wire hop (the control
+	// channel) and lives in the worker's memory for the login only.
+	enc, err := s.accounts.GetPasswordEnc(ctx, accountID)
+	if err != nil {
+		return AccountSummary{}, fmt.Errorf("account service: get credential: %w", err)
+	}
 	if a.WorkerID == nil {
 		return AccountSummary{}, fmt.Errorf("%w: account has no container to log in on", domain.ErrConflict)
 	}
@@ -313,10 +321,12 @@ func (s *AccountService) Login(ctx context.Context, accountID string) (AccountSu
 	if w.NoVNCService == nil {
 		return AccountSummary{}, fmt.Errorf("%w: worker has no live view to log in through", domain.ErrConflict)
 	}
+	payload := authLoginPayload(s.sealer, a, enc, s.logger)
 	msg, err := json.Marshal(controlMessage{
 		Type:      "auth-login",
 		AccountID: accountID,
 		Platform:  string(a.Platform),
+		Payload:   payload,
 	})
 	if err != nil {
 		return AccountSummary{}, fmt.Errorf("account service: marshal control: %w", err)
@@ -373,10 +383,31 @@ func (s *AccountService) SubmitInput(ctx context.Context, accountID, value strin
 
 // controlMessage is the wire shape the worker's control subscriber expects.
 type controlMessage struct {
-	Type      string            `json:"type"`
-	AccountID string            `json:"accountId"`
-	Platform  string            `json:"platform"`
-	Payload   map[string]string `json:"payload,omitempty"`
+	Type      string `json:"type"`
+	AccountID string `json:"accountId"`
+	Platform  string `json:"platform"`
+	// Payload carries dispatch-specific data (auth-login: the unsealed
+	// credentials; auth-input: the 2FA code; auth-export: the requestId).
+	Payload map[string]string `json:"payload,omitempty"`
+}
+
+// authLoginPayload unseals the account's stored credentials for a single
+// auth-login dispatch. The plaintext is carried on the private per-worker
+// control channel (the same one that carries 2FA codes via auth-input) and
+// lives in the worker's memory for the login only; neither the API log nor the
+// control log line ever includes it. Nil sealer or blob means an empty payload
+// and the operator types in the live view, exactly as before.
+func authLoginPayload(sealer port.Sealer, a domain.Account, enc []byte, log *slog.Logger) map[string]string {
+	if sealer == nil || len(enc) == 0 {
+		return nil
+	}
+	pw, err := sealer.Open(enc)
+	if err != nil {
+		log.Warn("auth-login: credential unseal failed, operator types manually",
+			"accountId", a.ID, "err", err)
+		return nil
+	}
+	return map[string]string{"username": a.Username, "password": string(pw)}
 }
 
 // sessionImportControl carries a session (cookies) as a raw JSON object to the

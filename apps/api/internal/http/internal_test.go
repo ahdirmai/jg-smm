@@ -162,6 +162,10 @@ func (s *fakeAccountStore) ListByWorker(_ context.Context, wid string) ([]domain
 	}
 	return out, nil
 }
+
+func (s *fakeAccountStore) GetPasswordEnc(_ context.Context, id string) ([]byte, error) {
+	return s.accounts[id].PasswordEnc, nil
+}
 func (s *fakeAccountStore) CountByWorker(_ context.Context, wid string) (int, error) {
 	n := 0
 	for _, a := range s.accounts {

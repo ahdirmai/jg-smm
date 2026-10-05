@@ -181,6 +181,19 @@ func (r *AccountRepo) CountByWorker(ctx context.Context, workerID string) (int, 
 	return int(n), nil
 }
 
+// GetPasswordEnc reads the write-only credential blob for the login flow. The
+// sole narrow exception to password_enc being write-only; nothing else calls it.
+func (r *AccountRepo) GetPasswordEnc(ctx context.Context, id string) ([]byte, error) {
+	enc, err := r.q.GetAccountPasswordEnc(ctx, uuidValue(id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("repository.account.GetPasswordEnc: %w", err)
+	}
+	return enc, nil
+}
+
 // nonNilTags guarantees a non-nil slice: a nil []string would be sent as SQL
 // NULL and rejected by the NOT NULL tags column (whose default is '{}').
 func nonNilTags(tags []string) []string {

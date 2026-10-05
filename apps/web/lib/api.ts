@@ -328,12 +328,12 @@ export const api = {
   containerLogs: (id: string, limit = 20) =>
     request<ApiSchemas['ProvisionLogList']>(`/api/containers/${id}?limit=${limit}`),
   deleteContainer: (id: string) => request<void>(`/api/containers/${id}`, { method: 'DELETE' }),
-  // Manual browser: ask the worker to open Chrome on its VNC display; the
-  // noVNC view then shows the browser immediately for testing / debugging.
-  openBrowser: (containerId: string, url?: string) =>
+  // Open a URL in the account's live, session-hydrated browser on the worker's
+  // VNC display; the noVNC live view then shows the page already logged in.
+  openBrowser: (containerId: string, url: string | null, platform: string) =>
     request<{ status: string }>(`/api/containers/${containerId}/browser`, {
       method: 'POST',
-      body: JSON.stringify({ url: url ?? null }),
+      body: JSON.stringify({ url, platform }),
     }),
 
   // The queue (P3-13). Enqueue is intent only: account + permalink + type.

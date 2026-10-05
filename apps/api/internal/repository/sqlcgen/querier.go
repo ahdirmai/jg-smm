@@ -122,9 +122,15 @@ type Querier interface {
 	DeleteProxyGroup(ctx context.Context, id pgtype.UUID) error
 	DeleteUser(ctx context.Context, id pgtype.UUID) error
 	DeleteWorker(ctx context.Context, id pgtype.UUID) error
-	// Account (executor identity) queries. password_enc is WRITE-ONLY: no query
-	// here ever selects it. UNIQUE(platform, username) + UNIQUE(worker_id, platform).
+	// Account (executor identity) queries. password_enc is WRITE-ONLY: it is
+	// never selected into an Account row, with one narrow exception below
+	// (GetAccountPasswordEnc) that exists solely for the auth-login dispatch.
 	GetAccountByID(ctx context.Context, id pgtype.UUID) (GetAccountByIDRow, error)
+	// The single narrow read of the credential blob: the auth-login dispatch
+	// unseals it once and rides it on the private per-worker control channel so
+	// the worker can fill the login form. No read model, API response, or log
+	// line ever carries the value.
+	GetAccountPasswordEnc(ctx context.Context, id pgtype.UUID) ([]byte, error)
 	GetActionJobByID(ctx context.Context, id pgtype.UUID) (ActionJob, error)
 	// The latest attempt of a job, by (job, attempt).
 	GetActionLog(ctx context.Context, arg GetActionLogParams) (ActionLog, error)

@@ -13,13 +13,13 @@ import { platformLabel } from '@/lib/platforms';
 /**
  * The public profile URL for a worker account. Worker accounts carry no
  * profileUrl in the contract (that field is official-account analytics only),
- * so the URL is derived from platform + handle/username — the same link the
- * worker itself would open.
+ * so the URL is derived from platform + username — the public handle the
+ * platform resolves. The `handle` column is NOT used: it can hold a
+ * platform-internal id (URL-encoded, not a public slug), which would point
+ * at a page that does not exist.
  */
 export function profileUrlFor(a: Account): string {
-  // Prefer the handle (canonical, may differ from the login username); fall
-  // back to it when the platform never reported one.
-  const handle = a.handle || a.username;
+  const handle = a.username;
   switch (a.platform) {
     case 'instagram':
       return `https://www.instagram.com/${handle}/`;
@@ -62,6 +62,7 @@ export function AccountDetailPanel({
   onStartLogin,
   onSubmitInput,
   onToggleWatch,
+  onOpenProfile,
 }: {
   account: Account;
   /** The worker's published live view URL, or null until its first heartbeat. */
@@ -75,6 +76,12 @@ export function AccountDetailPanel({
   onStartLogin: (id: string) => void;
   onSubmitInput: (id: string, value: string) => void;
   onToggleWatch: () => void;
+  /**
+   * Open the profile in the account's worker virtual browser (noVNC live
+   * view), logged in through the account's session. The page falls back to
+   * an operator tab when the account has no live view.
+   */
+  onOpenProfile: (account: Account) => void;
 }) {
   const [code, setCode] = useState('');
 
@@ -181,16 +188,14 @@ export function AccountDetailPanel({
 
           {account.authStatus === 'AUTHENTICATED' ? (
             <div className="flex flex-wrap gap-2">
-              <Button asChild variant="outline" size="sm">
-                <a
-                  href={profileUrlFor(account)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2"
-                >
-                  <ExternalLink />
-                  Open profile
-                </a>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={busy}
+                onClick={() => onOpenProfile(account)}
+              >
+                <ExternalLink />
+                Open profile
               </Button>
               <Button variant="ghost" size="sm" disabled={!novncUrl} onClick={onToggleWatch}>
                 <MonitorPlay />

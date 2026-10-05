@@ -16,16 +16,46 @@ import { runLogin, submitAuthInput, clearAuthContext, authContexts } from '../co
 function fakeBrowser(story: {
   cookies: Array<{ name: string; value: string }>;
   verificationField: boolean;
-}): { browser: Browser; ctx: BrowserContext; storageState: unknown } {
+  /** Thrown from `fill`, to prove a failed autofill does not kill the login. */
+  fillError?: Error;
+}): { browser: Browser; ctx: BrowserContext; storageState: unknown; fills: string[] } {
   let state: unknown = undefined;
+  // `fills` records every fill/press the page receives, so a test can prove
+  // the credential autofill actually reached the form.
+  const fills: string[] = [];
   const page = {
     url: () => 'https://www.instagram.com/',
     goto: async () => undefined,
-    locator: () => ({
-      count: async () => (story.verificationField ? 1 : 0),
-      fill: async () => undefined,
-      press: async () => undefined,
-    }),
+    locator: (selector: string) => {
+      const loc = {
+        count: async () => {
+          // The login form's own fields are always present on the fake page;
+          // only the OTP/verification field is gated by the story. This lets
+          // firstPresent resolve the first candidate, matching the real form.
+          const formFields = [
+            'input[name="username"]',
+            'input[name="email"]',
+            'input[type="text"]',
+            'input[name="password"]',
+            'input[name="pass"]',
+            'input[type="password"]',
+          ];
+          if (formFields.includes(selector)) return 1;
+          return story.verificationField ? 1 : 0;
+        },
+        fill: async (value: string) => {
+          if (story.fillError) throw story.fillError;
+          fills.push(`${selector}=${value}`);
+        },
+        press: async (key: string) => {
+          fills.push(`press:${key}`);
+        },
+        // firstPresent narrows a candidate selector with .first(); the fake
+        // has at most one match, so it is its own first.
+        first: () => loc,
+      };
+      return loc;
+    },
   };
   const ctx = {
     cookies: async () => story.cookies,
@@ -49,6 +79,7 @@ function fakeBrowser(story: {
     get storageState() {
       return state;
     },
+    fills,
   };
 }
 
@@ -70,6 +101,61 @@ test('login is verified when the platform session cookie is present', async () =
   assert.equal(result.handle, 'abc');
   // The parked context is released on success.
   assert.equal(authContexts.has('a1'), false);
+});
+
+test('runLogin fills and submits the credential form when the API delivers the credentials', async () => {
+  const { browser, fills } = fakeBrowser({
+    cookies: [
+      { name: 'sessionid', value: 'abc' },
+      { name: 'ds_user_id', value: '123' },
+    ],
+    verificationField: false,
+  });
+
+  const result = await runLogin(
+    'a-auto',
+    'instagram',
+    { browser: async () => browser, loginUrlFor: () => 'https://example.test/login' },
+    { username: 'growthco', password: 's3cret' },
+  );
+
+  assert.equal(result.outcome, 'verified');
+  // The platform adapter's autofill reached the form: username filled,
+  // password filled, Enter pressed to submit.
+  assert.deepEqual(fills, [
+    'input[name="username"]=growthco',
+    'input[name="password"]=s3cret',
+    'press:Enter',
+  ]);
+});
+
+test('a failed credential autofill does not abort the login — the cookie poll still decides', async () => {
+  const { browser } = fakeBrowser({
+    cookies: [
+      { name: 'sessionid', value: 'abc' },
+      { name: 'ds_user_id', value: '123' },
+    ],
+    verificationField: false,
+    fillError: new Error('challenge wall instead of the form'),
+  });
+  const logs: string[] = [];
+
+  const result = await runLogin(
+    'a-fill-fail',
+    'instagram',
+    {
+      browser: async () => browser,
+      loginUrlFor: () => 'https://example.test/login',
+      log: (msg: string) => logs.push(msg),
+    },
+    { username: 'growthco', password: 's3cret' },
+  );
+
+  assert.equal(result.outcome, 'verified');
+  assert.ok(
+    logs.some((m) => m.includes('autofill failed')),
+    'the fill failure must reach the container log',
+  );
 });
 
 test('login reports needs_input when a verification field appears', async () => {

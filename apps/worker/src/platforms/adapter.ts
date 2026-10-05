@@ -11,7 +11,7 @@
  * invites a platform author to implement only that and report success on a
  * compose that never posted.
  */
-import type { BrowserContext } from 'playwright';
+import type { BrowserContext, Page } from 'playwright';
 
 import type { Platform } from '@smm/shared';
 
@@ -65,6 +65,13 @@ export interface PlatformAdapter {
    * with bespoke markup overrides it.
    */
   detectAuthInput(ctx: BrowserContext): Promise<boolean>;
+  /**
+   * Fill and submit the platform's login form with credentials. Used by the
+   * operator headful flow when the API delivers the credentials on the
+   * auth-login dispatch; absent (or failed) means the operator types in the
+   * live view instead.
+   */
+  autofill?(page: Page, credentials: LoginCredentials): Promise<void>;
   /**
    * Fill and submit the operator-supplied code into the platform's field. The
    * default fills a single input and presses Enter; a multi-box SMS challenge

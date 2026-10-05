@@ -774,11 +774,12 @@ export async function runAction(
 }
 
 /**
- * Credential login shared by the Meta adapters. Both surface the same form
- * (`input[name=username]` / `input[name=password]`), so the step lives once
- * here; a platform supplies only its login URL. Verdict comes from
- * `pollLoginOutcome` — the cookie standard, never the URL (DRY with the
- * operator headful flow in core/auth).
+ * Credential login shared by the Meta adapters. Both surface the same login
+ * form (one identifier text input, one password input — Meta re-names the
+ * attributes between rollouts, so `fillMetaCredentials` resolves them by
+ * candidate selectors), and a platform supplies only its login URL. Verdict
+ * comes from `pollLoginOutcome` — the cookie standard, never the URL (DRY with
+ * the operator headful flow in core/auth).
  */
 export async function credentialLogin(
   ctx: BrowserContext,
@@ -789,10 +790,7 @@ export async function credentialLogin(
   const page = await ctx.newPage();
   try {
     await page.goto(loginUrl, { waitUntil: 'domcontentloaded' });
-    await page.locator('input[name="username"]').fill(credentials.username);
-    const password = page.locator('input[name="password"]');
-    await password.fill(credentials.password);
-    await password.press('Enter');
+    await fillMetaCredentials(page, credentials);
     // The page must stay open while the poll runs: closing it would abort the
     // submit navigation. Cookies live on the context, so the verdict reads the
     // context, and the page is dropped only once an outcome is reached.
@@ -800,6 +798,50 @@ export async function credentialLogin(
   } finally {
     await page.close().catch(() => undefined);
   }
+}
+
+/**
+ * The Meta login form's identifier field, tried in order. Meta re-names the
+ * attributes between rollouts (`username` -> `email`), so the first selector
+ * that resolves wins; `input[type="text"]` is the type-level fallback, the one
+ * attribute the form's single identifier field always has. An empty list
+ * means the login form is not on the page at all (a checkpoint/consent wall).
+ */
+const USERNAME_FIELD_SELECTORS = [
+  'input[name="username"]',
+  'input[name="email"]',
+  'input[type="text"]',
+];
+const PASSWORD_FIELD_SELECTORS = [
+  'input[name="password"]',
+  'input[name="pass"]',
+  'input[type="password"]',
+];
+
+async function firstPresent(page: Page, selectors: string[]): Promise<Locator> {
+  for (const sel of selectors) {
+    const loc = page.locator(sel);
+    if ((await loc.count()) > 0) return loc.first();
+  }
+  throw new Error(`login form field not found (tried: ${selectors.join(', ')})`);
+}
+
+/**
+ * Fill and submit the Meta credential form (IG + Threads share the markup).
+ * Used by the adapters' autonomous login and by the operator headful flow's
+ * autofill — one definition of the form (DRY). Pressing Enter in the password
+ * field submits; the verdict always comes from the cookie poll, never from the
+ * URL landing.
+ */
+export async function fillMetaCredentials(
+  page: Page,
+  credentials: LoginCredentials,
+): Promise<void> {
+  const username = await firstPresent(page, USERNAME_FIELD_SELECTORS);
+  await username.fill(credentials.username);
+  const password = await firstPresent(page, PASSWORD_FIELD_SELECTORS);
+  await password.fill(credentials.password);
+  await password.press('Enter');
 }
 
 // --- internals ------------------------------------------------------------

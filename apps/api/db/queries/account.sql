@@ -1,5 +1,6 @@
--- Account (executor identity) queries. password_enc is WRITE-ONLY: no query
--- here ever selects it. UNIQUE(platform, username) + UNIQUE(worker_id, platform).
+-- Account (executor identity) queries. password_enc is WRITE-ONLY: it is
+-- never selected into an Account row, with one narrow exception below
+-- (GetAccountPasswordEnc) that exists solely for the auth-login dispatch.
 
 -- name: GetAccountByID :one
 SELECT
@@ -7,6 +8,14 @@ SELECT
     proxy_group_id, health_score, status, tags, worker_id, last_used_at,
     last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at
 FROM account
+WHERE id = $1;
+
+-- name: GetAccountPasswordEnc :one
+-- The single narrow read of the credential blob: the auth-login dispatch
+-- unseals it once and rides it on the private per-worker control channel so
+-- the worker can fill the login form. No read model, API response, or log
+-- line ever carries the value.
+SELECT password_enc FROM account
 WHERE id = $1;
 
 -- name: ListAccounts :many

@@ -414,6 +414,7 @@ func main() {
 				Lead:   time.Duration(cfg.SessionRefreshLeadHours) * time.Hour,
 				Clock:  time.Now,
 				Logger: logger,
+				Sealer: sealer,
 			})
 			go refresher.Run(ctx, time.Duration(cfg.SessionRefreshIntervalSeconds)*time.Second)
 		}

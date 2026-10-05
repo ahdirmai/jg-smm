@@ -401,7 +401,17 @@ export interface paths {
          */
         get: operations["listContainerLogs"];
         put?: never;
-        post?: never;
+        /**
+         * Open a URL in the container's live browser
+         * @description Publishes `browser-open` on the container's control channel. The worker
+         *     navigates its live, session-hydrated Chromium on the Xvfb display to
+         *     the URL, so the noVNC live view shows the page already logged in —
+         *     used by the dashboard's "Open profile". The URL is SSRF-guarded to the
+         *     account's platform hosts; an empty URL opens about:blank. Requires the
+         *     `act` permission and a published live-view URL.
+         *
+         */
+        post: operations["openContainerBrowser"];
         /**
          * Delete a container
          * @description Sets desired state STOPPED; the reconciler tears down pod+PVC+service
@@ -1451,11 +1461,13 @@ export interface components {
             actionType?: string;
             targetUrl?: string;
             workerId?: string;
-            /** @description File name only; the server applies path.Base and requires .png. */
+            /** @description File name only; the server applies path.Base and requires .jpg (the format the worker's screenshot capture writes). */
             screenshotPath?: string;
             error?: string;
             /** @description The final comment text the worker posted (template already rendered), stored on the attempt so a verdict replays without the pool. */
             renderedText?: string;
+            /** @description The comment_template the job's text came from, echoed from the dispatched job. Empty for an operator-supplied body. Recorded on the attempt so the 7-day per-target dedupe can see the variant as used. */
+            templateId?: string;
             /** @description First runes of the platform response; the debug trail behind a verdict. */
             responseExcerpt?: string;
             /**
@@ -2200,6 +2212,43 @@ export interface operations {
             };
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
+        };
+    };
+    openContainerBrowser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The container ID. */
+                containerId: components["parameters"]["ContainerId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** @description Page to open. Empty/absent opens about:blank. */
+                    url?: string;
+                    /** @description The account's platform; required when url is set. */
+                    platform?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Instruction dispatched to the worker. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatusResponse"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
         };
     };
     deleteContainer: {

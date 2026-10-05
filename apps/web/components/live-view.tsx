@@ -9,8 +9,9 @@ import { cn } from '@smm/ui';
  *
  * The heartbeat reports host:port (or a bare root), and noVNC serves a
  * directory listing there. `vnc.html` is the client; `autoconnect=1` skips the
- * Connect dialog so the screen streams immediately. A URL already pointing at
- * the client is left alone — only its query params are merged.
+ * Connect dialog so the screen streams immediately, and `resize=scale` fits the
+ * remote framebuffer into the frame instead of clipping it at native size. A
+ * URL already pointing at the client is left alone — only its query params are merged.
  */
 export function novncClientUrl(url: string): string {
   const cleaned = url.trim().replace(/\/+$/, '');
@@ -19,6 +20,11 @@ export function novncClientUrl(url: string): string {
   const query = qIndex === -1 ? '' : cleaned.slice(qIndex + 1);
   const params = new URLSearchParams(query);
   params.set('autoconnect', '1');
+  // noVNC defaults to `resize=off`: the 1280x800 Xvfb framebuffer renders at
+  // native size and gets clipped at the iframe edge. `resize=scale` fits the
+  // whole remote into the container (aspect-preserved, no letterboxing — the
+  // display and this frame share the 16:10 ratio).
+  params.set('resize', 'scale');
   if (!path.endsWith('vnc.html')) {
     return `${path}/vnc.html?${params.toString()}`;
   }

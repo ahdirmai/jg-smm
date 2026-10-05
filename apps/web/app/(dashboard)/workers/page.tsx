@@ -393,7 +393,7 @@ export default function WorkersPage() {
                             size="sm"
                             className="h-8"
                             onClick={async () => {
-                              try { await api.openBrowser(c.id); } catch { /* best-effort: browser may already be open */ }
+                              try { await api.openBrowser(c.id, null, ''); } catch { /* best-effort: browser may already be open */ }
                               setLive({ name: c.name, url: c.novncUrl as string });
                             }}
                           >

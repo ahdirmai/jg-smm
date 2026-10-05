@@ -94,6 +94,10 @@ type AccountStore interface {
 	ListByWorker(ctx context.Context, workerID string) ([]domain.Account, error)
 	// CountByWorker returns how many accounts a container currently hosts.
 	CountByWorker(ctx context.Context, workerID string) (int, error)
+	// GetPasswordEnc is the single narrow read of the write-only credential
+	// blob, used once per auth-login dispatch so the worker can fill the login
+	// form. No list/read model ever selects the column.
+	GetPasswordEnc(ctx context.Context, id string) ([]byte, error)
 }
 
 // ProxyGroupStore persists proxy pools.

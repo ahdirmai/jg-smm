@@ -3,7 +3,7 @@
  * shares `dom.ts` and differs only in identity, login URL and its selector
  * set in `../sel`. See `instagram.ts` for the rationale per method.
  */
-import type { BrowserContext } from 'playwright';
+import type { BrowserContext, Page } from 'playwright';
 
 import type { ActionJob } from '../types.js';
 import type {
@@ -15,6 +15,7 @@ import type {
 import {
   commentOnPost,
   credentialLogin,
+  fillMetaCredentials,
   likeComment,
   likePost,
   missingText,
@@ -38,6 +39,10 @@ export const threadsAdapter: PlatformAdapter = {
 
   login(ctx: BrowserContext, credentials: LoginCredentials): Promise<LoginResultLike> {
     return credentialLogin(ctx, 'threads', credentials, LOGIN_URL);
+  },
+
+  autofill(page: Page, credentials: LoginCredentials): Promise<void> {
+    return fillMetaCredentials(page, credentials);
   },
 
   like(ctx: BrowserContext, job: ActionJob): Promise<AdapterResult> {

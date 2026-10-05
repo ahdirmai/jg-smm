@@ -7,11 +7,11 @@
  * follow-up `auth-input`: both must address the SAME context, so the parked
  * context is keyed by accountId and kept alive across the gap.
  */
-import type { Browser, BrowserContext } from 'playwright';
+import type { Browser, BrowserContext, Page } from 'playwright';
 
 import type { Platform } from '@smm/shared';
 
-import type { PlatformAdapter } from '../platforms/adapter.js';
+import type { LoginCredentials, PlatformAdapter } from '../platforms/adapter.js';
 import {
   META_OTP_SELECTOR,
   detectAuthInputWith,
@@ -163,14 +163,17 @@ export async function pollLoginOutcome(
 }
 
 /**
- * Start a login and block until an outcome is reached. The worker never holds
- * account passwords: the credential is entered by the operator in the headful
- * session the noVNC view exposes.
+ * Start a login and block until an outcome is reached. When the API delivers
+ * the operator's credentials on the dispatch they are filled into the login
+ * form (the platform adapter owns the markup); otherwise the operator types
+ * them in the headful session the noVNC view exposes. Either way the verdict
+ * is the cookie poll — never the URL.
  */
 export async function runLogin(
   accountId: string,
   platform: Platform,
   deps: AuthDeps,
+  credentials?: LoginCredentials,
 ): Promise<LoginResult> {
   const browser = await deps.browser();
   // Hydrate the persisted session before the first poll. This is what makes a
@@ -193,6 +196,20 @@ export async function runLogin(
   const page = await ctx.newPage();
   try {
     await page.goto(await loginUrlFor(platform, deps), { waitUntil: 'domcontentloaded' });
+    if (credentials?.username && credentials.password) {
+      // Best effort: a fill failure (a challenge wall instead of the form, a
+      // markup change) must not kill the login — the operator can still type
+      // in the live view, and the poll below is the only verdict authority.
+      try {
+        const adapter = await adapterFor(platform);
+        await adapter?.autofill?.(page, credentials);
+      } catch (err) {
+        deps.log?.('auth-login: credential autofill failed, operator can type in the live view', {
+          accountId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
     return await waitForOutcome(accountId, platform, ctx, deps);
   } catch (err) {
     // Swallowing this was the "login did not complete" mystery: the operator

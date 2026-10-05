@@ -135,8 +135,9 @@ func (h *ContainerHandler) listLogs(c echo.Context) error {
 	return c.JSON(http.StatusOK, oapigen.ProvisionLogList{Logs: items})
 }
 
-// openBrowser asks the worker to launch Chrome on its Xvfb display so the
-// noVNC view shows a real browser immediately for manual testing.
+// openBrowser asks the worker to open a page in the account's live,
+// session-hydrated browser on its Xvfb display, so the noVNC live view shows
+// the profile logged in instead of a fresh (logged-out) tab.
 func (h *ContainerHandler) openBrowser(c echo.Context) error {
 	if h.containers == nil {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "container service unavailable")
@@ -146,14 +147,15 @@ func (h *ContainerHandler) openBrowser(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "containerId is required")
 	}
 	var body struct {
-		URL *string `json:"url"`
+		URL      *string `json:"url"`
+		Platform string  `json:"platform"`
 	}
 	_ = c.Bind(&body)
 	url := ""
 	if body.URL != nil {
 		url = *body.URL
 	}
-	if err := h.containers.OpenBrowser(c.Request().Context(), id, url); err != nil {
+	if err := h.containers.OpenBrowser(c.Request().Context(), id, domain.Platform(body.Platform), url); err != nil {
 		return translateContainerError(err)
 	}
 	return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
