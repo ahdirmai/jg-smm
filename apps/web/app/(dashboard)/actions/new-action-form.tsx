@@ -27,9 +27,9 @@ import {
   Textarea,
 } from '@smm/ui';
 import { AlertCircle, AtSign, Heart, Loader2, MessageSquare, Search, Sparkles } from 'lucide-react';
-import { forwardRef, useCallback, useImperativeHandle, useMemo, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from 'react';
 
-import { api, type ScrapeTargetResponse } from '@/lib/api';
+import { api, type AccountsByRegionResponse, type ScrapeTargetResponse } from '@/lib/api';
 import { useAccounts } from '@/lib/hooks/use-accounts';
 import { useActions } from '@/lib/hooks/use-actions';
 import { PLATFORM_LABEL, platformLabel } from '@/lib/platforms';
@@ -45,6 +45,13 @@ const MAX_BATCH = 50;
 const MAX_COMMENT_LEN = 2200;
 
 type Flow = 'comment' | 'like';
+// How hard the AI draft may push. Empty on the wire = medium (server default).
+type Intensity = 'soft' | 'medium' | 'bold';
+const INTENSITIES: { value: Intensity; label: string }[] = [
+  { value: 'soft', label: 'Soft' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'bold', label: 'Bold' },
+];
 
 /**
  * Metrics arrive as raw Apify keys (`likeCount`, `playCount`, `views` …) with
@@ -136,8 +143,14 @@ export const NewActionForm = forwardRef<
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   // AI generation state.
   const [aiMode, setAiMode] = useState<'support' | 'counter'>('support');
+  // How hard the AI draft may push; medium is the server default.
+  const [intensity, setIntensity] = useState<Intensity>('medium');
   const [aiBusy, setAiBusy] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
+  // Accounts grouped by the worker's location (city; region fallback,
+  // unassigned last). null = not fetched yet / fetch failed: the list then
+  // falls back to the flat platformAccounts.
+  const [regionGroups, setRegionGroups] = useState<AccountsByRegionResponse['regions'] | null>(null);
 
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<string | null>(null);
@@ -156,6 +169,40 @@ export const NewActionForm = forwardRef<
     () => platformAccounts.filter((a) => selected[a.id]),
     [platformAccounts, selected],
   );
+
+  // The by-region list is the grouping source for the account picker: the
+  // same accounts, keyed by the worker's location (city; region fallback;
+  // unassigned last). One fetch on mount; a failure keeps regionGroups null,
+  // so the picker falls back to the flat list — grouping is an enhancement,
+  // never a blocker.
+  useEffect(() => {
+    let live = true;
+    api
+      .listAccountsByRegion()
+      .then((res) => {
+        if (live) setRegionGroups(res.regions);
+      })
+      .catch(() => {
+        if (live) setRegionGroups(null);
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  // The picker's rows: the platform's usable accounts, grouped by location.
+  // regionGroups null (not fetched / failed) collapses to one unlabelled
+  // group, i.e. today's flat list.
+  const accountGroups = useMemo(() => {
+    const usable = (a: (typeof accounts)[number]) =>
+      a.platform === platform && (a.status === 'ACTIVE' || a.status === 'PAUSED');
+    if (!regionGroups) {
+      return [{ region: '', accounts: accounts.filter(usable) }];
+    }
+    return regionGroups
+      .map((g) => ({ region: g.region, accounts: g.accounts.filter(usable) }))
+      .filter((g) => g.accounts.length > 0);
+  }, [accounts, regionGroups, platform]);
 
   // One scrape runner: explicit args so a history pick (platform/url set in
   // the same tick) scrapes the right post, not the previous state values.
@@ -212,6 +259,7 @@ export const NewActionForm = forwardRef<
         authorHandle: scrape.post.authorHandle,
         existingComments: scrape.comments.slice(0, 10).map((c) => c.text),
         mode: aiMode,
+        intensity,
         count: want,
       });
       const drafts = res.comments.length ? res.comments : [''];
@@ -431,7 +479,8 @@ export const NewActionForm = forwardRef<
           <div className="space-y-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <Label>
-                Accounts ({platformAccounts.length} on {platformLabel(platform) ?? platform})
+                Accounts ({accountGroups.reduce((n, g) => n + g.accounts.length, 0)} on{' '}
+                {platformLabel(platform) ?? platform})
               </Label>
               {flow === 'comment' ? (
                 <div className="flex items-center gap-1.5">
@@ -444,6 +493,32 @@ export const NewActionForm = forwardRef<
                       <SelectItem value="counter">Counter</SelectItem>
                     </SelectContent>
                   </Select>
+                  {/* How hard the AI draft may push. Segmented buttons, the
+                      same pattern as the Comment/Like toggle above: three
+                      discrete levels, not a slider whose middle values mean
+                      nothing. */}
+                  <div className="flex items-center gap-1" role="group" aria-label="Comment intensity">
+                    {INTENSITIES.map((it) => (
+                      <Button
+                        key={it.value}
+                        type="button"
+                        variant={intensity === it.value ? 'default' : 'outline'}
+                        size="sm"
+                        className="h-8 px-2.5 text-xs"
+                        aria-pressed={intensity === it.value}
+                        title={
+                          it.value === 'soft'
+                            ? 'Safe, neutral: no sarcasm or edge'
+                            : it.value === 'medium'
+                              ? 'Balanced, like today'
+                              : 'Pointed, slightly sarcastic, still civil'
+                        }
+                        onClick={() => setIntensity(it.value)}
+                      >
+                        {it.label}
+                      </Button>
+                    ))}
+                  </div>
                   <Button type="button" variant="outline" size="sm" onClick={generateAI} disabled={aiBusy || selectedAccounts.length === 0}>
                     {aiBusy ? <Loader2 className="animate-spin" /> : <Sparkles />}
                     AI generate
@@ -452,46 +527,58 @@ export const NewActionForm = forwardRef<
               ) : null}
             </div>
             {aiError ? <p className="text-sm text-destructive">{aiError}</p> : null}
-            {platformAccounts.length === 0 ? (
+            {accountGroups.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 No usable account on this platform — add one on the Accounts page.
               </p>
             ) : (
-              <div className="space-y-1.5">
-                {platformAccounts.map((a) => {
-                  const on = !!selected[a.id];
-                  return (
-                    <div key={a.id} className="flex items-start gap-2">
-                      <Button
-                        type="button"
-                        variant={on ? 'default' : 'outline'}
-                        size="sm"
-                        className="mt-0.5 shrink-0"
-                        aria-pressed={on}
-                        aria-label={`${on ? 'Deselect' : 'Select'} @${a.username}`}
-                        onClick={() => setSelected((s) => ({ ...s, [a.id]: !s[a.id] }))}
-                      >
-                        {on ? '✓' : '+'}
-                      </Button>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2 text-sm">
-                          <span className="truncate font-medium">@{a.username}</span>
-                          <Badge variant="outline">{a.status}</Badge>
-                        </div>
-                        {on && flow === 'comment' ? (
-                          <Textarea
-                            className="mt-1"
-                            rows={2}
-                            maxLength={MAX_COMMENT_LEN}
-                            placeholder="Comment for this account (blank = template pool)"
-                            value={text[a.id] ?? ''}
-                            onChange={(e) => setText((s) => ({ ...s, [a.id]: e.target.value }))}
-                          />
-                        ) : null}
+              <div className="space-y-3">
+                {accountGroups.map((g) => (
+                  <div key={g.region || 'flat'} className="space-y-1.5">
+                    {/* Group header only when there is more than one location
+                        to distinguish; a single group is the flat list as
+                        before. */}
+                    {accountGroups.length > 1 ? (
+                      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                        {g.region === 'unassigned' ? 'Unassigned' : g.region} ({g.accounts.length})
                       </div>
-                    </div>
-                  );
-                })}
+                    ) : null}
+                    {g.accounts.map((a) => {
+                      const on = !!selected[a.id];
+                      return (
+                        <div key={a.id} className="flex items-start gap-2">
+                          <Button
+                            type="button"
+                            variant={on ? 'default' : 'outline'}
+                            size="sm"
+                            className="mt-0.5 shrink-0"
+                            aria-pressed={on}
+                            aria-label={`${on ? 'Deselect' : 'Select'} @${a.username}`}
+                            onClick={() => setSelected((s) => ({ ...s, [a.id]: !s[a.id] }))}
+                          >
+                            {on ? '✓' : '+'}
+                          </Button>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 text-sm">
+                              <span className="truncate font-medium">@{a.username}</span>
+                              <Badge variant="outline">{a.status}</Badge>
+                            </div>
+                            {on && flow === 'comment' ? (
+                              <Textarea
+                                className="mt-1"
+                                rows={2}
+                                maxLength={MAX_COMMENT_LEN}
+                                placeholder="Comment for this account (blank = template pool)"
+                                value={text[a.id] ?? ''}
+                                onChange={(e) => setText((s) => ({ ...s, [a.id]: e.target.value }))}
+                              />
+                            ) : null}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
               </div>
             )}
           </div>

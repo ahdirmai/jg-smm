@@ -6,6 +6,21 @@
 
 ## Unreleased
 ### Added
+- **The New-Action account list is grouped by worker location.** Picking
+  accounts for a batch now shows one section per location the accounts run
+  from (city, falling back to region; unassigned last), so an operator can
+  see "Jakarta (3) / Bandung (2)" instead of one flat stack. The grouping
+  comes from the existing `GET /api/accounts/by-region` endpoint — no new
+  API surface; a fetch failure keeps the flat list, so grouping can never
+  block enqueueing.
+- **AI comment drafts have an intensity dial.** The "AI generate" button
+  gains a three-level selector — soft / medium / bold — orthogonal to the
+  support/counter stance: the same stance can be written safely or pointed.
+  `POST /api/scrape/comments/generate` accepts `intensity` (empty = medium,
+  unknown = 400); the level only steers the LLM prompt, and the denylist
+  screen and length cap apply to every level, so a bold draft can never ship
+  a banned word. Medium is byte-identical to the pre-intensity prompt, so
+  callers that do not pick a level get exactly the old behaviour.
 - **Keyword batches now run on seven platforms: YouTube, LinkedIn, X and
   Facebook join Instagram, Threads and TikTok.** One batch per platform per
   keyword set, four new Apify actors chosen by measured cost and verified

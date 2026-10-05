@@ -54,6 +54,23 @@ func (m CommentMode) Valid() bool {
 	return m == CommentModeSupport || m == CommentModeCounter
 }
 
+// CommentIntensity is how hard the generated comment pushes. It is orthogonal
+// to the stance (support/counter): the same stance can be written gently or
+// sharply. It steers the prompt only — the denylist screen and the length
+// cap apply to every level, so a "bold" draft can never ship a banned word.
+type CommentIntensity string
+
+const (
+	CommentIntensitySoft   CommentIntensity = "soft"
+	CommentIntensityMedium CommentIntensity = "medium"
+	CommentIntensityBold   CommentIntensity = "bold"
+)
+
+// Valid reports whether i is a known intensity.
+func (i CommentIntensity) Valid() bool {
+	return i == CommentIntensitySoft || i == CommentIntensityMedium || i == CommentIntensityBold
+}
+
 // GenerateInput is one generation request: the post being replied to, what the
 // crowd is saying (existing comments), and how many variants to produce.
 type GenerateInput struct {
@@ -73,6 +90,11 @@ type GenerateInput struct {
 	// Language steers the output language ("id" → Bahasa Indonesia, the
 	// dashboard default).
 	Language string
+	// Intensity steers how hard the comment pushes (soft/medium/bold).
+	// Empty means medium: the prompt is byte-identical to the pre-intensity
+	// one, so a caller that does not pick a level gets exactly the old
+	// behaviour.
+	Intensity CommentIntensity
 }
 
 // Generate returns Count comment candidates. Every variant is distinct,
@@ -83,6 +105,9 @@ func (g *CommentGenerator) Generate(ctx context.Context, in GenerateInput) ([]st
 	}
 	if !in.Mode.Valid() {
 		return nil, fmt.Errorf("%w: mode must be support or counter, got %q", domain.ErrValidation, in.Mode)
+	}
+	if in.Intensity != "" && !in.Intensity.Valid() {
+		return nil, fmt.Errorf("%w: intensity must be soft, medium or bold, got %q", domain.ErrValidation, in.Intensity)
 	}
 	if in.Count < 1 {
 		in.Count = 1
@@ -110,6 +135,12 @@ func (g *CommentGenerator) Generate(ctx context.Context, in GenerateInput) ([]st
 	)
 	if lang == "id" {
 		user += "\nWrite in Bahasa Indonesia, casual but polite."
+	}
+	switch in.Intensity {
+	case CommentIntensitySoft:
+		user += "\nKeep it safe and neutral: no sarcasm, no edge, nothing that could read as provocation."
+	case CommentIntensityBold:
+		user += "\nYou may be pointed, slightly sarcastic, and push the edge, but stay civil and never name-and-shame."
 	}
 
 	system := "You write short social-media comments for a social media management team. You never mention being an AI."

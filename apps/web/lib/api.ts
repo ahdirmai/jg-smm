@@ -306,6 +306,8 @@ export const api = {
     authorHandle?: string;
     existingComments?: string[];
     mode: 'support' | 'counter';
+    // How hard the draft pushes; empty = medium (the server default).
+    intensity?: 'soft' | 'medium' | 'bold';
     count?: number;
     language?: string;
   }) =>
