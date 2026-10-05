@@ -184,6 +184,14 @@
   keeps a hard cap (16384, the gateway's largest accepted value) as a
   caller-bug guard only. A ceiling costs nothing for small counts: the model
   stops early when it is done.
+- **AI comment generation switched to `nexa/claude-haiku-4.5` — ~8s instead of ~30s.**
+  The previous model (`nexa/glm-5.3-flash`) still spent a reasoning pass before
+  answering, so a 10-draft generation took ~30s. The Claude Code-style model
+  answers directly, in ~8s, with equivalent output. The gateway delivers it as
+  an SSE event stream even for a non-streaming request, so the LLM client now
+  reassembles the delta content across events (and strips inline
+  `<thinking>…</thinking>` blocks a reasoning model can leak into the answer).
+  Both shapes are covered by tests; the single-JSON path is unchanged.
 - **The noVNC live view clipped the remote screen.** noVNC defaults to
   `resize=off`, so the 1280×800 Xvfb framebuffer rendered at native size and
   got cut off at the iframe edge. The live-view URL now sets `resize=scale`,

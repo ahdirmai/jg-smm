@@ -88,3 +88,58 @@ func TestRequestTimeoutFitsAReasoningPass(t *testing.T) {
 		t.Fatalf("requestTimeout = %s; a non-streaming reasoning model routinely exceeds it", requestTimeout)
 	}
 }
+
+// The gateway streams some models (Claude) as a real SSE event stream even
+// for non-streaming requests. The client must reassemble the delta content
+// across events instead of failing to decode it as one JSON object.
+func TestCompleteParsesSSEStream(t *testing.T) {
+	body := "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"Halo\"}}]}\n\n" +
+		"data: {\"choices\":[{\"delta\":{\"content\":\" dunia\"}}]}\n\n" +
+		"data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n" +
+		"data: [DONE]\n\n"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	got, err := New(srv.URL, "k", "m").Complete(context.Background(), "s", "u", 0.7, 800)
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if got != "Halo dunia" {
+		t.Fatalf("content = %q, want %q", got, "Halo dunia")
+	}
+}
+
+// A reasoning model that streams its thinking inline in the content
+// (<thinking>...</thinking>) must not leak it into the answer.
+func TestCompleteStripsInlineThinking(t *testing.T) {
+	body := "data: {\"choices\":[{\"delta\":{\"content\":\"<thinking>berpikir keras</thinking>\"}}]}\n\n" +
+		"data: {\"choices\":[{\"delta\":{\"content\":\"Jawaban akhir\"}}]}\n\n" +
+		"data: [DONE]\n\n"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	got, err := New(srv.URL, "k", "m").Complete(context.Background(), "s", "u", 0.7, 800)
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if got != "Jawaban akhir" {
+		t.Fatalf("content = %q, want %q", got, "Jawaban akhir")
+	}
+}
+
+// An SSE stream with no usable events is an error, not an empty success.
+func TestCompleteSSEWithoutEventsFails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer srv.Close()
+
+	if _, err := New(srv.URL, "k", "m").Complete(context.Background(), "s", "u", 0.7, 800); err == nil {
+		t.Fatal("want error for an event-less stream, got nil")
+	}
+}

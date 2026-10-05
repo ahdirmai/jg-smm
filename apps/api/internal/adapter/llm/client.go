@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -128,6 +129,13 @@ func (c *Client) Complete(ctx context.Context, system, user string, temperature 
 	if resp.StatusCode >= 400 {
 		return "", fmt.Errorf("llm: http %d: %s", resp.StatusCode, truncate(string(raw), 300))
 	}
+	if looksLikeSSE(raw) {
+		content, err := parseSSE(raw)
+		if err != nil {
+			return "", err
+		}
+		return content, nil
+	}
 	var out chatResponse
 	if err := json.Unmarshal(firstJSONValue(raw), &out); err != nil {
 		return "", fmt.Errorf("llm: decode: %w", err)
@@ -177,4 +185,72 @@ func firstJSONValue(body []byte) []byte {
 		return body
 	}
 	return raw
+}
+
+// looksLikeSSE reports whether the gateway answered with a real SSE stream
+// (many "data: " chunks) rather than a single JSON object. Some gateways
+// stream certain models even for non-streaming requests; the payload is the
+// same completion, chunked.
+func looksLikeSSE(body []byte) bool {
+	trimmed := bytes.TrimSpace(body)
+	return len(trimmed) > 0 && strings.HasPrefix(string(trimmed), "data: ")
+}
+
+// sseChunk is one event of a streamed chat completion.
+type sseChunk struct {
+	Choices []struct {
+		Delta        chatMessage `json:"delta"`
+		FinishReason string      `json:"finish_reason"`
+	} `json:"choices"`
+}
+
+// thinkingBlock strips reasoning models that emit their thinking inline in the
+// content as <thinking>...</thinking> instead of a separate
+// reasoning_content field. A thinking block is never answer material.
+var thinkingBlock = regexp.MustCompile(`(?s)<thinking>.*?</thinking>`)
+
+// parseSSE reassembles a streamed completion: it concatenates the delta
+// content across events, drops inline thinking blocks, and errors on a
+// gateway error event or an event-less body.
+func parseSSE(raw []byte) (string, error) {
+	var b strings.Builder
+	var finish string
+	sawEvent := false
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if payload == "" || payload == "[DONE]" {
+			continue
+		}
+		var ev struct {
+			Error *struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal([]byte(payload), &ev); err == nil && ev.Error != nil {
+			return "", fmt.Errorf("llm: api error: %s", ev.Error.Message)
+		}
+		var ch sseChunk
+		if err := json.Unmarshal([]byte(payload), &ch); err != nil {
+			return "", fmt.Errorf("llm: decode stream event: %w", err)
+		}
+		for _, choice := range ch.Choices {
+			b.WriteString(choice.Delta.Content)
+			if choice.FinishReason != "" {
+				finish = choice.FinishReason
+			}
+		}
+		sawEvent = true
+	}
+	if !sawEvent {
+		return "", fmt.Errorf("llm: empty stream")
+	}
+	content := strings.TrimSpace(thinkingBlock.ReplaceAllString(b.String(), ""))
+	if content == "" && finish == "length" {
+		return "", fmt.Errorf("llm: no answer within the token budget (finish_reason=length)")
+	}
+	return content, nil
 }
