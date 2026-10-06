@@ -152,7 +152,7 @@ func (g *CommentGenerator) Generate(ctx context.Context, in GenerateInput) ([]st
 	}
 	comments := strings.TrimSpace(strings.Join(prefixEach(in.ExistingComments, "- "), "\n"))
 	user := fmt.Sprintf(
-		"Post%s:\n%s\n\nExisting comments:\n%s\n\nWrite %d distinct comment candidate(s) for the post above. %s\nLength: %s. Rules: sound like a real person typing in a comment section, not a brand account: vary the wording so no two candidates start the same way, write naturally, no hashtags, no quotes around the comment, no numbering. Reply with one comment per line and nothing else.",
+		"Post%s:\n%s\n\nExisting comments:\n%s\n\nWrite %d distinct comment candidate(s) for the post above. %s\nLength: %s. Rules: sound like a real person typing in a comment section, not a brand account: vary the wording so no two candidates start the same way, write naturally, no hashtags, no em dashes and no en dashes (never use the — or – character: use a comma, a colon or a full stop instead), no quotes around the comment, no numbering. Reply with one comment per line and nothing else.",
 		authorSuffix(in.AuthorHandle),
 		truncateText(strings.TrimSpace(in.PostText), 1200),
 		truncateText(comments, 800),
@@ -165,7 +165,7 @@ func (g *CommentGenerator) Generate(ctx context.Context, in GenerateInput) ([]st
 	}
 	user += "\n" + intensityInstruction(in.Intensity)
 
-	system := "You write short social-media comments for a social media management team. You never mention being an AI."
+	system := "You write short social-media comments for a social media management team. You never mention being an AI. You never use em dashes (—) or en dashes (–); use plain commas, colons or full stops instead."
 	out, err := g.llm.Complete(ctx, system, user, 0.9, tokenBudget(in.Count))
 	if err != nil {
 		return nil, err
@@ -176,6 +176,7 @@ func (g *CommentGenerator) Generate(ctx context.Context, in GenerateInput) ([]st
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)
 		line = strings.Trim(line, "\"•*- ")
+		line = normaliseDashes(line)
 		if line == "" || len(line) < 2 {
 			continue
 		}
@@ -262,4 +263,27 @@ func truncateText(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+// reDigitRange matches an em/en dash used as a numeric range (2019—2021),
+// which wants a hyphen, not the comma the parenthetical case below uses.
+var reDigitRange = regexp.MustCompile(`(\d)\s*[—–]\s*(\d)`)
+
+// normaliseDashes rewrites em/en dashes the model still emits despite the
+// prompt. It is the third layer of the guard: the user prompt forbids them,
+// the system prompt repeats it, and the parser rewrites whatever slips
+// through, so a later prompt tweak cannot silently let them back into shipped
+// comments. A dash between digits is a range and becomes a hyphen; every other
+// dash is a parenthetical aside and becomes a comma, which reads closest to the
+// original and stays grammatical. Leading/trailing comma artifacts are
+// trimmed, since the model sometimes opens or closes a line with the dash.
+func normaliseDashes(s string) string {
+	s = reDigitRange.ReplaceAllString(s, "$1-$2")
+	s = strings.ReplaceAll(s, " — ", ", ")
+	s = strings.ReplaceAll(s, " – ", ", ")
+	s = strings.ReplaceAll(s, "—", ", ")
+	s = strings.ReplaceAll(s, "–", ", ")
+	s = strings.TrimPrefix(s, ", ")
+	s = strings.TrimSuffix(s, ", ")
+	return s
 }

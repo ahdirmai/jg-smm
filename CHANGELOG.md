@@ -171,6 +171,13 @@
     looks thin, re-run it before trusting the count.
 
 ### Fixed
+- **AI comment drafts no longer come back with em dashes.** The model read them
+  as machine-written. The comment prompt now forbids em and en dashes in both
+  the user and the system prompt, and the parser rewrites any that still
+  arrive: a dash between digits becomes a hyphen (`2019—2021` → `2019-2021`),
+  every other dash becomes a comma (`bagus — serius` → `bagus, serius`). The
+  third guard means a later prompt edit cannot silently let them back into
+  shipped comments.
 - **The single-post "Scrape" button no longer pays for a run when the post is
   already scraped and fresh.** It always sent `force: true`, so re-scraping a
   post within the 6h window re-bought the same data from Apify every time. The

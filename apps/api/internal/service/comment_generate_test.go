@@ -134,3 +134,72 @@ func TestTokenBudgetScalesWithCount(t *testing.T) {
 		t.Fatalf("tokenBudget(huge) = %d, want the 16000 cap", got)
 	}
 }
+
+// fixedLLM answers with an exact string, to drive the output-side guards
+// (dash normalisation, denylist, dedupe) that prompt shaping cannot test.
+type fixedLLM struct {
+	out string
+}
+
+func (f *fixedLLM) Available() bool { return true }
+func (f *fixedLLM) Complete(_ context.Context, _, _ string, _ float64, _ int) (string, error) {
+	return f.out, nil
+}
+
+// The generator must not ship em/en dashes, which read as machine-written.
+// Two guards cover it: the prompt forbids them, and the parser rewrites any
+// that still arrive. This pins both, so a later prompt edit cannot silently
+// drop the rule the way the first version of the prompt did.
+func TestGeneratePromptForbidsDashes(t *testing.T) {
+	c := &capturingLLM{}
+	g := NewCommentGenerator(c, nil, nil)
+	if _, err := g.Generate(context.Background(), GenerateInput{
+		PostText: "a post",
+		Mode:     CommentModeSupport,
+		Count:    1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"no em dashes", "no en dashes"} {
+		if !strings.Contains(c.user, want) {
+			t.Errorf("prompt missing %q:\n%s", want, c.user)
+		}
+	}
+}
+
+// Whatever the model emits, no shipped candidate may contain an em or en dash.
+func TestGenerateNormalisesDashesInOutput(t *testing.T) {
+	cases := []struct {
+		name string
+		out  string
+		want string
+	}{
+		// The parenthetical aside the model reaches for becomes a comma.
+		{"spaced em dash", "Janjinya banyak, tapi yang paling fake itu “nanti aku improve” — padahal cuma tar.", "Janjinya banyak, tapi yang paling fake itu “nanti aku improve”, padahal cuma tar."},
+		{"spaced en dash", "Aku setuju – tapi pelan-pelan aja.", "Aku setuju, tapi pelan-pelan aja."},
+		{"bare em dash", "Bagus—serius.", "Bagus, serius."},
+		{"numeric range keeps a hyphen", "Sprint 2019—2021 chaos.", "Sprint 2019-2021 chaos."},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			g := NewCommentGenerator(&fixedLLM{out: tc.out}, nil, nil)
+			got, err := g.Generate(context.Background(), GenerateInput{
+				PostText: "a post",
+				Mode:     CommentModeSupport,
+				Count:    1,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != 1 {
+				t.Fatalf("want 1 candidate, got %d: %v", len(got), got)
+			}
+			if got[0] != tc.want {
+				t.Errorf("got  %q\nwant %q", got[0], tc.want)
+			}
+			if strings.ContainsAny(got[0], "—–") {
+				t.Errorf("candidate still contains an em/en dash: %q", got[0])
+			}
+		})
+	}
+}
