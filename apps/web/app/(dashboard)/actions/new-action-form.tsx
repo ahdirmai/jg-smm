@@ -275,11 +275,16 @@ export const NewActionForm = forwardRef<
         length,
         count: want,
       });
+      // Every press of AI generate is an explicit request for new drafts, so the
+      // fields are overwritten, mode and intensity included. The old guard only
+      // filled EMPTY fields, so generating counter then switching to support
+      // produced drafts the UI never showed: the textareas still held the
+      // counter text and the mode change looked broken.
       const drafts = res.comments.length ? res.comments : [''];
       setText((s) => {
         const copy = { ...s };
         selectedAccounts.forEach((a, i) => {
-          if (!copy[a.id]) copy[a.id] = drafts[i % drafts.length] ?? '';
+          copy[a.id] = drafts[i % drafts.length] ?? '';
         });
         return copy;
       });
