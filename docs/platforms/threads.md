@@ -61,6 +61,8 @@
 - **Output row:** satu row flat per post — `code`, `url`, `text`, `posted_at` (RFC3339), `like_count`, `reply_count`, `repost_count`, `quote_count`, `username`, `media_urls[]`, `is_reply`, `is_quote_post`, `replied_to_post_code`.
 - **Normalisasi → DB:** `code`→`Post.external_id`, `username`→`author_handle`, `text`→`text`, `media_urls[]`→`media_urls`, metrics `like_count`/`reply_count`/`repost_count`+`quote_count`.
 
+> **Perbaikan (v0.3):** mode post live mengirim `is_reply:true` dengan `parent_post_id:null` pada SETIAP row reply (diverifikasi pada run `x2Ts33gUPTXBNd6GT`, 24 row). Parser lama hanya mengandalkan map `parent_post_id`, sehingga permalink scrape menyimpan post dengan **0 comment**. Untuk scrape per-post (`onlyCode` diisi) parent sekarang di-fallback ke shortcode yang diminta — semua reply dalam run itu hanya bisa milik post tersebut.
+>
 > **Kesalahan terdokumentasi (v0.2):** actor flag `is_reply` pada row yang parent-nya **tidak pernah dikirim** — mode keyword menandai reply tanpa mengambil parent, dan `replied_to_post_code` datang kosong. Parser lama men-drop row itu sebagai orphan, sehingga 19 dari 50 post batch keyword hilang. Sekarang row tanpa parent yang bisa di-resolve disimpan sebagai post top-level.
 
 ### 4.2 Keyword search scrape — `futurizerush/meta-threads-scraper` (`mode:search`)
@@ -90,4 +92,5 @@
 | Versi | Tanggal | Perubahan |
 | --- | --- | --- |
 | v0.0 | | Stub dibuat |
+| v0.3 | 2026-10-19 | Scrape per-post: `parent_post_id` null pada row `is_reply` → parent di-fallback ke shortcode permalink yang diminta (sebelumnya 0 comment). Comment permalink Threads = `/post/<comment code>` (rute `/c/` 404). Reply dari dashboard bisa memakai link komentar yang di-paste. |
 | v0.2 | 2026-09-29 | §4.1 actor per-post diganti: `apify/meta-threads-scraper` (404 — build user-posts-only, tidak ada mode per-post) → `pro100chok/threads-scraper-usage` (async-only) → `themineworks/threads-scraper`. Id full, bukan turunan prefix. `includeReplies:true` wajib (reply = satu-satunya sumber comment). Ingestor sekarang memfilter context row share/quote via shortcode permalink, dan menyimpan row `is_reply` tanpa parent sebagai post (sebelumnya di-drop — 19/50 post batch keyword hilang). |

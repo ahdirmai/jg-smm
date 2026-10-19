@@ -242,6 +242,23 @@ func (r *ScrapeRepo) GetComment(ctx context.Context, id string) (domain.Comment,
 	return toComment(row), nil
 }
 
+// GetCommentByExternalID resolves a comment by the platform's own id. This is
+// how a nested reply reaches its parent: the actor payload carries platform ids
+// only, so the ingestor cannot build a uuid for the parent directly.
+func (r *ScrapeRepo) GetCommentByExternalID(ctx context.Context, p domain.Platform, externalID string) (domain.Comment, error) {
+	row, err := r.q.GetCommentByPlatformExternalID(ctx, sqlcgen.GetCommentByPlatformExternalIDParams{
+		Platform:   platformEnum(p),
+		ExternalID: externalID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Comment{}, domain.ErrNotFound
+	}
+	if err != nil {
+		return domain.Comment{}, fmt.Errorf("repository.scrape.GetCommentByExternalID: %w", err)
+	}
+	return toComment(row), nil
+}
+
 func (r *ScrapeRepo) ListCommentsByPost(ctx context.Context, postID string, limit, offset *int) ([]domain.Comment, error) {
 	l, o := ptrPage(limit, offset)
 	rows, err := r.q.ListCommentsByPost(ctx, sqlcgen.ListCommentsByPostParams{
@@ -265,6 +282,74 @@ func (r *ScrapeRepo) CountCommentsByPost(ctx context.Context, postID string) (in
 		return 0, fmt.Errorf("repository.scrape.CountCommentsByPost: %w", err)
 	}
 	return int(n), nil
+}
+
+// --- sentiment --------------------------------------------------------------
+
+// SetCommentSentiment writes one analysed verdict. score is nil when the model
+// reported no confidence, and the column stays NULL — 0 would be a claim it did
+// not make.
+func (r *ScrapeRepo) SetCommentSentiment(ctx context.Context, commentID string, label domain.Sentiment, score *float64) error {
+	if !label.Valid() {
+		return fmt.Errorf("repository.scrape.SetCommentSentiment: %w: unknown label %q", domain.ErrValidation, label)
+	}
+	err := r.q.SetCommentSentiment(ctx, sqlcgen.SetCommentSentimentParams{
+		ID:             uuidValue(commentID),
+		Sentiment:      sqlcgen.NullSentiment{Sentiment: sqlcgen.Sentiment(label), Valid: true},
+		SentimentScore: score,
+	})
+	if err != nil {
+		return fmt.Errorf("repository.scrape.SetCommentSentiment: %w", err)
+	}
+	return nil
+}
+
+// CommentsNeedingSentiment returns up to limit comments on a post that carry no
+// verdict yet, oldest first.
+func (r *ScrapeRepo) CommentsNeedingSentiment(ctx context.Context, postID string, limit int) ([]domain.Comment, error) {
+	rows, err := r.q.ListCommentsNeedingSentiment(ctx, sqlcgen.ListCommentsNeedingSentimentParams{
+		PostID: uuidValue(postID),
+		Limit:  int32(limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("repository.scrape.CommentsNeedingSentiment: %w", err)
+	}
+	out := make([]domain.Comment, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, toComment(row))
+	}
+	return out, nil
+}
+
+// CommentSentimentCounts returns the per-label counts for one post, plus the
+// number of comments with no verdict. The unanalysed count comes from the two
+// queries rather than a single grouped one because "no label" is a NULL, not a
+// group value — folding it in would need a COALESCE that invents a label.
+func (r *ScrapeRepo) CommentSentimentCounts(ctx context.Context, postID string) (domain.SentimentBreakdown, error) {
+	rows, err := r.q.CountCommentsBySentiment(ctx, uuidValue(postID))
+	if err != nil {
+		return domain.SentimentBreakdown{}, fmt.Errorf("repository.scrape.CountCommentsBySentiment: %w", err)
+	}
+	var b domain.SentimentBreakdown
+	for _, row := range rows {
+		if !row.Sentiment.Valid {
+			continue
+		}
+		switch domain.Sentiment(row.Sentiment.Sentiment) {
+		case domain.SentimentPositive:
+			b.Positive = int(row.N)
+		case domain.SentimentNeutral:
+			b.Neutral = int(row.N)
+		case domain.SentimentNegative:
+			b.Negative = int(row.N)
+		}
+	}
+	total, err := r.CountCommentsByPost(ctx, postID)
+	if err != nil {
+		return b, err
+	}
+	b.Unanalysed = total - b.Analysed()
+	return b, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -406,6 +491,19 @@ func (r *ScrapeRepo) CreateApifyRun(ctx context.Context, a domain.ApifyRun) (dom
 	})
 	if err != nil {
 		return domain.ApifyRun{}, fmt.Errorf("repository.scrape.CreateApifyRun: %w", err)
+	}
+	return toApifyRun(row), nil
+}
+
+// GetApifyRun reads one audit row by our uuid. The resume path needs the
+// stored Apify-side run_id to reconnect to an orphaned run.
+func (r *ScrapeRepo) GetApifyRun(ctx context.Context, id string) (domain.ApifyRun, error) {
+	row, err := r.q.GetApifyRunByID(ctx, uuidValue(id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.ApifyRun{}, domain.ErrNotFound
+	}
+	if err != nil {
+		return domain.ApifyRun{}, fmt.Errorf("repository.scrape.GetApifyRun: %w", err)
 	}
 	return toApifyRun(row), nil
 }

@@ -87,6 +87,57 @@ export async function dismissContinueInterstitial(page: Page): Promise<boolean> 
 }
 
 /**
+ * Dismiss Meta's periodic "Your Meta Account is here" account-consolidation
+ * modal if present.
+ *
+ * Why this exists (observed live, two separate accounts): Meta shows a
+ * full-screen `role=dialog` promotion — "Your Meta Account is here / Your
+ * updated account works across Meta apps and devices" with a "See what's new"
+ * button — on a normal post load. It carries a modal overlay, so EVERY
+ * subsequent click lands on the scrim instead of the page underneath. The reply
+ * flow then opens no composer and fails as "no @mention prefilled", blaming the
+ * selector for what is really an unclickable page. The same screenshot showed
+ * the composer rendered behind the modal, which is the tell.
+ *
+ * It is dismissed by its own close control, with a text-matched fallback on the
+ * confirmation button for rollouts that drop the X. Scoped to the exact
+ * copy so it can never fire on an unrelated dialog. Best-effort: a miss
+ * returns false and the normal flow proceeds — this must never be the reason a
+ * job fails.
+ */
+export async function dismissMetaAccountModal(page: Page): Promise<boolean> {
+  const dialog = page.locator('div[role="dialog"]').filter({ hasText: /Meta Account is here/i }).first();
+  if ((await dialog.count().catch(() => 0)) === 0) return false;
+
+  // Prefer the X: it leaves the page exactly as it was. The primary button is a
+  // fallback for a rollout that ships no close control.
+  const closer = dialog
+    .locator('button, div[role="button"], [aria-label*="Close" i]')
+    .filter({ hasText: /^\s*$/ })
+    .or(dialog.locator('[aria-label*="Close" i]'))
+    .first();
+  const clicked =
+    (await closer
+      .click({ timeout: 3_000 })
+      .then(() => true)
+      .catch(() => false)) ||
+    (await dialog
+      .locator('button, div[role="button"]')
+      .filter({ hasText: /See what's new|OK|Got it|Close/i })
+      .first()
+      .click({ timeout: 3_000 })
+      .then(() => true)
+      .catch(() => false));
+
+  if (clicked) {
+    // Let the overlay fade before anything tries to click through it.
+    await page.waitForTimeout(600);
+  }
+  return clicked;
+}
+
+
+/**
  * Open a post permalink. `domcontentloaded` only: `networkidle` never fires on
  * a Meta page (infinite re-layout), so waiting on it would time out every job.
  *
@@ -108,7 +159,12 @@ export async function openPost(page: Page, url: string): Promise<void> {
   // crucially we do NOT wait on anything below — IG mounts the composer only
   // after the comment affordance is clicked, so waiting for it here would hang.
   const onPost = (): boolean => page.url().includes(short);
-  if (onPost()) return;
+  if (onPost()) {
+    // Still clear any modal: it can cover the post we are already on (observed
+    // live), and every later click would land on its scrim.
+    await dismissMetaAccountModal(page);
+    return;
+  }
 
   // Meta account-chooser interstitial. A COLD browser context (fresh container
   // profile, valid session cookie but no warmed profile) loads a permalink into
@@ -121,7 +177,10 @@ export async function openPost(page: Page, url: string): Promise<void> {
   // bounded: absent screen → no-op, and Threads still falls through to recovery.
   if (await dismissContinueInterstitial(page)) {
     await page.goto(url, { waitUntil: 'domcontentloaded' });
-    if (onPost()) return;
+    if (onPost()) {
+      await dismissMetaAccountModal(page);
+      return;
+    }
   }
 
   // Bounced (Threads): click the injected post link to client-side route in.
@@ -157,6 +216,10 @@ export async function openPost(page: Page, url: string): Promise<void> {
       await sleep(DEEPLINK_POLL_MS);
     }
   }
+
+  // Last step, whichever route we took: clear the consolidation modal. It is
+  // shown on ordinary post loads and its scrim swallows every later click.
+  await dismissMetaAccountModal(page);
 }
 
 /**
@@ -389,6 +452,16 @@ const COMPOSER_OPEN_TIMEOUT_MS = 8_000;
 const COMPOSER_PROBE_MS = 1_000;
 /** How long to wait for IG to pre-fill the "@mention" after opening a reply. */
 const MENTION_TIMEOUT_MS = 5_000;
+/**
+ * How long to wait for the per-comment "Reply" affordance to mount before
+ * clicking it. Measured live: 0 matches until ~3s on a warm load, and ~5s on a
+ * load where Meta's consolidation modal has to be dismissed first (the modal
+ * delays the feed render). The bound is generous on purpose — the wait is
+ * bounded and its expiry is not a failure, so a slow mount costs latency only
+ * when the composer never arrives. A tight bound here is what turned a slow
+ * render into a failed job.
+ */
+const AFFORDANCE_WAIT_MS = 12_000;
 
 /**
  * Submit a comment and verify it rendered (§7.4). The flow is defensive because
@@ -496,25 +569,56 @@ export async function replyToComment(d: DomDeps, text: string): Promise<AdapterR
   // deeplink recovery bounces through the feed. `.first()` below would then
   // click the Reply button of whichever comment is at the top of the DOM — not
   // the target. Refuse rather than reply to the wrong person.
+  //
+  // The landing check is per threading model: IG keeps the `/c/<id>/` segment in
+  // the URL, Threads has no such route (it 404s) — a Threads comment IS a post
+  // whose own shortcode is the address, so the opened URL must still carry it.
   const want = commentId(d.job.targetUrl);
   if (want && !page.url().includes(`/c/${want}`)) {
     return failShot(d, `comment ${want} is no longer on the page (landed on ${page.url()})`);
+  }
+  if (!want) {
+    const code = postShortcode(d.job.targetUrl);
+    if (code && !page.url().includes(`/post/${code}`)) {
+      return failShot(d, `reply target ${code} is no longer on the page (landed on ${page.url()})`);
+    }
   }
 
   // Scroll first so a lazily-hydrated reply composer mounts (ref: jg/automation).
   await scrollToLoadComposer(page);
 
-  // A reply threads under a comment ONLY if we open that comment's reply box:
-  // clicking its Reply affordance focuses the composer. On IG this also pre-fills
-  // the "@username" mention that anchors the reply. Always click it — a top-level
-  // composer that happens to be mounted would post a top-level comment instead.
+  // A reply threads under a comment ONLY if we open that comment's reply box.
+  // On IG the permalink we opened already focuses that comment's box and
+  // pre-fills the "@username" mention, so this click is belt-and-braces: the
+  // mention check below is what actually decides threading, and it passes even
+  // when this click never lands.
+  //
+  // That is why the click MUST NOT fail the job. It was made fatal once and
+  // every reply died — on a fresh load the affordance does not exist for the
+  // first ~3s (see replyButton's note), so the click threw and three "retries"
+  // all failed while the composer was already open and correct.
+  //
+  // Wait (bounded) for the affordance to mount, then click it best-effort. The
+  // wait is what makes the click useful; the best-effort is what keeps a miss
+  // from failing a reply that would otherwise have worked.
   const replyAffordance = sel.replyButton ?? sel.commentButton;
   if (replyAffordance) {
-    await page
-      .locator(replyAffordance)
-      .first()
-      .click({ timeout: 5_000 })
-      .catch(() => undefined);
+    const target = page.locator(replyAffordance).first();
+    // Poll `count()` rather than `waitFor({state:'visible'})`: presence is the
+    // signal (the affordance is in the DOM before it is clickable), and count()
+    // is the one locator method every fake in the test suite implements. A
+    // waitFor here would couple the action path to a richer fake for no gain.
+    const deadline = Date.now() + AFFORDANCE_WAIT_MS;
+    for (;;) {
+      const present = await target
+        .count()
+        .then((n) => n > 0)
+        .catch(() => false);
+      if (present) break;
+      if (Date.now() >= deadline) break;
+      await page.waitForTimeout(250);
+    }
+    await target.click({ timeout: 5_000 }).catch(() => undefined);
   }
   const box = await findComposer(d, candidates, COMPOSER_OPEN_TIMEOUT_MS);
   if (!box) return failShot(d, 'reply composer not found (after clicking Reply)');
@@ -534,18 +638,28 @@ export async function replyToComment(d: DomDeps, text: string): Promise<AdapterR
   //     box, placeholder "Reply to <user>..."). Fill directly; requiring a
   //     mention here would fail every Threads reply.
   if (sel.replyPrefillsMention) {
-    // Require the "@username" mention IG pre-fills when a COMMENT's reply box opens.
-    // Its presence is the proof we opened a threaded reply and not the top-level
-    // composer — without it a submit posts a plain top-level comment (the bug: the
-    // reply landed unthreaded with no tag). No mention → fail loudly and iterate
-    // the reply affordance rather than silently posting to the wrong place.
-    const mention = await waitForMention(box, MENTION_TIMEOUT_MS);
+    // Require the "@username" mention IG pre-fills when a COMMENT's reply box
+    // opens. Its presence proves we opened a threaded reply and not the
+    // top-level composer — without it a submit posts a plain top-level comment.
+    //
+    // It must also be the RIGHT handle when we know it. Observed live: a
+    // top-level composer pre-fills the POST AUTHOR's handle, so a bare
+    // "starts with @" check passed on `@<postAuthor>` and would have posted a
+    // reply tagging the wrong person, threaded under the wrong comment — the
+    // exact failure this guard exists to catch, defeated by its own leniency.
+    // expectedMention is the target comment's author, resolved by the caller.
+    const mention = await waitForMention(box, MENTION_TIMEOUT_MS, d.job.expectedMention);
     if (!mention) {
       return failShot(
         d,
         'reply did not open a threaded composer (no @mention prefilled — the reply affordance is not the target comment)',
       );
     }
+    // A mention that names someone OTHER than nothing is fine (we cannot know the
+    // target's handle from the permalink alone), but a mention is still the proof
+    // we opened a COMMENT's reply box rather than the top-level composer. Record
+    // it in the result so a mis-threaded reply is diagnosable from the log
+    // instead of only from the screenshot.
     await box.press('End').catch(() => undefined);
     const sep = mention.endsWith(' ') ? '' : ' ';
     const full = `${mention}${sep}${text}`;
@@ -592,12 +706,31 @@ async function submitReply(
   return { ok: true, renderedText: rendered };
 }
 
-/** Poll the composer until it holds an "@mention" prefill, or the bound expires. */
-async function waitForMention(box: Locator, timeoutMs: number): Promise<string | undefined> {
+/**
+ * Poll the composer until it holds an "@mention" prefill, or the bound expires.
+ *
+ * `expected` (when known) is the handle the mention MUST name. Without it the
+ * check accepts any `@…`, which a top-level composer satisfies by pre-filling
+ * the POST AUTHOR — so the reply would tag the wrong person. Comparison is
+ * case-insensitive (handles are) and tolerates the trailing space IG appends.
+ */
+async function waitForMention(
+  box: Locator,
+  timeoutMs: number,
+  expected?: string,
+): Promise<string | undefined> {
+  const want = expected?.replace(/^@/, '').trim().toLowerCase();
   const started = Date.now();
   for (;;) {
     const v = (await composerValue(box)).trim();
-    if (v.startsWith('@') && v.length > 1) return v;
+    if (v.startsWith('@') && v.length > 1) {
+      // No expectation → any mention is the best evidence available (the
+      // caller had no handle to compare against, e.g. a comment row with no
+      // author recorded).
+      if (!want) return v;
+      const got = (v.slice(1).split(/\s/)[0] ?? '').toLowerCase();
+      if (got === want) return v;
+    }
     if (Date.now() - started >= timeoutMs) return undefined;
     await sleep(POLL_MS);
   }
@@ -818,12 +951,28 @@ const PASSWORD_FIELD_SELECTORS = [
   'input[type="password"]',
 ];
 
+/**
+ * Bound for the login form to mount. Threads serves `/login` as a client-
+ * rendered SPA: at `domcontentloaded` the page is the "Scan to get the app"
+ * shell and the fields appear only after hydration (~3s observed live). The
+ * old single-pass check ran in that window and reported
+ * `login form field not found` on a form that was about to render.
+ */
+const LOGIN_FORM_WAIT_MS = 20_000;
+const LOGIN_FORM_POLL_MS = 500;
+
 async function firstPresent(page: Page, selectors: string[]): Promise<Locator> {
-  for (const sel of selectors) {
-    const loc = page.locator(sel);
-    if ((await loc.count()) > 0) return loc.first();
+  const deadline = Date.now() + LOGIN_FORM_WAIT_MS;
+  for (;;) {
+    for (const sel of selectors) {
+      const loc = page.locator(sel);
+      if ((await loc.count()) > 0) return loc.first();
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(`login form field not found (tried: ${selectors.join(', ')})`);
+    }
+    await sleep(LOGIN_FORM_POLL_MS);
   }
-  throw new Error(`login form field not found (tried: ${selectors.join(', ')})`);
 }
 
 /**

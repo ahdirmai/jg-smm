@@ -11,6 +11,63 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const cancelActionJob = `-- name: CancelActionJob :one
+UPDATE action_job
+SET status      = 'CANCELLED',
+    finished_at = now(),
+    error       = 'Cancelled by operator'
+WHERE id = $1
+  AND status IN ('PENDING', 'RUNNING')
+RETURNING id, type, target_id, account_id, worker_id, status, scheduled_at, started_at, finished_at, attempts, error, created_at, template_id
+`
+
+// Operator cancel (dashboard). Same guard as CompleteActionJob: only a job
+// that could still be claimed/completed is cancellable, so a replayed cancel
+// cannot overwrite a verdict the worker already wrote. A RUNNING job is
+// cancellable too: the update does not stop the worker mid-action, but it
+// makes the job terminal, so the callback is a no-op (the guard above) and
+// the stale-running sweep cannot requeue it.
+func (q *Queries) CancelActionJob(ctx context.Context, id pgtype.UUID) (ActionJob, error) {
+	row := q.db.QueryRow(ctx, cancelActionJob, id)
+	var i ActionJob
+	err := row.Scan(
+		&i.ID,
+		&i.Type,
+		&i.TargetID,
+		&i.AccountID,
+		&i.WorkerID,
+		&i.Status,
+		&i.ScheduledAt,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.Attempts,
+		&i.Error,
+		&i.CreatedAt,
+		&i.TemplateID,
+	)
+	return i, err
+}
+
+const cancelPendingActionJobs = `-- name: CancelPendingActionJobs :execrows
+UPDATE action_job
+SET status      = 'CANCELLED',
+    finished_at = now(),
+    error       = 'Cancelled by operator'
+WHERE status = 'PENDING'
+`
+
+// "Cancel pending": one statement over the whole queued set, mirroring
+// SetPendingActionJobsScheduledAt. RUNNING and terminal rows are untouched —
+// cancelling a job after its worker claimed it would not stop the action, and
+// the per-row cancel exists for the RUNNING case.
+func (q *Queries) CancelPendingActionJobs(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, cancelPendingActionJobs)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const claimNextActionJob = `-- name: ClaimNextActionJob :one
 UPDATE action_job
 SET status     = 'RUNNING',

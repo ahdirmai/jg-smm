@@ -1,4 +1,6 @@
 import { test, expect } from '../fixtures/base.js';
+import type { Page } from '@playwright/test';
+import { execSync } from 'node:child_process';
 
 /**
  * Actions (P4-02, P3-13). The New-action form is one linear flow: paste a link
@@ -12,9 +14,24 @@ import { test, expect } from '../fixtures/base.js';
  */
 
 const TARGET = 'https://www.instagram.com/p/DdaJ8Y8gp3u/';
+const COMMENT_URL = 'https://www.instagram.com/p/DdaJ8Y8gp3u/c/17890012345678/';
+
+/** The scraped comment the reply flow targets. `url` is what the API derives. */
+function scrapedComment() {
+  return {
+    id: 'e2e-comment',
+    postId: 'e2e-post',
+    platform: 'instagram',
+    externalId: '17890012345678',
+    authorHandle: 'e2e_commenter',
+    text: 'Gimana kalau roadmap-nya dibikin dulu?',
+    scrapedAt: new Date().toISOString(),
+    url: COMMENT_URL,
+  };
+}
 
 /** The stubbed scrape reply: enough shape for the form to render step 2. */
-function scrapedPost() {
+function scrapedPost(opts: { withComment?: boolean } = {}) {
   return {
     post: {
       id: 'e2e-post',
@@ -26,19 +43,40 @@ function scrapedPost() {
       metrics: { likeCount: 1200, commentCount: 34 },
       scrapedAt: new Date().toISOString(),
     },
-    comments: [],
+    comments: opts.withComment ? [scrapedComment()] : [],
   };
 }
 
 /** Stub /api/scrape/target so no test spends an actor run. */
-async function stubScrape(page: import('@playwright/test').Page) {
+async function stubScrape(page: Page, opts: { withComment?: boolean } = {}) {
   await page.route('**/api/scrape/target', (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(scrapedPost()) }),
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(scrapedPost(opts)),
+    }),
   );
 }
 
+/**
+ * Read one target's stored URL straight from Postgres. No API exposes a target
+ * (the queue DTO carries only targetId), and the stored URL is exactly what the
+ * worker is handed at dispatch — so this is the ground truth for "which URL did
+ * the reply actually address".
+ */
+function readTargetUrl(targetId: string): string {
+  const out = execSync(
+    `docker exec smm-postgres-1 psql -U smm -d smm -tAc "SELECT url FROM target WHERE id='${targetId}'"`,
+    { encoding: 'utf8', timeout: 15_000 },
+  );
+  return out.trim();
+}
+
 /** Scrape + pick the flow, leaving the form at account selection. */
-async function openFlow(page: import('@playwright/test').Page, flow: 'Like' | 'Comment') {
+async function openFlow(
+  page: Page,
+  flow: 'Like' | 'Comment' | 'Reply',
+) {
   await page.goto('/actions');
   await page.getByLabel('Target post').fill(TARGET);
   await page.getByRole('button', { name: 'Scrape' }).click();
@@ -111,6 +149,105 @@ test.describe('actions page', () => {
     // A PENDING job has no targetUrl yet (resolved at dispatch — see ActionJob
     // schema), so the row shows its targetId.
     await expect(queue).toContainText(body.actions[0].targetId);
+
+    await api.removeAccount(account.id);
+  });
+
+  test('enqueues a reply to a chosen comment, targeting the COMMENT url not the post', async ({
+    authedPage,
+    api,
+  }) => {
+    const account = await api.createAccount(`e2e_reply_${Date.now().toString(36)}`, 'instagram');
+
+    await stubScrape(authedPage, { withComment: true });
+    await openFlow(authedPage, 'Reply');
+
+    // The reply target picker renders the scraped comment, pre-selected — the
+    // common case must not need a second click.
+    await expect(authedPage.getByText('Reply to which comment')).toBeVisible();
+    await expect(authedPage.getByText('@e2e_commenter')).toBeVisible();
+
+    await authedPage.getByRole('button', { name: `Select @${account.username}` }).click();
+
+    const [response] = await Promise.all([
+      authedPage.waitForResponse(
+        (r) => r.url().endsWith('/api/actions') && r.request().method() === 'POST',
+      ),
+      authedPage.getByRole('button', { name: /^Queue 1 reply/ }).click(),
+    ]);
+    expect(response.ok(), 'the enqueue succeeded').toBe(true);
+
+    // THE assertion: a reply addresses the comment, never the post. Sending the
+    // post URL here is the failure this whole feature exists to prevent — the
+    // API rejects it, and in the pre-fix worker it replied to whichever comment
+    // happened to own the first Reply button.
+    //
+    // The enqueue DTO carries only targetId (the queue resolves no URL), so the
+    // persisted target row is the ground truth for "what the worker will be
+    // handed". It is read straight from Postgres rather than an API: no
+    // endpoint exposes a target, and inventing one to satisfy a test would be
+    // test-shaped production surface.
+    const body = await response.json();
+    expect(body.actions, 'one job per selected account').toHaveLength(1);
+    expect(body.actions[0].actionType).toBe('action_reply_comment');
+
+    const targetUrl = readTargetUrl(body.actions[0].targetId);
+    expect(targetUrl, 'the reply targets the comment permalink, not the post').toBe(COMMENT_URL);
+
+    await api.removeAccount(account.id);
+  });
+
+  test('a reply is refused until a target is chosen when comments carry no permalink', async ({
+    authedPage,
+    api,
+  }) => {
+    // comments[] present but with no url (the API could not derive one): the
+    // scrape alone offers no legal target, so Reply stays disabled until the
+    // operator pastes the comment link. The guard is the disabled button, not
+    // a missing flow — pasting a link is the supported way in.
+    const account = await api.createAccount(`e2e_noreply_${Date.now().toString(36)}`, 'instagram');
+    await stubScrape(authedPage, { withComment: false });
+    await openFlow(authedPage, 'Like'); // scrape alone to reach step 3
+
+    await expect(
+      authedPage.getByRole('button', { name: 'Reply', exact: true }),
+      'no comment with a permalink → the picker has nothing, but pasting is allowed',
+    ).toBeEnabled();
+    await expect(authedPage.getByText(/No existing comments on this post/)).toBeVisible();
+
+    // Entering the flow with no target leaves Queue disabled: a reply must
+    // never fall back to the post URL (the server rejects it).
+    await authedPage.getByRole('button', { name: 'Reply', exact: true }).click();
+    await expect(authedPage.getByPlaceholder(/Paste the comment link/)).toBeVisible();
+    await expect(
+      authedPage.getByRole('button', { name: /^Queue 1 reply/ }),
+      'no target picked or pasted → cannot submit',
+    ).toBeDisabled();
+
+    await api.removeAccount(account.id);
+  });
+
+  test('a pasted comment link is the reply target', async ({ authedPage, api }) => {
+    // "Copy link" on the platform is the operator's shortest route, and the
+    // only one for a comment the scrape never delivered.
+    const account = await api.createAccount(`e2e_paste_${Date.now().toString(36)}`, 'instagram');
+    await stubScrape(authedPage, { withComment: true });
+    await openFlow(authedPage, 'Reply');
+
+    await authedPage.getByRole('button', { name: `Select @${account.username}` }).click();
+    const pasted = 'https://www.instagram.com/p/DdpmBpCEzpX/c/999999/';
+    await authedPage.getByPlaceholder(/Paste the comment link/).fill(pasted);
+
+    const [response] = await Promise.all([
+      authedPage.waitForResponse(
+        (r) => r.url().endsWith('/api/actions') && r.request().method() === 'POST',
+      ),
+      authedPage.getByRole('button', { name: /^Queue 1 reply/ }).click(),
+    ]);
+    expect(response.ok(), 'the enqueue succeeded').toBe(true);
+
+    const body = await response.json();
+    expect(readTargetUrl(body.actions[0].targetId), 'the pasted link wins').toBe(pasted);
 
     await api.removeAccount(account.id);
   });

@@ -18,10 +18,33 @@ import (
 
 // --- scripted fakes -------------------------------------------------------
 
-type schedTargets struct{ url string }
+type schedTargets struct {
+	url string
+	// comment is what GetComment returns; nil models "no comment resolved",
+	// which must leave the job without an expected mention rather than fail it.
+	comment *domain.Comment
+	// commentID is what GetTarget reports as the target's linked comment. The
+	// scheduler only looks the author up when it is set.
+	commentID *string
+}
 
 func (s *schedTargets) GetTarget(_ context.Context, id string) (domain.Target, error) {
-	return domain.Target{ID: id, URL: s.url, Platform: domain.PlatformInstagram}, nil
+	return domain.Target{
+		ID: id, URL: s.url, Platform: domain.PlatformInstagram,
+		// commentID links the reply's target comment; the scheduler resolves the
+		// author through it, so a test that wants a resolved handle must set it.
+		CommentID: s.commentID,
+	}, nil
+}
+
+// GetComment backs the reply-tagging path: the scheduler resolves a reply
+// target's author so the published job can carry the handle the worker must see
+// tagged. comment is injectable so a test can pin the resolved handle.
+func (s *schedTargets) GetComment(_ context.Context, id string) (domain.Comment, error) {
+	if s.comment == nil {
+		return domain.Comment{}, domain.ErrNotFound
+	}
+	return *s.comment, nil
 }
 
 type schedAccounts struct {
@@ -474,10 +497,117 @@ func (missingTargets) GetTarget(_ context.Context, id string) (domain.Target, er
 	return domain.Target{}, domain.ErrNotFound
 }
 
+func (missingTargets) GetComment(_ context.Context, id string) (domain.Comment, error) {
+	return domain.Comment{}, domain.ErrNotFound
+}
+
 // seedPending puts a due job in the fake action store's pending list, which the
 // scheduler's ListActionJobsByStatus returns.
 func seedPending(store *fakeActionStore, id string) {
 	store.pending = append(store.pending, aDueAction(store, id))
+}
+
+// --- reply tag resolution -------------------------------------------------
+
+// A reply job must carry the TARGET COMMENT's author, because the worker checks
+// IG's pre-filled mention names that person. A top-level composer pre-fills the
+// POST author, so a bare "@" check on the worker side would accept the wrong
+// tag; the handle has to come from the BE.
+func TestActionSchedulerSendsReplyTargetHandle(t *testing.T) {
+	store := newFakeActionStore()
+	store.logByAttempt = map[string]domain.ActionLog{}
+	tr := &schedTransport{}
+	composer := &schedComposer{text: "poin bagus"}
+
+	now := time.Unix(2_000_000, 0).UTC()
+	commentID := "cmt-1"
+	targets := &schedTargets{
+		url:       "https://instagram.com/p/x/c/9",
+		commentID: &commentID,
+		comment: &domain.Comment{
+			ID: commentID, AuthorHandle: "fathoni_saputra", Text: "Roadmap penting tapi execution...",
+		},
+	}
+	s := NewActionScheduler(store, &schedAccounts{workerID: "worker-1"}, targets, composer,
+		&schedCooldown{allow: true}, &schedLimits{allow: true}, tr, nil, nil,
+		ActionSchedulerConfig{
+			TickBudget: 5, Cooldown: 60 * time.Second, RateWindow: time.Hour,
+			RateLimits: map[string]int{"instagram": 30}, Clock: func() time.Time { return now },
+		},
+	)
+
+	job := aDueAction(store, "job-reply")
+	job.Type = domain.JobTypeActionReplyComment
+	store.pending = append(store.pending, job)
+
+	if err := s.Tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if len(tr.jobs) != 1 {
+		t.Fatalf("one job must reach the transport, got %d", len(tr.jobs))
+	}
+	if got := tr.jobs[0].ExpectedMention; got != "fathoni_saputra" {
+		t.Fatalf("payload expectedMention = %q, want the comment author (fathoni_saputra) — "+
+			"without it the worker cannot tell the right tag from the post author's", got)
+	}
+}
+
+// A comment job (top-level) has no author to tag: the field must stay empty so
+// the worker does not run a reply-only check on a plain comment.
+func TestActionSchedulerOmitsMentionForPlainComment(t *testing.T) {
+	store := newFakeActionStore()
+	store.logByAttempt = map[string]domain.ActionLog{}
+	tr := &schedTransport{}
+	s := newSched(t, store, &schedCooldown{allow: true}, &schedLimits{allow: true}, tr,
+		&schedComposer{text: "nice"})
+
+	seedPending(store, "job-comment")
+
+	if err := s.Tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if len(tr.jobs) != 1 {
+		t.Fatalf("one job must reach the transport, got %d", len(tr.jobs))
+	}
+	if tr.jobs[0].ExpectedMention != "" {
+		t.Fatalf("a top-level comment must not carry an expected mention, got %q", tr.jobs[0].ExpectedMention)
+	}
+}
+
+// An unresolvable comment must not block the reply: the job still ships, with no
+// expectation, and the worker falls back to its presence-only check. Failing
+// here would make a transient lookup error a lost reply.
+func TestActionSchedulerReplyShipsWithoutResolvableComment(t *testing.T) {
+	store := newFakeActionStore()
+	store.logByAttempt = map[string]domain.ActionLog{}
+	tr := &schedTransport{}
+	composer := &schedComposer{text: "poin bagus"}
+
+	now := time.Unix(2_000_000, 0).UTC()
+	// comment is nil → GetComment reports not-found.
+	linked := "cmt-missing"
+	targets := &schedTargets{url: "https://instagram.com/p/x/c/9", commentID: &linked}
+	s := NewActionScheduler(store, &schedAccounts{workerID: "worker-1"}, targets, composer,
+		&schedCooldown{allow: true}, &schedLimits{allow: true}, tr, nil, nil,
+		ActionSchedulerConfig{
+			TickBudget: 5, Cooldown: 60 * time.Second, RateWindow: time.Hour,
+			RateLimits: map[string]int{"instagram": 30}, Clock: func() time.Time { return now },
+		},
+	)
+
+	job := aDueAction(store, "job-reply-nocmt")
+	job.Type = domain.JobTypeActionReplyComment
+	store.pending = append(store.pending, job)
+
+	if err := s.Tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if len(tr.jobs) != 1 {
+		t.Fatalf("an unresolvable comment must not block the reply, got %d jobs", len(tr.jobs))
+	}
+	if tr.jobs[0].ExpectedMention != "" {
+		t.Fatalf("with no comment resolved the mention must be empty, got %q", tr.jobs[0].ExpectedMention)
+	}
 }
 
 // --- P3-03 compose + denylist gate ---------------------------------------

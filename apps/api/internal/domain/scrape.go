@@ -184,6 +184,59 @@ type Post struct {
 	// leaves this false — the on-demand 6h cache must not serve such a row as a
 	// fresh "no comments" answer.
 	CommentsFetched bool `json:"commentsFetched"`
+	// Sentiment labels the CAPTION, not the room. The post's overall mood is
+	// the comment aggregate (see SentimentBreakdown) — analysing the caption
+	// and calling it "the sentiment of this post" would hide the case that
+	// matters most: an upbeat caption under a thread of complaints.
+	Sentiment *Sentiment `json:"sentiment"`
+	// SentimentScore is the model's confidence for the caption label, nil when
+	// it reported none.
+	SentimentScore *float64 `json:"sentimentScore"`
+}
+
+// SentimentBreakdown counts a post's analysed comments by label. Unanalysed
+// comments are counted separately rather than folded into NEUTRAL: "we did not
+// look" and "we looked and it is neutral" are different facts, and merging them
+// would let a partially-analysed post read as a calm one.
+type SentimentBreakdown struct {
+	Positive int `json:"positive"`
+	Neutral  int `json:"neutral"`
+	Negative int `json:"negative"`
+	// Unanalysed is the number of comments with no label yet.
+	Unanalysed int `json:"unanalysed"`
+}
+
+// Total is the number of comments the breakdown covers.
+func (b SentimentBreakdown) Total() int {
+	return b.Positive + b.Neutral + b.Negative + b.Unanalysed
+}
+
+// Analysed is the number of comments that carry a label.
+func (b SentimentBreakdown) Analysed() int {
+	return b.Positive + b.Neutral + b.Negative
+}
+
+// Sentiment is the LLM's stance label for a piece of scraped text. Enum, not a
+// score: the operator reads "negative", and a 0-1 float would imply a precision
+// the model does not have. The raw confidence rides alongside as a nullable
+// score for tie-breaking and for auditing a surprising label — see Post.Score.
+type Sentiment string
+
+const (
+	SentimentPositive Sentiment = "POSITIVE"
+	SentimentNeutral  Sentiment = "NEUTRAL"
+	SentimentNegative Sentiment = "NEGATIVE"
+)
+
+// Valid reports whether s is a known label. Empty is NOT valid: an unanalysed
+// row is represented by a nil pointer, never by the zero string, so a
+// half-written label can never masquerade as a real verdict.
+func (s Sentiment) Valid() bool {
+	switch s {
+	case SentimentPositive, SentimentNeutral, SentimentNegative:
+		return true
+	}
+	return false
 }
 
 // Comment is a scraped comment, optionally a reply (ParentID chain). JSON tags
@@ -198,6 +251,19 @@ type Comment struct {
 	Metrics      json.RawMessage `json:"metrics"`
 	ScrapedAt    time.Time       `json:"scrapedAt"`
 	ParentID     *string         `json:"parentId"`
+	// URL is the comment's own permalink (…/p/<code>/c/<id>/), derived at read
+	// time — never stored. It is what a reply action must target: Enqueue
+	// rejects a reply whose URL has no /c/<id>/ segment, so without this the
+	// dashboard has no way to build a legal reply to a comment it just read.
+	// Empty when the post's shortcode is unknown (the comment cannot be
+	// addressed, so the UI must not offer a reply).
+	URL string `json:"url"`
+	// Sentiment is the analysed stance, nil when the row has not been analysed
+	// (no LLM configured, or the call failed). Nil renders as "not analysed" —
+	// never as a default verdict, because a made-up label is acted upon.
+	Sentiment *Sentiment `json:"sentiment"`
+	// SentimentScore is the model's own confidence, nil when it reported none.
+	SentimentScore *float64 `json:"sentimentScore"`
 }
 
 // MetricSnapshot is one time-series sample of a post's metrics. History table;

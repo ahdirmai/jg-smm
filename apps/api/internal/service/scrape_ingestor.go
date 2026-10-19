@@ -198,6 +198,22 @@ func (s *ScrapeIngestor) ingestComment(ctx context.Context, p domain.Platform, i
 		}
 		postID = parent.ID
 	}
+	// A reply names its parent by the parent comment's external id. The parent
+	// row was written first (parseIGComments walks depth-first), so this lookup
+	// succeeds; a parent we somehow do not have stores the reply as top-level
+	// rather than dropping it — a reply without its parent is still real
+	// content, and the alternative (skip) loses it silently.
+	var parentID *string
+	if item.ParentExternalID != "" {
+		parent, err := s.scrapes.GetCommentByExternalID(ctx, p, item.ParentExternalID)
+		if err != nil {
+			s.log.Warn("ingest: reply parent not found, storing as top-level",
+				"reply", item.ExternalID, "parent", item.ParentExternalID, "err", err)
+		} else {
+			parentID = &parent.ID
+		}
+	}
+
 	_, err := s.scrapes.UpsertComment(ctx, domain.Comment{
 		PostID:       postID,
 		Platform:     p,
@@ -205,6 +221,7 @@ func (s *ScrapeIngestor) ingestComment(ctx context.Context, p domain.Platform, i
 		AuthorHandle: orDefault(item.AuthorHandle, "unknown"),
 		Text:         orDefault(item.Text, ""),
 		Metrics:      item.metricsJSON(),
+		ParentID:     parentID,
 	})
 	if err != nil {
 		return fmt.Errorf("upsert comment: %w", err)
@@ -235,15 +252,20 @@ func nilIfEmpty(s string) *string {
 // text_content, ...) live only in parseItem, so a new actor is a one-function
 // addition instead of an ingest rewrite.
 type scrapeItem struct {
-	Platform     string         `json:"platform"`
-	ExternalID   string         `json:"externalId"`
-	PostID       string         `json:"postId"`
-	CommentOf    string         `json:"commentOf"`
-	AuthorHandle string         `json:"authorHandle"`
-	AuthorID     string         `json:"authorId"`
-	Text         string         `json:"text"`
-	MediaURLs    []string       `json:"mediaUrls"`
-	Metrics      map[string]any `json:"metrics"`
+	Platform   string `json:"platform"`
+	ExternalID string `json:"externalId"`
+	PostID     string `json:"postId"`
+	CommentOf  string `json:"commentOf"`
+	// ParentExternalID is the enclosing comment's external id when this item is
+	// a reply, empty for a top-level comment. The DB stores parent as a uuid,
+	// so the ingestor resolves this to comment.parent_id after the parent row
+	// is written (replies are emitted depth-first so it already exists).
+	ParentExternalID string         `json:"parentExternalId"`
+	AuthorHandle     string         `json:"authorHandle"`
+	AuthorID         string         `json:"authorId"`
+	Text             string         `json:"text"`
+	MediaURLs        []string       `json:"mediaUrls"`
+	Metrics          map[string]any `json:"metrics"`
 	// PublishedAt carries the post's own publish time through to the DB. It is
 	// the same value the window filter already read (takenAt) — previously it
 	// was used to decide keep/drop and then thrown away, so no post row ever
@@ -251,12 +273,25 @@ type scrapeItem struct {
 	PublishedAt *time.Time `json:"publishedAt"`
 }
 
-// igCommentItem is one element of instagram-post-scraper's latestComments[].
+// igCommentItem is one element of instagram-post-scraper's latestComments[] or
+// apify/instagram-comment-scraper's dataset row. Both carry the same core
+// fields; Replies is populated only by the comment scraper with
+// includeNestedComments, which is gated to paid Apify plans.
+//
+// The thread shape is NESTED, not flat: a reply sits in its parent's Replies
+// slice and does NOT appear as its own top-level row. That is why parsing must
+// recurse — reading only the top level silently drops every reply, which looks
+// identical to "this post has no replies".
 type igCommentItem struct {
 	ID            string `json:"id"`
 	Text          string `json:"text"`
 	OwnerUsername string `json:"ownerUsername"`
 	LikesCount    *int64 `json:"likesCount"`
+	// RepliesCount is the platform's own count. It is NOT used to join
+	// anything; it is kept only so a reply-less payload can be told apart from
+	// a payload whose replies the plan stripped.
+	RepliesCount *int64          `json:"repliesCount"`
+	Replies      []igCommentItem `json:"replies"`
 }
 
 // parseItems translates one raw dataset row into the canonical scrapeItems it
@@ -790,24 +825,41 @@ func parseActorTime(s string) time.Time {
 	return time.Time{}
 }
 
-// parseIGComments splits a post row into one scrapeItem per latestComments
-// entry (each keyed to the parent post's shortcode). The post itself is
-// emitted first so the parent row exists when the comments resolve it.
+// parseIGComments splits a post row into one scrapeItem per comment, and one
+// per NESTED reply, depth-first so a parent always precedes its children (the
+// ingestor resolves a child's parent by external id, so the parent row must
+// exist first).
+//
+// Replies are nested inside their parent in the payload — never emitted as
+// sibling top-level rows — so this recursion is the only thing that surfaces
+// them. Without it every reply is dropped and the stored post looks
+// reply-less. `parent` is the external id of the enclosing comment, empty for
+// a top-level one, and becomes scrapeItem.ParentExternalID.
 func parseIGComments(platform domain.Platform, post scrapeItem, comments []igCommentItem) []scrapeItem {
 	items := make([]scrapeItem, 0, len(comments))
-	for _, c := range comments {
-		if c.ID == "" || strings.TrimSpace(c.Text) == "" {
-			continue
+	var walk func(parent string, list []igCommentItem)
+	walk = func(parent string, list []igCommentItem) {
+		for _, c := range list {
+			if c.ID == "" || strings.TrimSpace(c.Text) == "" {
+				continue
+			}
+			items = append(items, scrapeItem{
+				Platform:         string(platform),
+				ExternalID:       c.ID,
+				CommentOf:        post.ExternalID,
+				ParentExternalID: parent,
+				AuthorHandle:     orDefault(c.OwnerUsername, "unknown"),
+				Text:             c.Text,
+				Metrics:          map[string]any{"likes": c.LikesCount},
+			})
+			// Recurse: a reply can itself be replied to (IG nests more than one
+			// level), and this comment becomes the parent for anything inside it.
+			if len(c.Replies) > 0 {
+				walk(c.ID, c.Replies)
+			}
 		}
-		items = append(items, scrapeItem{
-			Platform:     string(platform),
-			ExternalID:   c.ID,
-			CommentOf:    post.ExternalID,
-			AuthorHandle: orDefault(c.OwnerUsername, "unknown"),
-			Text:         c.Text,
-			Metrics:      map[string]any{"likes": c.LikesCount},
-		})
 	}
+	walk("", comments)
 	return items
 }
 
@@ -938,10 +990,16 @@ func parseThreadsItem(raw []byte, window port.KeywordTimeWindow, onlyCode string
 	handle := orDefault(src.Username, "unknown")
 
 	// The reply branch: same row shape, linked to its parent through the run's
-	// shortcode map. Resolved before the window check above could drop the
-	// parent, so a reply is kept whenever the parent row was seen.
+	// shortcode map. A single-post scrape (onlyCode set) is its own fallback:
+	// the live actor omits `parent_post_id` there, yet every `is_reply` row in
+	// that run can only belong to the post that was asked for. Without the
+	// fallback a post scrape returned its replies as zero comments (verified
+	// live: 24 dataset rows, all `is_reply: true`, all `parent_post_id: null`).
 	if src.IsReply {
 		parent := run.parent(src.ParentPostID)
+		if parent == "" && onlyCode != "" {
+			parent = onlyCode
+		}
 		if parent != "" && text != "" {
 			return []scrapeItem{{
 				Platform:     string(domain.PlatformThreads),

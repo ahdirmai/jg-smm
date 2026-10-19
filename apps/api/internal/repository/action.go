@@ -144,6 +144,30 @@ func (r *ActionRepo) SetPendingActionJobsScheduledAt(ctx context.Context, schedu
 	return n, nil
 }
 
+// CancelActionJob makes a queued or running job terminal. The SQL guard means
+// an already-terminal row returns ErrNotFound rather than being overwritten;
+// the service checks the status first so the caller gets a validation error.
+func (r *ActionRepo) CancelActionJob(ctx context.Context, id string) (domain.ActionJob, error) {
+	row, err := r.q.CancelActionJob(ctx, uuidValue(id))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.ActionJob{}, domain.ErrNotFound
+		}
+		return domain.ActionJob{}, fmt.Errorf("repository.action.CancelActionJob: %w", err)
+	}
+	return actionJobDomain(row), nil
+}
+
+// CancelPendingActionJobs cancels every PENDING row in one statement and
+// reports the row count, same shape as SetPendingActionJobsScheduledAt.
+func (r *ActionRepo) CancelPendingActionJobs(ctx context.Context) (int64, error) {
+	n, err := r.q.CancelPendingActionJobs(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("repository.action.CancelPendingActionJobs: %w", err)
+	}
+	return n, nil
+}
+
 // SweepStaleRunningJobs requeues jobs whose worker never reported back.
 func (r *ActionRepo) SweepStaleRunningJobs(ctx context.Context, staleAfter time.Duration) (int64, error) {
 	mins := int(staleAfter / time.Minute)

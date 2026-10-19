@@ -183,14 +183,14 @@ func (h *ScrapeHandler) listPostComments(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "keyword scrape is not configured")
 	}
 	limit, offset := parseLimitOffset(c, 50, 0)
-	comments, err := h.keywords.PostComments(c.Request().Context(), c.Param("postId"), &limit, &offset)
+	comments, breakdown, err := h.keywords.PostCommentsWithSentiment(c.Request().Context(), c.Param("postId"), &limit, &offset)
 	if err != nil {
 		return scrapeError(err)
 	}
 	if comments == nil {
 		comments = []domain.Comment{}
 	}
-	return c.JSON(http.StatusOK, map[string]any{"comments": comments})
+	return c.JSON(http.StatusOK, map[string]any{"comments": comments, "sentiment": breakdown})
 }
 
 func parseLimitOffset(c echo.Context, defLimit, defOffset int) (int, int) {
@@ -209,8 +209,13 @@ func parseLimitOffset(c echo.Context, defLimit, defOffset int) (int, int) {
 	return limit, offset
 }
 
-// listRecent returns stored posts newest-scrape-first — the "already scraped"
-// history for the dashboard.
+// listRecent returns recent posts, optionally RANKED by insight.
+//
+// `ranked=true` reorders them by the score in service.RankInsights: engagement
+// (log-scaled), engagement-per-follower where a denominator is known, and a
+// freshness decay. The dashboard defaults to this order because "what should I
+// act on now" is the question the page exists to answer; `ranked=false` keeps
+// the raw newest-first order for an operator who just wants the latest.
 func (h *ScrapeHandler) listRecent(c echo.Context) error {
 	if h.scrapes == nil {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "scrape is not configured")
@@ -225,7 +230,15 @@ func (h *ScrapeHandler) listRecent(c echo.Context) error {
 	if err != nil {
 		return scrapeError(err)
 	}
-	return c.JSON(http.StatusOK, map[string]any{"posts": posts})
+	if c.QueryParam("ranked") != "true" {
+		return c.JSON(http.StatusOK, map[string]any{"posts": posts})
+	}
+	// Follower counts are per MONITORED account; a scraped post's author is
+	// usually not one of ours, so the map is empty for keyword scrapes. That is
+	// why EngagementPerFollower is nullable: a rate against an unknown
+	// denominator is not "0%", it is no number at all.
+	ranked := service.RankInsights(posts, map[string]int64{}, service.DefaultInsightWeights())
+	return c.JSON(http.StatusOK, map[string]any{"insights": ranked})
 }
 
 // parseWindowDate accepts RFC3339 or a bare YYYY-MM-DD (dashboard date input).
@@ -255,11 +268,18 @@ type generateCommentRequest struct {
 	PostText         string   `json:"postText"`
 	AuthorHandle     string   `json:"authorHandle"`
 	ExistingComments []string `json:"existingComments"`
-	Mode             string   `json:"mode"`      // support | counter
-	Intensity        int      `json:"intensity"` // 1-5 slider; 0 = medium (3)
-	Length           string   `json:"length"`    // short | medium | long; empty = medium
-	Count            int      `json:"count"`
-	Language         string   `json:"language"`
+	// ReplyTo is set when drafting a REPLY rather than a top-level comment. It
+	// names the comment being answered, so the drafts engage with that argument
+	// instead of the thread's general mood.
+	ReplyTo *struct {
+		Handle string `json:"handle"`
+		Text   string `json:"text"`
+	} `json:"replyTo"`
+	Mode      string `json:"mode"`      // support | counter
+	Intensity int    `json:"intensity"` // 1-5 slider; 0 = medium (3)
+	Length    string `json:"length"`    // short | medium | long; empty = medium
+	Count     int    `json:"count"`
+	Language  string `json:"language"`
 }
 
 // generateComment drafts comment candidates from the scraped context. The
@@ -272,10 +292,15 @@ func (h *ScrapeHandler) generateComment(c echo.Context) error {
 	if err := c.Bind(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
 	}
+	var replyTo *service.ReplyContext
+	if req.ReplyTo != nil && strings.TrimSpace(req.ReplyTo.Text) != "" {
+		replyTo = &service.ReplyContext{Handle: req.ReplyTo.Handle, Text: req.ReplyTo.Text}
+	}
 	texts, err := h.gen.Generate(c.Request().Context(), service.GenerateInput{
 		PostText:         req.PostText,
 		AuthorHandle:     req.AuthorHandle,
 		ExistingComments: req.ExistingComments,
+		ReplyTo:          replyTo,
 		Mode:             service.CommentMode(req.Mode),
 		Count:            req.Count,
 		Language:         req.Language,

@@ -20,6 +20,14 @@ export interface ActionJob {
    * absent for an operator-supplied body.
    */
   templateId?: string;
+  /**
+   * The handle a reply must tag, without the leading @. Only set for
+   * `reply_comment`: IG pre-fills a mention when a comment's reply box opens,
+   * and the worker verifies it names THIS person before posting. Without it any
+   * `@mention` passes — including the post author's, which a top-level composer
+   * pre-fills — and the reply tags the wrong user.
+   */
+  expectedMention?: string;
   /** 1-based attempt counter used for idempotency and backoff. */
   attempt: number;
 }

@@ -337,6 +337,27 @@ function fakePage(story: Story, sel: SelectorSet): Page {
   const locate = (selector: string): Locator =>
     story.composerMissing ? noComposer(selector) : resolveLocator(selector);
 
+  /**
+   * A locator that matches nothing, with the full surface the production code
+   * may call on a zero-result chain (`count`, `first`, and `filter`/`or` for the
+   * dismissal's fallback lookups). Used for the Meta consolidation modal, which
+   * no test renders.
+   */
+  const absent = (): Locator => {
+    const loc: Locator = {
+      count: async () => 0,
+      first: () => loc,
+      last: () => loc,
+      filter: () => loc,
+      or: () => loc,
+      locator: () => loc,
+      click: async () => {
+        throw new Error('click on an absent locator');
+      },
+    } as unknown as Locator;
+    return loc;
+  };
+
   // The like-button scope (IG action bar). likeRoot takes `.last()` of it and
   // resolves the like selectors within — so the scope delegates `.locator()`
   // straight back to the resolver, making scoping transparent to these tests
@@ -374,6 +395,12 @@ function fakePage(story: Story, sel: SelectorSet): Page {
     evaluate: async () => undefined,
     waitForTimeout: async () => undefined,
     locator: (selector: string): Locator => {
+      // No test renders Meta's consolidation modal, so a dialog lookup must
+      // report "absent" — the dismissal is then a no-op, which is exactly what
+      // the real code does on a page without the modal. Returning a
+      // zero-counting locator (rather than throwing on a missing method) keeps
+      // the fake honest about the page it models.
+      if (selector.includes('role="dialog"')) return absent();
       if (story.requireMention && selector.includes('contenteditable')) {
         // The MENTION model mounts the threaded reply box only after the Reply
         // affordance was clicked. Modelled as an order-dependent mount, so a
@@ -761,6 +788,78 @@ test('replyToComment: the reply composer never mounting is a failure, never a ph
   assert.equal(result.ok, false);
   assert.match(result.error ?? '', /reply composer not found/);
   assert.equal(story.composed, '', 'nothing was typed');
+});
+
+test('replyToComment: refuses when the prefill names someone OTHER than the target (wrong tag)', async () => {
+  // Observed live: a TOP-LEVEL composer pre-fills the POST AUTHOR's handle, so a
+  // bare "starts with @" check passed on `@<postAuthor>` and the reply would have
+  // tagged the wrong person, threaded under the wrong comment. The job carries
+  // the target comment's author; anything else must refuse rather than post.
+  const story = makeStory({
+    url: 'https://www.instagram.com/p/abc123/c/1789/',
+    mentionPrefill: '@the_post_author',
+    requireMention: true,
+  });
+  const result = await replyToComment(
+    deps(story, replyJob({ expectedMention: 'rackytampubolon' }), IG),
+    'nice one',
+  );
+
+  assert.equal(result.ok, false, 'a mention naming the wrong person must not post');
+  assert.match(
+    result.error ?? '',
+    /no @mention prefilled/,
+    'reports that the threaded composer did not open for this target',
+  );
+  assert.equal(story.composed, '', 'nothing was typed at the wrong target');
+});
+
+test('replyToComment: accepts the prefill when it names the target author', async () => {
+  // The positive half. Without it, a guard that refused every mention would
+  // still pass the test above and every reply would be dead.
+  const story = makeStory({
+    url: 'https://www.instagram.com/p/abc123/c/1789/',
+    mentionPrefill: '@rackytampubolon',
+    requireMention: true,
+  });
+  const result = await replyToComment(
+    deps(story, replyJob({ expectedMention: 'rackytampubolon' }), IG),
+    'nice one',
+  );
+
+  assert.equal(result.ok, true, 'a mention naming the target author is the threaded composer');
+  assert.equal(story.composed, '', 'the submit cleared the composer');
+});
+
+test('replyToComment: the mention check ignores case and the leading @', async () => {
+  // Handles are case-insensitive on Instagram, and the caller may send the
+  // handle with or without the @. A strict comparison would refuse a
+  // CORRECTLY threaded reply — the expensive direction of this bug.
+  const story = makeStory({
+    url: 'https://www.instagram.com/p/abc123/c/1789/',
+    mentionPrefill: '@RackyTampubolon',
+    requireMention: true,
+  });
+  const result = await replyToComment(
+    deps(story, replyJob({ expectedMention: '@rackytampubolon' }), IG),
+    'nice one',
+  );
+
+  assert.equal(result.ok, true, 'case and the leading @ must not fail a correct reply');
+});
+
+test('replyToComment: with no expected handle, any prefill still passes (older publishers)', async () => {
+  // A job from a BE that does not yet send expectedMention must keep working —
+  // the check degrades to "a mention exists", its previous behaviour, rather
+  // than refusing every reply after a rolling deploy.
+  const story = makeStory({
+    url: 'https://www.instagram.com/p/abc123/c/1789/',
+    mentionPrefill: '@anyone',
+    requireMention: true,
+  });
+  const result = await replyToComment(deps(story, replyJob(), IG), 'nice one');
+
+  assert.equal(result.ok, true, 'no expectation → presence is the best evidence available');
 });
 
 test('adapter replyComment dispatches to the reply path through the public interface (L-6)', async () => {

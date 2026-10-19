@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -128,16 +129,25 @@ func (r *Runner) searchInput(in port.ApifySearchInput, maxItems int) map[string]
 }
 
 // instagramSearchInput builds the payload for
-// crawlerbros/instagram-keyword-search-scraper.
+// sasky/instagram-keyword-posts-urls-scraper.
 //
-// No date keys: the actor's schema has no date field, so sending
-// onlyPostsNewerThan (the old apify/instagram-scraper spelling) would be
-// ignored — and an ignored lower bound means the ingestor has to drop
-// out-of-window posts it already paid to fetch.
+// This actor returns post URLs ONLY — no caption, no metrics. That is why the
+// runner enriches each URL with a per-post scrape (see runSearchInstagram): the
+// search stage is discovery, the post actor is the data. The previous actor
+// (crawlerbros/instagram-keyword-search-scraper) returned full posts in one
+// call but the publisher has been removed from the Store, so every batch 403'd.
+//
+// No date keys. The actor accepts `date`/`from`/`to` but FAILS at runtime
+// ("Context: Parsing date..") for every combination tried, so a window cannot be
+// enforced here — the ingestor applies it instead (inWindow), which is the same
+// contract the previous actor had.
+//
+// `limit` is a STRING in this actor's schema, not a number: sending an int is
+// silently ignored and the run falls back to an enormous default.
 func instagramSearchInput(in port.ApifySearchInput, maxItems int) map[string]any {
 	return map[string]any{
 		"keywords": in.Keywords,
-		"maxPosts": maxItems,
+		"limit":    strconv.Itoa(maxItems),
 	}
 }
 
@@ -280,6 +290,81 @@ func tiktokSearchInput(in port.ApifySearchInput, maxItems int) map[string]any {
 	}
 }
 
+// searchPostURL is one row of the Instagram keyword-search actor's output:
+// `post_url` is the only field that carries data (user_name is usually empty).
+type searchPostURL struct {
+	PostURL string `json:"post_url"`
+}
+
+// enrichInstagramPosts turns the search actor's URL rows into full post rows by
+// running the per-post actor on each URL.
+//
+// Why one call per URL rather than one batched call: apify/instagram-post-scraper
+// takes a `username` array and would accept several at once, but a single
+// bad URL then fails the whole batch's payload. Per-URL keeps the blast radius
+// to one post, and the concurrency here is bounded by the sequential loop — the
+// platform's own run-concurrency cap (5 on the free plan) is the real limit, and
+// parallelising would just move the throttling into 429s.
+//
+// Deduped by URL: the same post can appear under two keywords, and paying twice
+// for one post is the exact waste this pipeline exists to avoid.
+func (r *Runner) enrichInstagramPosts(ctx context.Context, rows []json.RawMessage) ([]json.RawMessage, error) {
+	urls := searchPostURLs(rows)
+	if len(urls) == 0 {
+		return nil, nil
+	}
+
+	// actorFor is the same resolver the single-post path uses, so the search
+	// enrichment runs the exact actor a permalink scrape would.
+	actorID := strings.TrimSpace(r.actorFor(domain.PlatformInstagram))
+	if actorID == "" {
+		return nil, errors.New("no post actor configured to enrich search results")
+	}
+
+	out := make([]json.RawMessage, 0, len(urls))
+	for _, u := range urls {
+		items, _, err := r.runSync(ctx, actorID, runInput(domain.PlatformInstagram, u, 1), 1)
+		if err != nil {
+			r.log("apify: enrich post failed", "url", u, "err", err)
+			continue
+		}
+		for _, it := range items {
+			out = append(out, it)
+		}
+	}
+	r.log("apify: enriched search results", "urls", len(urls), "posts", len(out))
+	return out, nil
+}
+
+// searchPostURLs pulls the deduped, query-stripped post URLs out of the search
+// actor's rows.
+//
+// Deduped because the same post can rank under two keywords, and paying the
+// post actor twice for one post is the waste this pipeline exists to avoid.
+// Query strings are stripped so `?img_index=1` and the bare URL count as one.
+// Rows without a URL are skipped, not errored: the actor emits a page-metadata
+// row alongside its results, and that is not a failure.
+func searchPostURLs(rows []json.RawMessage) []string {
+	seen := make(map[string]struct{}, len(rows))
+	urls := make([]string, 0, len(rows))
+	for _, raw := range rows {
+		var u searchPostURL
+		if err := json.Unmarshal(raw, &u); err != nil {
+			continue
+		}
+		clean := strings.TrimSpace(strings.Split(u.PostURL, "?")[0])
+		if clean == "" {
+			continue
+		}
+		if _, dup := seen[clean]; dup {
+			continue
+		}
+		seen[clean] = struct{}{}
+		urls = append(urls, clean)
+	}
+	return urls
+}
+
 // RunSearch drives the platform's search actor: keywords + window instead of
 // one permalink. The payload shape is the union of what the IG/Threads search
 // actors accept; a field the actor ignores is harmless, a field it needs and
@@ -294,60 +379,102 @@ func (r *Runner) RunSearch(ctx context.Context, in port.ApifySearchInput) (port.
 	if maxItems <= 0 {
 		maxItems = 50
 	}
-	// No maxItems query param: on a pay-per-result actor it caps the run's
-	// charge, and too low a cap ABORTS the run ("max charge limit was too low to
-	// deliver any posts") before the payload is even read — which is what the
-	// Threads search actor did. The payload bounds the result count itself
-	// (resultsLimit / max_posts), so the cap adds nothing here.
-	url := fmt.Sprintf("%s/acts/%s/run-sync-get-dataset-items?token=%s",
-		r.baseURL, pathSegment(actorID), r.token)
+	// Resume vs start. A resumed run was already paid for and started by an
+	// earlier process; building the payload and POSTing again would buy a
+	// SECOND run, so the start half is skipped entirely.
+	runID := strings.TrimSpace(in.ResumeRunID)
+	if runID == "" {
+		payload := r.searchInput(in, maxItems)
+		if payload == nil {
+			// searchInput returns nil for a platform it has no branch for, on
+			// purpose: the old if-chain silently sent the Instagram payload to
+			// anything missing from it, and an unknown key is answered 200 with the
+			// actor's own default — invisible. Marshal it and the nil map becomes
+			// the four bytes "null", the run is still POSTed and still billed, and the
+			// actor answers with defaults. So refuse before spending anything.
+			return port.ApifyOutput{}, fmt.Errorf("apify: no search input for platform %q", in.Platform)
+		}
+		// ASYNC run + poll, not the sync endpoint.
+		//
+		// The search actor drives a real browser and takes ~40-60s per keyword, so a
+		// multi-keyword batch runs for minutes. The sync endpoint's whole request has
+		// to fit inside one http.Client.Timeout, and the batch died with "context
+		// deadline exceeded" while the run was still healthy on Apify — we paid for a
+		// run we then threw away. Async start returns immediately; the poll below
+		// owns the wait and its budget is sized for the actor.
+		startURL := fmt.Sprintf("%s/acts/%s/runs?token=%s",
+			r.baseURL, pathSegment(actorID), r.token)
+		body, err := json.Marshal(payload)
+		if err != nil {
+			return port.ApifyOutput{}, fmt.Errorf("apify: encode search input: %w", err)
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, startURL, bytes.NewReader(body))
+		if err != nil {
+			return port.ApifyOutput{}, fmt.Errorf("apify: build search run: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
 
-	payload := r.searchInput(in, maxItems)
-	if payload == nil {
-		// searchInput returns nil for a platform it has no branch for, on
-		// purpose: the old if-chain silently sent the Instagram payload to
-		// anything missing from it, and an unknown key is answered 200 with the
-		// actor's own default — invisible. Marshal it and the nil map becomes
-		// the four bytes "null", the run is still POSTed and still billed, and the
-		// actor answers with defaults. So refuse before spending anything.
-		return port.ApifyOutput{}, fmt.Errorf("apify: no search input for platform %q", in.Platform)
-	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return port.ApifyOutput{}, fmt.Errorf("apify: encode search input: %w", err)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return port.ApifyOutput{}, fmt.Errorf("apify: build search request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
+		resp, err := r.client.Do(req)
+		if err != nil {
+			return port.ApifyOutput{}, fmt.Errorf("apify: search run request: %w", err)
+		}
+		defer resp.Body.Close()
 
-	resp, err := r.client.Do(req)
-	if err != nil {
-		return port.ApifyOutput{}, fmt.Errorf("apify: search request: %w", err)
+		raw, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
+		if err != nil {
+			return port.ApifyOutput{}, fmt.Errorf("apify: read search run body: %w", err)
+		}
+		if resp.StatusCode >= 400 {
+			return port.ApifyOutput{
+				Status: statusFailed,
+				Error:  fmt.Sprintf("apify http %d: %s", resp.StatusCode, truncate(string(raw), 500)),
+			}, nil
+		}
+		var started struct {
+			Data struct {
+				ID string `json:"id"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(raw, &started); err != nil || started.Data.ID == "" {
+			return port.ApifyOutput{
+				Status: statusFailed,
+				Error:  truncate(fmt.Sprintf("unexpected run body: %v", err), 500),
+			}, nil
+		}
+		runID = started.Data.ID
 	}
-	defer resp.Body.Close()
+	if in.OnStarted != nil {
+		in.OnStarted(runID)
+	}
+	r.log("apify: search run started", "run", runID, "keywords", in.Keywords, "resumed", in.ResumeRunID != "")
 
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
+	items, runStatus, err := r.pollRunDatasetWithin(ctx, runID, searchPollBudget)
 	if err != nil {
-		return port.ApifyOutput{}, fmt.Errorf("apify: read search body: %w", err)
+		return port.ApifyOutput{RunID: runID}, err
 	}
-	runID := resp.Header.Get("x-apify-run-id")
-	if resp.StatusCode >= 400 {
+	if runStatus != statusSucceeded {
 		return port.ApifyOutput{
 			RunID:  runID,
-			Status: statusFailed,
-			Error:  fmt.Sprintf("apify http %d: %s", resp.StatusCode, truncate(string(raw), 500)),
+			Status: runStatus,
+			Error:  truncate("search actor run: "+runStatus, 500),
 		}, nil
 	}
 
-	var items []json.RawMessage
-	if err := json.Unmarshal(raw, &items); err != nil {
-		return port.ApifyOutput{
-			RunID:  runID,
-			Status: statusFailed,
-			Error:  truncate(fmt.Sprintf("unexpected body: %s", err), 500),
-		}, nil
+	// TWO-STAGE for Instagram: the search actor returns post URLs only, so each
+	// URL is enriched by the post actor for its caption and metrics. Skipping
+	// this would store posts with no caption and no engagement — the dashboard
+	// would show rows of blank text and zeros, which reads as a broken scrape.
+	//
+	// Per-URL and BEST-EFFORT: one post that 404s (deleted, private) must not
+	// fail the batch. Falls back to the raw search rows when enrichment yields
+	// nothing, so a broken post actor degrades to URL-only rows rather than an
+	// empty batch.
+	if in.Platform == domain.PlatformInstagram {
+		if enriched, err := r.enrichInstagramPosts(ctx, items); err != nil {
+			r.log("apify: post enrichment failed, storing search rows only", "err", err)
+		} else if len(enriched) > 0 {
+			items = enriched
+		}
 	}
 
 	stored := make([]port.RawItem, 0, len(items))
@@ -529,14 +656,27 @@ func (r *Runner) runThreadsPost(ctx context.Context, actorID, scrapeJobID, targe
 // pollRunDataset waits for the actor run to reach a terminal status, then
 // downloads its dataset items. The poll window is the run budget: the sync
 // endpoint blocks for exactly this long in the normal path anyway.
+
+// pollRunDataset waits up to pollBudget for a run to reach a terminal status.
 func (r *Runner) pollRunDataset(ctx context.Context, runID string) ([]json.RawMessage, string, error) {
-	deadline := time.Now().Add(pollBudget)
+	return r.pollRunDatasetWithin(ctx, runID, pollBudget)
+}
+
+// pollRunDatasetWithin is pollRunDataset with an explicit budget.
+//
+// The budget is a parameter because the actors differ by an order of magnitude:
+// the Threads scrape finishes in well under a minute, while the Instagram
+// keyword search drives a browser and takes ~40-60s PER KEYWORD. One shared
+// constant either cuts the slow actor off (the batch died at 5 minutes while the
+// run was still healthy) or makes a fast failure take a quarter hour to surface.
+func (r *Runner) pollRunDatasetWithin(ctx context.Context, runID string, budget time.Duration) ([]json.RawMessage, string, error) {
+	deadline := time.Now().Add(budget)
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, "", fmt.Errorf("apify: poll canceled: %w", err)
 		}
 		if time.Now().After(deadline) {
-			return nil, "", fmt.Errorf("apify: run %s did not finish in %s", runID, pollBudget)
+			return nil, "", fmt.Errorf("apify: run %s did not finish in %s", runID, budget)
 		}
 		time.Sleep(pollInterval)
 
@@ -609,9 +749,22 @@ func (r *Runner) storeItems(ctx context.Context, jobKey, runID string, items []j
 	}, nil
 }
 
+// syncMaxItemsFloor is the smallest `maxItems` the sync endpoint tolerates.
+//
+// The cap is a CHARGE cap on a pay-per-event actor, and Apify rejects a run
+// whose ceiling is below $0.005 ("max-total-charge-usd-below-minimum"). At the
+// post actor's price a maxItems of 1 rounds under that, so enriching a single
+// search result failed with a 400 — the batch then found 15 URLs and stored 0
+// posts. Requesting a few covers one run's worth with room to spare; the actor
+// still returns only what it can for the payload it was given.
+const syncMaxItemsFloor = 10
+
 // runSync posts the payload to run-sync-get-dataset-items and returns the
 // dataset items inline.
 func (r *Runner) runSync(ctx context.Context, actorID string, payload map[string]any, maxItems int) ([]json.RawMessage, string, error) {
+	if maxItems < syncMaxItemsFloor {
+		maxItems = syncMaxItemsFloor
+	}
 	url := fmt.Sprintf("%s/acts/%s/run-sync-get-dataset-items?token=%s&maxItems=%d",
 		r.baseURL, pathSegment(actorID), r.token, maxItems)
 	body, err := json.Marshal(payload)
@@ -704,4 +857,17 @@ const (
 	// Async-run polling budget for a Threads user scrape.
 	pollBudget   = 4 * time.Minute
 	pollInterval = 5 * time.Second
+
+	// Async-run polling budget for the Instagram keyword SEARCH actor.
+	//
+	// This actor drives a real browser and takes ~40-60s PER KEYWORD, so a
+	// 3-keyword batch runs for many minutes. MEASURED on the live actor: a
+	// 3-keyword run took 946s (15m47s) and succeeded — a hair after a 15-minute
+	// budget expired, so the batch failed while Apify had already finished. The
+	// budget must clear the slowest real run with margin, not sit on it.
+	//
+	// The sync endpoint cannot carry this at all: one http.Client.Timeout spans
+	// the whole request, so the batch died with "context deadline exceeded" while
+	// the run was healthy. Hence async start + poll.
+	searchPollBudget = 25 * time.Minute
 )

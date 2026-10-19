@@ -152,6 +152,38 @@ cockpit), never through the API:
 The live view is published per worker on `127.0.0.1:24100–24299`
 (`NOVNC_PORT_MIN/MAX` in `compose.yaml`).
 
+Platform quirks worth knowing before debugging a login:
+
+- **The login form mounts late.** Both Meta platforms are client-rendered:
+  Threads' `/login` shows the "Scan to get the app" shell for ~3–10s before
+  the fields exist, so the credential fill polls for up to 20s. A
+  `login form field not found` line after a couple of seconds is not a
+  selector problem.
+- **A stored session wins.** `runLogin` hydrates `/data/sessions/session-<platform>.json`
+  first and treats a still-valid session as proof, so a scheduled refresh
+  never needs a human. Seed or import a session (dashboard export/import, or
+  copy the file into the worker's `smm-session-<workerId>` volume) and the
+  login settles on the first poll.
+- **Proof is cookies, never the URL.** Instagram and Threads both require
+  `sessionid` + `ds_user_id`; a redirect to the home page without both is
+  not a login.
+
+## Comment replies
+
+The New-Action form's Reply flow targets a specific comment, not a post.
+Two ways to pick one:
+
+- choose a scraped comment from the threaded picker (its URL is derived from
+  the stored ids — never persisted), or
+- paste the comment's own "Copy link".
+
+The URL shape is platform-specific: Instagram addresses a comment as
+`/p/<post>/c/<commentId>/`, while Threads has **no `/c/` route** (it 404s) — a
+Threads reply is itself a post, so its address is `/post/<comment code>`.
+`Enqueue` enforces the platform's shape and rejects the other one. A Threads
+per-post scrape therefore stores replies as comments keyed by their own
+shortcode (`is_reply` rows, linked to the requested post).
+
 Manual, end-to-end run-through of the live stack (containers up, no mocks):
 `docs/MANUAL_TESTING.md`.
 

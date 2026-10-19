@@ -68,6 +68,24 @@ func (r *KeywordBatchRepo) ListKeywordBatches(ctx context.Context, limit, offset
 	return out, nil
 }
 
+func (r *KeywordBatchRepo) ListKeywordBatchesByStatus(ctx context.Context, status domain.KeywordBatchStatus, limit int) ([]domain.KeywordBatch, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := r.q.ListKeywordBatchesByStatus(ctx, sqlcgen.ListKeywordBatchesByStatusParams{
+		Status: string(status),
+		Limit:  int32(limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("repository.keyword_batch.ListByStatus: %w", err)
+	}
+	out := make([]domain.KeywordBatch, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, toKeywordBatch(row))
+	}
+	return out, nil
+}
+
 func (r *KeywordBatchRepo) UpdateKeywordBatch(ctx context.Context, b domain.KeywordBatch) (domain.KeywordBatch, error) {
 	var fin pgtype.Timestamptz
 	if b.FinishedAt != nil {

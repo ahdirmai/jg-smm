@@ -111,6 +111,8 @@ func toPost(row sqlcgen.Post) domain.Post {
 		PublishedAt:     tsTimePtr(row.PublishedAt),
 		AuthorAccountID: uuidStrPtr(row.AuthorAccountID),
 		CommentsFetched: row.CommentsFetched,
+		Sentiment:       sentimentPtr(row.Sentiment),
+		SentimentScore:  row.SentimentScore,
 	}
 }
 
@@ -125,7 +127,22 @@ func toComment(row sqlcgen.Comment) domain.Comment {
 		Metrics:      json.RawMessage(row.Metrics),
 		ScrapedAt:    tsTimeOrZero(row.ScrapedAt),
 		ParentID:     uuidStrPtr(row.ParentID),
+		// NullSentiment carries Valid separately from the value, so an
+		// unanalysed row stays nil rather than becoming the zero string.
+		Sentiment:      sentimentPtr(row.Sentiment),
+		SentimentScore: row.SentimentScore,
 	}
+}
+
+// sentimentPtr maps the generated nullable enum onto the domain's pointer.
+// Invalid (NULL) → nil, which the JSON exposes as null and the UI renders as
+// "not analysed".
+func sentimentPtr(v sqlcgen.NullSentiment) *domain.Sentiment {
+	if !v.Valid {
+		return nil
+	}
+	s := domain.Sentiment(v.Sentiment)
+	return &s
 }
 
 // --- scrape job / apify run / raw payload -----------------------------------

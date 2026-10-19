@@ -6,6 +6,168 @@
 
 ## Unreleased
 ### Added
+- **Keyword search now runs on a working actor, in two stages.** The publisher of
+  `crawlerbros/instagram-keyword-search-scraper` was **removed from the Apify
+  Store** (the actor and its whole namespace are gone), so every Instagram
+  keyword batch failed with `403 insufficient-permissions`. Nothing configurable
+  causes that — the actor no longer exists.
+  - `APIFY_SEARCH_ACTOR_INSTAGRAM` is now
+    `sasky/instagram-keyword-posts-urls-scraper`. It returns **post URLs only**,
+    so each URL is enriched by `apify/instagram-post-scraper` (the same actor the
+    single-post scrape uses) for its caption and metrics. Deduped by URL, because
+    the same post can rank under two keywords and paying twice is the waste the
+    pipeline exists to avoid.
+  - The two stages are independently best-effort: an unenrichable post (deleted,
+    private) is skipped rather than stored blank.
+  - The search actor's `date`/`from`/`to` inputs **fail at runtime** ("Context:
+    Parsing date..") in every form tried, so the date window is enforced by the
+    ingestor (`inWindow`) — the same contract the previous actor had.
+- **Posts are ranked by insight.** `GET /api/scrape/recent?ranked=true` scores
+  every post and the batch page renders the order with a rank badge, the score,
+  and the three engagement numbers, plus an Insight / Interaksi / Terbaru toggle.
+  - Score = `log(1 + engagement) × per‑follower efficiency × freshness`. Log-scaled
+    so one viral outlier cannot flatten the rest of the list to ties; per-follower
+    as a multiplier so a small account can outrank a large one on equal absolute
+    numbers; freshness halving every 72h. Ties break by engagement then id, so
+    "the top post" does not move between identical requests.
+  - The score is **shown**, not hidden, so an order can be explained.
+- **Scraped-post preview shows captions, thumbnails and per-post metrics** instead
+  of a thin `@handle · metrics` line, and each card's comment button now carries
+  the sentiment distribution and the threaded comments (same reading model as the
+  Actions card).
+
+### Fixed
+- **Threads login from the worker app works again, and a Threads reply now
+  targets the right comment.** Both were live failures, each with a cause
+  unrelated to the other.
+  - **Login: the credential autofill raced the SPA.** `firstPresent` checked the
+    login form once at `domcontentloaded`. Threads serves `/login` as a
+    client-rendered SPA — at that moment the page is still the "Scan to get the
+    app" shell, and the fields mount **~3–10s later** (measured live: 9.7s).
+    Every dispatch logged `login form field not found` and fell back to the
+    operator. The probe now polls up to 20s. Verified in the worker container:
+    `fillMetaCredentials` succeeded after 20.5s and typed both values.
+  - **A hydrated session no longer pays that wait.** On the scheduled-refresh
+    path the stored session is already proof; the login page redirects it away,
+    so the form never appears and the old code sat out the whole mount bound.
+    `runLogin` now probes the hydrated context first and skips the fill when it
+    is already proven.
+- **Threads comment permalinks were the Instagram shape, which 404s.**
+  Threads has no `/post/<post>/c/<comment>/` route (verified live against
+  threads.com — 404, no composer). A Threads reply **is** a post with its own
+  shortcode, so a comment's addressable permalink is `/post/<comment code>`
+  (`comment_permalink.go`). `Enqueue` validates per platform via
+  `replyTargetID`: IG still requires `/c/<id>/`, Threads accepts exactly
+  `/post/<code>` and rejects the IG-shaped URL with a hint that says which shape
+  is expected.
+- **A Threads per-post scrape stored zero comments.** The live actor returns
+  every reply row with `is_reply: true` and `parent_post_id: null` (verified on
+  run `x2Ts33gUPTXBNd6GT`: 24 rows, all null) — the run's post-id map has
+  nothing to resolve, so the reply branch fell through and the rows were
+  dropped. In a single-post scrape (`onlyCode` set) every reply row can only
+  belong to the post that was asked for, so the parent now falls back to that
+  shortcode.
+- **A reply can be aimed at a pasted comment link.** The Reply flow now accepts
+  the platform's own "Copy link" output as the target — the shortest route, and
+  the only one for a comment the scrape did not deliver. The picker clears a
+  pasted link when a row is chosen (and vice versa) so what is visible is what
+  ships; Queue stays disabled with no target at all.
+- **Enriching one post failed with `max-total-charge-usd-below-minimum`.** The
+  sync endpoint's `maxItems` is a CHARGE cap on a pay-per-event actor, and
+  requesting 1 rounds below Apify's $0.005 minimum, so the run was rejected with a
+  400. A batch would then find 15 URLs and store **0 posts**. `runSync` now floors
+  `maxItems` at 10. Verified against the live API: `maxItems=1` → 400,
+  `maxItems=10` → 201.
+- **A negative metric ranked a post below zero.** The actor emits `likes: -1` when
+  Instagram hides the count. Physics says a like count cannot be negative, so it
+  now reads as "not reported" (0) rather than a small number — previously such a
+  post sorted below every zero-engagement post and printed `Likes -1`.
+- **The keyword search no longer dies on `context deadline exceeded`.** The search
+  actor drives a real browser and takes ~40–60s PER KEYWORD, which does not fit in
+  one `http.Client.Timeout` on the sync endpoint — the batch failed while the run
+  was still healthy on Apify, paying for a run it then discarded. The search path
+  now starts the run asynchronously and polls, with its own 15-minute budget
+  (`searchPollBudget`), separate from the Threads scrape's 4 minutes.
+- **The New-Action account list is grouped by worker location.**
+- **Scraped posts and comments now carry an LLM sentiment label.** Every comment
+  is labelled POSITIVE / NEUTRAL / NEGATIVE at ingest (migration
+  `000019_sentiment`, additive + reversible), and the dashboard renders a
+  distribution plus a per-comment badge, so an operator can see the mood of a
+  thread instead of reading every line.
+  - **One LLM call per batch, not per comment** (cap 40, `MaxSentimentBatch`),
+    so a post with hundreds of comments costs one round trip, not hundreds.
+    Comments already labelled are skipped, so a re-scrape is free.
+  - **Unanalysed is a real state, not a default.** A comment with no verdict
+    stores NULL and renders no badge; the distribution reports
+    "`N` of `M` analysed". Treating a missing label as NEUTRAL would tell the
+    operator a machine read the comment calmly when nothing read it.
+  - **Bad model output is dropped, never coerced.** An unknown label is
+    discarded rather than folded into NEUTRAL, and a score outside 0..1 is
+    dropped while its label survives. An absent `score` stays absent — decoding
+    it into Go's zero float would have stored a fabricated 0.0 confidence
+    (found by test, `TestSentimentDropsOutOfRangeScoreKeepsLabel`).
+  - Analysis is best-effort end to end: an unconfigured or failing LLM leaves
+    rows unlabelled and never fails a scrape the operator already paid for.
+- **Comments are threaded in the dashboard.** A reply renders nested under the
+  comment it answers, in both the scrape card and the Reply picker. The tree is
+  built from `parentId` at render time — one source of truth, nothing
+  denormalised. A reply whose parent fell outside the page limit is shown
+  top-level rather than hidden (it is real content), and the walk is
+  depth-bounded so a malformed row cannot hang the render.
+- **Nested replies can now be ingested** (`parseIGComments` recurses). The actor
+  we use today returns `replies: null` on the free plan, so this is inert until
+  Apify is upgraded — but it is correct and tested now, so the upgrade needs no
+  code change. `comment.parent_id` is now written via COALESCE, which keeps an
+  existing link when a payload has none instead of erasing it.
+- **Reply to a specific comment from the dashboard.** The New-Action form
+  gains a third flow beside Comment and Like. Pick Reply, choose one of the
+  scraped comments, and the job targets that comment's own permalink
+  (`/p/<code>/c/<id>/`) instead of the post — which is the only input the API
+  accepts for a reply (`action.go` rejects a bare post URL, and the worker's
+  `replyToComment` refuses when the page did not land on that comment).
+  - `GET /api/scrape/posts/{id}/comments` and the scrape card now return a
+    derived `url` per comment. It is **not stored**: `comment.external_id`
+    already holds the id Instagram puts in the `/c/<id>/` segment, and
+    `post.external_id` is the shortcode, so the permalink is pure derivation.
+    A comment whose post code is unknown yields an empty `url`, and the form
+    then offers no Reply at all rather than a URL the server would reject.
+  - On Instagram the reply box pre-fills an `@username` mention and the
+    worker **preserves** it, so the reply tags the person it answers. Verified
+    live: the commit echoed `"@rackytampubolon setuju, roadmap dulu baru janji"`.
+  - **Two defects found and fixed after live failures:**
+    1. **Meta's "Your Meta Account is here" modal blocked every action.** Seen
+       on two separate accounts/workers: the full-screen consolidation dialog
+       renders on an ordinary post load and its scrim swallows every click, so
+       the reply flow opened no composer and failed as *"no @mention
+       prefilled"* — blaming the selector for an unclickable page. `openPost`
+       now dismisses it on every exit path (`dismissMetaAccountModal`),
+       best-effort: absent modal → no-op, and it can never fail a job.
+    2. **The mention check accepted any `@handle`, so the wrong tag passed.**
+       A *top-level* composer pre-fills the **post author**; a threaded reply
+       box pre-fills the **comment author**. Asking only "does it start with
+       @" meant a reply could tag the post author and still be recorded as
+       threaded. The BE now resolves the target comment's author and sends
+       `expectedMention`; the worker requires the prefill to name that person
+       (case-insensitive, `@`-tolerant). An empty expectation still passes, so
+       a rolling deploy cannot refuse every reply.
+  - The mount bound was **6s, measured from one sample**. Polled again live and
+    the affordance took **~9.8s**, so the 6s bound still failed every reply.
+    It is now 12s, and expiry is not a failure. A bound drawn from a single
+    measurement is a guess.
+  - Spam posture is unchanged and inherits every existing gate, because a
+    reply rides the same enqueue → cooldown → rate-limit → pace pipeline as a
+    like or a comment: per-(account,target) 60s cooldown, per-platform hourly
+    budget (IG 30/hr) and the per-account pace (`ACTION_ACCOUNT_PACE_SECONDS`,
+    480s). None of these are new or relaxed for replies.
+  - **Deployed to the worker fleet.** `smm-worker:latest` was rebuilt (the
+    running containers were from 2026-10-05, before the reply work) and all 15
+    workers recreated. The deploy is a `worker.generation` bump, not a
+    `docker restart`: `CreateWorker` binds the session volume by worker ID
+    (`smm-session-<id>`), so the reconciler tears the container down and
+    brings it back on the new image **with the stored Instagram session
+    intact** — verified: all 10 account-holding workers kept a live
+    `sessionid`. A pre-deploy backup of all 22 session volumes plus the DB
+    was taken first (`infra/backup/pre-worker-deploy-*`, gitignored).
 - **The New-Action account list is grouped by worker location.** Picking
   accounts for a batch now shows one section per location the accounts run
   from (city, falling back to region; unassigned last), so an operator can

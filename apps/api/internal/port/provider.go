@@ -47,6 +47,15 @@ type ApifySearchInput struct {
 	Window KeywordTimeWindow
 	// MaxPosts bounds posts across the whole run.
 	MaxPosts int
+	// OnStarted, when set, is called once with the Apify-side run id the
+	// moment the actor has started — before the (long) poll begins. The caller
+	// persists it so a process death mid-poll no longer loses a paid run: the
+	// id is what makes the run resumable.
+	OnStarted func(runID string)
+	// ResumeRunID, when set, skips starting a new actor run and instead polls
+	// this already-started Apify run to completion. Used to reconnect to a run
+	// orphaned by a redeploy.
+	ResumeRunID string
 }
 
 // KeywordTimeWindow is the shared time-filter shape (port level so the apify

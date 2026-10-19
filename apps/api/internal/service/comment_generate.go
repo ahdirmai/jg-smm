@@ -87,6 +87,17 @@ func (l CommentLength) Valid() bool {
 	return l == CommentLengthShort || l == CommentLengthMedium || l == CommentLengthLong
 }
 
+// ReplyContext identifies the comment a reply answers. The handle matters as
+// much as the text: the reply will tag that person (IG pre-fills the mention),
+// so the draft must read as addressed to them and must not repeat their handle
+// inside the body — the platform adds it.
+type ReplyContext struct {
+	// Handle is the commented author's handle, without the leading @.
+	Handle string
+	// Text is that comment's body.
+	Text string
+}
+
 // GenerateInput is one generation request: the post being replied to, what the
 // crowd is saying (existing comments), and how many variants to produce.
 type GenerateInput struct {
@@ -96,6 +107,12 @@ type GenerateInput struct {
 	AuthorHandle string
 	// ExistingComments are up to ~10 scraped comments that set the tone.
 	ExistingComments []string
+	// ReplyTo is the exact comment being answered, when the operator is in the
+	// Reply flow. Non-empty switches the prompt from "write something on this
+	// post" to "answer THIS person": the drafts then address the argument in
+	// front of them instead of the thread's general mood. Empty for a top-level
+	// comment, where there is nothing to answer.
+	ReplyTo *ReplyContext
 	// Mode picks the editorial stance.
 	Mode CommentMode
 	// Count is how many variants to return. The dashboard asks for one per
@@ -151,14 +168,36 @@ func (g *CommentGenerator) Generate(ctx context.Context, in GenerateInput) ([]st
 		stance = "Counter: you respectfully disagree or add a different angle. Critique the idea, never the person. Stay civil."
 	}
 	comments := strings.TrimSpace(strings.Join(prefixEach(in.ExistingComments, "- "), "\n"))
+
+	// A reply answers ONE comment, so the prompt is built around that comment
+	// instead of the thread's general mood. The rest of the scraped comments
+	// stay in as background (what the room is saying), but the ask changes from
+	// "comment on this post" to "answer this person".
+	task := fmt.Sprintf(
+		"Write %d distinct comment candidate(s) for the post above. %s\nLength: %s. Rules: sound like a real person typing in a comment section, not a brand account: vary the wording so no two candidates start the same way, write naturally, no hashtags, no em dashes and no en dashes (never use the — or – character: use a comma, a colon or a full stop instead), no quotes around the comment, no numbering. Reply with one comment per line and nothing else.",
+		in.Count, stance, lengthInstruction(in.Length),
+	)
+	target := ""
+	if in.ReplyTo != nil && strings.TrimSpace(in.ReplyTo.Text) != "" {
+		handle := strings.TrimPrefix(strings.TrimSpace(in.ReplyTo.Handle), "@")
+		target = fmt.Sprintf(
+			"\n\nYou are REPLYING to this specific comment by @%s:\n\"%s\"\n\nWrite %d repl(y/ies) that answer @%s directly: engage with the point they actually made, agree or push back on it. Do NOT write their handle or any @mention inside the text; the platform adds the tag automatically. Do not greet them by name. Do not repeat their comment back to them.",
+			handle,
+			truncateText(strings.TrimSpace(in.ReplyTo.Text), 600),
+			in.Count,
+			handle,
+		)
+		task = fmt.Sprintf(
+			"Write %d distinct reply candidate(s) for the post above.%s\nLength: %s. Rules: sound like a real person typing in a comment section, not a brand account: vary the wording so no two candidates start the same way, write naturally, no hashtags, no em dashes and no en dashes (never use the — or – character: use a comma, a colon or a full stop instead), no quotes around the reply, no numbering. Reply with one reply per line and nothing else.",
+			in.Count, target, lengthInstruction(in.Length),
+		)
+	}
 	user := fmt.Sprintf(
-		"Post%s:\n%s\n\nExisting comments:\n%s\n\nWrite %d distinct comment candidate(s) for the post above. %s\nLength: %s. Rules: sound like a real person typing in a comment section, not a brand account: vary the wording so no two candidates start the same way, write naturally, no hashtags, no em dashes and no en dashes (never use the — or – character: use a comma, a colon or a full stop instead), no quotes around the comment, no numbering. Reply with one comment per line and nothing else.",
+		"Post%s:\n%s\n\nExisting comments:\n%s\n\n%s",
 		authorSuffix(in.AuthorHandle),
 		truncateText(strings.TrimSpace(in.PostText), 1200),
 		truncateText(comments, 800),
-		in.Count,
-		stance,
-		lengthInstruction(in.Length),
+		task,
 	)
 	if lang == "id" {
 		user += "\nWrite in Bahasa Indonesia, casual and natural: everyday abbreviations and light slang are fine (e.g. 'nggak', 'bgt', 'sih', 'gimana', 'gw/aku' where it fits), but keep it readable."

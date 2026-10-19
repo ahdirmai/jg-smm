@@ -158,6 +158,65 @@ export interface ScrapedComment {
   authorHandle: string;
   text: string;
   scrapedAt: string;
+  /** The comment's own permalink (…/p/<code>/c/<id>/), derived by the API.
+   *  This is the targetUrl a reply must use: the API rejects a reply aimed at
+   *  a bare post. Empty when the post's shortcode is unknown — then no reply
+   *  can be offered for this comment. */
+  url: string;
+  /** The analysed stance, null when this comment has not been analysed (no LLM
+   *  configured, or the call failed). Null renders as "not analysed" — the UI
+   *  must never show a default verdict for a row nobody looked at. */
+  sentiment: 'POSITIVE' | 'NEUTRAL' | 'NEGATIVE' | null;
+  /** The model's own confidence, null when it reported none. */
+  sentimentScore: number | null;
+  /** The comment this replies to, when it is a reply. Resolved to the parent's
+   *  id so the UI can nest it; null for a top-level comment. */
+  parentId: string | null;
+}
+
+/** Per-label counts for one post's comments. `unanalysed` is kept separate from
+ *  `neutral` on purpose: "we did not look" and "we looked and it is neutral"
+ *  are different facts, and merging them would make a partly-analysed post read
+ *  as a calm one. */
+export interface SentimentBreakdown {
+  positive: number;
+  neutral: number;
+  negative: number;
+  unanalysed: number;
+}
+
+/**
+ * One scraped post's ranking, computed server-side (service.RankInsights).
+ *
+ * A score rather than "sort by likes": a raw like count ranks a 3-day-old post
+ * above a 3-hour-old one and ranks a 200k-follower account above a 2k one for
+ * reasons unrelated to the content. The score combines engagement (log-scaled
+ * so one viral outlier cannot flatten the list), engagement-per-follower, and a
+ * freshness decay.
+ */
+export interface PostInsight {
+  postId: string;
+  externalId: string;
+  platform: string;
+  author: string;
+  permalink: string;
+  /** First line of the caption, for the ranking row. */
+  caption: string;
+  mediaUrl: string;
+  likes: number;
+  comments: number;
+  shares: number;
+  /** likes + comments + shares. */
+  engagement: number;
+  /** Engagement as a percentage of the author's followers. Null when the
+   *  follower count is unknown — a rate against a missing denominator is not
+   *  0%, it is no number. */
+  engagementPerFollowerPct: number | null;
+  ageHours: number;
+  /** Ranking key, higher first. Shown so the order is explicable. */
+  score: number;
+  /** 1-based position within the ranked list. */
+  rank: number;
 }
 
 export interface ScrapedPost {
@@ -182,6 +241,8 @@ export interface ScrapedPost {
 export interface ScrapeTargetResponse {
   post: ScrapedPost;
   comments: ScrapedComment[];
+  /** Comment sentiment counts, computed on read. */
+  sentiment: SentimentBreakdown;
   /** True when this was served from the 6h freshness cache instead of a paid
    *  actor run. The dashboard uses it to say "served from storage" and offer a
    *  re-scrape rather than implying a fresh fetch. */
@@ -263,6 +324,13 @@ export const api = {
       '/api/scrape/recent',
       signal ? { signal } : undefined,
     ),
+  // The same posts, SCORED and ordered by insight on the server. The page only
+  // renders the order it is given; re-deriving the score here would let the two
+  // implementations drift.
+  rankedRecent: (limit = 200, signal?: AbortSignal) => {
+    const qs = new URLSearchParams({ ranked: 'true', limit: String(limit) });
+    return request<{ insights: PostInsight[] }>(`/api/scrape/recent?${qs}`, signal ? { signal } : undefined);
+  },
   // On-demand scrape: run the platform actor synchronously for one post URL.
   // Long request (the actor run lasts tens of seconds); the caller shows a loader.
   // force=true skips the 6h freshness cache — needed for comments, because a
@@ -306,13 +374,19 @@ export const api = {
     if (params?.limit) qs.set('limit', String(params.limit));
     if (params?.offset) qs.set('offset', String(params.offset));
     const q = qs.toString() ? `?${qs}` : '';
-    return request<{ comments: ScrapedComment[] }>(`/api/scrape/posts/${postId}/comments${q}`);
+    return request<{ comments: ScrapedComment[]; sentiment: SentimentBreakdown }>(
+      `/api/scrape/posts/${postId}/comments${q}`,
+    );
   },
   // AI comment candidates from a scraped post's context.
   generateComment: (body: {
     postText: string;
     authorHandle?: string;
     existingComments?: string[];
+    // Set when drafting a REPLY: the comment being answered. The API then
+    // writes drafts that engage with that argument, and is told NOT to emit the
+    // handle (the platform tags it).
+    replyTo?: { handle: string; text: string };
     mode: 'support' | 'counter';
     // How hard the draft pushes, 1 (gentle) to 5 (sharp); 0 = server default.
     intensity?: number;
@@ -369,6 +443,16 @@ export const api = {
   // normal answer, not an error.
   runPendingNow: () =>
     request<{ moved: number }>('/api/actions/run-pending', { method: 'POST' }),
+  // Cancel one queued or running job. A terminal job is a 400 (nothing to
+  // cancel), so the button only shows for PENDING/RUNNING rows. The row is
+  // terminal afterwards; a RUNNING job's worker may still finish its action,
+  // but its callback cannot re-grade the row.
+  cancelAction: (jobId: string) =>
+    request<ActionJob>(`/api/actions/${jobId}/cancel`, { method: 'POST' }),
+  // Cancel the whole PENDING queue in one statement. Returns how many rows
+  // moved; 0 is a normal answer, not an error.
+  cancelPendingNow: () =>
+    request<{ cancelled: number }>('/api/actions/cancel-pending', { method: 'POST' }),
 
   // Comment templates (P3-02/P3-03). The pool per platform.
   listTemplates: (platform?: Platform, signal?: AbortSignal) =>

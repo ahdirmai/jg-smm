@@ -29,6 +29,14 @@ type ActionStore interface {
 	// whole of "run pending now": paging a set while rewriting its sort key is
 	// how the previous implementation both double-counted and skipped rows.
 	SetPendingActionJobsScheduledAt(ctx context.Context, scheduledAt time.Time) (int64, error)
+	// CancelActionJob makes one job terminal. Cancellable states are PENDING and
+	// RUNNING: the update cannot stop a worker mid-action, but it does stop the
+	// job being re-claimed, swept back into the queue, or re-graded by a late
+	// callback.
+	CancelActionJob(ctx context.Context, id string) (domain.ActionJob, error)
+	// CancelPendingActionJobs cancels the whole queued set in one statement and
+	// reports how many rows moved, mirroring SetPendingActionJobsScheduledAt.
+	CancelPendingActionJobs(ctx context.Context) (int64, error)
 	ListActionJobs(ctx context.Context, limit, offset *int) ([]domain.ActionJob, error)
 	ListActionJobsByStatus(ctx context.Context, status domain.JobStatus, limit, offset *int) ([]domain.ActionJob, error)
 	ListActionJobsByAccount(ctx context.Context, accountID string, limit, offset *int) ([]domain.ActionJob, error)

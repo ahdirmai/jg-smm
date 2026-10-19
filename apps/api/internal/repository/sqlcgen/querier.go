@@ -51,6 +51,18 @@ type Querier interface {
 	// the retry backoff above measures from, and it also means a dispatch whose
 	// worker never reports back still ages out instead of pinning the account.
 	BeginSessionRefresh(ctx context.Context, id pgtype.UUID) error
+	// Operator cancel (dashboard). Same guard as CompleteActionJob: only a job
+	// that could still be claimed/completed is cancellable, so a replayed cancel
+	// cannot overwrite a verdict the worker already wrote. A RUNNING job is
+	// cancellable too: the update does not stop the worker mid-action, but it
+	// makes the job terminal, so the callback is a no-op (the guard above) and
+	// the stale-running sweep cannot requeue it.
+	CancelActionJob(ctx context.Context, id pgtype.UUID) (ActionJob, error)
+	// "Cancel pending": one statement over the whole queued set, mirroring
+	// SetPendingActionJobsScheduledAt. RUNNING and terminal rows are untouched —
+	// cancelling a job after its worker claimed it would not stop the action, and
+	// the per-row cancel exists for the RUNNING case.
+	CancelPendingActionJobs(ctx context.Context) (int64, error)
 	// Atomic FIFO claim for one account: PENDING + scheduled_at <= now() ordered by
 	// scheduled_at, bumped to RUNNING, and stamped with the claiming worker. The
 	// worker id is written here (not at enqueue time) because a job is assigned to
@@ -71,6 +83,9 @@ type Querier interface {
 	CountAccountsByWorker(ctx context.Context, workerID pgtype.UUID) (int64, error)
 	CountAuditLogsFiltered(ctx context.Context, arg CountAuditLogsFilteredParams) (int64, error)
 	CountCommentsByPost(ctx context.Context, postID pgtype.UUID) (int64, error)
+	// The per-post distribution the dashboard renders. Unanalysed rows are counted
+	// by the caller (count - analysed), so this only returns labels that exist.
+	CountCommentsBySentiment(ctx context.Context, postID pgtype.UUID) ([]CountCommentsBySentimentRow, error)
 	// Same filter as the list it counts: a per-platform count that included
 	// archived accounts would disagree with the table shown beside it.
 	CountOfficialAccountsByPlatform(ctx context.Context, platform Platform) (int64, error)
@@ -135,6 +150,7 @@ type Querier interface {
 	// The latest attempt of a job, by (job, attempt).
 	GetActionLog(ctx context.Context, arg GetActionLogParams) (ActionLog, error)
 	GetActiveAuthSession(ctx context.Context, tokenHash []byte) (GetActiveAuthSessionRow, error)
+	GetApifyRunByID(ctx context.Context, id pgtype.UUID) (ApifyRun, error)
 	GetCommentByID(ctx context.Context, id pgtype.UUID) (Comment, error)
 	GetCommentByPlatformExternalID(ctx context.Context, arg GetCommentByPlatformExternalIDParams) (Comment, error)
 	GetCommentTemplateByID(ctx context.Context, id pgtype.UUID) (CommentTemplate, error)
@@ -241,6 +257,10 @@ type Querier interface {
 	// (see PickForTarget).
 	ListCommentTemplates(ctx context.Context, arg ListCommentTemplatesParams) ([]CommentTemplate, error)
 	ListCommentsByPost(ctx context.Context, arg ListCommentsByPostParams) ([]Comment, error)
+	// Comments with no verdict yet, for the backfill path. Ordered oldest-first so
+	// a bounded backfill drains a post in insertion order and a rerun picks up
+	// where the budget ran out.
+	ListCommentsNeedingSentiment(ctx context.Context, arg ListCommentsNeedingSentimentParams) ([]Comment, error)
 	// The per-platform "top content" table. Ordered by reach because that is the
 	// headline number, with interactions as the tie-break so two posts with the
 	// same reach do not swap places between renders. NULLS LAST keeps a post the
@@ -248,6 +268,7 @@ type Querier interface {
 	ListContentMetrics(ctx context.Context, arg ListContentMetricsParams) ([]ListContentMetricsRow, error)
 	ListKeywordBatchPosts(ctx context.Context, arg ListKeywordBatchPostsParams) ([]Post, error)
 	ListKeywordBatches(ctx context.Context, arg ListKeywordBatchesParams) ([]KeywordBatch, error)
+	ListKeywordBatchesByStatus(ctx context.Context, arg ListKeywordBatchesByStatusParams) ([]KeywordBatch, error)
 	ListMetricSnapshotsByPost(ctx context.Context, arg ListMetricSnapshotsByPostParams) ([]MetricSnapshot, error)
 	// ARCHIVED is a soft delete: the row and its snapshots stay queryable for
 	// history, but a deleted account must not reappear in the monitored list the
@@ -305,6 +326,10 @@ type Querier interface {
 	// INSERT-time field. action_log.template_id is written separately from the
 	// worker's callback echo; this is the queue-side projection of the same fact.
 	SetActionJobTemplate(ctx context.Context, arg SetActionJobTemplateParams) error
+	// Writes one analysed verdict. sentiment_at is set from the caller's clock so
+	// the row records WHEN analysis happened, which is what makes "already
+	// analysed" decidable on a later scrape.
+	SetCommentSentiment(ctx context.Context, arg SetCommentSentimentParams) error
 	// "Run pending now": pull every PENDING row forward to one instant. One
 	// statement, not a paged LIMIT/OFFSET walk — the walk ordered by scheduled_at
 	// and then rewrote scheduled_at, re-sorting the set it was walking, so the
@@ -365,11 +390,6 @@ type Querier interface {
 	// filter on `ts >= X` alone is enough for chunk exclusion; the upper bound is
 	// stated explicitly so `time_bucket_gapfill` can infer its range).
 	UpsertAnalyticsSnapshot(ctx context.Context, arg UpsertAnalyticsSnapshotParams) (AnalyticsSnapshot, error)
-	// parent_id is deliberately NOT overwritten. The Instagram actor does not
-	// return a parent reference, so EXCLUDED.parent_id is always NULL: keeping
-	// `parent_id = EXCLUDED.parent_id` made every re-scrape erase a link that some
-	// other writer had established. Drop the assignment once the parser can supply
-	// one; until then, absence of data must not mean "erase what exists".
 	UpsertComment(ctx context.Context, arg UpsertCommentParams) (Comment, error)
 	// Per-content metrics are a lifetime gauge, so a re-ingest refreshes the row
 	// for a media id in place. The unique index on

@@ -23,9 +23,43 @@ func (q *Queries) CountCommentsByPost(ctx context.Context, postID pgtype.UUID) (
 	return count, err
 }
 
+const countCommentsBySentiment = `-- name: CountCommentsBySentiment :many
+SELECT sentiment, count(*) AS n
+FROM comment
+WHERE post_id = $1 AND sentiment IS NOT NULL
+GROUP BY sentiment
+`
+
+type CountCommentsBySentimentRow struct {
+	Sentiment NullSentiment `json:"sentiment"`
+	N         int64         `json:"n"`
+}
+
+// The per-post distribution the dashboard renders. Unanalysed rows are counted
+// by the caller (count - analysed), so this only returns labels that exist.
+func (q *Queries) CountCommentsBySentiment(ctx context.Context, postID pgtype.UUID) ([]CountCommentsBySentimentRow, error) {
+	rows, err := q.db.Query(ctx, countCommentsBySentiment, postID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CountCommentsBySentimentRow{}
+	for rows.Next() {
+		var i CountCommentsBySentimentRow
+		if err := rows.Scan(&i.Sentiment, &i.N); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getCommentByID = `-- name: GetCommentByID :one
 SELECT id, post_id, platform, external_id, author_handle, text, metrics,
-       scraped_at, parent_id
+       scraped_at, parent_id, sentiment, sentiment_score, sentiment_at
 FROM comment
 WHERE id = $1
 `
@@ -43,13 +77,16 @@ func (q *Queries) GetCommentByID(ctx context.Context, id pgtype.UUID) (Comment, 
 		&i.Metrics,
 		&i.ScrapedAt,
 		&i.ParentID,
+		&i.Sentiment,
+		&i.SentimentScore,
+		&i.SentimentAt,
 	)
 	return i, err
 }
 
 const getCommentByPlatformExternalID = `-- name: GetCommentByPlatformExternalID :one
 SELECT id, post_id, platform, external_id, author_handle, text, metrics,
-       scraped_at, parent_id
+       scraped_at, parent_id, sentiment, sentiment_score, sentiment_at
 FROM comment
 WHERE platform = $1 AND external_id = $2
 `
@@ -72,6 +109,9 @@ func (q *Queries) GetCommentByPlatformExternalID(ctx context.Context, arg GetCom
 		&i.Metrics,
 		&i.ScrapedAt,
 		&i.ParentID,
+		&i.Sentiment,
+		&i.SentimentScore,
+		&i.SentimentAt,
 	)
 	return i, err
 }
@@ -79,7 +119,8 @@ func (q *Queries) GetCommentByPlatformExternalID(ctx context.Context, arg GetCom
 const getPostByID = `-- name: GetPostByID :one
 
 SELECT id, platform, external_id, author_handle, author_id, text, media_urls,
-       metrics, scraped_at, author_account_id, published_at, comments_fetched
+       metrics, scraped_at, author_account_id, published_at, comments_fetched,
+       sentiment, sentiment_score, sentiment_at
 FROM post
 WHERE id = $1
 `
@@ -103,13 +144,17 @@ func (q *Queries) GetPostByID(ctx context.Context, id pgtype.UUID) (Post, error)
 		&i.AuthorAccountID,
 		&i.PublishedAt,
 		&i.CommentsFetched,
+		&i.Sentiment,
+		&i.SentimentScore,
+		&i.SentimentAt,
 	)
 	return i, err
 }
 
 const getPostByPlatformExternalID = `-- name: GetPostByPlatformExternalID :one
 SELECT id, platform, external_id, author_handle, author_id, text, media_urls,
-       metrics, scraped_at, author_account_id, published_at, comments_fetched
+       metrics, scraped_at, author_account_id, published_at, comments_fetched,
+       sentiment, sentiment_score, sentiment_at
 FROM post
 WHERE platform = $1 AND external_id = $2
 `
@@ -135,13 +180,16 @@ func (q *Queries) GetPostByPlatformExternalID(ctx context.Context, arg GetPostBy
 		&i.AuthorAccountID,
 		&i.PublishedAt,
 		&i.CommentsFetched,
+		&i.Sentiment,
+		&i.SentimentScore,
+		&i.SentimentAt,
 	)
 	return i, err
 }
 
 const listCommentsByPost = `-- name: ListCommentsByPost :many
 SELECT id, post_id, platform, external_id, author_handle, text, metrics,
-       scraped_at, parent_id
+       scraped_at, parent_id, sentiment, sentiment_score, sentiment_at
 FROM comment
 WHERE post_id = $1
 ORDER BY scraped_at DESC, id
@@ -173,6 +221,59 @@ func (q *Queries) ListCommentsByPost(ctx context.Context, arg ListCommentsByPost
 			&i.Metrics,
 			&i.ScrapedAt,
 			&i.ParentID,
+			&i.Sentiment,
+			&i.SentimentScore,
+			&i.SentimentAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCommentsNeedingSentiment = `-- name: ListCommentsNeedingSentiment :many
+SELECT id, post_id, platform, external_id, author_handle, text, metrics,
+       scraped_at, parent_id, sentiment, sentiment_score, sentiment_at
+FROM comment
+WHERE post_id = $1 AND sentiment IS NULL
+ORDER BY scraped_at, id
+LIMIT $2
+`
+
+type ListCommentsNeedingSentimentParams struct {
+	PostID pgtype.UUID `json:"post_id"`
+	Limit  int32       `json:"limit"`
+}
+
+// Comments with no verdict yet, for the backfill path. Ordered oldest-first so
+// a bounded backfill drains a post in insertion order and a rerun picks up
+// where the budget ran out.
+func (q *Queries) ListCommentsNeedingSentiment(ctx context.Context, arg ListCommentsNeedingSentimentParams) ([]Comment, error) {
+	rows, err := q.db.Query(ctx, listCommentsNeedingSentiment, arg.PostID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Comment{}
+	for rows.Next() {
+		var i Comment
+		if err := rows.Scan(
+			&i.ID,
+			&i.PostID,
+			&i.Platform,
+			&i.ExternalID,
+			&i.AuthorHandle,
+			&i.Text,
+			&i.Metrics,
+			&i.ScrapedAt,
+			&i.ParentID,
+			&i.Sentiment,
+			&i.SentimentScore,
+			&i.SentimentAt,
 		); err != nil {
 			return nil, err
 		}
@@ -186,7 +287,8 @@ func (q *Queries) ListCommentsByPost(ctx context.Context, arg ListCommentsByPost
 
 const listPosts = `-- name: ListPosts :many
 SELECT id, platform, external_id, author_handle, author_id, text, media_urls,
-       metrics, scraped_at, author_account_id, published_at, comments_fetched
+       metrics, scraped_at, author_account_id, published_at, comments_fetched,
+       sentiment, sentiment_score, sentiment_at
 FROM post
 ORDER BY published_at DESC NULLS LAST, scraped_at DESC
 LIMIT $1 OFFSET $2
@@ -219,6 +321,9 @@ func (q *Queries) ListPosts(ctx context.Context, arg ListPostsParams) ([]Post, e
 			&i.AuthorAccountID,
 			&i.PublishedAt,
 			&i.CommentsFetched,
+			&i.Sentiment,
+			&i.SentimentScore,
+			&i.SentimentAt,
 		); err != nil {
 			return nil, err
 		}
@@ -232,7 +337,8 @@ func (q *Queries) ListPosts(ctx context.Context, arg ListPostsParams) ([]Post, e
 
 const listRecentPostsByPlatform = `-- name: ListRecentPostsByPlatform :many
 SELECT id, platform, external_id, author_handle, author_id, text, media_urls,
-       metrics, scraped_at, author_account_id, published_at, comments_fetched
+       metrics, scraped_at, author_account_id, published_at, comments_fetched,
+       sentiment, sentiment_score, sentiment_at
 FROM post
 WHERE platform = $1
 ORDER BY published_at DESC NULLS LAST, scraped_at DESC
@@ -270,6 +376,9 @@ func (q *Queries) ListRecentPostsByPlatform(ctx context.Context, arg ListRecentP
 			&i.AuthorAccountID,
 			&i.PublishedAt,
 			&i.CommentsFetched,
+			&i.Sentiment,
+			&i.SentimentScore,
+			&i.SentimentAt,
 		); err != nil {
 			return nil, err
 		}
@@ -283,7 +392,8 @@ func (q *Queries) ListRecentPostsByPlatform(ctx context.Context, arg ListRecentP
 
 const listTopPostsByPlatform = `-- name: ListTopPostsByPlatform :many
 SELECT id, platform, external_id, author_handle, author_id, text, media_urls,
-       metrics, scraped_at, author_account_id, published_at, comments_fetched
+       metrics, scraped_at, author_account_id, published_at, comments_fetched,
+       sentiment, sentiment_score, sentiment_at
 FROM post
 WHERE platform = $1
 ORDER BY (metrics->>$2::text)::bigint DESC NULLS LAST
@@ -321,6 +431,9 @@ func (q *Queries) ListTopPostsByPlatform(ctx context.Context, arg ListTopPostsBy
 			&i.AuthorAccountID,
 			&i.PublishedAt,
 			&i.CommentsFetched,
+			&i.Sentiment,
+			&i.SentimentScore,
+			&i.SentimentAt,
 		); err != nil {
 			return nil, err
 		}
@@ -347,6 +460,26 @@ func (q *Queries) MarkPostCommentsFetched(ctx context.Context, id pgtype.UUID) e
 	return err
 }
 
+const setCommentSentiment = `-- name: SetCommentSentiment :exec
+UPDATE comment
+SET sentiment = $2, sentiment_score = $3, sentiment_at = now()
+WHERE id = $1
+`
+
+type SetCommentSentimentParams struct {
+	ID             pgtype.UUID   `json:"id"`
+	Sentiment      NullSentiment `json:"sentiment"`
+	SentimentScore *float64      `json:"sentiment_score"`
+}
+
+// Writes one analysed verdict. sentiment_at is set from the caller's clock so
+// the row records WHEN analysis happened, which is what makes "already
+// analysed" decidable on a later scrape.
+func (q *Queries) SetCommentSentiment(ctx context.Context, arg SetCommentSentimentParams) error {
+	_, err := q.db.Exec(ctx, setCommentSentiment, arg.ID, arg.Sentiment, arg.SentimentScore)
+	return err
+}
+
 const upsertComment = `-- name: UpsertComment :one
 INSERT INTO comment (
     post_id, platform, external_id, author_handle, text, metrics, parent_id
@@ -357,9 +490,15 @@ SET text       = EXCLUDED.text,
     scraped_at = now(),
     -- Same reason as UpsertPost: a handle correction must not be frozen at the
     -- value the first scrape happened to see.
-    author_handle = EXCLUDED.author_handle
+    author_handle = EXCLUDED.author_handle,
+    -- parent_id is COALESCEd, not assigned. A reply parser supplies one; a
+    -- top-level comment supplies NULL (its actor row has no parent), and the
+    -- previous plain assignment let the second case ERASE a link the first case
+    -- had written. COALESCE keeps an existing link when the new payload has
+    -- none, and still lets a real parent ref correct a wrong one.
+    parent_id  = COALESCE(EXCLUDED.parent_id, comment.parent_id)
 RETURNING id, post_id, platform, external_id, author_handle, text, metrics,
-          scraped_at, parent_id
+          scraped_at, parent_id, sentiment, sentiment_score, sentiment_at
 `
 
 type UpsertCommentParams struct {
@@ -372,11 +511,6 @@ type UpsertCommentParams struct {
 	ParentID     pgtype.UUID     `json:"parent_id"`
 }
 
-// parent_id is deliberately NOT overwritten. The Instagram actor does not
-// return a parent reference, so EXCLUDED.parent_id is always NULL: keeping
-// `parent_id = EXCLUDED.parent_id` made every re-scrape erase a link that some
-// other writer had established. Drop the assignment once the parser can supply
-// one; until then, absence of data must not mean "erase what exists".
 func (q *Queries) UpsertComment(ctx context.Context, arg UpsertCommentParams) (Comment, error) {
 	row := q.db.QueryRow(ctx, upsertComment,
 		arg.PostID,
@@ -398,6 +532,9 @@ func (q *Queries) UpsertComment(ctx context.Context, arg UpsertCommentParams) (C
 		&i.Metrics,
 		&i.ScrapedAt,
 		&i.ParentID,
+		&i.Sentiment,
+		&i.SentimentScore,
+		&i.SentimentAt,
 	)
 	return i, err
 }
@@ -420,7 +557,8 @@ SET text               = EXCLUDED.text,
     -- CHECK (author_handle <> '') already keeps an empty value out.
     author_handle       = EXCLUDED.author_handle
 RETURNING id, platform, external_id, author_handle, author_id, text, media_urls,
-          metrics, scraped_at, author_account_id, published_at, comments_fetched
+          metrics, scraped_at, author_account_id, published_at, comments_fetched,
+          sentiment, sentiment_score, sentiment_at
 `
 
 type UpsertPostParams struct {
@@ -461,6 +599,9 @@ func (q *Queries) UpsertPost(ctx context.Context, arg UpsertPostParams) (Post, e
 		&i.AuthorAccountID,
 		&i.PublishedAt,
 		&i.CommentsFetched,
+		&i.Sentiment,
+		&i.SentimentScore,
+		&i.SentimentAt,
 	)
 	return i, err
 }

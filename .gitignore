@@ -61,6 +61,12 @@ infra/backup/sessions/
 infra/backup/backups/
 infra/backup/*.sql
 infra/backup/*.dump
+# Timestamped backup DIRECTORIES (pre-reset, pre-deploy): `pre-*/smm-db.sql` and
+# `pre-*/sessions/*.tgz` sit one level below the patterns above, so they escaped
+# them — and a pre-deploy bundle is the same secret material (DB COPY blocks for
+# app_user/auth_session/account, plus the worker session tars). Ignore the whole
+# directory shape, not just the top-level files.
+infra/backup/*/
 
 # local dev harness deps
 docs/local-worker/node_modules/

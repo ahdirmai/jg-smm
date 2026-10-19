@@ -193,6 +193,27 @@ func (q *Queries) CreateScrapeJob(ctx context.Context, arg CreateScrapeJobParams
 	return i, err
 }
 
+const getApifyRunByID = `-- name: GetApifyRunByID :one
+SELECT id, scrape_job_id, actor_id, run_id, status, started_at, finished_at
+FROM apify_run
+WHERE id = $1
+`
+
+func (q *Queries) GetApifyRunByID(ctx context.Context, id pgtype.UUID) (ApifyRun, error) {
+	row := q.db.QueryRow(ctx, getApifyRunByID, id)
+	var i ApifyRun
+	err := row.Scan(
+		&i.ID,
+		&i.ScrapeJobID,
+		&i.ActorID,
+		&i.RunID,
+		&i.Status,
+		&i.StartedAt,
+		&i.FinishedAt,
+	)
+	return i, err
+}
+
 const getScrapeJobByID = `-- name: GetScrapeJobByID :one
 SELECT id, type, target_id, account_id, worker_id, status, scheduled_at,
        started_at, finished_at, attempts, error, created_at

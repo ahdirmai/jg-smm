@@ -84,6 +84,11 @@ INSERT INTO apify_run (scrape_job_id, actor_id, run_id, status)
 VALUES ($1, $2, $3, $4)
 RETURNING id, scrape_job_id, actor_id, run_id, status, started_at, finished_at;
 
+-- name: GetApifyRunByID :one
+SELECT id, scrape_job_id, actor_id, run_id, status, started_at, finished_at
+FROM apify_run
+WHERE id = $1;
+
 -- name: UpdateApifyRun :one
 -- finished_at is passed in (NULL while the run is still in flight) so the caller
 -- controls the terminal stamp without a CASE in SQL.

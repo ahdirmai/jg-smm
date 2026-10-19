@@ -223,6 +223,74 @@ func (f *fakeScrapeStore) CountCommentsByPost(ctx context.Context, postID string
 	c, _ := f.ListCommentsByPost(context.Background(), postID, nil, nil)
 	return len(c), nil
 }
+
+// GetCommentByExternalID mirrors the real lookup: the platform's own comment id
+// is the key a nested reply uses to reach its parent.
+func (f *fakeScrapeStore) GetCommentByExternalID(ctx context.Context, p domain.Platform, externalID string) (domain.Comment, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if c, ok := f.comments[string(p)+"|"+externalID]; ok {
+		return c, nil
+	}
+	return domain.Comment{}, domain.ErrNotFound
+}
+
+func (f *fakeScrapeStore) SetCommentSentiment(ctx context.Context, commentID string, label domain.Sentiment, score *float64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for k, c := range f.comments {
+		if c.ID == commentID {
+			l := label
+			c.Sentiment, c.SentimentScore = &l, score
+			f.comments[k] = c
+			return nil
+		}
+	}
+	return domain.ErrNotFound
+}
+
+// CommentsNeedingSentiment returns unlabelled comments oldest-first, mirroring
+// the query's ORDER BY scraped_at (which the fake approximates by insertion
+// order via sorted keys). The limit is honoured so the batch cap is testable.
+func (f *fakeScrapeStore) CommentsNeedingSentiment(ctx context.Context, postID string, limit int) ([]domain.Comment, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	keys := make([]string, 0, len(f.comments))
+	for k := range f.comments {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]domain.Comment, 0, limit)
+	for _, k := range keys {
+		c := f.comments[k]
+		if c.PostID != postID || c.Sentiment != nil {
+			continue
+		}
+		out = append(out, c)
+		if len(out) == limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeScrapeStore) CommentSentimentCounts(ctx context.Context, postID string) (domain.SentimentBreakdown, error) {
+	comments, _ := f.ListCommentsByPost(context.Background(), postID, nil, nil)
+	var b domain.SentimentBreakdown
+	for _, c := range comments {
+		switch {
+		case c.Sentiment == nil:
+			b.Unanalysed++
+		case *c.Sentiment == domain.SentimentPositive:
+			b.Positive++
+		case *c.Sentiment == domain.SentimentNeutral:
+			b.Neutral++
+		case *c.Sentiment == domain.SentimentNegative:
+			b.Negative++
+		}
+	}
+	return b, nil
+}
 func (f *fakeScrapeStore) CreateScrapeJob(ctx context.Context, j domain.ScrapeJob) (domain.ScrapeJob, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -366,6 +434,17 @@ func (f *fakeScrapeStore) UpdateApifyRun(ctx context.Context, r domain.ApifyRun,
 	}
 	f.runs[r.ID] = cur
 	return cur, nil
+}
+// GetApifyRun mirrors the real store's read: the resume path needs the stored
+// Apify-side run id, which UpdateApifyRun deliberately keeps when given "".
+func (f *fakeScrapeStore) GetApifyRun(ctx context.Context, id string) (domain.ApifyRun, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	r, ok := f.runs[id]
+	if !ok {
+		return domain.ApifyRun{}, domain.ErrNotFound
+	}
+	return r, nil
 }
 func (f *fakeScrapeStore) CreateRawPayload(ctx context.Context, p domain.RawPayload) (domain.RawPayload, error) {
 	f.mu.Lock()
@@ -570,6 +649,21 @@ func (f *fakeKeywordBatchStore) UpdateKeywordBatch(_ context.Context, b domain.K
 	}
 	f.batches[b.ID] = cur
 	return cur, nil
+}
+func (f *fakeKeywordBatchStore) ListKeywordBatchesByStatus(_ context.Context, status domain.KeywordBatchStatus, limit int) ([]domain.KeywordBatch, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]domain.KeywordBatch, 0, len(f.batches))
+	for _, b := range f.batches {
+		if b.Status == status {
+			out = append(out, b)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }
 func (f *fakeKeywordBatchStore) CreateKeywordBatchPost(_ context.Context, batchID, postID string) error {
 	f.mu.Lock()

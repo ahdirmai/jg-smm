@@ -17,6 +17,13 @@ FROM keyword_batch
 ORDER BY created_at DESC
 LIMIT $1 OFFSET $2;
 
+-- name: ListKeywordBatchesByStatus :many
+SELECT id, platform, keywords, window_from, window_to, max_posts, actor_id, status, apify_run_id, items_read, posts_count, comments_count, error, created_by, created_at, finished_at
+FROM keyword_batch
+WHERE status = $1
+ORDER BY created_at DESC
+LIMIT $2;
+
 -- name: UpdateKeywordBatchStatus :one
 -- Drives PENDING→RUNNING→SUCCEEDED/FAILED. finished_at set only on terminal.
 UPDATE keyword_batch
@@ -30,7 +37,7 @@ VALUES ($1, $2)
 ON CONFLICT DO NOTHING;
 
 -- name: ListKeywordBatchPosts :many
-SELECT p.id, p.platform, p.external_id, p.author_handle, p.author_id, p.text, p.media_urls, p.metrics, p.scraped_at, p.author_account_id, p.published_at, p.comments_fetched
+SELECT p.id, p.platform, p.external_id, p.author_handle, p.author_id, p.text, p.media_urls, p.metrics, p.scraped_at, p.author_account_id, p.published_at, p.comments_fetched, p.sentiment, p.sentiment_score, p.sentiment_at
 FROM post p
 JOIN keyword_batch_post kbp ON kbp.post_id = p.id
 WHERE kbp.keyword_batch_id = $1

@@ -101,6 +101,32 @@ UPDATE action_job
 SET scheduled_at = $1
 WHERE status = 'PENDING';
 
+-- name: CancelActionJob :one
+-- Operator cancel (dashboard). Same guard as CompleteActionJob: only a job
+-- that could still be claimed/completed is cancellable, so a replayed cancel
+-- cannot overwrite a verdict the worker already wrote. A RUNNING job is
+-- cancellable too: the update does not stop the worker mid-action, but it
+-- makes the job terminal, so the callback is a no-op (the guard above) and
+-- the stale-running sweep cannot requeue it.
+UPDATE action_job
+SET status      = 'CANCELLED',
+    finished_at = now(),
+    error       = 'Cancelled by operator'
+WHERE id = $1
+  AND status IN ('PENDING', 'RUNNING')
+RETURNING *;
+
+-- name: CancelPendingActionJobs :execrows
+-- "Cancel pending": one statement over the whole queued set, mirroring
+-- SetPendingActionJobsScheduledAt. RUNNING and terminal rows are untouched —
+-- cancelling a job after its worker claimed it would not stop the action, and
+-- the per-row cancel exists for the RUNNING case.
+UPDATE action_job
+SET status      = 'CANCELLED',
+    finished_at = now(),
+    error       = 'Cancelled by operator'
+WHERE status = 'PENDING';
+
 -- name: ListActionJobs :many
 SELECT *
 FROM action_job

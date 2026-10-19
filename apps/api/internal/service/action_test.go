@@ -122,6 +122,12 @@ func (a *actionAccounts) GetByID(_ context.Context, id string) (domain.Account, 
 
 type actionTargets struct {
 	ups targetUpsert
+	// comment is the scraped comment a reply target links to; nil models a
+	// comment we have not scraped (the link is then skipped, not failed).
+	comment *domain.Comment
+	// linked records every LinkTargetComment call, so a test can assert the
+	// reply target was actually linked to its comment.
+	linked []string
 }
 
 type targetUpsert = struct {
@@ -135,6 +141,20 @@ func (t *actionTargets) UpsertTarget(_ context.Context, tg domain.Target) (domai
 	}
 	tg.ID = t.ups.id
 	return tg, nil
+}
+
+// comment is what GetCommentByExternalID returns; nil models "not scraped yet",
+// which must leave the reply target unlinked rather than fail the enqueue.
+func (t *actionTargets) GetCommentByExternalID(_ context.Context, p domain.Platform, externalID string) (domain.Comment, error) {
+	if t.comment == nil {
+		return domain.Comment{}, domain.ErrNotFound
+	}
+	return *t.comment, nil
+}
+
+func (t *actionTargets) LinkTargetComment(_ context.Context, targetID, commentID string) error {
+	t.linked = append(t.linked, targetID+":"+commentID)
+	return nil
 }
 
 func newActionService(store *actionStore, accs *actionAccounts, tgts *actionTargets) *ActionService {
@@ -239,6 +259,85 @@ func TestActionEnqueueRejectsReplyWithoutCommentID(t *testing.T) {
 		{AccountID: "acc-1", TargetURL: "https://www.instagram.com/p/abc/c/1789xyz/", Type: domain.JobTypeActionReplyComment},
 	}); err != nil {
 		t.Fatalf("a reply to a comment permalink must be accepted: %v", err)
+	}
+}
+
+// A reply target must LINK to the comment it answers. Without the link the
+// dispatch-side author lookup has nothing to resolve, so the worker's tag check
+// degrades to "a mention exists" — which the POST author's prefill satisfies.
+// That is how a reply could tag the wrong person and still be recorded threaded.
+func TestActionEnqueueLinksReplyTargetToComment(t *testing.T) {
+	targets := &actionTargets{
+		ups:     targetUpsert{id: "tgt-1"},
+		comment: &domain.Comment{ID: "cmt-1", AuthorHandle: "fathoni_saputra"},
+	}
+	svc := NewActionService(
+		newActionStore(),
+		&actionAccounts{acc: domain.Account{Platform: domain.PlatformInstagram, Status: domain.AccountActive}},
+		targets,
+		fixedClock{}, nil, nil, nil, nil,
+	)
+
+	if _, err := svc.Enqueue(t.Context(), []ActionItem{
+		{AccountID: "acc-1", TargetURL: "https://www.instagram.com/p/abc/c/1789xyz/", Type: domain.JobTypeActionReplyComment},
+	}); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	if len(targets.linked) != 1 {
+		t.Fatalf("LinkTargetComment calls = %d, want 1 (target → comment)", len(targets.linked))
+	}
+	if got := targets.linked[0]; got != "tgt-1:cmt-1" {
+		t.Fatalf("linked %q, want tgt-1:cmt-1", got)
+	}
+}
+
+// A reply to a comment we have not scraped must still enqueue: the operator can
+// paste any permalink, and a missing link only weakens the tag check. Failing
+// here would make "scrape first" a hard precondition of replying.
+func TestActionEnqueueReplyWithoutScrapedCommentStillQueues(t *testing.T) {
+	targets := &actionTargets{ups: targetUpsert{id: "tgt-1"}} // comment nil → not found
+	svc := NewActionService(
+		newActionStore(),
+		&actionAccounts{acc: domain.Account{Platform: domain.PlatformInstagram, Status: domain.AccountActive}},
+		targets,
+		fixedClock{}, nil, nil, nil, nil,
+	)
+
+	jobs, err := svc.Enqueue(t.Context(), []ActionItem{
+		{AccountID: "acc-1", TargetURL: "https://www.instagram.com/p/abc/c/999/", Type: domain.JobTypeActionReplyComment},
+	})
+	if err != nil {
+		t.Fatalf("an unscraped comment must not block the reply: %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("jobs = %d, want 1", len(jobs))
+	}
+	if len(targets.linked) != 0 {
+		t.Fatalf("nothing to link, got %v", targets.linked)
+	}
+}
+
+// A like targets a POST; linking it to a comment would be meaningless and could
+// only mislead the dispatch-side lookup.
+func TestActionEnqueueDoesNotLinkNonReplyTargets(t *testing.T) {
+	targets := &actionTargets{
+		ups:     targetUpsert{id: "tgt-1"},
+		comment: &domain.Comment{ID: "cmt-1", AuthorHandle: "someone"},
+	}
+	svc := NewActionService(
+		newActionStore(),
+		&actionAccounts{acc: domain.Account{Platform: domain.PlatformInstagram, Status: domain.AccountActive}},
+		targets,
+		fixedClock{}, nil, nil, nil, nil,
+	)
+
+	if _, err := svc.Enqueue(t.Context(), []ActionItem{
+		{AccountID: "acc-1", TargetURL: "https://www.instagram.com/p/abc/", Type: domain.JobTypeActionLike},
+	}); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	if len(targets.linked) != 0 {
+		t.Fatalf("a like must not link a comment, got %v", targets.linked)
 	}
 }
 

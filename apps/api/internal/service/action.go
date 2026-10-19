@@ -72,8 +72,15 @@ const ActionTextTTL = 24 * 60 * 60 // seconds (24h)
 // narrowTargetWriter is the slice of port.ScrapeStore the enqueue path needs:
 // turn a pasted permalink into a Target row (find-or-create) so the scheduler
 // can resolve it back to a URL at dispatch.
+//
+// The comment methods exist so a REPLY target can be linked to the comment it
+// answers. Without that link the dispatch-side author lookup has nothing to
+// resolve, and the worker's tag check degrades to "a mention exists" — which a
+// wrong tag passes.
 type narrowTargetWriter interface {
 	UpsertTarget(ctx context.Context, t domain.Target) (domain.Target, error)
+	GetCommentByExternalID(ctx context.Context, p domain.Platform, externalID string) (domain.Comment, error)
+	LinkTargetComment(ctx context.Context, targetID, commentID string) error
 }
 
 // ActionItem is one intent from the enqueue request.
@@ -174,8 +181,13 @@ func (s *ActionService) Enqueue(ctx context.Context, items []ActionItem) ([]doma
 		// A reply must name the comment it answers. A bare post permalink used to
 		// pass here, and the worker then replied to whichever comment owned the
 		// first Reply button on the page.
-		if item.Type == domain.JobTypeActionReplyComment && commentIDFromURL(u.Path) == "" {
-			return nil, fmt.Errorf("%d: %w: a reply target must be a comment permalink (.../c/<commentId>/), got %q", i, domain.ErrValidation, u.Path)
+		//
+		// The shape is platform-specific: Instagram addresses a comment as
+		// `/p/<post>/c/<id>/`, while Threads has no such route (it 404s) — a
+		// Threads comment IS a post with its own shortcode, so its permalink is
+		// `/post/<comment code>` (see commentPermalink).
+		if item.Type == domain.JobTypeActionReplyComment && replyTargetID(acc.Platform, u.Path) == "" {
+			return nil, fmt.Errorf("%d: %w: a reply target must be a comment permalink (%s), got %q", i, domain.ErrValidation, replyPermalinkShape(acc.Platform), u.Path)
 		}
 		if text := strings.TrimSpace(item.Text); text != "" {
 			if len(text) > MaxCommentTextLen {
@@ -203,6 +215,28 @@ func (s *ActionService) Enqueue(ctx context.Context, items []ActionItem) ([]doma
 		})
 		if err != nil {
 			return nil, fmt.Errorf("item %d: target upsert: %w", i, err)
+		}
+
+		// A reply target must LINK to the comment it answers. Without this the
+		// target's comment_id stays NULL and the dispatch-side handle lookup
+		// (which sends the worker the author to verify the tag against) can
+		// never resolve — the reply then falls back to a presence-only mention
+		// check, which a WRONG tag passes.
+		//
+		// The link is best-effort: a comment we have not scraped is legitimately
+		// unknown at enqueue time (the operator can paste any permalink), and a
+		// missing link degrades the tag check rather than blocking the job.
+		if item.Type == domain.JobTypeActionReplyComment {
+			if want := replyTargetID(acc.Platform, u.Path); want != "" {
+				if c, err := s.scrapes.GetCommentByExternalID(ctx, acc.Platform, want); err == nil {
+					if err := s.scrapes.LinkTargetComment(ctx, tgt.ID, c.ID); err != nil {
+						s.log.Warn("reply target: could not link comment", "target", tgt.ID, "err", err)
+					}
+				} else {
+					s.log.Info("reply target: comment not scraped yet, tag check will be presence-only",
+						"comment", want, "err", err)
+				}
+			}
 		}
 
 		jobs = append(jobs, domain.ActionJob{
@@ -428,6 +462,45 @@ func (s *ActionService) RunPendingNow(ctx context.Context) (int, error) {
 	return int(moved), nil
 }
 
+// Cancel makes one job terminal. PENDING and RUNNING are cancellable; anything
+// already terminal is rejected rather than reported as a successful cancel, so
+// the operator learns the verdict was not theirs to overwrite.
+//
+// Cancelling a RUNNING job does not stop the worker mid-action: Playwright may
+// already have posted. What it does guarantee is that the late callback is a
+// no-op (CompleteActionJob's status guard) and the stale-running sweep cannot
+// requeue the job, so the cancel can never cause a second delivery.
+func (s *ActionService) Cancel(ctx context.Context, jobID string) (domain.ActionJob, error) {
+	job, err := s.actions.GetActionJob(ctx, jobID)
+	if err != nil {
+		return domain.ActionJob{}, fmt.Errorf("cancel action job: %w", err)
+	}
+	if job.Status != domain.JobStatusPending && job.Status != domain.JobStatusRunning {
+		return domain.ActionJob{}, fmt.Errorf("%w: job %s is already %s", domain.ErrValidation, jobID, job.Status)
+	}
+	cancelled, err := s.actions.CancelActionJob(ctx, jobID)
+	if err != nil {
+		return domain.ActionJob{}, err
+	}
+	return cancelled, nil
+}
+
+// CancelPendingNow cancels the whole queued set in one statement and reports
+// how many rows moved. 0 is a valid answer (nothing was queued), matching
+// RunPendingNow's contract.
+//
+// RUNNING rows are deliberately not touched: the operator's bulk cancel is
+// about the queue that has not started, and a row already dispatched is
+// answered by the per-row cancel, which explains that it cannot stop the
+// worker.
+func (s *ActionService) CancelPendingNow(ctx context.Context) (int, error) {
+	moved, err := s.actions.CancelPendingActionJobs(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("cancel pending now: %w", err)
+	}
+	return int(moved), nil
+}
+
 // List returns the queue newest-first with each job's latest attempt verdict.
 // One batched log query keeps a page at two queries, not N+1.
 func (s *ActionService) List(ctx context.Context, status *domain.JobStatus, limit int) ([]ActionView, error) {
@@ -542,6 +615,62 @@ func commentIDFromURL(raw string) string {
 		if segs[i] == "c" {
 			return segs[i+1]
 		}
+	}
+	return ""
+}
+
+// replyTargetID extracts the comment id a reply URL addresses, in the platform's
+// own permalink shape:
+//
+//   - Instagram: `/p/<post>/c/<commentId>/` → the segment after `c`.
+//   - Threads:   `/post/<commentCode>` → the comment's OWN post code. Threads
+//     has no `/c/` route (it 404s); a reply is a post, so its code is the
+//     address Enqueue links and the worker opens.
+//
+// Empty means the URL does not name a specific comment, which a reply job must
+// never accept.
+//
+// ponytail: on Threads a comment and a top-level post are the same object, so
+// the URL alone cannot tell them apart — a pasted POST permalink passes here
+// and the worker replies at the post's top level. The comment table cannot be
+// consulted without a store on this path; if that matters, reject Threads reply
+// targets whose code is not a scraped comment (needs a comment lookup in
+// Enqueue, which already does one for the link).
+func replyTargetID(p domain.Platform, path string) string {
+	if p == domain.PlatformThreads {
+		return postCodeFromPath(path)
+	}
+	return commentIDFromURL(path)
+}
+
+// replyPermalinkShape is the human-facing shape hint in the Enqueue rejection,
+// kept next to replyTargetID so the two cannot drift.
+func replyPermalinkShape(p domain.Platform) string {
+	if p == domain.PlatformThreads {
+		return "https://www.threads.net/post/<commentCode>"
+	}
+	return "https://www.instagram.com/p/<postCode>/c/<commentId>/"
+}
+
+// postCodeFromPath returns the shortcode of a Threads `/post/<code>` permalink
+// (bare or under `/@handle`), or "" for any other shape. A `/c/` suffix is
+// rejected outright: that IG-style route does not exist on Threads (it 404s),
+// so accepting it would enqueue a reply against the POST instead of the
+// comment the operator meant.
+func postCodeFromPath(raw string) string {
+	u := raw
+	if i := strings.IndexAny(u, "?#"); i >= 0 {
+		u = u[:i]
+	}
+	segs := strings.Split(strings.Trim(u, "/"), "/")
+	for i, seg := range segs {
+		if seg != "post" {
+			continue
+		}
+		if i+1 >= len(segs) || i+1 != len(segs)-1 {
+			return ""
+		}
+		return segs[i+1]
 	}
 	return ""
 }

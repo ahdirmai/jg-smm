@@ -123,16 +123,23 @@ const SELECTORS: Partial<Record<Platform, SelectorSet>> = {
     // Per-comment Reply affordance. On a /c/<id>/ permalink the target comment
     // is first, so the first "Reply" match threads to it. IG ships this as a
     // bare `<button class="_a9ze"><span>Reply</span></button>` — NO role
-    // attribute. Two traps, both verified live:
-    //   • a `[role=button]`/`span[role=button]`-led selector matched ZERO (the
-    //     leaf has no role), so the flow never opened the threaded box; and
+    // attribute.
+    //
+    // Timing, measured live (this is the trap): the reply affordance does NOT
+    // exist for the first ~3s after the comment permalink loads. Polled once per
+    // 500ms, both this list and a bare `span:text-is("Reply")` returned 0 until
+    // t≈3000ms, then both returned 8. So a click issued immediately after
+    // `scrollToLoadComposer` always throws on a fresh load — which is why the
+    // click in replyToComment must stay non-fatal (the permalink already focuses
+    // the box, and the mention check is what actually decides threading).
+    //
+    // Two traps in the form itself, both verified live:
+    //   • a `[role=button]`-led selector matches ZERO (the leaf has no role), and
     //   • `button:has(span:text-is("Reply"))` ALSO matches the ANCESTOR comment
-    //     -row button (it too contains the Reply span), and `.first()` in DOM
-    //     order is that ancestor — clicking it opens nothing and the mention
-    //     never prefills.
-    // Match only the LEAF: `:text-is("Reply")` on the element's OWN text excludes
-    // every ancestor (their text is the whole comment, not "Reply"). Lead with
-    // the bare button, then role/span shapes for other rollouts.
+    //     -row button (it contains the Reply span), and `.first()` is then that
+    //     ancestor — clicking it opens nothing.
+    // `:text-is("Reply")` on the element's OWN text excludes ancestors (their
+    // text is the whole comment, not "Reply"), so every entry below is a leaf.
     replyButton:
       'button:text-is("Reply"), [role="button"]:text-is("Reply"), span:text-is("Reply")',
     // IG pre-fills "@username" when a comment's reply box opens; that mention is

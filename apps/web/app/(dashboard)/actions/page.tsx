@@ -15,8 +15,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@smm/ui';
-import { AlertCircle, Check, Loader2, Play, RotateCcw } from 'lucide-react';
-import { useMemo, useRef, useState } from 'react';
+import { AlertCircle, Check, Loader2, Play, RotateCcw, X, XCircle } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { NewActionForm, type NewActionFormHandle } from './new-action-form';
 import { ScrapeHistory } from './scrape-history';
@@ -34,6 +34,10 @@ function statusLabel(value: string): string {
 // Uniform row height: group headers and job rows share it so the window math
 // stays fixed-height (see useVirtualRowWindow).
 const ROW_HEIGHT = 44;
+
+// Sentinel for the header's whole-queue cancel; it shares the arm state with
+// per-row cancels so arming one control disarms the other.
+const CANCEL_ALL = 'all-pending';
 
 // Pipeline the worker actually runs (ADR: publish → dispatch → verify). The
 // stepper below maps a real JobStatus onto it; no stage is invented for show.
@@ -69,11 +73,39 @@ function stageReached(status: JobStatus): number {
 
 export default function ActionsPage() {
   const { accounts } = useAccounts();
-  const { actions, loading, error, retry, runPendingNow } = useActions();
+  const { actions, loading, error, retry, runPendingNow, cancel, cancelPendingNow } = useActions();
 
   const formRef = useRef<NewActionFormHandle>(null);
   // Bumped after a fresh scrape so the history card re-reads the stored list.
   const [historyRefresh, setHistoryRefresh] = useState(0);
+
+  // Deep-link from the batch preview: /actions?post=<permalink>&platform=<p>
+  // preloads the form and runs the scrape, so "Buat Action" on a discovered post
+  // lands the operator on a filled-in form instead of an empty one.
+  //
+  // A ref, not a state guard: the effect must run at most ONCE per mount. React
+  // StrictMode double-invokes effects in development, and running twice would
+  // fire two paid scrape calls for one click. `replaceState` then clears the
+  // query so a reload doesn't re-trigger it either.
+  const deepLinkDone = useRef(false);
+  useEffect(() => {
+    if (deepLinkDone.current) return;
+    deepLinkDone.current = true;
+
+    const params = new URLSearchParams(window.location.search);
+    const post = params.get('post');
+    const platform = params.get('platform');
+    if (!post) return;
+    // Only the two on-demand platforms have an actor; anything else would 400.
+    if (platform !== 'instagram' && platform !== 'threads') return;
+
+    // Wait one frame: `loadPost` re-enters the form's own state, and on the
+    // first paint the imperative handle is attached but the scrape effect has
+    // not yet read the url it sets.
+    const t = window.setTimeout(() => formRef.current?.loadPost(platform, post), 0);
+    window.history.replaceState({}, '', window.location.pathname);
+    return () => window.clearTimeout(t);
+  }, []);
 
   const [status, setStatusFilter] = useState<string>('all');
   // Job id currently being re-queued, so its row shows a spinner and the
@@ -83,6 +115,12 @@ export default function ActionsPage() {
   // Set while the whole-queue "run now" is in flight, so the button shows a
   // spinner and cannot be pressed twice into two overlapping sweeps.
   const [sweeping, setSweeping] = useState(false);
+  // Cancelling is destructive and irreversible (it is not a retry: the row
+  // stays terminal), so a cancel click only arms the action; the second click
+  // on the same control executes it. One state covers a row id and the
+  // whole-queue sentinel.
+  const [armedCancel, setArmedCancel] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   const inFlight = useMemo(
@@ -154,6 +192,56 @@ export default function ActionsPage() {
       setSweeping(false);
     }
   }
+  // Cancel one queued/running job. Armed first: the click that turns the
+  // button destructive is the confirmation. Throws on the server's 400 when
+  // the job already finished, surfaced as the row error banner.
+  async function doCancel(jobId: string) {
+    if (armedCancel !== jobId) {
+      setArmedCancel(jobId);
+      return;
+    }
+    setArmedCancel(null);
+    setRetryError(null);
+    setNotice(null);
+    setCancelling(jobId);
+    try {
+      await cancel(jobId);
+      // The dialog holds a snapshot of the job, which this cancel just made
+      // stale; closing it is honest, and it is a no-op for a row cancel.
+      setSelected(null);
+      setNotice('Job cancelled. A worker already running it may still finish the action; its report will not overwrite this verdict.');
+    } catch (err) {
+      setRetryError(err instanceof Error ? err.message : 'Cancel failed');
+    } finally {
+      setCancelling(null);
+    }
+  }
+
+  // Cancel the whole PENDING queue. Same two-click arm; RUNNING rows stay
+  // untouched (the worker may already be mid-action), which the label says.
+  async function doCancelPendingNow() {
+    if (armedCancel !== CANCEL_ALL) {
+      setArmedCancel(CANCEL_ALL);
+      return;
+    }
+    setArmedCancel(null);
+    setRetryError(null);
+    setNotice(null);
+    setSweeping(true);
+    try {
+      const cancelled = await cancelPendingNow();
+      setNotice(
+        cancelled === 0
+          ? 'Nothing was queued — no pending job to cancel.'
+          : `Cancelled ${cancelled} pending job${cancelled === 1 ? '' : 's'}. Running jobs are untouched.`,
+      );
+    } catch (err) {
+      setRetryError(err instanceof Error ? err.message : 'Could not cancel the queue');
+    } finally {
+      setSweeping(false);
+    }
+  }
+
   const filtered = useMemo(
     () => (status === 'all' ? actions : actions.filter((a) => a.status === status)),
     [actions, status],
@@ -231,6 +319,29 @@ export default function ActionsPage() {
               ) : null}
               {inFlight} in flight
             </span>
+            <Button
+              variant={armedCancel === CANCEL_ALL ? 'destructive' : 'outline'}
+              size="sm"
+              disabled={sweeping || cancelling !== null || pendingCount === 0}
+              onClick={() => void doCancelPendingNow()}
+              onBlur={() => {
+                if (armedCancel === CANCEL_ALL) setArmedCancel(null);
+              }}
+              title={
+                pendingCount === 0
+                  ? 'No pending jobs'
+                  : armedCancel === CANCEL_ALL
+                    ? `Press again to cancel ${pendingCount} pending job${pendingCount === 1 ? '' : 's'}`
+                    : `Cancel ${pendingCount} pending job${pendingCount === 1 ? '' : 's'} (running jobs are untouched)`
+              }
+            >
+              {armedCancel === CANCEL_ALL ? (
+                <XCircle className="size-3.5" />
+              ) : (
+                <X className="size-3.5" />
+              )}
+              {armedCancel === CANCEL_ALL ? 'Confirm cancel' : 'Cancel pending'}
+            </Button>
             <Button
               variant="outline"
               size="sm"
@@ -383,6 +494,35 @@ export default function ActionsPage() {
                             Retry
                           </Button>
                         ) : null}
+                        {row.job.status === 'PENDING' || row.job.status === 'RUNNING' ? (
+                          <Button
+                            variant={armedCancel === row.job.id ? 'destructive' : 'outline'}
+                            size="sm"
+                            className="h-7 shrink-0"
+                            disabled={cancelling === row.job.id}
+                            title={
+                              row.job.status === 'RUNNING'
+                                ? 'Stop this job. A worker already running it may still finish the action; its report will not overwrite the cancel.'
+                                : 'Cancel this queued job'
+                            }
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void doCancel(row.job.id);
+                            }}
+                            onBlur={() => {
+                              if (armedCancel === row.job.id) setArmedCancel(null);
+                            }}
+                          >
+                            {cancelling === row.job.id ? (
+                              <Loader2 className="size-3 animate-spin" />
+                            ) : armedCancel === row.job.id ? (
+                              <XCircle className="size-3" />
+                            ) : (
+                              <X className="size-3" />
+                            )}
+                            {armedCancel === row.job.id ? 'Confirm' : 'Cancel'}
+                          </Button>
+                        ) : null}
                       </div>
                     ),
                   )}
@@ -442,6 +582,22 @@ export default function ActionsPage() {
             </div>
           ) : null}
           <DialogFooter>
+            {selected?.status === 'PENDING' || selected?.status === 'RUNNING' ? (
+              <Button
+                variant={armedCancel === selected.id ? 'destructive' : 'outline'}
+                disabled={cancelling === selected.id}
+                onClick={() => void doCancel(selected.id)}
+              >
+                {cancelling === selected.id ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : armedCancel === selected.id ? (
+                  <XCircle className="size-4" />
+                ) : (
+                  <X className="size-4" />
+                )}
+                {armedCancel === selected.id ? 'Confirm cancel' : 'Cancel this action'}
+              </Button>
+            ) : null}
             {selected?.status === 'FAILED' ? (
               <Button
                 variant="outline"

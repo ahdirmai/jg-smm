@@ -21,6 +21,7 @@ import {
   Copy,
   ExternalLink,
   Loader2,
+  Megaphone,
   MessageSquare,
   RefreshCw,
 } from 'lucide-react';
@@ -28,10 +29,11 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 
-import { api, type KeywordBatch, type ScrapedComment, type ScrapedPost } from '@/lib/api';
+import { api, type KeywordBatch, type PostInsight, type ScrapedComment, type ScrapedPost } from '@/lib/api';
 import { metricsLine, platformLabel } from '@/lib/platforms';
-import { postPermalink } from '@/lib/permalink';
+import { actionDeepLink, postPermalink } from '@/lib/permalink';
 import { PostMedia } from '@/components/post-media';
+import { CommentPreview, RankedPostList } from '@/components/ranked-post-list';
 
 /** Posts per page. The fetch asks for one more than this purely to detect a
  *  next page, so the pager never offers one that does not exist. */
@@ -79,6 +81,12 @@ export default function BatchDetailPage() {
   // button on a batch of exactly PAGE_SIZE posts.
   const [page, setPage] = useState(0);
   const [posts, setPosts] = useState<ScrapedPost[]>([]);
+  // Server-computed ranking for the CURRENT page of posts.
+  const [insights, setInsights] = useState<PostInsight[]>([]);
+  // Comments already fetched per post id, so a card can show its sentiment
+  // distribution without opening the dialog (which is what made the operator
+  // click every post to compare them).
+  const [commentsByPost, setCommentsByPost] = useState<Record<string, ScrapedComment[]>>({});
   const [hasMore, setHasMore] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   // Post whose comments are open. Null = dialog closed; the comments load on
@@ -110,7 +118,36 @@ export default function BatchDetailPage() {
     try {
       const pr = await api.listKeywordBatchPosts(id, { limit: PAGE_SIZE + 1, offset: page * PAGE_SIZE });
       setHasMore(pr.posts.length > PAGE_SIZE);
-      setPosts(pr.posts.slice(0, PAGE_SIZE));
+      const pagePosts = pr.posts.slice(0, PAGE_SIZE);
+      setPosts(pagePosts);
+
+      // Ranking: the SERVER scores, this page only renders the order it gets.
+      // Computed over the same page slice, so a card's rank is its rank within
+      // what the operator can see — a global rank would number a page that
+      // starts at "27" and read as broken.
+      try {
+        const r = await api.rankedRecent(200);
+        const byId = new Map(r.insights.map((i) => [i.postId, i]));
+        setInsights(pagePosts.map((p) => byId.get(p.id)).filter((i): i is PostInsight => Boolean(i)));
+      } catch {
+        // Ranking is an enhancement; without it the list falls back to the raw
+        // post order and the cards simply show no rank badge.
+        setInsights([]);
+      }
+
+      // Comments already stored for this page's posts — one read per post, no
+      // Apify spend. They give the cards a sentiment preview before any click.
+      const withComments = await Promise.all(
+        pagePosts.map(async (p) => {
+          try {
+            const res = await api.listPostComments(p.id, { limit: 100 });
+            return [p.id, res.comments ?? []] as const;
+          } catch {
+            return [p.id, []] as const;
+          }
+        }),
+      );
+      setCommentsByPost(Object.fromEntries(withComments));
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     }
@@ -266,65 +303,13 @@ export default function BatchDetailPage() {
               {batch.status === 'SUCCEEDED' ? 'Tidak ada post untuk keyword/window ini.' : 'Menunggu batch selesai…'}
             </p>
           ) : (
-            <div className="max-h-[600px] space-y-2 overflow-y-auto">
-              {posts.map((p) => {
-                const link = postPermalink(p);
-                return (
-                  <div key={p.id} className="flex gap-3 rounded-lg border px-3 py-2">
-                    {/* Thumbnail: the batch is a discovery surface, so the operator
-                        picks posts by what they look like. Clicking it opens the
-                        same detail dialog as the Detail button. */}
-                    {p.mediaUrls?.[0] ? (
-                      <button
-                        type="button"
-                        onClick={() => void openDetail(p)}
-                        aria-label={`Open detail for @${p.authorHandle}`}
-                        className="h-16 w-16 shrink-0 overflow-hidden rounded-md border border-border/60 bg-secondary/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                      >
-                        {/* eslint-disable-next-line @next/next/no-img-element -- remote user content on rotating CDN hosts */}
-                        <img
-                          src={p.mediaUrls[0]}
-                          alt=""
-                          loading="lazy"
-                          draggable={false}
-                          className="h-full w-full object-cover"
-                        />
-                      </button>
-                    ) : null}
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                        <span className="font-medium text-foreground">@{p.authorHandle || 'unknown'}</span>
-                        {p.publishedAt ? (
-                          <span title="Tanggal publikasi post">{new Date(p.publishedAt).toLocaleDateString()}</span>
-                        ) : (
-                          <span title="Tanggal publikasi tidak tersedia untuk post ini — menampilkan kapan post di-scrape" className="text-muted-foreground/70">
-                           scrape {new Date(p.scrapedAt).toLocaleDateString()}
-                          </span>
-                        )}
-                        {p.metrics ? <span>{metricsLine(p.platform, p.metrics)}</span> : null}
-                        <div className="ml-auto flex items-center gap-1">
-                          {link ? (
-                            <>
-                              <CopyButton value={link} label={`Copy link to @${p.authorHandle}`} />
-                              <Button variant="outline" size="sm" asChild>
-                                <a href={link} target="_blank" rel="noreferrer noopener">
-                                  <ExternalLink className="size-3.5" />
-                                  Open
-                                </a>
-                              </Button>
-                            </>
-                          ) : null}
-                          <Button variant="outline" size="sm" onClick={() => void openDetail(p)}>
-                            <MessageSquare className="size-3.5" />
-                            Detail
-                          </Button>
-                        </div>
-                      </div>
-                      {p.text ? <p className="mt-1 line-clamp-3 text-sm">{p.text}</p> : <p className="mt-1 text-sm italic text-muted-foreground">No text</p>}
-                    </div>
-                  </div>
-                );
-              })}
+            <div className="max-h-[720px] overflow-y-auto pr-1">
+              <RankedPostList
+                posts={posts}
+                insights={insights}
+                commentsByPost={commentsByPost}
+                onOpen={(p) => void openDetail(p)}
+              />
             </div>
           )}
           {posts.length > 0 ? (
@@ -403,6 +388,23 @@ export default function BatchDetailPage() {
                 </div>
               ) : null}
 
+              {/* The bridge from discovery to action. The batch page is where a
+                  post is FOUND; like/comment/reply all live on /actions. Without
+                  this the operator retypes or copies a permalink by hand, which
+                  is the step that gets the wrong post acted on.
+                  Rendered only when the platform is on-demand scrapable, because
+                  /actions loads the post through that endpoint and the other five
+                  platforms answer 400 — a button that always errors teaches the
+                  operator the feature is broken, not that it does not apply. */}
+              {actionDeepLink(detail) ? (
+                <Button asChild className="w-full">
+                  <Link href={actionDeepLink(detail)!}>
+                    <Megaphone className="size-4" />
+                    Buat Action untuk post ini
+                  </Link>
+                </Button>
+              ) : null}
+
               <div className="space-y-2">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="flex items-center gap-2 text-sm font-medium">
@@ -450,14 +452,23 @@ export default function BatchDetailPage() {
                     comments” di atas.
                   </p>
                 ) : (
-                  <ul className="space-y-2">
-                    {comments.map((c) => (
-                      <li key={c.id} className="rounded-lg border border-border/60 px-3 py-2">
-                        <div className="text-xs font-medium text-foreground">@{c.authorHandle || 'unknown'}</div>
-                        <p className="mt-0.5 whitespace-pre-wrap text-sm">{c.text}</p>
-                      </li>
-                    ))}
-                  </ul>
+                  // Threaded, with the sentiment distribution above it: the same
+                  // preview the ranked card shows, so the dialog adds depth
+                  // rather than switching to a different reading model.
+                  <CommentPreview
+                    comments={comments}
+                    sentiment={comments.reduce(
+                      (acc, c) => {
+                        if (c.sentiment === 'POSITIVE') acc.positive++;
+                        else if (c.sentiment === 'NEGATIVE') acc.negative++;
+                        else if (c.sentiment === 'NEUTRAL') acc.neutral++;
+                        else acc.unanalysed++;
+                        return acc;
+                      },
+                      { positive: 0, neutral: 0, negative: 0, unanalysed: 0 },
+                    )}
+                    authorHandle={detail.authorHandle}
+                  />
                 )}
               </div>
             </div>

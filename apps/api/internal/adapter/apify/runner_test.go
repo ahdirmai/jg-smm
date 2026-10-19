@@ -1,6 +1,7 @@
 package apify
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -49,17 +50,23 @@ func TestSearchInputPerActor(t *testing.T) {
 	if !ok || len(igkws) != 2 || igkws[0] != "batulicin" {
 		t.Errorf("instagram keywords = %v, want the array %v", ig["keywords"], in.Keywords)
 	}
-	if ig["maxPosts"] != 30 {
-		t.Errorf("instagram maxPosts = %v, want 30", ig["maxPosts"])
+	// sasky's `limit` is a STRING. An int is silently ignored and the run falls
+	// back to an enormous default, which is how a "max 50" batch ends up
+	// scraping thousands.
+	if ig["limit"] != "30" {
+		t.Errorf("instagram limit = %#v, want the string \"30\"", ig["limit"])
 	}
-	// The old apify/instagram-scraper spellings. Sending them to the crawlerbros
-	// actor is not a harmless default: it ignores `search`, so the run would
-	// search for nothing and return an empty dataset.
+	// The previous actor's spellings. Sending them is not harmless: the actor
+	// ignores unknown keys, so the run searches for nothing and returns an empty
+	// dataset while still being billed.
+	if _, ok := ig["maxPosts"]; ok {
+		t.Error("the search actor takes no `maxPosts`; the cap is `limit` (a string)")
+	}
 	if _, ok := ig["search"]; ok {
 		t.Error("instagram has no comma-joined `search` field; the actor ignores it")
 	}
 	if _, ok := ig["resultsLimit"]; ok {
-		t.Error("instagram has no `resultsLimit` field; the cap is `maxPosts`")
+		t.Error("instagram has no `resultsLimit` field")
 	}
 	// This actor's input schema has no date field at all. The window is applied
 	// by the ingestor, so sending a bound here would be ignored — and paying for
@@ -347,5 +354,50 @@ func TestSearchInputFacebookSendsOneQueryAndForcesPostType(t *testing.T) {
 func TestSearchInputUnknownPlatformYieldsNoPayload(t *testing.T) {
 	if got := searchInputFor(domain.Platform("mastodon"), []string{"x"}, fullWindow(), 10); got != nil {
 		t.Errorf("unknown platform payload = %v, want nil — an unlisted platform must not borrow another actor's schema", got)
+	}
+}
+
+// The Instagram search actor returns post URLs only, so the runner enriches
+// each one with the post actor. These cases pin the URL extraction that decides
+// what gets paid for.
+func TestSearchPostURLs(t *testing.T) {
+	rows := []json.RawMessage{
+		json.RawMessage(`{"keyword":"a","post_url":"https://www.instagram.com/p/AAA/"}`),
+		// Same post under a second keyword: paying twice is the waste.
+		json.RawMessage(`{"keyword":"b","post_url":"https://www.instagram.com/p/AAA/"}`),
+		// Query string must not make it a different post.
+		json.RawMessage(`{"keyword":"c","post_url":"https://www.instagram.com/p/BBB/?img_index=1"}`),
+		// The page-metadata row the actor emits; not an error, just skipped.
+		json.RawMessage(`{"keyword":"d","post_url":""}`),
+		json.RawMessage(`{"keyword":"e"}`),
+		// A non-object row must not take the batch down.
+		json.RawMessage(`"nonsense"`),
+	}
+	got := searchPostURLs(rows)
+	want := []string{
+		"https://www.instagram.com/p/AAA/",
+		"https://www.instagram.com/p/BBB/", // query stripped
+	}
+	if len(got) != len(want) {
+		t.Fatalf("urls = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("urls[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// An empty result set is not an error: a keyword with no posts is a real
+// answer, and the caller must not run the post actor for it.
+func TestSearchPostURLsEmpty(t *testing.T) {
+	// nil input → nothing to pay for. The caller tests len(), so an empty
+	// slice would also be correct; asserting emptiness keeps the contract at
+	// the level the caller relies on.
+	if got := searchPostURLs(nil); len(got) != 0 {
+		t.Fatalf("urls = %v, want empty", got)
+	}
+	if got := searchPostURLs([]json.RawMessage{json.RawMessage(`{"post_url":""}`)}); len(got) != 0 {
+		t.Fatalf("urls = %v, want empty", got)
 	}
 }

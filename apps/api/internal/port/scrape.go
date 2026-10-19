@@ -39,8 +39,17 @@ type ScrapeStore interface {
 	MarkPostCommentsFetched(ctx context.Context, postID string) error
 	UpsertComment(ctx context.Context, c domain.Comment) (domain.Comment, error)
 	GetComment(ctx context.Context, id string) (domain.Comment, error)
+	// GetCommentByExternalID resolves a comment from the platform's own id,
+	// which is how a nested reply names its parent (the payload carries ids,
+	// not our uuids).
+	GetCommentByExternalID(ctx context.Context, p domain.Platform, externalID string) (domain.Comment, error)
 	ListCommentsByPost(ctx context.Context, postID string, limit, offset *int) ([]domain.Comment, error)
 	CountCommentsByPost(ctx context.Context, postID string) (int, error)
+
+	// Sentiment (derived labels; a row with none is NULL, never a default).
+	SetCommentSentiment(ctx context.Context, commentID string, label domain.Sentiment, score *float64) error
+	CommentsNeedingSentiment(ctx context.Context, postID string, limit int) ([]domain.Comment, error)
+	CommentSentimentCounts(ctx context.Context, postID string) (domain.SentimentBreakdown, error)
 
 	// Scrape jobs.
 	CreateScrapeJob(ctx context.Context, j domain.ScrapeJob) (domain.ScrapeJob, error)
@@ -54,6 +63,7 @@ type ScrapeStore interface {
 
 	// Apify runs + raw payload pointers.
 	CreateApifyRun(ctx context.Context, r domain.ApifyRun) (domain.ApifyRun, error)
+	GetApifyRun(ctx context.Context, id string) (domain.ApifyRun, error)
 	UpdateApifyRun(ctx context.Context, r domain.ApifyRun, finished bool) (domain.ApifyRun, error)
 	CreateRawPayload(ctx context.Context, p domain.RawPayload) (domain.RawPayload, error)
 	ListRawPayloadsByRunID(ctx context.Context, apifyRunID string) ([]string, error)

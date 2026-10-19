@@ -111,7 +111,7 @@ func (q *Queries) GetKeywordBatchByID(ctx context.Context, id pgtype.UUID) (Keyw
 }
 
 const listKeywordBatchPosts = `-- name: ListKeywordBatchPosts :many
-SELECT p.id, p.platform, p.external_id, p.author_handle, p.author_id, p.text, p.media_urls, p.metrics, p.scraped_at, p.author_account_id, p.published_at, p.comments_fetched
+SELECT p.id, p.platform, p.external_id, p.author_handle, p.author_id, p.text, p.media_urls, p.metrics, p.scraped_at, p.author_account_id, p.published_at, p.comments_fetched, p.sentiment, p.sentiment_score, p.sentiment_at
 FROM post p
 JOIN keyword_batch_post kbp ON kbp.post_id = p.id
 WHERE kbp.keyword_batch_id = $1
@@ -147,6 +147,9 @@ func (q *Queries) ListKeywordBatchPosts(ctx context.Context, arg ListKeywordBatc
 			&i.AuthorAccountID,
 			&i.PublishedAt,
 			&i.CommentsFetched,
+			&i.Sentiment,
+			&i.SentimentScore,
+			&i.SentimentAt,
 		); err != nil {
 			return nil, err
 		}
@@ -172,6 +175,56 @@ type ListKeywordBatchesParams struct {
 
 func (q *Queries) ListKeywordBatches(ctx context.Context, arg ListKeywordBatchesParams) ([]KeywordBatch, error) {
 	rows, err := q.db.Query(ctx, listKeywordBatches, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []KeywordBatch{}
+	for rows.Next() {
+		var i KeywordBatch
+		if err := rows.Scan(
+			&i.ID,
+			&i.Platform,
+			&i.Keywords,
+			&i.WindowFrom,
+			&i.WindowTo,
+			&i.MaxPosts,
+			&i.ActorID,
+			&i.Status,
+			&i.ApifyRunID,
+			&i.ItemsRead,
+			&i.PostsCount,
+			&i.CommentsCount,
+			&i.Error,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.FinishedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listKeywordBatchesByStatus = `-- name: ListKeywordBatchesByStatus :many
+SELECT id, platform, keywords, window_from, window_to, max_posts, actor_id, status, apify_run_id, items_read, posts_count, comments_count, error, created_by, created_at, finished_at
+FROM keyword_batch
+WHERE status = $1
+ORDER BY created_at DESC
+LIMIT $2
+`
+
+type ListKeywordBatchesByStatusParams struct {
+	Status string `json:"status"`
+	Limit  int32  `json:"limit"`
+}
+
+func (q *Queries) ListKeywordBatchesByStatus(ctx context.Context, arg ListKeywordBatchesByStatusParams) ([]KeywordBatch, error) {
+	rows, err := q.db.Query(ctx, listKeywordBatchesByStatus, arg.Status, arg.Limit)
 	if err != nil {
 		return nil, err
 	}

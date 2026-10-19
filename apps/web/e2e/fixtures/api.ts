@@ -230,9 +230,10 @@ export type ActionJob = {
   actionType: string;
   accountId: string;
   targetId: string;
-  // Resolved from the target at dispatch; null on a PENDING job the queue then
-  // renders by targetId.
-  targetUrl?: string | null;
+  // NOTE: the API returns NO targetUrl here (jobToDTO emits id/actionType/
+  // accountId/targetId/status/attempts only). The URL lives on the target row
+  // and is resolved at dispatch, so the queue renders a PENDING job by its
+  // targetId. Assert the URL against `target`, not this DTO.
   status: string;
   attempts: number;
   renderedText?: string | null;

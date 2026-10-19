@@ -41,6 +41,11 @@ func (h *ActionHandler) Register(g *echo.Group) {
 	// Pull the whole PENDING queue forward to now. `act`, same as retry: it
 	// re-queues work against a platform account.
 	g.POST("/actions/run-pending", h.runPendingNow, RequirePermission(domain.PermAct))
+	// Cancel one queued or running job. `act`: stopping work against a platform
+	// account is the same authority as starting it.
+	g.POST("/actions/:jobId/cancel", h.cancel, RequirePermission(domain.PermAct))
+	// Cancel the whole PENDING queue in one statement.
+	g.POST("/actions/cancel-pending", h.cancelPending, RequirePermission(domain.PermAct))
 }
 
 // retry re-queues one failed job. 200 with the job so the caller can swap the
@@ -68,6 +73,33 @@ func (h *ActionHandler) runPendingNow(c echo.Context) error {
 		return actionError(err)
 	}
 	return c.JSON(http.StatusOK, map[string]any{"moved": n})
+}
+
+// cancel makes one queued or running job terminal. 200 with the job so the
+// caller can swap the row in place; a terminal job is a 400, not a silent
+// no-op.
+func (h *ActionHandler) cancel(c echo.Context) error {
+	if h.actions == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "action service unavailable")
+	}
+	job, err := h.actions.Cancel(c.Request().Context(), c.Param("jobId"))
+	if err != nil {
+		return actionError(err)
+	}
+	return c.JSON(http.StatusOK, jobToDTO(job))
+}
+
+// cancelPending cancels the whole PENDING queue and returns how many rows
+// moved. 0 is a valid answer.
+func (h *ActionHandler) cancelPending(c echo.Context) error {
+	if h.actions == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "action service unavailable")
+	}
+	n, err := h.actions.CancelPendingNow(c.Request().Context())
+	if err != nil {
+		return actionError(err)
+	}
+	return c.JSON(http.StatusOK, map[string]any{"cancelled": n})
 }
 
 // enqueue turns a batch of intents into PENDING jobs.

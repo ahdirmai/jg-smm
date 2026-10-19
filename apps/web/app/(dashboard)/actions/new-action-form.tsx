@@ -26,7 +26,17 @@ import {
   SelectValue,
   Textarea,
 } from '@smm/ui';
-import { AlertCircle, AtSign, Heart, Loader2, MessageSquare, RefreshCw, Search, Sparkles } from 'lucide-react';
+import {
+  AlertCircle,
+  AtSign,
+  Heart,
+  Loader2,
+  MessageSquare,
+  RefreshCw,
+  Reply,
+  Search,
+  Sparkles,
+} from 'lucide-react';
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from 'react';
 
 import { api, type AccountsByRegionResponse, type ScrapeTargetResponse } from '@/lib/api';
@@ -37,6 +47,8 @@ import type { ActionItem } from '@/lib/api';
 import { useSession } from '@/lib/auth/session-context';
 import { can } from '@/lib/auth/permissions';
 import { PostMedia } from '@/components/post-media';
+import { CommentThread } from '@/components/comment-thread';
+import { SentimentSummary } from '@/components/sentiment';
 
 const MAX_BATCH = 50;
 // Mirrors MaxCommentTextLen in apps/api/internal/service/action.go — the API
@@ -44,7 +56,7 @@ const MAX_BATCH = 50;
 // a paste that is guaranteed to fail at enqueue.
 const MAX_COMMENT_LEN = 2200;
 
-type Flow = 'comment' | 'like';
+type Flow = 'comment' | 'like' | 'reply';
 // How hard the AI draft may push: a 1-5 slider, 3 = balanced (server default).
 const INTENSITY_MIN = 1;
 const INTENSITY_MAX = 5;
@@ -144,6 +156,13 @@ export const NewActionForm = forwardRef<
 
   // Step 3: action + targets.
   const [flow, setFlow] = useState<Flow | null>(null);
+  // Reply flow: which comment the reply threads under. The job's targetUrl is
+  // that comment's permalink, not the post's — the API rejects a reply aimed at
+  // a bare post. Two ways in: pick a scraped comment, or paste its link (the
+  // platform's own "Copy link"). Pasting is the direct route and the only one
+  // for a comment the scrape never delivered.
+  const [replyCommentId, setReplyCommentId] = useState<string | null>(null);
+  const [manualReplyUrl, setManualReplyUrl] = useState('');
   // accountId -> comment body (comment flow).
   const [text, setText] = useState<Record<string, string>>({});
   const [selected, setSelected] = useState<Record<string, boolean>>({});
@@ -222,6 +241,10 @@ export const NewActionForm = forwardRef<
       setScrapeError(null);
       setScrape(null);
       setFlow(null);
+      // The previous post's comments are gone; a stale id would aim the reply
+      // at a comment no longer in the list.
+      setReplyCommentId(null);
+      setManualReplyUrl('');
       if (!u.trim()) {
         setScrapeError('Paste a post link first.');
         return;
@@ -253,6 +276,14 @@ export const NewActionForm = forwardRef<
     void runScrapeWith(platform, url, true);
   }
 
+  // The comment a reply answers. Declared above generateAI because the AI
+  // drafts are built from it: the generator must be told which comment is being
+  // answered, and `scrape` alone does not say that.
+  const replyComment = useMemo(
+    () => scrape?.comments.find((c) => c.id === replyCommentId) ?? null,
+    [scrape, replyCommentId],
+  );
+
   async function generateAI() {
     setAiError(null);
     if (!scrape) return;
@@ -266,10 +297,23 @@ export const NewActionForm = forwardRef<
       // pool, which is a worse outcome than a repeated draft the operator can
       // edit.
       const want = Math.min(Math.max(selectedAccounts.length, 1), MAX_BATCH);
+      // Reply flow: tell the generator WHICH comment is being answered. The
+      // first N comments of a busy thread say very little about the argument in
+      // front of the operator, so the target leads and the rest become
+      // background. Without this the drafts read as generic top-level comments
+      // posted into a reply slot.
+      const target = flow === 'reply' ? replyComment : null;
+      const otherComments = scrape.comments
+        .filter((c) => c.id !== target?.id)
+        .slice(0, 9)
+        .map((c) => c.text);
       const res = await api.generateComment({
         postText: scrape.post.text ?? '',
         authorHandle: scrape.post.authorHandle,
-        existingComments: scrape.comments.slice(0, 10).map((c) => c.text),
+        existingComments: target
+          ? [target.text, ...otherComments]
+          : scrape.comments.slice(0, 10).map((c) => c.text),
+        ...(target ? { replyTo: { handle: target.authorHandle, text: target.text } } : {}),
         mode: aiMode,
         intensity,
         length,
@@ -307,26 +351,40 @@ export const NewActionForm = forwardRef<
   );
   useImperativeHandle(ref, () => ({ loadPost }), [loadPost]);
 
-  const canSubmit = flow !== null && selectedAccounts.length > 0 && selectedAccounts.length <= MAX_BATCH && !submitting;
+  // A reply needs an addressable target: either a picked comment with a
+  // derived permalink, or a pasted comment link. The pasted link wins when
+  // both are present — it is the operator's explicit choice.
+  const replyTargetUrl =
+    flow === 'reply' ? manualReplyUrl.trim() || (replyComment?.url ?? '') : '';
+  const canSubmit =
+    flow !== null &&
+    selectedAccounts.length > 0 &&
+    selectedAccounts.length <= MAX_BATCH &&
+    !submitting &&
+    (flow !== 'reply' || replyTargetUrl !== '');
 
   async function submit() {
     setError(null);
     setResult(null);
     if (!canSubmit || !flow) return;
+    const targetUrl = flow === 'reply' ? replyTargetUrl : url.trim();
     const items: ActionItem[] = selectedAccounts.map((a) => {
       const item: ActionItem = {
         accountId: a.id,
-        targetUrl: url.trim(),
-        actionType: flow === 'like' ? 'action_like' : 'action_comment',
+        targetUrl,
+        actionType:
+          flow === 'like' ? 'action_like' : flow === 'reply' ? 'action_reply_comment' : 'action_comment',
       };
       const body = (text[a.id] ?? '').trim();
-      if (flow === 'comment' && body) item.text = body;
+      if (flow !== 'like' && body) item.text = body;
       return item;
     });
     setSubmitting(true);
     try {
       await enqueue(items);
-      setResult(`Queued ${items.length} ${flow}${items.length === 1 ? '' : 's'} for ${selectedAccounts.length} account(s).`);
+      setResult(
+        `Queued ${items.length} ${flow}${items.length === 1 ? '' : 's'} for ${selectedAccounts.length} account(s).`,
+      );
       setSelected({});
       setText({});
     } catch (e) {
@@ -462,11 +520,23 @@ export const NewActionForm = forwardRef<
                 </div>
               ) : null}
 
+              {/* Comment sentiment: the distribution over what was actually
+                  analysed, with the unanalysed count kept visible. */}
               {scrape.comments.length > 0 ? (
-                <p className="text-xs text-muted-foreground">
-                  {scrape.comments.length} existing comment
-                  {scrape.comments.length === 1 ? '' : 's'} loaded
-                </p>
+                <SentimentSummary breakdown={scrape.sentiment} />
+              ) : null}
+
+              {scrape.comments.length > 0 ? (
+                <div className="space-y-2 border-t border-border/60 pt-3">
+                  <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                    {scrape.comments.length} comment{scrape.comments.length === 1 ? '' : 's'} loaded
+                  </p>
+                  {/* Threaded by parentId so a reply sits under what it answers.
+                      A flat list reads as non-sequiturs on a busy post. */}
+                  <div className="max-h-72 overflow-y-auto rounded-lg border border-border/60 p-2">
+                    <CommentThread comments={scrape.comments} />
+                  </div>
+                </div>
               ) : null}
               {scrape.comments.length === 0 ? (
                 // The 6h cache only serves posts whose comments were actually
@@ -503,7 +573,70 @@ export const NewActionForm = forwardRef<
               >
                 <Heart /> Like
               </Button>
+              <Button
+                type="button"
+                variant={flow === 'reply' ? 'default' : 'outline'}
+                onClick={() => {
+                  setFlow('reply');
+                  // Default to the first comment that can actually be replied
+                  // to, so the common case is one click. Comments with no
+                  // derivable permalink have no legal target and are skipped;
+                  // with none at all the operator pastes the comment link.
+                  setReplyCommentId(
+                    (prev) => prev ?? scrape?.comments.find((c) => c.url)?.id ?? null,
+                  );
+                }}
+                disabled={!canAct}
+                title={
+                  scrape.comments.some((c) => c.url)
+                    ? 'Reply to one of the scraped comments'
+                    : 'Paste a comment link to reply'
+                }
+              >
+                <Reply /> Reply
+              </Button>
             </div>
+          </div>
+        ) : null}
+
+        {/* 3b. Reply target: which comment the reply threads under. */}
+        {scrape && flow === 'reply' ? (
+          <div className="space-y-2">
+            <Label>Reply to which comment</Label>
+            {/* Paste route first: the platform's own "Copy link" on a reply is
+                the shortest path, and the only one when the scrape did not
+                deliver that comment. A pasted link overrides the picker. */}
+            <Input
+              placeholder="Paste the comment link (optional) — e.g. https://www.threads.com/@user/post/ABC123"
+              value={manualReplyUrl}
+              onChange={(e) => setManualReplyUrl(e.target.value)}
+              disabled={!canAct}
+            />
+            {scrape.comments.some((c) => c.url) ? (
+              <div className="max-h-64 overflow-y-auto rounded-lg border border-border/60 p-2">
+                {/* The picker uses the same threaded view as the card, so the
+                    operator picks a target in the shape they will see on the
+                    platform. Comments without a derivable permalink stay
+                    visible but unselectable: hiding a parent would strand its
+                    replies, and hiding the row would misrepresent the thread. */}
+                <CommentThread
+                  comments={scrape.comments}
+                  selectable
+                  selectedId={replyCommentId}
+                  onSelect={(c) => {
+                    if (!c.url) return;
+                    setReplyCommentId(c.id);
+                    // Picking a row clears a stale pasted link so the visible
+                    // selection is the one that ships.
+                    setManualReplyUrl('');
+                  }}
+                />
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                No scraped comment has a permalink, so paste the comment link above to reply.
+              </p>
+            )}
           </div>
         ) : null}
 
@@ -515,7 +648,7 @@ export const NewActionForm = forwardRef<
                 Accounts ({accountGroups.reduce((n, g) => n + g.accounts.length, 0)} on{' '}
                 {platformLabel(platform) ?? platform})
               </Label>
-              {flow === 'comment' ? (
+              {flow === 'comment' || flow === 'reply' ? (
                 <div className="flex items-center gap-1.5">
                   <Select value={aiMode} onValueChange={(v) => setAiMode(v as 'support' | 'counter')}>
                     <SelectTrigger className="h-8 w-32" aria-label="AI mode">
@@ -599,12 +732,16 @@ export const NewActionForm = forwardRef<
                               <span className="truncate font-medium">@{a.username}</span>
                               <Badge variant="outline">{a.status}</Badge>
                             </div>
-                            {on && flow === 'comment' ? (
+                            {on && (flow === 'comment' || flow === 'reply') ? (
                               <Textarea
                                 className="mt-1"
                                 rows={2}
                                 maxLength={MAX_COMMENT_LEN}
-                                placeholder="Comment for this account (blank = template pool)"
+                                placeholder={
+                                  flow === 'reply'
+                                    ? 'Reply for this account (blank = template pool)'
+                                    : 'Comment for this account (blank = template pool)'
+                                }
                                 value={text[a.id] ?? ''}
                                 onChange={(e) => setText((s) => ({ ...s, [a.id]: e.target.value }))}
                               />

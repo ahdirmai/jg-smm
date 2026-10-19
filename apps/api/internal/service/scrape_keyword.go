@@ -294,6 +294,13 @@ func (s *KeywordScrapeService) processBatch(ctx context.Context, batchID string,
 		s.log.Warn("keyword scrape: empty result, retrying", "batch", batchID, "attempt", attempt)
 	}
 
+	s.linkAndComplete(ctx, batchID, run.ID, res)
+}
+
+// linkAndComplete joins exactly the posts this run ingested and marks the batch
+// SUCCEEDED. Shared by the fresh path (processBatch) and the boot-time resume
+// path, so a resumed batch records its result exactly like an uninterrupted one.
+func (s *KeywordScrapeService) linkAndComplete(ctx context.Context, batchID, runID string, res port.ScrapeIngestResult) {
 	// Join exactly the posts this run ingested. Reading the platform's newest
 	// posts instead would let a batch claim rows another batch (or a single
 	// post scrape) just wrote.
@@ -307,7 +314,7 @@ func (s *KeywordScrapeService) processBatch(ctx context.Context, batchID string,
 	}
 	n := time.Now().UTC()
 	if _, err := s.batches.UpdateKeywordBatch(ctx, domain.KeywordBatch{
-		ID: batchID, Status: domain.KeywordBatchSucceeded, ApifyRunID: &run.ID,
+		ID: batchID, Status: domain.KeywordBatchSucceeded, ApifyRunID: &runID,
 		// ItemsRead is the actor's delivered item count; PostsCount is what
 		// survived the operator's time window. They differ by design, and the
 		// divergence is how a too-narrow window shows up on the dashboard.
@@ -316,6 +323,94 @@ func (s *KeywordScrapeService) processBatch(ctx context.Context, batchID string,
 	}); err != nil {
 		s.log.Warn("keyword batch: mark succeeded failed", "batch", batchID, "err", err)
 	}
+}
+
+// ResumeOrphaned reconnects to batches a previous process left in flight. The
+// batch pipeline runs in a detached goroutine, so a redeploy kills it; without
+// this sweep the batch row stays RUNNING forever and the Apify run it already
+// paid for is never collected.
+//
+// Called once at API boot. Non-blocking: each batch resumes in its own
+// goroutine, like the original launch.
+//
+// ponytail: no cross-instance claim. A multi-replica deployment booting two
+// copies at once resumes a batch twice (two pollers on the same Apify run;
+// ingest is idempotent). Add a claim column/lease when there is more than one
+// API replica.
+func (s *KeywordScrapeService) ResumeOrphaned(ctx context.Context) {
+	if s.batches == nil || s.runner == nil {
+		return
+	}
+	var all []domain.KeywordBatch
+	for _, st := range []domain.KeywordBatchStatus{domain.KeywordBatchRunning, domain.KeywordBatchPending} {
+		rows, err := s.batches.ListKeywordBatchesByStatus(ctx, st, 50)
+		if err != nil {
+			s.log.Warn("keyword batch: resume list failed", "status", st, "err", err)
+			continue
+		}
+		all = append(all, rows...)
+	}
+	for _, b := range all {
+		b := b
+		s.log.Info("keyword batch: resuming interrupted batch", "batch", b.ID, "status", b.Status, "run", b.ApifyRunID)
+		// Detached like the original launch: request/boot cancellation must not
+		// kill a paid run mid-poll.
+		go s.resumeBatch(context.Background(), b)
+	}
+}
+
+// resumeBatch drives one interrupted batch to a terminal state.
+func (s *KeywordScrapeService) resumeBatch(ctx context.Context, b domain.KeywordBatch) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.log.Error("keyword batch: resume panic", "batch", b.ID, "panic", r)
+			s.failBatch(ctx, b.ID, fmt.Sprintf("resume panic: %v", r))
+		}
+	}()
+	window := KeywordWindow{}
+	if b.WindowFrom != nil {
+		window.From = *b.WindowFrom
+	}
+	if b.WindowTo != nil {
+		window.To = *b.WindowTo
+	}
+	if b.ApifyRunID == nil || *b.ApifyRunID == "" {
+		// PENDING, or killed before the audit row existed: no actor was started,
+		// so nothing was spent and a fresh launch is safe.
+		s.processBatch(ctx, b.ID, b.Platform, b.Keywords, window, b.MaxPosts, b.ActorID)
+		return
+	}
+	run, err := s.scrapes.GetApifyRun(ctx, *b.ApifyRunID)
+	if err != nil {
+		s.failBatch(ctx, b.ID, fmt.Sprintf("resume: load apify run: %v", err))
+		return
+	}
+	if run.RunID == "" {
+		// The process died between starting the Apify run and recording its id.
+		// Starting a new run would pay twice while the old one may still finish,
+		// so the batch fails with an honest reason instead.
+		s.failBatch(ctx, b.ID, "interrupted before the Apify run id was recorded; cannot reconnect to the run it may have started")
+		return
+	}
+	if run.Status != "RUNNING" && run.Status != "SUCCEEDED" {
+		s.failBatch(ctx, b.ID, fmt.Sprintf("resume: apify run already %s", run.Status))
+		return
+	}
+	// Resume polls the EXISTING Apify run (no new spend). A run that already
+	// SUCCEEDED returns its dataset immediately, so a crash after success but
+	// before the batch row was closed still lands its posts.
+	out, res, err := s.runAttempt(ctx, run.ID, b.ActorID, b.Platform, b.Keywords, window, b.MaxPosts, run.RunID)
+	if err != nil {
+		status := out.Status
+		if status == "" {
+			status = "FAILED"
+		}
+		s.finishRun(ctx, run.ID, out, status)
+		s.failBatch(ctx, b.ID, err.Error())
+		return
+	}
+	s.finishRun(ctx, run.ID, out, out.Status)
+	s.linkAndComplete(ctx, b.ID, run.ID, res)
 }
 
 // runOnce drives the actor once and ingests what it returned. A non-SUCCEEDED
@@ -329,30 +424,54 @@ func (s *KeywordScrapeService) processBatch(ctx context.Context, batchID string,
 // audit table reporting the opposite of what happened, and attempt 1's run
 // never closed by the retry.
 func (s *KeywordScrapeService) runOnce(ctx context.Context, runID, actorID string, platform domain.Platform, keywords []string, window KeywordWindow, maxPosts int) (port.ScrapeIngestResult, error) {
-	// closeRun writes the terminal status and stamps finished_at. Called from
-	// every return below. The write is deliberately on a context that survives
-	// the run's cancellation: a batch goroutine can be cancelled mid-flight, and
-	// an audit row left RUNNING is exactly the bug this closes.
-	closeRun := func(status string) {
+	out, res, err := s.runAttempt(ctx, runID, actorID, platform, keywords, window, maxPosts, "")
+	if err != nil {
+		// Whatever failed (start, poll budget, terminal status), the audit row
+		// must not stay RUNNING. The started run's id, when known, is persisted
+		// first — otherwise the paid Apify run is unreachable to the operator.
+		// An actor status the runner reported (FAILED/ABORTED/TIMED-OUT) is
+		// kept verbatim; a transport/poll error has none.
+		status := out.Status
+		if status == "" {
+			status = "FAILED"
+		}
+		s.finishRun(ctx, runID, out, status)
+		return port.ScrapeIngestResult{}, err
+	}
+	s.finishRun(ctx, runID, out, out.Status)
+	return res, nil
+}
+
+// runAttempt starts (or resumes) one actor run and ingests its output. It does
+// NOT touch apify_run's terminal status; the caller decides that, so a resume
+// failure can close the row the same way a fresh run's does.
+//
+// resumeRunID empty = start a new actor run; non-empty = poll that already
+// started run again instead of paying for a second one.
+func (s *KeywordScrapeService) runAttempt(ctx context.Context, runID, actorID string, platform domain.Platform, keywords []string, window KeywordWindow, maxPosts int, resumeRunID string) (port.ApifyOutput, port.ScrapeIngestResult, error) {
+	// The audit row is created before the actor starts, so apify_run.run_id is
+	// empty until Apify answers. Persisting it the moment the run is started is
+	// what makes the run resumable: a redeploy mid-poll used to lose the id —
+	// and the paid run with it — because the only write sat after SUCCEEDED.
+	onStarted := func(apifyRunID string) {
 		if _, err := s.scrapes.UpdateApifyRun(context.WithoutCancel(ctx), domain.ApifyRun{
-			ID: runID, Status: status,
-		}, true); err != nil {
-			s.log.Warn("keyword scrape: close run failed", "run", runID, "status", status, "err", err)
+			ID: runID, RunID: apifyRunID, Status: "RUNNING",
+		}, false); err != nil {
+			s.log.Warn("keyword scrape: persist run id failed", "run", runID, "apify_run", apifyRunID, "err", err)
 		}
 	}
-
 	out, err := s.runner.RunSearch(ctx, port.ApifySearchInput{
 		RunID: runID, ActorID: actorID, Platform: platform, Keywords: keywords,
 		Window: port.KeywordTimeWindow{From: window.From, To: window.To}, MaxPosts: maxPosts,
+		OnStarted:   onStarted,
+		ResumeRunID: resumeRunID,
 	})
 	if err != nil {
 		s.log.Warn("keyword scrape: run failed", "run", runID, "err", err)
-		closeRun("FAILED")
-		return port.ScrapeIngestResult{}, fmt.Errorf("run: %w", err)
+		return out, port.ScrapeIngestResult{}, fmt.Errorf("run: %w", err)
 	}
 	if out.Status != "SUCCEEDED" {
-		closeRun(out.Status)
-		return port.ScrapeIngestResult{}, fmt.Errorf("actor %s: %s", out.Status, out.Error)
+		return out, port.ScrapeIngestResult{}, fmt.Errorf("actor %s: %s", out.Status, out.Error)
 	}
 	// Record the run id + dataset keys, then normalize the payload.
 	if _, err := s.scrapes.UpdateApifyRun(ctx, domain.ApifyRun{ID: runID, RunID: out.RunID, Status: out.Status}, true); err != nil {
@@ -368,12 +487,22 @@ func (s *KeywordScrapeService) runOnce(ctx context.Context, runID, actorID strin
 	ingestor := NewSearchScrapeIngestor(s.scrapes, s.storageRef, platform, port.KeywordTimeWindow{From: window.From, To: window.To}, s.log)
 	res, err := ingestor.IngestRun(ctx, runID)
 	if err != nil {
-		// The actor succeeded; the ingest did not. The row must not stay RUNNING
-		// just because the failure happened one step later.
-		closeRun("FAILED")
-		return port.ScrapeIngestResult{}, fmt.Errorf("ingest: %w", err)
+		return out, port.ScrapeIngestResult{}, fmt.Errorf("ingest: %w", err)
 	}
-	return res, nil
+	return out, res, nil
+}
+
+// finishRun closes the apify_run audit row with its terminal status. A run id
+// the runner reported is persisted too, so even a failed attempt stays
+// traceable on Apify. The write is deliberately on a context that survives the
+// run's cancellation: a batch goroutine can be cancelled mid-flight, and an
+// audit row left RUNNING is exactly the bug this closes.
+func (s *KeywordScrapeService) finishRun(ctx context.Context, runID string, out port.ApifyOutput, status string) {
+	if _, err := s.scrapes.UpdateApifyRun(context.WithoutCancel(ctx), domain.ApifyRun{
+		ID: runID, RunID: out.RunID, Status: status,
+	}, true); err != nil {
+		s.log.Warn("keyword scrape: close run failed", "run", runID, "status", status, "err", err)
+	}
 }
 
 func (s *KeywordScrapeService) failBatch(ctx context.Context, batchID, msg string) {
@@ -447,9 +576,37 @@ func (s *KeywordScrapeService) ListBatchPosts(ctx context.Context, batchID strin
 // PostComments returns the comments already stored for one post. Keyword search
 // ingests each item's comment list, so the batch dashboard can show them
 // without a second paid scrape — the point is to read what we already paid for.
+//
+// Each comment gains its own permalink (…/p/<code>/c/<id>/), the URL a reply
+// action must target. Deriving it needs the post's shortcode, so this reads the
+// post once for the whole batch. A post row that cannot be read (deleted, or a
+// stale id) leaves every URL empty rather than failing: the comments are still
+// the honest answer, and the UI simply offers no reply on them.
 func (s *KeywordScrapeService) PostComments(ctx context.Context, postID string, limit, offset *int) ([]domain.Comment, error) {
+	comments, _, err := s.PostCommentsWithSentiment(ctx, postID, limit, offset)
+	return comments, err
+}
+
+// PostCommentsWithSentiment also returns the per-label counts, so the batch
+// dashboard can render the same distribution the on-demand card shows. The two
+// surfaces read the same stored rows; computing the breakdown here keeps them
+// from drifting into different summaries of one dataset.
+func (s *KeywordScrapeService) PostCommentsWithSentiment(ctx context.Context, postID string, limit, offset *int) ([]domain.Comment, domain.SentimentBreakdown, error) {
 	if s.scrapes == nil {
-		return nil, fmt.Errorf("%w: scrape store not configured", domain.ErrUnavailable)
+		return nil, domain.SentimentBreakdown{}, fmt.Errorf("%w: scrape store not configured", domain.ErrUnavailable)
 	}
-	return s.scrapes.ListCommentsByPost(ctx, postID, limit, offset)
+	comments, err := s.scrapes.ListCommentsByPost(ctx, postID, limit, offset)
+	if err != nil {
+		return nil, domain.SentimentBreakdown{}, err
+	}
+	breakdown, err := s.scrapes.CommentSentimentCounts(ctx, postID)
+	if err != nil {
+		// Counts are a summary; losing them must not hide the comments.
+		breakdown = domain.SentimentBreakdown{}
+	}
+	post, err := s.scrapes.GetPost(ctx, postID)
+	if err != nil {
+		return comments, breakdown, nil
+	}
+	return withCommentPermalinks(post.Platform, post.ExternalID, comments), breakdown, nil
 }

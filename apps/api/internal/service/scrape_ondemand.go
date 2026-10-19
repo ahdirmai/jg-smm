@@ -33,7 +33,11 @@ type ScrapeService struct {
 	// cost guard (the 6h freshness cache), so without this the endpoint is an
 	// unmetered way to spend Apify credit in a loop. nil means unlimited.
 	spend *importLimiter
-	log   *slog.Logger
+	// sentiment labels stored comments after a scrape, when an LLM is
+	// configured. nil means analysis is off; every call site nil-checks via
+	// SentimentAnalyzer.Available, so this needs no guard here.
+	sentiment *SentimentAnalyzer
+	log       *slog.Logger
 }
 
 // NewScrapeService wires the on-demand scraper. runner/actorFor/storage may be
@@ -56,6 +60,66 @@ func (s *ScrapeService) SetSpendLimit(limit int, window time.Duration) {
 	s.spend = newImportLimiter(window, limit)
 }
 
+// SetSentimentAnalyzer attaches the LLM sentiment labeller. Called from wiring,
+// like SetSpendLimit, so the constructor signature stays stable and a
+// deployment without an LLM simply never analyses anything.
+//
+// Analysis is best-effort at every call site: a missing or failing analyser
+// leaves rows unlabelled, never fails a scrape the operator already paid for.
+func (s *ScrapeService) SetSentimentAnalyzer(a *SentimentAnalyzer) {
+	s.sentiment = a
+}
+
+// analyseMissingSentiment labels a post's unlabelled comments, capped per pass.
+//
+// It runs after ingest, on rows this scrape just stored. Comments already
+// labelled are skipped by the query, so a re-scrape of the same post costs
+// nothing — and the cap bounds the cost of a post with hundreds of comments to
+// one batch per pass, with the remainder picked up by the next scrape or the
+// backfill. Every failure mode returns quietly: the labels are derived, the
+// content is already stored, and the operator must not lose a paid scrape to an
+// LLM outage.
+func (s *ScrapeService) analyseMissingSentiment(ctx context.Context, postID string) {
+	if !s.sentiment.Available() {
+		return
+	}
+	pending, err := s.scrapes.CommentsNeedingSentiment(ctx, postID, MaxSentimentBatch)
+	if err != nil {
+		s.log.Warn("sentiment: could not list unlabelled comments", "post", postID, "err", err)
+		return
+	}
+	if len(pending) == 0 {
+		return
+	}
+	texts := make([]string, len(pending))
+	for i, c := range pending {
+		texts[i] = c.Text
+	}
+	results, err := s.sentiment.Analyze(ctx, texts)
+	if err != nil {
+		s.log.Warn("sentiment: analysis failed", "post", postID, "count", len(texts), "err", err)
+		return
+	}
+	written := 0
+	for i, r := range results {
+		// An unlabelled slot means the model skipped that item; leaving it NULL
+		// is the honest outcome and the next pass retries it.
+		if r.Label == "" {
+			continue
+		}
+		var score *float64
+		if r.HasScore {
+			score = &r.Score
+		}
+		if err := s.scrapes.SetCommentSentiment(ctx, pending[i].ID, r.Label, score); err != nil {
+			s.log.Warn("sentiment: could not store label", "comment", pending[i].ID, "err", err)
+			continue
+		}
+		written++
+	}
+	s.log.Info("sentiment: labelled comments", "post", postID, "labelled", written, "requested", len(texts))
+}
+
 // allowSpend reports whether caller may start a paid run now. A nil limiter
 // means unlimited, so callers do not need to nil-check.
 func (s *ScrapeService) allowSpend(caller string) bool {
@@ -69,6 +133,10 @@ func (s *ScrapeService) allowSpend(caller string) bool {
 type PostDetail struct {
 	Post     domain.Post      `json:"post"`
 	Comments []domain.Comment `json:"comments"`
+	// Sentiment counts this post's analysed comments by label. It is computed
+	// on read (one grouped query) rather than stored, so it can never disagree
+	// with the comments it summarises.
+	Sentiment domain.SentimentBreakdown `json:"sentiment"`
 	// Cached is true when this came straight from the 6h freshness cache
 	// instead of a paid actor run. The dashboard uses it to say "served from
 	// storage, re-scrape to refresh" rather than implying a fresh fetch.
@@ -313,11 +381,28 @@ func (s *ScrapeService) readBack(ctx context.Context, tgt domain.Target) (PostDe
 	if err != nil {
 		return PostDetail{}, err
 	}
+	// Label any unlabelled comment BEFORE reading them back, so the card the
+	// operator sees is analysed on the same request that fetched the comments —
+	// not one page-load later. Best-effort: a failure here leaves the labels
+	// NULL and the read below still returns the comments.
+	s.analyseMissingSentiment(ctx, post.ID)
+
 	comments, err := s.scrapes.ListCommentsByPost(ctx, post.ID, nil, nil)
 	if err != nil {
 		return PostDetail{}, fmt.Errorf("list comments: %w", err)
 	}
-	return PostDetail{Post: post, Comments: comments}, nil
+	// A breakdown failure must not lose the scraped card: the counts are a
+	// summary, the comments are the payload. An error leaves a zero breakdown
+	// (all zeros, which the UI renders as "no analysis") alongside the comments.
+	breakdown, err := s.scrapes.CommentSentimentCounts(ctx, post.ID)
+	if err != nil {
+		s.log.Warn("sentiment: breakdown failed", "post", post.ID, "err", err)
+	}
+	return PostDetail{
+		Post:      post,
+		Comments:  withCommentPermalinks(post.Platform, post.ExternalID, comments),
+		Sentiment: breakdown,
+	}, nil
 }
 
 // resolvePost finds the target's post: the linked id when one exists, else the

@@ -185,10 +185,11 @@ export async function runLogin(
   //
   // Same context shape the action path uses (locale, UA, geolocation), so the
   // platform sees one consistent "device" across login and action.
+  const stored = await readSession(platform, deps.sessionDir).catch(() => undefined);
   const ctx = await newAccountContext(
     browser,
     platform,
-    await readSession(platform, deps.sessionDir).catch(() => undefined),
+    stored,
     await deps.geolocation?.().catch(() => null),
   );
   authContexts.set(accountId, ctx);
@@ -196,10 +197,21 @@ export async function runLogin(
   const page = await ctx.newPage();
   try {
     await page.goto(await loginUrlFor(platform, deps), { waitUntil: 'domcontentloaded' });
-    if (credentials?.username && credentials.password) {
+    // A still-valid hydrated session is redirected away from the login page,
+    // so there is no form to fill: waiting out the mount bound here only
+    // stalls every scheduled refresh (and logs a misleading "field not
+    // found"). A stale session — or a first login, where nothing was stored —
+    // leaves the form in place and the fill runs normally.
+    const hydratedProven = stored ? (await probeSession(platform, ctx)).proven : false;
+    if (credentials?.username && credentials.password && !hydratedProven) {
       // Best effort: a fill failure (a challenge wall instead of the form, a
       // markup change) must not kill the login — the operator can still type
       // in the live view, and the poll below is the only verdict authority.
+      //
+      // The mount wait inside the adapter matters: Threads serves /login as a
+      // client-rendered SPA, so at `domcontentloaded` the page is still the
+      // "Scan to get the app" shell and the fields appear ~3-10s later.
+      // Filling in that window was the "login form field not found" failure.
       try {
         const adapter = await adapterFor(platform);
         await adapter?.autofill?.(page, credentials);

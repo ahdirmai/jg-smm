@@ -330,14 +330,29 @@ func main() {
 			// On-demand scrape (dashboard: paste a URL, get post + comments) and
 			// the AI comment generator that drafts from what it read. Both
 			// degrade to 503 routes when their config is absent.
+			// One LLM client serves both the comment generator and the sentiment
+			// labeller: same gateway, same model, same failure mode. Sharing the
+			// instance keeps the config in one place — a swap of LLM_MODEL moves
+			// both, and a missing key disables both.
+			llm := llmadapter.New(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel)
 			gen := service.NewCommentGenerator(
-				llmadapter.New(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel),
+				llm,
 				nil, // no platform-wide denylist yet; template-level screening stays the enforcement point
 				logger,
 			)
+			// Sentiment is derived data: when the LLM is unconfigured the scrape
+			// paths still work and comments simply stay unlabelled.
+			sentiment := service.NewSentimentAnalyzer(llm, logger)
 			kwSvc := service.NewKeywordScrapeService(scrapeRepo, runner, searchActorForPlatform(cfg), rawStorage, logger)
 			kwSvc.SetBatchStore(repository.NewKeywordBatchRepo(pg.Queries()))
+			// A batch runs in a detached goroutine, so a redeploy that lands while
+			// one is mid-poll kills it and leaves the row RUNNING with a paid Apify
+			// run nobody collects. Sweep at boot: each interrupted batch reconnects
+			// to its recorded run (or restarts only when nothing was spent) and is
+			// driven to a terminal state. Background so boot never waits on Apify.
+			go kwSvc.ResumeOrphaned(ctx)
 			scrapeSvc := service.NewScrapeService(scrapeRepo, runner, actorForPlatform(cfg), rawStorage, logger)
+			scrapeSvc.SetSentimentAnalyzer(sentiment)
 			// The two endpoints that spend money share one per-caller ceiling.
 			// SCRAPE_RATE_LIMIT=0 leaves them unlimited, which is the self-hosted
 			// default; a deployment that wants the guard sets it once.

@@ -591,6 +591,49 @@ func (ns NullRole) Value() (driver.Value, error) {
 	return string(ns.Role), nil
 }
 
+type Sentiment string
+
+const (
+	SentimentPOSITIVE Sentiment = "POSITIVE"
+	SentimentNEUTRAL  Sentiment = "NEUTRAL"
+	SentimentNEGATIVE Sentiment = "NEGATIVE"
+)
+
+func (e *Sentiment) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = Sentiment(s)
+	case string:
+		*e = Sentiment(s)
+	default:
+		return fmt.Errorf("unsupported scan type for Sentiment: %T", src)
+	}
+	return nil
+}
+
+type NullSentiment struct {
+	Sentiment Sentiment `json:"sentiment"`
+	Valid     bool      `json:"valid"` // Valid is true if Sentiment is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullSentiment) Scan(value interface{}) error {
+	if value == nil {
+		ns.Sentiment, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.Sentiment.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullSentiment) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.Sentiment), nil
+}
+
 type TargetKind string
 
 const (
@@ -888,15 +931,18 @@ type AuthSession struct {
 }
 
 type Comment struct {
-	ID           pgtype.UUID        `json:"id"`
-	PostID       pgtype.UUID        `json:"post_id"`
-	Platform     Platform           `json:"platform"`
-	ExternalID   string             `json:"external_id"`
-	AuthorHandle string             `json:"author_handle"`
-	Text         string             `json:"text"`
-	Metrics      json.RawMessage    `json:"metrics"`
-	ScrapedAt    pgtype.Timestamptz `json:"scraped_at"`
-	ParentID     pgtype.UUID        `json:"parent_id"`
+	ID             pgtype.UUID        `json:"id"`
+	PostID         pgtype.UUID        `json:"post_id"`
+	Platform       Platform           `json:"platform"`
+	ExternalID     string             `json:"external_id"`
+	AuthorHandle   string             `json:"author_handle"`
+	Text           string             `json:"text"`
+	Metrics        json.RawMessage    `json:"metrics"`
+	ScrapedAt      pgtype.Timestamptz `json:"scraped_at"`
+	ParentID       pgtype.UUID        `json:"parent_id"`
+	Sentiment      NullSentiment      `json:"sentiment"`
+	SentimentScore *float64           `json:"sentiment_score"`
+	SentimentAt    pgtype.Timestamptz `json:"sentiment_at"`
 }
 
 type CommentTemplate struct {
@@ -983,6 +1029,9 @@ type Post struct {
 	AuthorAccountID pgtype.UUID        `json:"author_account_id"`
 	PublishedAt     pgtype.Timestamptz `json:"published_at"`
 	CommentsFetched bool               `json:"comments_fetched"`
+	Sentiment       NullSentiment      `json:"sentiment"`
+	SentimentScore  *float64           `json:"sentiment_score"`
+	SentimentAt     pgtype.Timestamptz `json:"sentiment_at"`
 }
 
 type ProvisionLog struct {

@@ -17,6 +17,8 @@ export type ActionsState = {
   enqueue: (items: ActionItem[]) => Promise<void>;
   retry: (jobId: string) => Promise<void>;
   runPendingNow: () => Promise<number>;
+  cancel: (jobId: string) => Promise<void>;
+  cancelPendingNow: () => Promise<number>;
 };
 
 /**
@@ -91,5 +93,33 @@ export function useActions(status?: JobStatus): ActionsState {
     return moved;
   }, [refresh]);
 
-  return { actions, loading, error, refresh, enqueue, retry, runPendingNow };
+  // Cancel one queued/running job. Throws on the server's 400 (job is already
+  // terminal) so the caller can surface it; the refetch moves the row.
+  const cancel = useCallback(
+    async (jobId: string) => {
+      await api.cancelAction(jobId);
+      await refresh();
+    },
+    [refresh],
+  );
+
+  // Cancel the whole PENDING queue; resolves to the row count so the caller
+  // can report "nothing was queued" instead of guessing.
+  const cancelPendingNow = useCallback(async () => {
+    const { cancelled } = await api.cancelPendingNow();
+    await refresh();
+    return cancelled;
+  }, [refresh]);
+
+  return {
+    actions,
+    loading,
+    error,
+    refresh,
+    enqueue,
+    retry,
+    runPendingNow,
+    cancel,
+    cancelPendingNow,
+  };
 }

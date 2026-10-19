@@ -77,3 +77,45 @@ func TestPermalinkScrapeDropsContextRows(t *testing.T) {
 		}
 	})
 }
+
+// A per-post Threads scrape must store the post's replies as its comments. The
+// live actor emits every reply row with `is_reply:true` and `parent_post_id`
+// ABSENT (verified on run x2Ts33gUPTXBNd6GT: 24 rows, all null), so the run's
+// post-id map has nothing to resolve. Before the fix the reply branch fell
+// through to the top-level-post path, which the onlyCode filter then dropped —
+// a paid scrape of a post with 51 replies stored zero comments.
+func TestPermalinkScrapeLinksRepliesWithoutParentPostID(t *testing.T) {
+	// Real shape: post row first, then reply rows with no parent field.
+	rows := []string{
+		`{"post_id":"4001990000000000001","code":"DeJ5KgVGPNp","username":"dimaspram.id","text":"parent","posted_at":"2026-10-06T12:00:00.000Z","like_count":5,"reply_count":2,"repost_count":0,"quote_count":0,"media_urls":[],"is_reply":false}`,
+		`{"post_id":"4001993526779447123","code":"DeJ7-i9GgdT","username":"theakbaralatas","text":"first reply","posted_at":"2026-10-06T13:53:46.000Z","like_count":1,"reply_count":0,"repost_count":0,"quote_count":0,"media_urls":[],"is_reply":true}`,
+		`{"post_id":"4001993526779447199","code":"DeJ8RztGJjZ","username":"dimaspram.id","text":"second reply","posted_at":"2026-10-06T14:01:00.000Z","like_count":2,"reply_count":0,"repost_count":0,"quote_count":0,"media_urls":[],"is_reply":true}`,
+	}
+	window := port.KeywordTimeWindow{To: time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC)}
+
+	run := newThreadsRun()
+	var posts, comments int
+	for _, row := range rows {
+		items, err := parseItems(domain.PlatformThreads, []byte(row), window, "DeJ5KgVGPNp", run)
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		for _, it := range items {
+			if it.CommentOf != "" {
+				comments++
+				if it.CommentOf != "DeJ5KgVGPNp" {
+					t.Errorf("reply %q linked to %q, want the requested post", it.ExternalID, it.CommentOf)
+				}
+			} else {
+				posts++
+			}
+		}
+	}
+
+	if posts != 1 {
+		t.Fatalf("posts = %d, want 1 (the requested post)", posts)
+	}
+	if comments != 2 {
+		t.Fatalf("comments = %d, want 2 (both reply rows)", comments)
+	}
+}

@@ -18,6 +18,9 @@ import (
 // full ScrapeStore fake is dozens of methods that say nothing about this loop.
 type narrowTarget interface {
 	GetTarget(ctx context.Context, id string) (domain.Target, error)
+	// GetComment resolves a reply target's author, so the published job can
+	// carry the handle the worker must see tagged.
+	GetComment(ctx context.Context, id string) (domain.Comment, error)
 }
 
 // narrowAccount is the slice of port.AccountStore the scheduler needs: the
@@ -322,7 +325,7 @@ func (s *ActionScheduler) dispatchOne(ctx context.Context, job domain.ActionJob)
 		}
 	}
 
-	if err := s.publish(ctx, job, acc, workerID, tgt.URL, text); err != nil {
+	if err := s.publish(ctx, job, acc, workerID, tgt, text); err != nil {
 		// Transport down: the job was NOT delivered, so release the cooldown
 		// slot by simply letting it lapse (TTL is short) and requeue the job.
 		s.reschedule(ctx, job, s.cfg.Cooldown, fmt.Sprintf("publish: %v", err))
@@ -427,19 +430,35 @@ type composedText struct {
 
 // publish serialises the job exactly as the worker's ActionJob expects and
 // appends it to that worker's durable queue (FIFO).
-func (s *ActionScheduler) publish(ctx context.Context, job domain.ActionJob, acc domain.Account, workerID, targetURL string, text composedText) error {
+func (s *ActionScheduler) publish(ctx context.Context, job domain.ActionJob, acc domain.Account, workerID string, tgt domain.Target, text composedText) error {
 	if s.transport == nil {
 		return errors.New("transport not configured")
 	}
+	// A reply must tag the comment's author. Resolve the handle here, from the
+	// comment the target points at, and send it so the worker can verify IG's
+	// pre-filled mention names that person — a top-level composer pre-fills the
+	// POST author, which a bare "@" check accepts. Best-effort: an unresolved
+	// handle leaves the field empty and the worker falls back to its older,
+	// looser check rather than refusing to act.
+	expectedMention := ""
+	if job.Type == domain.JobTypeActionReplyComment && tgt.CommentID != nil {
+		if c, err := s.scrapes.GetComment(ctx, *tgt.CommentID); err == nil {
+			expectedMention = c.AuthorHandle
+		} else {
+			s.log.Warn("action: could not resolve reply target author", "job", job.ID, "comment", *tgt.CommentID, "err", err)
+		}
+	}
+
 	payload, err := json.Marshal(workerActionJob{
-		ID:         job.ID,
-		AccountID:  job.AccountID,
-		Platform:   string(acc.Platform),
-		Action:     actionName(job.Type),
-		TargetURL:  targetURL,
-		Text:       text.text,
-		TemplateID: text.templateID,
-		Attempt:    job.Attempts,
+		ID:              job.ID,
+		AccountID:       job.AccountID,
+		Platform:        string(acc.Platform),
+		Action:          actionName(job.Type),
+		TargetURL:       tgt.URL,
+		Text:            text.text,
+		TemplateID:      text.templateID,
+		ExpectedMention: expectedMention,
+		Attempt:         job.Attempts,
 	})
 	if err != nil {
 		return fmt.Errorf("marshal action job: %w", err)
@@ -484,7 +503,12 @@ type workerActionJob struct {
 	TargetURL  string `json:"targetUrl"`
 	Text       string `json:"text,omitempty"`
 	TemplateID string `json:"templateId,omitempty"`
-	Attempt    int    `json:"attempt"`
+	// ExpectedMention is the handle a reply must tag, without the @. Set only
+	// for reply_comment, from the target comment's author: the worker verifies
+	// IG's pre-filled mention names this person, because a top-level composer
+	// pre-fills the POST author instead and a bare "@" check would accept it.
+	ExpectedMention string `json:"expectedMention,omitempty"`
+	Attempt         int    `json:"attempt"`
 }
 
 // accountPaceKey is the fixed sentinel "target" the per-account pacing gate

@@ -46,3 +46,27 @@ export function postPermalink(p: ScrapedPost): string | null {
 export function postPlatformLabel(p: ScrapedPost): string {
   return platformLabel(p.platform ?? '') ?? p.platform ?? 'unknown';
 }
+
+/**
+ * Deep-link into /actions with one scraped post preloaded and pre-scraped.
+ *
+ * The batch page is a discovery surface: the operator finds a post worth acting
+ * on there, but every action lives on /actions. Without this they retype or copy
+ * a permalink by hand, which is exactly the step that makes them act on the
+ * wrong post.
+ *
+ * Returns null when the post cannot be addressed OR its platform is not
+ * scrapable on demand. The second check is not cosmetic: /actions loads the post
+ * through the on-demand scrape endpoint, which answers 400 "no actor configured"
+ * for the five platforms that have no actor. Handing over a link that always
+ * errors is worse than showing no button — the operator learns the feature is
+ * broken rather than that it does not apply here.
+ */
+export function actionDeepLink(p: ScrapedPost): string | null {
+  const url = postPermalink(p);
+  if (!url) return null;
+  const platform = p.platform?.toLowerCase();
+  if (platform !== 'instagram' && platform !== 'threads') return null;
+  const qs = new URLSearchParams({ post: url, platform });
+  return `/actions?${qs.toString()}`;
+}

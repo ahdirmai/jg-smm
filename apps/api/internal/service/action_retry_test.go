@@ -145,6 +145,91 @@ func TestRunPendingNowEmptyQueue(t *testing.T) {
 	}
 }
 
+// --- cancel: operator stop ---------------------------------------------------
+
+func TestCancelStopsQueuedAndRunningJobs(t *testing.T) {
+	for _, status := range []domain.JobStatus{domain.JobStatusPending, domain.JobStatusRunning} {
+		t.Run(string(status), func(t *testing.T) {
+			store := newFakeActionStore()
+			store.pending = []domain.ActionJob{{ID: "job-1", Status: status}}
+
+			job, err := newRetryService(store, time.Now()).Cancel(context.Background(), "job-1")
+			if err != nil {
+				t.Fatalf("Cancel(%s): %v", status, err)
+			}
+			if job.Status != domain.JobStatusCancelled {
+				t.Fatalf("status = %s, want cancelled", job.Status)
+			}
+			if len(store.cancelled) != 1 || store.cancelled[0] != "job-1" {
+				t.Fatalf("store cancelled %v, want [job-1]", store.cancelled)
+			}
+		})
+	}
+}
+
+// A terminal job cannot be re-graded: cancelling a SUCCESS would rewrite the
+// platform's verdict, and cancelling a CANCELLED row is a pointless press.
+func TestCancelRejectsTerminalStatuses(t *testing.T) {
+	for _, status := range []domain.JobStatus{
+		domain.JobStatusSuccess,
+		domain.JobStatusFailed,
+		domain.JobStatusCancelled,
+	} {
+		t.Run(string(status), func(t *testing.T) {
+			store := newFakeActionStore()
+			store.completed = []completedJob{{id: "job-1", status: status}}
+
+			_, err := newRetryService(store, time.Now()).Cancel(context.Background(), "job-1")
+			if !errors.Is(err, domain.ErrValidation) {
+				t.Fatalf("Cancel(%s) error = %v, want ErrValidation", status, err)
+			}
+			if len(store.cancelled) != 0 {
+				t.Errorf("store cancelled %v, want none", store.cancelled)
+			}
+		})
+	}
+}
+
+func TestCancelUnknownJob(t *testing.T) {
+	_, err := newRetryService(newFakeActionStore(), time.Now()).Cancel(context.Background(), "nope")
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("Cancel error = %v, want ErrNotFound", err)
+	}
+}
+
+// Bulk cancel clears the queue but leaves RUNNING rows alone: a dispatched job
+// may already have posted, and its late callback is already guarded. The
+// per-row cancel exists for that case.
+func TestCancelPendingNowLeavesRunningRows(t *testing.T) {
+	store := newFakeActionStore()
+	store.pending = []domain.ActionJob{
+		{ID: "p-1", Status: domain.JobStatusPending},
+		{ID: "p-2", Status: domain.JobStatusPending},
+		{ID: "r-1", Status: domain.JobStatusRunning},
+	}
+
+	n, err := newRetryService(store, time.Now()).CancelPendingNow(context.Background())
+	if err != nil {
+		t.Fatalf("CancelPendingNow: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("cancelled %d jobs, want 2", n)
+	}
+	if store.pending[2].Status != domain.JobStatusRunning {
+		t.Fatalf("RUNNING row became %s, want running", store.pending[2].Status)
+	}
+}
+
+func TestCancelPendingNowEmptyQueue(t *testing.T) {
+	n, err := newRetryService(newFakeActionStore(), time.Now()).CancelPendingNow(context.Background())
+	if err != nil {
+		t.Fatalf("CancelPendingNow on an empty queue: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("cancelled %d jobs, want 0", n)
+	}
+}
+
 // --- M-4: the sweep must move every distinct row exactly once --------------
 
 // The bug: ListActionJobsByStatus ordered by scheduled_at LIMIT/OFFSET while

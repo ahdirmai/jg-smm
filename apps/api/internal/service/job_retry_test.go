@@ -27,6 +27,10 @@ type fakeActionStore struct {
 	// pending is the queue the scheduler's ListActionJobsByStatus returns, in
 	// insertion order so a test can assert claim order.
 	pending []domain.ActionJob
+	// cancelled records per-job cancels; cancelledBulk records whole-queue
+	// cancels so a test can distinguish the two operator paths.
+	cancelled     []string
+	cancelledBulk int
 }
 
 type completedJob struct {
@@ -138,8 +142,45 @@ func (f *fakeActionStore) SetPendingActionJobsScheduledAt(_ context.Context, at 
 	}
 	return n, nil
 }
-func (f *fakeActionStore) SweepStaleRunningJobs(_ context.Context, _ time.Duration) (int64, error) {
-	// Mirror the real sweep: RUNNING jobs older than the bound go back to PENDING.
+// CancelActionJob mirrors the SQL guard: only PENDING/RUNNING rows move, and a
+// job the fake only knows as completed is terminal and cannot be cancelled.
+func (f *fakeActionStore) CancelActionJob(_ context.Context, id string) (domain.ActionJob, error) {
+	for i := range f.pending {
+		if f.pending[i].ID != id {
+			continue
+		}
+		if f.pending[i].Status != domain.JobStatusPending && f.pending[i].Status != domain.JobStatusRunning {
+			return domain.ActionJob{}, domain.ErrNotFound
+		}
+		f.pending[i].Status = domain.JobStatusCancelled
+		f.cancelled = append(f.cancelled, id)
+		return f.pending[i], nil
+	}
+	for i := range f.completed {
+		if f.completed[i].id == id {
+			return domain.ActionJob{}, domain.ErrNotFound
+		}
+	}
+	return domain.ActionJob{}, domain.ErrNotFound
+}
+
+// CancelPendingActionJobs mirrors the single-statement sweep: only PENDING
+// rows move; RUNNING and terminal rows are untouched.
+func (f *fakeActionStore) CancelPendingActionJobs(_ context.Context) (int64, error) {
+	var n int64
+	for i := range f.pending {
+		if f.pending[i].Status != domain.JobStatusPending {
+			continue
+		}
+		f.pending[i].Status = domain.JobStatusCancelled
+		f.cancelled = append(f.cancelled, f.pending[i].ID)
+		n++
+	}
+	f.cancelledBulk++
+	return n, nil
+}
+
+func (f *fakeActionStore) SweepStaleRunningJobs(_ context.Context, _ time.Duration) (int64, error) {	// Mirror the real sweep: RUNNING jobs older than the bound go back to PENDING.
 	var n int64
 	for i := range f.pending {
 		if f.pending[i].Status != domain.JobStatusRunning {
