@@ -19,11 +19,45 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
 	"github.com/ahdirmai/jg-smm/apps/api/internal/port"
 )
+
+// fleetTTL bounds how long one /containers/json snapshot serves every read.
+// The reconciler ticks once per RECONCILE_INTERVAL and asks Observe for EVERY
+// worker: a per-worker lookup meant 2 HTTP round-trips × N workers per tick.
+// With the snapshot one pass costs a single list; mutations drop the snapshot
+// so a create/stop/delete is never consumed stale.
+const fleetTTL = time.Second
+
+// Worker resource ceiling. A worker box runs a headful Chromium stack that
+// spikes to ~460MiB measured (INFRA_ANALYST §2.3); the 4GiB cap absorbs the
+// spike while a runaway render can no longer starve the host or its siblings.
+// ponytail: fixed caps, not env-tuned — revisit when a fleet profile needs a
+// smaller worker than this.
+const (
+	workerMemoryBytes = int64(4 << 30)
+	// Chromium forks a short-lived process tree per account action and per
+	// login, and the worker's PID 1 is Node, which cannot reap grandchildren it
+	// never parented. Without Init: true those processes stay zombies, so the
+	// pids cgroup fills up and every later browserType.launch fails with
+	// "pthread_create: Resource temporarily unavailable". 256 was low enough to
+	// hit that after roughly a dozen logins; Init: true reaps them, and the
+	// larger ceiling absorbs the burst in between reaps.
+	workerPidsLimit = int64(1024)
+)
+
+// fleetEntry is one labelled container as the fleet snapshot saw it.
+type fleetEntry struct {
+	name    string
+	gen     int
+	running bool
+	// hostPorts are the TCP host ports this container publishes (live view).
+	hostPorts []int
+}
 
 // Labels tie a container back to its Worker row. ListRunning reads them; the
 // sweeper treats any labelled container without a row as an orphan.
@@ -46,7 +80,15 @@ type Client struct {
 	platforms      string
 	dryRun         bool
 	internalSecret string
+	proxyFor       func(ctx context.Context, workerID string) (*WorkerProxy, error)
 	logger         *slog.Logger
+
+	// fleet snapshot cache: one /containers/json?all=1 list shared by Observe
+	// and port allocation. Guarded by mu. Mutations nil it so the next read
+	// never consumes a stale view of a create/stop/delete.
+	mu      sync.Mutex
+	fleet   map[string]fleetEntry // keyed by worker id
+	fleetAt time.Time
 }
 
 // Config tunes the driver.
@@ -74,7 +116,23 @@ type Config struct {
 	// API's /internal routes. Empty leaves the API's guard disabled, which is
 	// only acceptable when the API port is unreachable off-host.
 	InternalSecret string
-	Logger         *slog.Logger
+	// ProxyFor resolves the egress proxy for one worker's account, or nil for
+	// direct dial. Injected rather than read from Config because the binding is
+	// per-worker (it comes from the account's `proxy_group` row), so the driver
+	// cannot know it at construction. A nil resolver means every worker dials
+	// direct — correct for a local stack, wrong for a fleet sharing one IP.
+	ProxyFor func(ctx context.Context, workerID string) (*WorkerProxy, error)
+	Logger   *slog.Logger
+}
+
+// WorkerProxy is the resolved egress for one container. Split from a single URL
+// string so credentials stay out of any value that gets logged.
+type WorkerProxy struct {
+	// Server is scheme://host:port, e.g. socks5://gate.example.com:1080.
+	Server string
+	// Username/Password are empty for an open or IP-allowlisted proxy.
+	Username string
+	Password string
 }
 
 // DefaultNetwork matches the network `docker compose up` creates for this
@@ -123,6 +181,7 @@ func New(cfg Config) (*Client, error) {
 		platforms:      cfg.Platforms,
 		dryRun:         cfg.DryRun,
 		internalSecret: cfg.InternalSecret,
+		proxyFor:       cfg.ProxyFor,
 		logger:         logger,
 	}, nil
 }
@@ -146,11 +205,11 @@ func (c *Client) CreateWorker(ctx context.Context, w domain.Worker) error {
 	}
 
 	// A container at this or a newer generation is already doing the job.
-	if gen, exists, err := c.Observe(ctx, w.ID); err != nil {
+	if gen, state, err := c.Observe(ctx, w.ID); err != nil {
 		return err
-	} else if exists && gen >= w.Generation {
+	} else if state != port.ContainerAbsent && gen >= w.Generation {
 		return nil
-	} else if exists {
+	} else if state != port.ContainerAbsent {
 		if err := c.deleteByWorkerID(ctx, w.ID, "stale-generation"); err != nil {
 			return err
 		}
@@ -171,21 +230,64 @@ func (c *Client) CreateWorker(ctx context.Context, w domain.Worker) error {
 		"S3_ENDPOINT=http://minio:9000",
 		"PLATFORMS=" + c.platforms,
 		"ACTION_DRY_RUN=" + boolStr(c.dryRun),
+		// Operator wall-clock: logs and auth screenshots read in WIB.
+		"TZ=Asia/Jakarta",
 		"NOVNC_URL=http://" + c.publicHost + ":" + fmt.Sprintf("%d", hostPort),
 	}
 	if c.internalSecret != "" {
 		env = append(env, "INTERNAL_API_SECRET="+c.internalSecret)
+	}
+	// Egress proxy, resolved per worker from its account's `proxy_group`. A
+	// resolver error downgrades to direct dial with a warning rather than
+	// failing the create: a container that boots without a proxy is far better
+	// than one that never boots, and the warning is the signal to fix it.
+	if c.proxyFor != nil {
+		proxy, err := c.proxyFor(ctx, w.ID)
+		if err != nil {
+			c.logger.Warn("docker provisioner: proxy lookup failed; worker will dial direct",
+				"workerId", w.ID, "err", err)
+		} else if proxy != nil && proxy.Server != "" {
+			env = append(env, "PROXY_URL="+proxy.Server)
+			if proxy.Username != "" {
+				env = append(env, "PROXY_USERNAME="+proxy.Username)
+			}
+			if proxy.Password != "" {
+				env = append(env, "PROXY_PASSWORD="+proxy.Password)
+			}
+			// Never the value: the operator only needs to know routing is on.
+			c.logger.Info("docker provisioner: worker egress routed through proxy",
+				"workerId", w.ID, "proxy", proxy.Server, "auth", proxy.Username != "")
+		}
 	}
 	body := map[string]any{
 		"Image":  c.image,
 		"Labels": labels,
 		"Env":    env,
 		"HostConfig": map[string]any{
-			"RestartPolicy": map[string]any{"Name": "unless-stopped"},
+			// NOT unless-stopped: that hands the daemon the lifecycle. A worker
+			// whose heartbeat stopped crashed; unless-stopped resurrected it, so
+			// a fleet of 77 that OOM-killed the host kept restarting itself with
+			// the API dead and nobody able to stop it. The reconciler and the
+			// waker own start/stop; the daemon may only retry a genuine crash.
+			"RestartPolicy": map[string]any{"Name": "on-failure", "MaximumRetryCount": 3},
+			// PID 1 here is Node, which reaps only the children it forks itself.
+			// Chromium's helper processes are reparented to PID 1 when their
+			// parent exits, and nothing waits on them, so they accumulate as
+			// zombies. Docker's tiny init runs as PID 1 and reaps them.
+			"Init": true,
 			"Binds": []string{
 				"smm-session-" + w.ID + ":/data/sessions",
 				"smm-screenshot-" + w.ID + ":/data/screenshots",
 			},
+			// Hard ceilings: one worker's Chromium stack measured 85MiB idle /
+			// ~460MiB after a session; the 4GiB Memory cap absorbs the spike
+			// while a runaway render can no longer starve the host or siblings.
+			"Memory":     workerMemoryBytes,
+			"PidsLimit":  workerPidsLimit,
+			// Chromium's shared-memory surfaces need far more than the 64MiB
+			// /dev/shm a container gets by default; short of it, tabs crash
+			// under load.
+			"ShmSize":    int64(512 << 20),
 			// Loopback only (docs/INFRA_ANALYST.md §7): the live view is for the
 			// operator's own browser, never another machine.
 			"PortBindings": map[string]any{
@@ -204,6 +306,7 @@ func (c *Client) CreateWorker(ctx context.Context, w domain.Worker) error {
 	if err := c.postEmpty(ctx, "/containers/"+created.ID+"/start"); err != nil {
 		return fmt.Errorf("docker: start container: %w", err)
 	}
+	c.invalidate()
 	c.logger.Info("worker container started", "workerId", w.ID, "name", w.Name, "container", shortID(created.ID), "novncPort", hostPort)
 	return nil
 }
@@ -214,6 +317,7 @@ func (c *Client) DeleteWorker(ctx context.Context, workerID string) error {
 	if err := c.deleteByWorkerID(ctx, workerID, "deprovision"); err != nil {
 		return err
 	}
+	c.invalidate()
 	// Named volumes outlive the container; drop them so sessions/screenshots do
 	// not pile up across recreations.
 	for _, vol := range []string{"smm-session-" + workerID, "smm-screenshot-" + workerID} {
@@ -225,49 +329,186 @@ func (c *Client) DeleteWorker(ctx context.Context, workerID string) error {
 	return nil
 }
 
-// Observe returns the running generation, or (0,false) when absent.
-func (c *Client) Observe(ctx context.Context, workerID string) (int, bool, error) {
-	name, err := c.containerByWorkerID(ctx, workerID)
+// Observe returns the generation on the platform plus the container's run
+// state. Served from the cached fleet snapshot: the reconciler calls this once
+// per worker per tick, and one shared list replaces N label-filtered lookups.
+func (c *Client) Observe(ctx context.Context, workerID string) (int, port.ContainerState, error) {
+	fleet, err := c.snapshot(ctx)
 	if err != nil {
-		return 0, false, err
+		return 0, port.ContainerAbsent, err
 	}
-	if name == "" {
-		return 0, false, nil
+	e, ok := fleet[workerID]
+	if !ok {
+		return 0, port.ContainerAbsent, nil
 	}
-	var info struct {
-		State struct {
-			Running bool `json:"Running"`
-		} `json:"State"`
-		Config struct {
-			Labels map[string]string `json:"Labels"`
-		} `json:"Config"`
+	state := port.ContainerStopped
+	if e.running {
+		state = port.ContainerRunning
 	}
-	if err := c.getJSON(ctx, "/containers/"+name+"/json", &info); err != nil {
-		if isNotFound(err) {
-			return 0, false, nil
-		}
-		return 0, false, err
-	}
-	return parseGeneration(info.Config.Labels), info.State.Running, nil
+	return e.gen, state, nil
 }
 
-// ListRunning returns every worker id the daemon hosts. Label-derived, so the
-// sweeper can finally distinguish an orphan from a scaled replica.
-func (c *Client) ListRunning(ctx context.Context) ([]string, error) {
-	// The daemon's filter form is {"label":["smm.worker=true"]} — a list of
-	// key=value predicates, not a map. The map form is a 400 "invalid filter".
-	// Encoded: the raw blob is rejected by the query parser.
-	filter := url.QueryEscape(`{"label":["` + LabelWorker + `=true"]}`)
+// snapshot returns the fleet cache, refreshing it when older than fleetTTL.
+func (c *Client) snapshot(ctx context.Context) (map[string]fleetEntry, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.fleet != nil && time.Since(c.fleetAt) < fleetTTL {
+		return c.fleet, nil
+	}
+	fresh, err := c.listFleet(ctx)
+	if err != nil {
+		// Serve the stale map rather than wedging every create behind a list
+		// failure; Apply-time ops still hard-fail on their own HTTP errors.
+		if c.fleet != nil {
+			c.logger.Warn("docker: fleet refresh failed; serving stale snapshot", "err", err)
+			return c.fleet, nil
+		}
+		return nil, err
+	}
+	c.fleet = fresh
+	c.fleetAt = time.Now()
+	return c.fleet, nil
+}
+
+// listFleet is one /containers/json?all=1 decode into per-worker entries. The
+// generation label and running state ride along so Observe and the reconciler's
+// stop path need nothing else.
+func (c *Client) listFleet(ctx context.Context) (map[string]fleetEntry, error) {
 	var list []struct {
 		Names  []string          `json:"Names"`
+		State  string            `json:"State"`
 		Labels map[string]string `json:"Labels"`
+		Ports  []struct {
+			PublicPort int `json:"PublicPort"`
+		} `json:"Ports"`
 	}
-	if err := c.getJSON(ctx, "/containers/json?all=1&filters="+filter, &list); err != nil {
+	if err := c.getJSON(ctx, "/containers/json?all=1", &list); err != nil {
 		return nil, fmt.Errorf("docker: list containers: %w", err)
 	}
-	ids := make([]string, 0, len(list))
+	fleet := make(map[string]fleetEntry, len(list))
 	for _, ctr := range list {
-		if id := ctr.Labels[LabelWorkerID]; id != "" {
+		id := ctr.Labels[LabelWorkerID]
+		if id == "" {
+			continue
+		}
+		e := fleet[id]
+		// A worker can have at most one container; if a stale duplicate ever
+		// appears the newest non-running one loses to a running one.
+		if e.running {
+			continue
+		}
+		name := ""
+		if len(ctr.Names) > 0 {
+			name = strings.TrimPrefix(ctr.Names[0], "/")
+		}
+		for _, p := range ctr.Ports {
+			e.hostPorts = append(e.hostPorts, p.PublicPort)
+		}
+		e.name = name
+		e.gen = parseGeneration(ctr.Labels)
+		e.running = ctr.State == "running"
+		fleet[id] = e
+	}
+	return fleet, nil
+}
+
+// invalidate drops the snapshot after a mutation so reads never act on a
+// container state that no longer exists, and so the capacity count sees the
+// containers this pass just started. Every path that must be exact takes a fresh
+// snapshot rather than reusing one taken before the mutation.
+func (c *Client) invalidate() {
+	c.mu.Lock()
+	c.fleet = nil
+	c.mu.Unlock()
+}
+
+// fresh reads the fleet with the cache bypassed. The capacity check needs an
+// exact count: a snapshot taken before this pass's own creates (or within
+// fleetTTL of a previous tick) would still report the pre-pass fleet.
+func (c *Client) fresh(ctx context.Context) (map[string]fleetEntry, error) {
+	c.invalidate()
+	return c.snapshot(ctx)
+}
+
+// StopWorker halts a container but keeps it (and its volumes), so StartWorker
+// resumes the same instance. Idempotent: an already-stopped or absent container
+// is success, because the desired end state is simply "not running".
+//
+// A `t=10` grace lets the worker flush its Redis claim before the process is
+// killed. Docker's default (10s) is the same, but naming it keeps the intent
+// explicit if that default ever changes.
+func (c *Client) StopWorker(ctx context.Context, workerID string) error {
+	// Already stopped is the common steady state for a paused fleet, so read
+	// the snapshot first: an Exited container needs no round-trip, and the
+	// reconciler would otherwise POST a stop for every paused worker each tick.
+	fleet, err := c.snapshot(ctx)
+	if err == nil {
+		if e, ok := fleet[workerID]; ok && !e.running {
+			return nil
+		}
+	}
+	name, err := c.containerByWorkerID(ctx, workerID)
+	if err != nil {
+		return err
+	}
+	if name == "" {
+		return nil
+	}
+	if err := c.postEmpty(ctx, "/containers/"+name+"/stop?t=10"); err != nil {
+		if isNotFound(err) {
+			c.invalidate()
+			return nil
+		}
+		return fmt.Errorf("docker: stop container: %w", err)
+	}
+	c.invalidate()
+	c.logger.Info("worker container stopped", "workerId", workerID, "container", name)
+	return nil
+}
+
+// StartWorker resumes a stopped container that still exists, and provisions one
+// when nothing exists yet.
+//
+// The create fallback is what makes pausing-by-default affordable: a PAUSED row
+// keeps no container (the reconciler no longer materialises the whole fleet), so
+// the first wake of a never-used account has to build its container. CreateWorker
+// is idempotent per generation, so racing a concurrent create converges instead
+// of duplicating.
+func (c *Client) StartWorker(ctx context.Context, w domain.Worker) error {
+	name, err := c.containerByWorkerID(ctx, w.ID)
+	if err != nil {
+		return err
+	}
+	if name == "" {
+		return c.CreateWorker(ctx, w)
+	}
+	if err := c.postEmpty(ctx, "/containers/"+name+"/start"); err != nil {
+		// A 304 ("already running") is NOT an error here: do() only fails on
+		// >=400, and 304 already means the desired end state.
+		return fmt.Errorf("docker: start container: %w", err)
+	}
+	c.invalidate()
+	c.logger.Info("worker container started", "workerId", w.ID, "container", name)
+	return nil
+}
+
+// ListRunning returns every worker the daemon currently RUNS, and is the
+// reconciler's capacity count. Two things matter for correctness:
+//
+//   - Stopped containers are excluded. They exist but spend no RAM, so counting
+//     them would keep the cap permanently full once a few sessions had paused.
+//   - It reads the shared fleet snapshot, not its own list. The cap is checked
+//     once per create inside one pass, and a fresh list per worker would mean N
+//     full /containers/json calls per tick — and, worse, each read would lag the
+//     pass's own creates, letting the pass admit N more than the cap.
+func (c *Client) ListRunning(ctx context.Context) ([]string, error) {
+	fleet, err := c.fresh(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(fleet))
+	for id, e := range fleet {
+		if e.running {
 			ids = append(ids, id)
 		}
 	}
@@ -291,40 +532,27 @@ func (c *Client) hostPortFor(w domain.Worker) int {
 	return p
 }
 
-// allocatePort walks the range for a host port nothing else has bound. It
-// prefers to stay out of Docker's way entirely, so a hit is checked live
-// rather than trusting bookkeeping.
+// allocatePort walks the range for a host port nothing else has published. It
+// reads ONE fleet snapshot instead of re-listing per candidate port.
 func (c *Client) allocatePort(ctx context.Context) (int, error) {
-	for p := c.portMin; p <= c.portMax; p++ {
-		if c.portTaken(ctx, p) {
-			continue
+	fleet, err := c.snapshot(ctx)
+	if err != nil {
+		// Without a snapshot we cannot see what is bound; fail loudly rather
+		// than hand out a port another live view already owns.
+		return 0, fmt.Errorf("docker: port allocation needs fleet snapshot: %w", err)
+	}
+	taken := make(map[int]bool)
+	for _, e := range fleet {
+		for _, p := range e.hostPorts {
+			taken[p] = true
 		}
-		return p, nil
+	}
+	for p := c.portMin; p <= c.portMax; p++ {
+		if !taken[p] {
+			return p, nil
+		}
 	}
 	return 0, fmt.Errorf("docker: live-view port range %d-%d exhausted", c.portMin, c.portMax)
-}
-
-// portTaken reports whether any container already binds the host port.
-func (c *Client) portTaken(ctx context.Context, port int) bool {
-	var list []struct {
-		Ports []struct {
-			PublicPort int `json:"PublicPort"`
-		} `json:"Ports"`
-	}
-	if err := c.getJSON(ctx, "/containers/json?all=1", &list); err != nil {
-		// If the daemon cannot answer, treat the port as free rather than
-		// wedging every create behind a list failure.
-		c.logger.Warn("docker: port probe failed, assuming free", "port", port, "err", err)
-		return false
-	}
-	for _, ctr := range list {
-		for _, bp := range ctr.Ports {
-			if bp.PublicPort == port {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func (c *Client) deleteByWorkerID(ctx context.Context, workerID, reason string) error {

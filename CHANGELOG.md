@@ -6,6 +6,36 @@
 
 ## Unreleased
 ### Added
+- **Elastic worker pool: the fleet is now sized for concurrency, not for the
+  number of accounts.** A worker container holds a headful Chromium for as long
+  as it runs (~85 MiB idle, up to ~460 MiB after a session, 4 GiB limit for the
+  spike), so a host had to be big enough for every container at once. The pool
+  keeps at most `ELASTIC_POOL_MAX_ACTIVE` AUTO workers RUNNING fleet-wide and
+  pauses the rest once they have been quiet for `ELASTIC_POOL_IDLE_SECONDS`.
+  A PAUSED container costs **0 bytes of RAM** (measured: `docker stats` reports
+  `0B / 0B` for an Exited container) and resumes in **~3–5 s** (measured:
+  `docker start` 0.39 s + entrypoint + node boot to `control subscriber ready`
+  0.37 s), so a 4 vCPU / 8 GiB box can serve a fleet far larger than its memory
+  would allow if everything ran at once.
+  - **Policy is pure and testable.** `ElasticPool.Decide` is side-effect free:
+    it steers only `source=AUTO` workers, treats an empty queue **plus** an
+    expired idle window as idle (a worker is never killed the instant it
+    finishes a job), ranks the rest busiest-first with a stable tie-break on
+    worker id (an unstable order would make two workers trade the last slot
+    every tick and flap both), and pauses the over-cap remainder while their
+    jobs stay durable in Redis. Covered by 12 table tests.
+  - **It writes `desired_state`, never `STOPPED`.** PAUSED keeps the session
+    volume so a resume is a `docker start`, not an interactive `runLogin`;
+    STOPPED would delete the volume and force a manual re-login. The existing
+    reconciler performs the actual start/stop, so a driver outage cannot leave
+    the pool half-applied.
+  - **Off by default** (`ELASTIC_POOL_MAX_ACTIVE=0`), and requires
+    `RECONCILE_INTERVAL_SECONDS > 0`: with the reconciler off nothing would
+    carry out the intent. A nil driver also disables it, so local dev and tests
+    keep working without a provisioner.
+  - Docs: `docs/DEPLOYMENT_ELASTIC_POOL.md` (sizing, deploy, verification,
+    rollback, troubleshooting); strategy and measured scale limits in
+    `docs/SCALE_MINSPEC_STRATEGY.md`.
 - **Keyword search now runs on a working actor, in two stages.** The publisher of
   `crawlerbros/instagram-keyword-search-scraper` was **removed from the Apify
   Store** (the actor and its whole namespace are gone), so every Instagram
@@ -37,6 +67,33 @@
   Actions card).
 
 ### Fixed
+- **The worker fleet can no longer outgrow its host: a paused row no longer
+  boots a container, and creates are hard-capped.** Live incident: 77 worker
+  containers ran on a 16 GiB box until the kernel OOM-killed `postgres` and
+  `minio` (`Exited 137`) and the API could not start, with load average 39.8 on
+  8 CPUs. Four independent causes; all four are closed.
+  - **`diff()` created a container for every PAUSED row.** `PAUSED + absent`
+    returned `ActionCreate` "so a later resume has something to start". The
+    packer seeds 454 accounts as `AUTO/PAUSED`, so the first tick after a
+    restart materialised the entire fleet at once. Absent is now in sync: the
+    container is built on demand, when the waker actually needs it.
+  - **Nothing capped concurrent creates.** `ELASTIC_POOL_MAX_ACTIVE` only
+    limited RUNNING *rows*, and `paused-but-absent` never consulted it. The
+    reconciler now takes the same number as a hard ceiling on containers
+    actually running: one exact `ListRunning` per tick, a slot spent per
+    create/resume and returned on stop/delete. A failed count admits nothing.
+  - **`StartWorker` now provisions when the container is absent**, so on-demand
+    materialisation works: the first wake of a never-used account builds its
+    container instead of failing `container not found`. Docker and k8s both
+    (`k8s` also ensures the session PVC, since a paused row may own none).
+  - **Restart policy was `unless-stopped`, handing the daemon the fleet's
+    lifecycle.** Crashed workers restarted themselves indefinitely — 10 restarts
+    each — with the API dead and nothing able to stop them; `docker stop` alone
+    did not stick. Now `on-failure:3`: the reconciler and waker own start/stop,
+    the daemon only retries a genuine crash.
+  - `ListRunning` reports running containers only (a stopped one holds a row but
+    spends no RAM, so counting it kept the cap permanently full) and reads the
+    shared fleet snapshot instead of a fresh `/containers/json` per worker.
 - **Threads login from the worker app works again, and a Threads reply now
   targets the right comment.** Both were live failures, each with a cause
   unrelated to the other.

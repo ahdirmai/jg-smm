@@ -34,6 +34,9 @@ docs/development-analyst/ audit of built vs approved prototype; derives the P6
 Local containers run via **colima + docker compose** — no Kubernetes (K8s is the
 production path; see `docs/SYSTEM_DESIGN.md` → Local Tier).
 
+Production (K8s) install order, manifests and the tier's known gaps:
+[`docs/DEPLOY_K8S.md`](docs/DEPLOY_K8S.md), with manifests in `infra/k8s/`.
+
 ## Bootstrap
 
 ```sh
@@ -249,6 +252,40 @@ so they are left off.
 `Post.published_at` (migration `000016`) holds the post's own publication
 date. `Post.scraped_at` is when *we* looked and is not a substitute; the UI
 labels the fallback `scrape …` so the two are never confused.
+
+## Worker capacity
+
+A worker container runs a headful Chromium (plus Xvfb, x11vnc, noVNC) for as
+long as it lives: ~85 MiB idle, up to ~460 MiB after a session, 4 GiB limit for
+the spike. The fleet is therefore sized for concurrency, never for the number of
+accounts:
+
+| Env | Default | Meaning |
+| --- | --- | --- |
+| `ELASTIC_POOL_MAX_ACTIVE` | `0` | Hard ceiling on **containers running**, fleet-wide. `0` disables both the pool and the cap. |
+| `ELASTIC_POOL_IDLE_SECONDS` | `300` | Quiet time before an AUTO worker is paused. |
+| `RECONCILE_INTERVAL_SECONDS` | `5` compose / `0` code | Tick for the reconciler and the pool. `0` starts neither, so no container is created or stopped. |
+
+Two independent layers enforce it, and both are needed:
+
+- **The reconciler never creates a container for a PAUSED row.** Absent is the
+  correct state for a paused worker; the container is built on demand by the
+  waker when a login, action or live view actually needs it. Without this, the
+  454 packer-seeded `AUTO/PAUSED` accounts all materialised on the first tick.
+- **Creates and resumes are capped**, counted from containers actually running
+  on the platform (one `ListRunning` per tick, a slot per create/resume,
+  returned on stop/delete). A failed count admits nothing — deferring a tick is
+  cheaper than an OOM.
+
+The pool only steers `desired_state` on rows, so it cannot stop a container no
+RUNNING row explains; the cap is what holds in that gap. Sizing, deploy and
+rollback: [`docs/DEPLOYMENT_ELASTIC_POOL.md`](docs/DEPLOYMENT_ELASTIC_POOL.md).
+
+Worker containers run with `restart: on-failure:3`, **never** `unless-stopped`:
+a crashed fleet restarted itself indefinitely through an OOM with the API down,
+and `docker stop` alone did not stick. If a fleet ever runs away, the reset is
+`docker rm -f $(docker ps -aq --filter name=smm-worker)` — then check
+`RECONCILE_INTERVAL_SECONDS` before starting the API again.
 
 ## Changelog
 

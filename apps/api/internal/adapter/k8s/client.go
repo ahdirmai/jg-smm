@@ -135,24 +135,51 @@ func (c *Client) DeleteWorker(ctx context.Context, workerID string) error {
 	return nil
 }
 
-// Observe returns the generation currently running for a worker, or
-// (0, false) when nothing exists. This is the reconciler's "actual" side.
-func (c *Client) Observe(ctx context.Context, workerID string) (int, bool, error) {
+// Observe returns the generation on the platform and whether the pod is
+// running, or (0, ContainerAbsent) when nothing exists. This is the
+// reconciler's "actual" side.
+func (c *Client) Observe(ctx context.Context, workerID string) (int, port.ContainerState, error) {
 	pod, err := c.core.CoreV1().Pods(c.ns).Get(ctx, workerName(workerID), metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		return 0, false, nil
+		return 0, port.ContainerAbsent, nil
 	}
 	if err != nil {
-		return 0, false, fmt.Errorf("k8s: observe %s: %w", workerID, err)
+		return 0, port.ContainerAbsent, fmt.Errorf("k8s: observe %s: %w", workerID, err)
 	}
-	return generationOf(pod), true, nil
+	if isPodRunning(pod) {
+		return generationOf(pod), port.ContainerRunning, nil
+	}
+	return generationOf(pod), port.ContainerStopped, nil
 }
 
-// ListRunning returns every worker ID the cluster currently hosts. It is the
-// orphan sweeper's source of truth for what exists on the platform.
+// isPodRunning reports whether the pod has at least its worker container
+// running. Pending/CrashLoopBackOff/Succeeded all count as "not running": the
+// reconciler treats them as stopped, which for Pending converges by a later
+// observe once the pod schedules.
+func isPodRunning(pod *corev1.Pod) bool {
+	if pod == nil {
+		return false
+	}
+	if pod.Status.Phase != corev1.PodRunning {
+		return false
+	}
+	for _, st := range pod.Status.ContainerStatuses {
+		if st.Name == WorkerContainerName {
+			return st.State.Running != nil
+		}
+	}
+	return false
+}
+
+// ListRunning returns every worker ID the cluster currently runs. It is the
+// orphan sweeper's source of truth for what exists on the platform AND the
+// reconciler's capacity count, so only live pods are reported: a paused or
+// completed pod holds a row but spends no resources, and counting it would keep
+// the cap permanently full.
 func (c *Client) ListRunning(ctx context.Context) ([]string, error) {
 	pods, err := c.core.CoreV1().Pods(c.ns).List(ctx, metav1.ListOptions{
 		LabelSelector: WorkerLabel,
+		FieldSelector: "status.phase=Running",
 	})
 	if err != nil {
 		return nil, fmt.Errorf("k8s: list worker pods: %w", err)
@@ -215,6 +242,12 @@ func (c *Client) ensurePod(ctx context.Context, w domain.Worker) error {
 	allowPrivilegeEscalation := false
 	runAsNonRoot := true
 	runAsUser := int64(10001)
+	// Same ceilings the docker driver hard-codes: a headful Chromium stack
+	// spikes to ~460MiB, the limit absorbs the spike, and a runaway render
+	// gets OOM-killed instead of starving the node. /dev/shm is a real
+	// tmpfs volume because a pod's default (64MiB) crashes tabs under load.
+	workerMemory := resource.MustParse("4Gi")
+	workerShm := resource.MustParse("512Mi")
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -234,9 +267,21 @@ func (c *Client) ensurePod(ctx context.Context, w domain.Worker) error {
 					AllowPrivilegeEscalation: &allowPrivilegeEscalation,
 					Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
 				},
+				Resources: corev1.ResourceRequirements{
+					// Requests = steady state, Limits = spike ceiling.
+					Requests: corev1.ResourceList{
+						corev1.ResourceMemory: resource.MustParse("512Mi"),
+					},
+					Limits: corev1.ResourceList{
+						corev1.ResourceMemory: workerMemory,
+					},
+				},
 				VolumeMounts: []corev1.VolumeMount{{
 					Name:      SessionVolumeName,
 					MountPath: "/data/sessions",
+				}, {
+					Name:      "dshm",
+					MountPath: "/dev/shm",
 				}},
 			}},
 			Volumes: []corev1.Volume{{
@@ -244,6 +289,14 @@ func (c *Client) ensurePod(ctx context.Context, w domain.Worker) error {
 				VolumeSource: corev1.VolumeSource{
 					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
 						ClaimName: domain.SessionPVCName(w.ID),
+					},
+				},
+			}, {
+				Name: "dshm",
+				VolumeSource: corev1.VolumeSource{
+					EmptyDir: &corev1.EmptyDirVolumeSource{
+						Medium:    corev1.StorageMediumMemory,
+						SizeLimit: &workerShm,
 					},
 				},
 			}},
@@ -309,4 +362,49 @@ func generationOf(pod *corev1.Pod) int {
 		return 0
 	}
 	return n
+}
+
+// StopWorker removes the worker's POD while keeping its Service and PVC.
+//
+// This driver runs a bare Pod rather than a Deployment, so there is no replica
+// count to scale — deleting the pod IS "stopped here". The PVC is deliberately
+// left alone, so StartWorker recreates the pod against the SAME volume and the
+// persisted session survives. That is what separates PAUSED from DELETE
+// (DeleteWorker, which removes the PVC too).
+//
+// Idempotent: an absent pod is already the desired end state.
+func (c *Client) StopWorker(ctx context.Context, workerID string) error {
+	name := workerName(workerID)
+	err := c.core.CoreV1().Pods(c.ns).Delete(ctx, name, metav1.DeleteOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("k8s: stop worker %s: %w", workerID, err)
+	}
+	c.logger.Info("worker pod stopped", "workerId", workerID)
+	return nil
+}
+
+// StartWorker creates or resumes the pod for a paused worker.
+//
+// The caller passes the row, which is all ensurePod needs to rebuild it: ensurePod is
+// idempotent and names every resource after the worker id. This does NOT call
+// ensureService — the Service outlived the pause, and recreating it would be
+// the only part of the path that could race.
+func (c *Client) StartWorker(ctx context.Context, w domain.Worker) error {
+	if err := c.limiter.Wait(ctx); err != nil {
+		return fmt.Errorf("k8s: rate limit: %w", err)
+	}
+	// The PVC as well as the pod: a paused row may never have been materialised,
+	// so "resume" is often a first provision and the session volume must exist
+	// before the pod mounts it.
+	if err := c.ensurePVC(ctx, w); err != nil {
+		return err
+	}
+	if err := c.ensurePod(ctx, w); err != nil {
+		return err
+	}
+	c.logger.Info("worker pod started", "workerId", w.ID, "generation", w.Generation)
+	return nil
 }

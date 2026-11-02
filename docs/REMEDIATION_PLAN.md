@@ -36,11 +36,13 @@ and [ADR 0001](adr/0001-container-per-device.md).
 | `CreateWorker` | inspect → delete stale generation → `POST /containers/create?name=…` → `POST /containers/{id}/start` |
 | `DeleteWorker` | `DELETE /containers/{name}?force=1&v=1`, then the volumes                                            |
 | `Observe`      | `GET /containers/{name}/json` → running + `smm.generation` label; `404` = absent                     |
-| `ListRunning`  | `GET /containers/json?all=1&filters={"label":["smm.worker=true"]}`                                   |
+| `ListRunning`  | shared fleet snapshot, running container ids only (the reconciler's capacity count)                  |
 
 Labels: `smm.worker=true`, `smm.worker.id`, `smm.generation`. Host config:
 network = the compose network, per-worker named volume at `/data/sessions` and
-`/data/screenshots`, restart policy `unless-stopped`, `6080/tcp` published to
+`/data/screenshots`, restart policy `on-failure:3` (never `unless-stopped`:
+the daemon must not own a worker's lifecycle — a crashed fleet restarted itself
+through an OOM with the API dead), `6080/tcp` published to
 `127.0.0.1:<port>`.
 
 Environment injected into the container — this is what finally makes F-03 work:

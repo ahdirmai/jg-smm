@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/port"
 )
 
 // fakeDaemon stands in for Docker Engine: it records every request and answers
@@ -86,11 +87,10 @@ func (d *fakeDaemon) handler(w http.ResponseWriter, r *http.Request) {
 			if wantID != "" && id != wantID {
 				continue
 			}
-			entry := map[string]any{"Names": []string{"/" + name}}
-			if wantID == "" {
-				entry["Labels"] = map[string]any{LabelWorkerID: id}
-			} else {
-				entry["Labels"] = map[string]any{LabelWorkerID: id, LabelGeneration: gen}
+			entry := map[string]any{
+				"Names":  []string{"/" + name},
+				"State":  "running",
+				"Labels": map[string]any{LabelWorkerID: id, LabelGeneration: gen},
 			}
 			out = append(out, entry)
 		}
@@ -202,15 +202,15 @@ func TestObserveReportsGenerationAndAbsence(t *testing.T) {
 	d := newFakeDaemon()
 	c := newTestClient(t, d)
 
-	if gen, exists, err := c.Observe(context.Background(), "missing"); err != nil || exists || gen != 0 {
-		t.Fatalf("Observe(missing) = (%d,%v,%v), want (0,false,nil)", gen, exists, err)
+	if gen, state, err := c.Observe(context.Background(), "missing"); err != nil || state != port.ContainerAbsent || gen != 0 {
+		t.Fatalf("Observe(missing) = (%d,%v,%v), want (0,absent,nil)", gen, state, err)
 	}
 	url := "http://localhost:24100"
 	if err := c.CreateWorker(context.Background(), domain.Worker{ID: "w1", Name: "coba jakarta 1", Generation: 2, NoVNCService: &url}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if gen, exists, err := c.Observe(context.Background(), "w1"); err != nil || !exists || gen != 2 {
-		t.Fatalf("Observe(w1) = (%d,%v,%v), want (2,true,nil)", gen, exists, err)
+	if gen, state, err := c.Observe(context.Background(), "w1"); err != nil || state != port.ContainerRunning || gen != 2 {
+		t.Fatalf("Observe(w1) = (%d,%v,%v), want (2,running,nil)", gen, state, err)
 	}
 }
 
@@ -251,6 +251,49 @@ func TestHostPortForReadsStoredURL(t *testing.T) {
 		if got := c.hostPortFor(domain.Worker{NoVNCService: p}); got != tc.want {
 			t.Errorf("hostPortFor(%q) = %d, want %d", tc.url, got, tc.want)
 		}
+	}
+}
+
+func TestCreateWorkerDoesNotHandLifecycleToDaemon(t *testing.T) {
+	d := newFakeDaemon()
+	c := newTestClient(t, d)
+	url := "http://localhost:24100"
+	if err := c.CreateWorker(context.Background(), domain.Worker{ID: "w1", Name: "w1", Generation: 1, NoVNCService: &url}); err != nil {
+		t.Fatalf("CreateWorker: %v", err)
+	}
+	var path string
+	for p := range d.posts {
+		path = p
+	}
+	hc, _ := d.posts[path][0]["HostConfig"].(map[string]any)
+	policy, _ := hc["RestartPolicy"].(map[string]any)
+	// unless-stopped resurrects a stopped worker forever, with or without the
+	// API: a crashed fleet kept itself alive through an OOM. The daemon may only
+	// retry a genuine crash, and only a bounded number of times.
+	if got := policy["Name"]; got != "on-failure" {
+		t.Fatalf("RestartPolicy = %v, want on-failure (never unless-stopped)", got)
+	}
+	if got := policy["MaximumRetryCount"]; got != float64(3) {
+		t.Fatalf("MaximumRetryCount = %v, want 3", got)
+	}
+}
+
+// A PAUSED row that was never materialised has no container to resume, so the
+// wake has to build one; failing here would leave the account unreachable.
+func TestStartWorkerCreatesWhenContainerIsAbsent(t *testing.T) {
+	d := newFakeDaemon()
+	c := newTestClient(t, d)
+	url := "http://localhost:24100"
+	w := domain.Worker{ID: "w1", Name: "coba jakarta 1", Generation: 1, NoVNCService: &url}
+
+	if err := c.StartWorker(context.Background(), w); err != nil {
+		t.Fatalf("StartWorker: %v", err)
+	}
+	if len(d.posts) != 1 {
+		t.Fatalf("creates = %d, want 1", len(d.posts))
+	}
+	if gen, state, err := c.Observe(context.Background(), "w1"); err != nil || state != port.ContainerRunning || gen != 1 {
+		t.Fatalf("Observe(w1) = (%d,%v,%v), want (1,running,nil)", gen, state, err)
 	}
 }
 

@@ -13,6 +13,11 @@ import (
 	"syscall"
 	"time"
 
+	// Embed the IANA timezone database: the runtime image is distroless and
+	// ships no /usr/share/zoneinfo, so without this TZ=Asia/Jakarta silently
+	// falls back to UTC and timestamps log 7 hours off WIB.
+	_ "time/tzdata"
+
 	"github.com/labstack/echo/v4"
 	"github.com/redis/go-redis/v9"
 
@@ -23,6 +28,7 @@ import (
 	"github.com/ahdirmai/jg-smm/apps/api/internal/adapter/dockerprovisioner"
 	"github.com/ahdirmai/jg-smm/apps/api/internal/adapter/k8s"
 	llmadapter "github.com/ahdirmai/jg-smm/apps/api/internal/adapter/llm"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/adapter/proxyresolver"
 	smtpadapter "github.com/ahdirmai/jg-smm/apps/api/internal/adapter/smtp"
 	storageadapter "github.com/ahdirmai/jg-smm/apps/api/internal/adapter/storage"
 	"github.com/ahdirmai/jg-smm/apps/api/internal/adapter/transport"
@@ -161,7 +167,15 @@ func main() {
 		// and the reconciler) because the delete path needs it directly — the
 		// row is the reconciler's only view of desired state, so a delete must
 		// tear the container down while the row still says STOPPED.
-		raw, err := provisionDriver(ctx, cfg, workerRepo, logRepo, logger)
+		// Egress routing (P1-07 `proxy_group`): resolve the pool bound to a
+		// worker's accounts so its container reports the residential IP the
+		// pool was bought for. Without this a whole fleet shares one datacentre
+		// IP, which is what Instagram rate-limits first — logins fail with
+		// ERR_HTTP_RESPONSE_CODE_FAILURE while the same request from an
+		// ordinary host returns 200.
+		proxyResolver := proxyresolver.New(repository.NewProxyGroupRepo(pg.Queries()), sealer)
+
+		raw, err := provisionDriver(ctx, cfg, workerRepo, logRepo, logger, proxyResolver.ForWorker)
 		if err != nil {
 			logger.Error("provisioner init failed", "err", err)
 			os.Exit(1)
@@ -186,6 +200,11 @@ func main() {
 			publisher = transport.NewPublisher(redisClient)
 		}
 
+		// One waker shared by every trigger that needs a PAUSED container back:
+		// a login, an action job, and an operator opening the live view. One
+		// instance so the "is it already running?" check cannot diverge.
+		waker := service.NewWaker(workerRepo, driver, logger)
+
 		// Container API (P1-19): create/list/delete MANUAL containers. The
 		// reconciler provisions the pod from the row this service writes.
 		containerSvc := service.NewContainerService(workerRepo, accountRepo, packer, service.ContainerConfig{
@@ -196,6 +215,7 @@ func main() {
 			Driver:  driver,
 			Novnc:   novnc,
 			Control: publisher,
+			Waker:   waker,
 		})
 		deps.Containers = apihttp.NewContainerHandler(containerSvc)
 
@@ -216,7 +236,12 @@ func main() {
 			Clock:   adapter.SystemClock{},
 			Stream:  hub,
 			Control: publisher,
-			Logger:  logger,
+			// Per-account cookie store (migration 000020): a login is captured
+			// on export and re-imported by whichever container picks the account
+			// up next, so a rotating fleet does not pay for a login per swap.
+			Sessions: repository.NewSessionRepo(pg.Queries()),
+			Waker:    waker,
+			Logger:   logger,
 		})
 		deps.Accounts = apihttp.NewAccountHandler(accountSvc)
 		// The account service is the sink for worker session-export callbacks:
@@ -412,6 +437,7 @@ func main() {
 					RateWindow:  time.Hour,
 					RateLimits:  cfg.ActionRateLimits,
 					Clock:       time.Now,
+					Waker:       waker,
 					Logger:      logger,
 				},
 			)
@@ -430,6 +456,14 @@ func main() {
 				Clock:  time.Now,
 				Logger: logger,
 				Sealer: sealer,
+				// Bound how many logins this fleet runs at once. TickBudget
+				// alone bounds a TICK, not concurrency: with a login taking
+				// minutes and ticks repeating every few seconds, the ceiling
+				// became "however many the scheduler could start before the
+				// first resolved" — which is how 30 workers came to hit
+				// Instagram simultaneously from one IP.
+				MaxConcurrentLogins: cfg.MaxConcurrentLogins,
+				InFlightLogins:      accountRepo.CountInFlightLogins,
 			})
 			go refresher.Run(ctx, time.Duration(cfg.SessionRefreshIntervalSeconds)*time.Second)
 		}
@@ -495,7 +529,12 @@ func main() {
 		// The desired-state loop is opt-in via RECONCILE_INTERVAL_SECONDS. It is
 		// off by default so `make up` locally never depends on it (P1-04).
 		if cfg.ReconcileIntervalSeconds > 0 {
-			reconciler := service.NewReconciler(workerRepo, driver, logger)
+			// ELASTIC_POOL_MAX_ACTIVE is also the reconciler's hard ceiling: the
+			// pool only steers rows, so it cannot stop a create that no RUNNING
+			// row explains. Without the cap that path materialised the whole
+			// paused fleet and OOM-killed the host.
+			reconciler := service.NewReconciler(workerRepo, driver, logger).
+				WithMaxActive(cfg.ElasticPoolMaxActive)
 			go reconciler.Run(ctx, time.Duration(cfg.ReconcileIntervalSeconds)*time.Second)
 
 			// Orphan sweeper: deletes platform resources whose Worker row is
@@ -506,6 +545,19 @@ func main() {
 				Logger: logger,
 			})
 			go sweeper.Run(ctx, time.Duration(cfg.ReconcileIntervalSeconds)*time.Second)
+
+			// Elastic pool: caps how many AUTO workers run at once and pauses
+			// the idle ones, so a small host is not sized for the whole fleet's
+			// worst case. It writes desired_state; the reconciler above does the
+			// actual start/stop. The hub carries every flip to the dashboard
+			// the tick it happens. Off unless ELASTIC_POOL_MAX_ACTIVE > 0.
+			pool := service.NewElasticPoolWithStream(workerRepo, driver, adapter.SystemClock{}, hub,
+				cfg.ElasticPoolMaxActive,
+				time.Duration(cfg.ElasticPoolIdleSeconds)*time.Second,
+				logger)
+			if pool.Enabled() {
+				go pool.Run(ctx, time.Duration(cfg.ReconcileIntervalSeconds)*time.Second)
+			}
 		}
 	}
 
@@ -549,7 +601,7 @@ func run(ctx context.Context, e *echo.Echo, addr string, timeout time.Duration, 
 // k8s inside a cluster, docker on a workstation, static for bookkeeping-only.
 // All three implement port.K8sClient, so the reconciler and services are
 // tier-agnostic.
-func provisionDriver(ctx context.Context, cfg config.Config, workers port.WorkerStore, logs port.ProvisionLogStore, logger *slog.Logger) (port.K8sClient, error) {
+func provisionDriver(ctx context.Context, cfg config.Config, workers port.WorkerStore, logs port.ProvisionLogStore, logger *slog.Logger, proxyFor func(context.Context, string) (*dockerprovisioner.WorkerProxy, error)) (port.K8sClient, error) {
 	switch cfg.ProvisionerMode {
 	case "k8s":
 		logger.Info("provisioner: k8s driver", "namespace", cfg.K8sNamespace)
@@ -574,6 +626,7 @@ func provisionDriver(ctx context.Context, cfg config.Config, workers port.Worker
 			Platforms:      cfg.WorkerPlatforms,
 			DryRun:         cfg.ActionDryRun,
 			InternalSecret: cfg.InternalAPISecret,
+			ProxyFor:       proxyFor,
 			Logger:         logger,
 		})
 	default:
@@ -582,23 +635,32 @@ func provisionDriver(ctx context.Context, cfg config.Config, workers port.Worker
 	}
 }
 
-// actorForPlatform maps a platform to its configured Apify actor id. The ids
-// are derived from the actor prefix in config so an actor change ships without
-// a rebuild. The MVP enables Instagram + Threads only; every other platform
-// returns empty and the runner rejects the job up front.
+// actorForPlatform maps a platform to its configured Apify POST actor id. The
+// ids are derived from the actor prefix in config so an actor change ships
+// without a rebuild.
 //
-// Actor picks (verified against the Apify store, 2026-09):
-//   - instagram-post-scraper takes a post permalink in its `username` field
-//     and returns that exact post with comments (the old apify/instagram-
-//     scraper build dropped per-post scraping).
-//   - threads: themineworks/threads-scraper, addressed by its FULL id. The
+// This is the ON-DEMAND scrape surface, not the action surface: which platform
+// a worker can like/comment on is a separate fleet fact (MVP_PLATFORMS) and is
+// deliberately NOT the gate here. A YouTube or X post can be scraped and read
+// even though no worker can act on it yet — refusing to store its data because
+// the action half is missing would make the dashboard unable to show the very
+// posts an operator is evaluating.
+//
+// Actor picks (verified against the live store AND run, 2026-10):
+//   - Instagram: <prefix>/instagram-post-scraper. Takes a post permalink in its
+//     `username` field and returns that exact post with comments.
+//   - Threads: themineworks/threads-scraper, addressed by its FULL id. The
 //     prefix-derived "<prefix>/meta-threads-scraper" this replaced 404'd on
 //     every scrape — that actor is a user-posts-only build with no per-post
-//     mode, so it could not address a permalink at all, and no store entry
-//     existed under the `apify/` namespace for it. Its predecessor
-//     (pro100chok/threads-scraper-usage) could address a permalink but ran
-//     async-only; this one is driven the same way and returns replies as
-//     sibling rows rather than nested (see runThreadsPost).
+//     mode.
+//   - TikTok: logical_scrapers/tiktok-realtime-post-details-scraper. A
+//     permalink can only come from an actor that takes one; the keyword search
+//     actor cannot, and the popular thenetaji/tiktok-post-scraper was rejected
+//     because its `urls` field declares minItems:4 — a single-post scrape is
+//     rejected by the schema before it runs.
+//   - YouTube / X: the SAME actors as their keyword search, which both accept a
+//     single video/tweet URL through `startUrls` (verified by running each with
+//     one URL and reading the one row back).
 func actorForPlatform(cfg config.Config) func(domain.Platform) string {
 	return func(p domain.Platform) string {
 		switch p {
@@ -606,6 +668,12 @@ func actorForPlatform(cfg config.Config) func(domain.Platform) string {
 			return cfg.ApifyActorPrefix + "/instagram-post-scraper"
 		case domain.PlatformThreads:
 			return cfg.ApifyPostActorThreads
+		case domain.PlatformTikTok:
+			return cfg.ApifyPostActorTikTok
+		case domain.PlatformYouTube:
+			return cfg.ApifySearchActorYouTube
+		case domain.PlatformX:
+			return cfg.ApifySearchActorX
 		}
 		return ""
 	}
