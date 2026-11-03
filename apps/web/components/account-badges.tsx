@@ -20,7 +20,11 @@ function statusTone(
 ): 'success' | 'outline' | 'secondary' | 'destructive' {
   switch (status) {
     case 'ACTIVE':
-      return 'success';
+      // Enrolment, not liveness: an account stays ACTIVE while its container
+      // is paused. Green here read as "this is running" and buried the
+      // fleet's real PAUSED state; neutral keeps the operator's eye on the
+      // worker-state badge that accompanies it.
+      return 'outline';
     case 'PAUSED':
       return 'secondary';
     case 'ARCHIVED':

@@ -85,6 +85,7 @@ const (
 
 // Defines values for ContainerDesiredState.
 const (
+	ContainerDesiredStatePAUSED  ContainerDesiredState = "PAUSED"
 	ContainerDesiredStateRUNNING ContainerDesiredState = "RUNNING"
 	ContainerDesiredStateSTOPPED ContainerDesiredState = "STOPPED"
 )
@@ -198,8 +199,8 @@ const (
 
 // Defines values for ProvisionLogEntryStatus.
 const (
-	APPLIED ProvisionLogEntryStatus = "APPLIED"
-	FAILED  ProvisionLogEntryStatus = "FAILED"
+	ProvisionLogEntryStatusAPPLIED ProvisionLogEntryStatus = "APPLIED"
+	ProvisionLogEntryStatusFAILED  ProvisionLogEntryStatus = "FAILED"
 )
 
 // Defines values for ReadinessStatusStatus.
@@ -218,8 +219,8 @@ const (
 
 // Defines values for SetAccountStatusRequestStatus.
 const (
-	SetAccountStatusRequestStatusACTIVE SetAccountStatusRequestStatus = "ACTIVE"
-	SetAccountStatusRequestStatusPAUSED SetAccountStatusRequestStatus = "PAUSED"
+	ACTIVE SetAccountStatusRequestStatus = "ACTIVE"
+	PAUSED SetAccountStatusRequestStatus = "PAUSED"
 )
 
 // Defines values for StreamEventKind.

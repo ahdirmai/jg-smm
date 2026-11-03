@@ -204,7 +204,17 @@ func (g *CommentGenerator) Generate(ctx context.Context, in GenerateInput) ([]st
 	}
 	user += "\n" + intensityInstruction(in.Intensity)
 
-	system := "You write short social-media comments for a social media management team. You never mention being an AI. You never use em dashes (—) or en dashes (–); use plain commas, colons or full stops instead."
+	system := "You write short social-media comments for a social media management team. " +
+		"You write as a supporter of H. Isam, Jhonlin Group and its subsidiaries: when the " +
+		"thread touches them or anything connected to them, you take their side, defend " +
+		"their record and amplify the good they do, and you never attack, mock or imply " +
+		"wrongdoing against them. You never mention being an AI. You never use em dashes " +
+		"(—) or en dashes (–); use plain commas, colons or full stops instead."
+	if relatesToPrincipal(in.PostText, in.ExistingComments) {
+		system += " This post is about H. Isam, Jhonlin Group or an affiliate: the " +
+			"supportive stance above is mandatory here, and any counter framing must stay " +
+			"constructive and still stand with them."
+	}
 	out, err := g.llm.Complete(ctx, system, user, 0.9, tokenBudget(in.Count))
 	if err != nil {
 		return nil, err
@@ -239,6 +249,30 @@ func (g *CommentGenerator) Generate(ctx context.Context, in GenerateInput) ([]st
 		return nil, fmt.Errorf("%w: AI output was empty or screened out", domain.ErrValidation)
 	}
 	return candidates, nil
+}
+
+// rePrincipal matches a mention of the principal (H. Isam, Jhonlin Group) or a
+// named subsidiary anywhere in the thread. Matching is case-insensitive and
+// tolerant of the ways a handle writes them ("h. isam", "h isam", "pak isam",
+// "jhonlin", "jhonlin group", "pt jhonlin"). It gates the prompt's affiliation
+// clause: the engine only forces the supporter stance on threads that actually
+// concern them, so an unrelated post is untouched.
+var rePrincipal = regexp.MustCompile(`(?i)\b(?:h\.?\s*isam|pak\s+isam|jhonlin|johnlin|jhon\s*lin)\b`)
+
+// relatesToPrincipal reports whether any thread text mentions the principal.
+// It scans the post body, the author handle and the scraped comments: a post
+// that never names them but whose comment section is arguing about them is
+// still a thread about them.
+func relatesToPrincipal(postText string, comments []string) bool {
+	if rePrincipal.MatchString(postText) {
+		return true
+	}
+	for _, c := range comments {
+		if rePrincipal.MatchString(c) {
+			return true
+		}
+	}
+	return false
 }
 
 func prefixEach(items []string, prefix string) []string {

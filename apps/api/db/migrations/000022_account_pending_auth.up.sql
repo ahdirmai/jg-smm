@@ -1,0 +1,34 @@
+-- 000022 — an account that has never attempted a login is PENDING, not
+-- AUTHENTICATING.
+--
+-- WHY THIS IS A BUG AND NOT COSMETIC
+-- The column defaulted to AUTHENTICATING, so every imported or seeded account
+-- entered that state the moment its row was created, with last_checked_at
+-- still NULL. Two queries then made the row unreachable forever:
+--
+--   ListAccountsDueForRefresh excludes AUTHENTICATING, so a login is never
+--   dispatched (the exclusion exists so a tick cannot stampede a login that is
+--   already in flight — correct for a real dispatch, wrong for a row that never
+--   had one).
+--
+--   ListStaleLoginAttempts requires last_checked_at IS NOT NULL, so the
+--   safety net skipped it too. The row had no timestamp to age out by.
+--
+-- CountInFlightLogins counted those rows as live logins, so 443 imported
+-- accounts reported a fleet-wide login ceiling of 443 in flight and the gate
+-- refused to start anything.
+--
+-- Observed: 443 accounts sat in AUTHENTICATING with NULL last_checked_at for
+-- hours, invisible to the scheduler, the sweeper and the gate at once.
+--
+-- PENDING is the truthful state: no login has been attempted, so no outcome
+-- exists to report. The due query already selects FAILED and AUTHENTICATED, so
+-- a PENDING row becomes eligible for its first login without any other change.
+--
+-- The default moves with the type so new imports start correctly.
+
+-- Add the value only. PostgreSQL rejects USING a new enum value in the same
+-- transaction that added it ("unsafe use of new value"), and the migration
+-- runner wraps each file in one transaction, so the data fix and the default
+-- live in 000023.
+ALTER TYPE auth_status ADD VALUE IF NOT EXISTS 'PENDING';

@@ -1,0 +1,12 @@
+-- 000021 — reverse of the PAUSED enum value.
+--
+-- PostgreSQL cannot remove a value from an enum type. Recreating the type would
+-- require rewriting every column that uses it, and would fail outright if any
+-- row currently holds 'PAUSED' — which is exactly the state a rollback is
+-- likely to run in.
+--
+-- So the reverse migration does the only safe thing: move every PAUSED row to
+-- RUNNING (the container is still there, so running is the truthful state) and
+-- leave the value in the enum. A binary that predates this migration rejects
+-- 'PAUSED' at the domain layer anyway, and after this UPDATE no row carries it.
+UPDATE worker SET desired_state = 'RUNNING' WHERE desired_state = 'PAUSED';

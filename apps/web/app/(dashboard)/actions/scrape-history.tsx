@@ -2,10 +2,14 @@
 
 /**
  * Scrape history. Lists stored posts newest-first (GET /api/scrape/recent),
- * grouped by the keyword batch that produced them. Clicking a row hands its
- * permalink + platform up to the page, which re-fills the New Action form and
- * re-scrapes — the 6-hour cache makes that read the stored post instead of
- * spending another actor run.
+ * grouped by the keyword batch that produced them.
+ *
+ * Clicking a row opens the post detail panel — the same one the batch page
+ * uses. It used to hand the permalink to the New Action form instead, and that
+ * was a dead click for five of the seven platforms: the form only accepts
+ * Instagram and Threads, so a TikTok row looked interactive (pointer cursor,
+ * hover fill) and did nothing. Reading a post is possible for all seven; acting
+ * on it is not, and the list must not conflate the two.
  *
  * Grouping needs no new endpoint: /api/scrape/recent returns a flat post list
  * and /api/scrape/batches/:id/posts returns that batch's posts, so the batch id
@@ -13,12 +17,13 @@
  * belong to no batch and fall into their own "single post" group.
  */
 
-import { Badge, Card, CardContent, CardDescription, CardHeader, CardTitle } from '@smm/ui';
-import { ChevronDown, History, Layers } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Input } from '@smm/ui';
+import { ChevronDown, Filter, History, Layers, Search, X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import { PostDetailDialog } from '@/components/post-detail-dialog';
 import { api, type KeywordBatch, type ScrapedPost } from '@/lib/api';
-import { metricsLine, platformLabel } from '@/lib/platforms';
+import { PLATFORMS, PLATFORM_LABEL, metricsLine, platformLabel } from '@/lib/platforms';
 import { postPermalink } from '@/lib/permalink';
 
 type Group = {
@@ -30,20 +35,39 @@ type Group = {
   posts: ScrapedPost[];
 };
 
-const SINGLE_KEY = '__single__';
+type Sort = 'newest' | 'oldest' | 'engagement';
+type StatusFilter = 'all' | KeywordBatch['status'];
 
-export function ScrapeHistory({
-  onPickPostAction,
-  refreshKey,
-}: {
-  onPickPostAction: (platform: string, url: string) => void;
-  /** Bumped by the page after a fresh scrape lands, to re-read the list. */
-  refreshKey: number;
-}) {
+const SINGLE_KEY = '__single__';
+const PAGE_SIZES = [20, 50, 100] as const;
+
+/** Engagement is the sum of every numeric metric, not one platform's favourite
+ *  count: "most engaged" must mean the same thing on a TikTok video and an
+ *  Instagram carousel, and views alone would rank a video with no likes above
+ *  a post whose comment thread is the point. */
+function engagement(p: ScrapedPost): number {
+  if (!p.metrics) return 0;
+  return Object.values(p.metrics).reduce((n, v) => n + (typeof v === 'number' ? v : 0), 0);
+}
+
+export function ScrapeHistory({ refreshKey }: { refreshKey: number }) {
   const [posts, setPosts] = useState<ScrapedPost[] | null>(null);
   const [groups, setGroups] = useState<Group[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [selected, setSelected] = useState<ScrapedPost | null>(null);
+
+  // Filters. Client-side on purpose: /api/scrape/recent already returns the
+  // window the page shows, so a round trip per keystroke would re-fetch the
+  // same rows. If the window ever grows past a few hundred rows, move the
+  // predicate into the query instead of raising the limit.
+  const [platform, setPlatform] = useState<string>('all');
+  const [status, setStatus] = useState<StatusFilter>('all');
+  const [query, setQuery] = useState('');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [sort, setSort] = useState<Sort>('newest');
+  const [pageSize, setPageSize] = useState<number>(PAGE_SIZES[1]);
 
   useEffect(() => {
     let stale = false;
@@ -94,8 +118,61 @@ export function ScrapeHistory({
     };
   }, [posts]);
 
+  /** The predicates, in one place so the counts and the list cannot disagree. */
+  const matches = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    const fromTs = from ? new Date(`${from}T00:00:00`).getTime() : null;
+    const toTs = to ? new Date(`${to}T23:59:59.999`).getTime() : null;
+    return (p: ScrapedPost) => {
+      if (platform !== 'all' && p.platform.toLowerCase() !== platform) return false;
+      const ts = new Date(p.scrapedAt).getTime();
+      if (fromTs !== null && ts < fromTs) return false;
+      if (toTs !== null && ts > toTs) return false;
+      if (needle) {
+        const hay = `${p.text ?? ''} ${p.authorHandle ?? ''}`.toLowerCase();
+        if (!hay.includes(needle)) return false;
+      }
+      return true;
+    };
+  }, [platform, query, from, to]);
+
+  const postMatches = useMemo(() => {
+    if (!posts) return new Set<string>();
+    return new Set(posts.filter(matches).map((p) => p.id));
+  }, [posts, matches]);
+
+  const sortPosts = useCallback(
+    (list: ScrapedPost[]): ScrapedPost[] => {
+      if (sort === 'engagement') return [...list].sort((a, b) => engagement(b) - engagement(a));
+      const dir = sort === 'oldest' ? 1 : -1;
+      return [...list].sort(
+        (a, b) => dir * (new Date(a.scrapedAt).getTime() - new Date(b.scrapedAt).getTime()),
+      );
+    },
+    [sort],
+  );
+
+  /** Filtered + sorted groups, with the status filter applied to the BATCH.
+   *  The single-post group has no status and survives it only when the filter
+   *  is off — a group with no batch is neither SUCCEEDED nor FAILED. */
+  const visible = useMemo(() => {
+    return groups
+      .filter((g) => status === 'all' || g.status === status)
+      .map((g) => ({ ...g, posts: sortPosts(g.posts.filter((p) => postMatches.has(p.id))) }))
+      .filter((g) => g.posts.length > 0 || (g.batchId && status !== 'all'));
+  }, [groups, status, postMatches, sortPosts]);
+
+  const shown = visible.reduce((n, g) => n + g.posts.length, 0);
   const total = posts?.length ?? 0;
-  const shown = useMemo(() => groups.reduce((n, g) => n + g.posts.length, 0), [groups]);
+  const filtering = platform !== 'all' || status !== 'all' || query !== '' || from !== '' || to !== '';
+
+  function resetFilters() {
+    setPlatform('all');
+    setStatus('all');
+    setQuery('');
+    setFrom('');
+    setTo('');
+  }
 
   return (
     <Card>
@@ -107,28 +184,126 @@ export function ScrapeHistory({
           Scrape history
           {total > 0 ? (
             <Badge variant="outline" className="ml-1 font-normal">
-              {total}
+              {filtering ? `${shown} / ${total}` : total}
             </Badge>
           ) : null}
         </CardTitle>
         <CardDescription>
-          Posts stored from earlier scrapes, newest first, grouped by the batch that produced them.
-          Click one to load it into the form above — the 6-hour cache means it opens instantly.
+          Posts stored from earlier scrapes, grouped by the batch that produced them. Click one to
+          read it in full.
         </CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-3">
+        {/* Filters. Chips for the two enumerable dimensions (platform, batch
+            status) and inputs only for the free-form ones — a dropdown for a
+            9-value set hides its own contents behind a click for no gain. */}
+        <div className="space-y-2 rounded-lg border border-border/60 p-2.5">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Filter className="size-3.5 shrink-0 text-muted-foreground" />
+            <Chip label="All platforms" active={platform === 'all'} onClick={() => setPlatform('all')} />
+            {PLATFORMS.map((p) => (
+              <Chip
+                key={p}
+                label={PLATFORM_LABEL[p]}
+                active={platform === p}
+                onClick={() => setPlatform(platform === p ? 'all' : p)}
+              />
+            ))}
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Chip label="Any status" active={status === 'all'} onClick={() => setStatus('all')} />
+            {(['SUCCEEDED', 'FAILED', 'RUNNING'] as const).map((s) => (
+              <Chip
+                key={s}
+                label={s[0] + s.slice(1).toLowerCase()}
+                active={status === s}
+                tone={s === 'FAILED' ? 'destructive' : s === 'SUCCEEDED' ? 'success' : 'secondary'}
+                onClick={() => setStatus(status === s ? 'all' : s)}
+              />
+            ))}
+          </div>
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="relative min-w-[180px] flex-1">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search caption or @handle"
+                aria-label="Search caption or handle"
+                className="h-8 pl-8 text-sm"
+              />
+            </div>
+            <label className="flex items-center gap-1 text-xs text-muted-foreground">
+              From
+              <Input
+                type="date"
+                value={from}
+                onChange={(e) => setFrom(e.target.value)}
+                className="h-8 w-[140px] text-sm"
+                aria-label="Scraped from date"
+              />
+            </label>
+            <label className="flex items-center gap-1 text-xs text-muted-foreground">
+              To
+              <Input
+                type="date"
+                value={to}
+                onChange={(e) => setTo(e.target.value)}
+                className="h-8 w-[140px] text-sm"
+                aria-label="Scraped to date"
+              />
+            </label>
+            <select
+              value={sort}
+              onChange={(e) => setSort(e.target.value as Sort)}
+              aria-label="Sort order"
+              className="h-8 rounded-lg border border-input bg-transparent px-2 text-sm"
+            >
+              <option value="newest">Newest scraped</option>
+              <option value="oldest">Oldest scraped</option>
+              <option value="engagement">Most engagement</option>
+            </select>
+            <select
+              value={pageSize}
+              onChange={(e) => setPageSize(Number(e.target.value))}
+              aria-label="Posts per group"
+              className="h-8 rounded-lg border border-input bg-transparent px-2 text-sm"
+            >
+              {PAGE_SIZES.map((n) => (
+                <option key={n} value={n}>
+                  {n} per group
+                </option>
+              ))}
+            </select>
+            {filtering ? (
+              <Button variant="ghost" size="sm" className="h-8" onClick={resetFilters}>
+                <X className="size-3.5" />
+                Clear
+              </Button>
+            ) : null}
+          </div>
+        </div>
+
         {error ? (
           <p className="text-sm text-destructive">{error}</p>
         ) : posts === null ? (
           <p className="text-sm text-muted-foreground">Loading…</p>
-        ) : posts.length === 0 ? (
+        ) : total === 0 ? (
           <div className="flex items-center justify-center rounded-lg border border-dashed py-10 text-sm text-muted-foreground">
-            Nothing scraped yet. Paste a link above to add the first post.
+            Nothing scraped yet. Run a keyword search or paste a link to add the first post.
+          </div>
+        ) : visible.length === 0 ? (
+          <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed py-10 text-sm text-muted-foreground">
+            No post matches these filters.
+            <Button variant="outline" size="sm" onClick={resetFilters}>
+              Clear filters
+            </Button>
           </div>
         ) : (
           <div className="max-h-[560px] space-y-3 overflow-y-auto pr-1">
-            {groups.map((g) => {
+            {visible.map((g) => {
               const isCollapsed = collapsed[g.key];
+              const overflow = g.posts.length - pageSize;
               return (
                 <section key={g.key} className="rounded-xl border border-border/60">
                   <button
@@ -140,15 +315,9 @@ export function ScrapeHistory({
                     <ChevronDown
                       className={`size-4 shrink-0 text-muted-foreground transition-transform ${isCollapsed ? '-rotate-90' : ''}`}
                     />
-                    {g.batchId ? (
-                      <span className="grid size-6 shrink-0 place-items-center rounded-md bg-secondary text-muted-foreground">
-                        <Layers className="size-3.5" />
-                      </span>
-                    ) : (
-                      <span className="grid size-6 shrink-0 place-items-center rounded-md bg-secondary text-muted-foreground">
-                        <History className="size-3.5" />
-                      </span>
-                    )}
+                    <span className="grid size-6 shrink-0 place-items-center rounded-md bg-secondary text-muted-foreground">
+                      {g.batchId ? <Layers className="size-3.5" /> : <History className="size-3.5" />}
+                    </span>
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-medium">{g.label}</span>
                       <span className="block truncate text-xs text-muted-foreground">{g.sublabel}</span>
@@ -162,55 +331,79 @@ export function ScrapeHistory({
                   {!isCollapsed ? (
                     g.posts.length === 0 ? (
                       <p className="px-3 pb-3 pl-14 text-xs text-muted-foreground">
-                        No posts from this batch in the recent list.
+                        No post from this batch matches the current filters.
                       </p>
                     ) : (
-                      <div className="grid grid-cols-1 gap-2 px-2 pb-2 sm:grid-cols-2">
-                        {g.posts.map((p) => (
-                          <PostRow key={p.id} post={p} onPick={onPickPostAction} />
-                        ))}
-                      </div>
+                      <>
+                        <div className="grid grid-cols-1 gap-2 px-2 pb-2 sm:grid-cols-2">
+                          {g.posts.slice(0, pageSize).map((p) => (
+                            <PostRow key={p.id} post={p} onOpen={() => setSelected(p)} />
+                          ))}
+                        </div>
+                        {overflow > 0 ? (
+                          <p className="px-3 pb-2 text-xs text-muted-foreground">
+                            {overflow} more in this group — raise “per group” above to show them.
+                          </p>
+                        ) : null}
+                      </>
                     )
                   ) : null}
                 </section>
               );
             })}
-            {groups.length > 0 && shown < total ? (
-              <p className="px-1 text-xs text-muted-foreground">
-                {total - shown} older post{total - shown === 1 ? '' : 's'} not in the recent window.
-              </p>
-            ) : null}
           </div>
         )}
       </CardContent>
+
+      <PostDetailDialog post={selected} onClose={() => setSelected(null)} />
     </Card>
   );
 }
 
-function PostRow({
-  post,
-  onPick,
+function Chip({
+  label,
+  active,
+  tone,
+  onClick,
 }: {
-  post: ScrapedPost;
-  onPick: (platform: string, url: string) => void;
+  label: string;
+  active: boolean;
+  tone?: 'success' | 'destructive' | 'secondary';
+  onClick: () => void;
 }) {
   return (
     <button
       type="button"
-      onClick={() => {
-        // postPermalink is nullable by design. Fabricating a URL to hand the
-        // on-demand scraper would fail server-side with "no actor configured"
-        // anyway, and used to send an instagram.com link for a YouTube id.
-        const url = postPermalink(post);
-        if (url) onPick(post.platform, url);
-      }}
+      onClick={onClick}
+      aria-pressed={active}
+      className={[
+        'rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors',
+        'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
+        active ? 'border-primary bg-primary/10 text-foreground' : 'border-border text-muted-foreground hover:bg-secondary/60',
+        !active && tone === 'destructive' ? 'text-destructive' : '',
+        !active && tone === 'success' ? 'text-success' : '',
+      ].join(' ')}
+    >
+      {label}
+    </button>
+  );
+}
+
+function PostRow({ post, onOpen }: { post: ScrapedPost; onOpen: () => void }) {
+  // Every row is clickable now: opening the detail panel works for all seven
+  // platforms because it reads only stored data. The permalink gate moved into
+  // the dialog, where the two actions that NEED a URL are the ones disabled.
+  const hasLink = postPermalink(post) !== null;
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
       className="flex items-start gap-3 rounded-lg border border-border/60 bg-background p-2.5 text-left transition-colors hover:bg-secondary/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
     >
       {post.mediaUrls && post.mediaUrls.length > 0 ? (
         <span className="relative size-14 shrink-0 overflow-hidden rounded-lg bg-secondary">
           {/* eslint-disable-next-line @next/next/no-img-element -- remote user content */}
           <img src={post.mediaUrls[0]} alt="" loading="lazy" className="size-full object-cover" />
-          {/* Carousel badge: the cover alone would hide the rest. */}
           {post.mediaUrls.length > 1 ? (
             <span className="absolute bottom-0.5 right-0.5 rounded bg-foreground/70 px-1 text-[10px] font-medium tabular-nums text-background">
               {post.mediaUrls.length}
@@ -230,8 +423,6 @@ function PostRow({
             {platformLabel(post.platform) ?? post.platform}
           </Badge>
         </span>
-        {/* Two lines of caption is enough to recognise a post; the
-            full text is one click away in the form. */}
         <span className="line-clamp-2 text-xs leading-snug text-muted-foreground">
           {post.text || '(no caption)'}
         </span>
@@ -243,6 +434,7 @@ function PostRow({
               ? new Date(post.publishedAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
               : `scraped ${new Date(post.scrapedAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}`}
           </span>
+          {hasLink ? null : <span className="italic">no permalink</span>}
         </span>
       </span>
     </button>
@@ -292,5 +484,3 @@ function groupByBatch(
   }
   return out;
 }
-
-

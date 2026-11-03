@@ -84,6 +84,41 @@ func (q *Queries) GetProxyGroupByID(ctx context.Context, id pgtype.UUID) (ProxyG
 	return i, err
 }
 
+const getProxyGroupForWorker = `-- name: GetProxyGroupForWorker :one
+SELECT pg.id, pg.name, pg.region, pg.provider, pg.pool_key, pg.max_concurrency, pg.daily_budget_mb, pg.created_at
+FROM proxy_group pg
+JOIN account a ON a.proxy_group_id = pg.id
+WHERE a.worker_id = $1
+ORDER BY a.created_at ASC, a.id ASC
+LIMIT 1
+`
+
+// The proxy pool a worker's container should egress through, or no rows when
+// the worker's accounts carry no group.
+//
+// Derived from the worker's FIRST account rather than stored on `worker`,
+// because the binding lives on `account` (P1-07: a pool is bound "at region
+// level" per account) and a container is a device, not a pool member. Several
+// accounts on one container may name different groups; the container can only
+// have one egress (Playwright fixes the proxy at launch), so the earliest
+// binding wins and is stable across reconciles, which is what keeps a
+// reconciled container on the same IP it had before.
+func (q *Queries) GetProxyGroupForWorker(ctx context.Context, workerID pgtype.UUID) (ProxyGroup, error) {
+	row := q.db.QueryRow(ctx, getProxyGroupForWorker, workerID)
+	var i ProxyGroup
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Region,
+		&i.Provider,
+		&i.PoolKey,
+		&i.MaxConcurrency,
+		&i.DailyBudgetMb,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const listProxyGroups = `-- name: ListProxyGroups :many
 SELECT id, name, region, provider, pool_key, max_concurrency, daily_budget_mb, created_at FROM proxy_group ORDER BY created_at DESC
 `

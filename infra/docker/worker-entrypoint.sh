@@ -24,6 +24,20 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# 0. Clear a stale display socket left by a PREVIOUS boot.
+#
+# A container that was stopped and started again (the PAUSED → RUNNING path)
+# finds /tmp/.X11-unix/X99 still on the container's writable layer, owned by a
+# dead Xvfb. The readiness loop below then passes on the FIRST iteration —
+# the file exists — and Chromium launches against a display nothing is serving.
+# The failure surfaces far away, as "Missing X server or $DISPLAY" inside a
+# login, which reads as a Playwright bug rather than a boot race.
+# Both artifacts, not just the socket: Xvfb refuses to start ("Server is
+# already active for display 99") while .X<num>-lock exists, and deleting only
+# the socket turns that into a restart loop — the container exits 1, Docker
+# restarts it, and it finds the lock again.
+rm -f "/tmp/.X11-unix/X${DISPLAY_NUM}" "/tmp/.X${DISPLAY_NUM}-lock"
+
 # 1. Virtual framebuffer (the "headful" display).
 Xvfb ":${DISPLAY_NUM}" -screen 0 "${SCREEN_GEOMETRY}" -nolisten tcp &
 XVFB_PID=$!

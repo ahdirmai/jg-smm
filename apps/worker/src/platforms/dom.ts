@@ -965,7 +965,11 @@ async function firstPresent(page: Page, selectors: string[]): Promise<Locator> {
   const deadline = Date.now() + LOGIN_FORM_WAIT_MS;
   for (;;) {
     for (const sel of selectors) {
-      const loc = page.locator(sel);
+      // IG sometimes keeps a hidden clone of the form in the DOM (a second
+      // `input[name="email"]` that resolves but is `display:none`). Counting
+      // it as present made `fill()` burn its 30s visibility poll and the login
+      // died as "login did not complete". Match on the VISIBLE instance.
+      const loc = page.locator(`${sel} >> visible=true`);
       if ((await loc.count()) > 0) return loc.first();
     }
     if (Date.now() >= deadline) {

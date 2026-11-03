@@ -5,10 +5,21 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand"
+	"time"
 
 	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
 	"github.com/ahdirmai/jg-smm/apps/api/internal/port"
 )
+
+// autoContainerCities is the pool an AUTO container's location is drawn from.
+// The same three the dashboard groups workers by, so an auto-spawned container
+// lands in a real group instead of the "Unlocated" bucket.
+var autoContainerCities = []domain.City{
+	{Name: "Jakarta", Latitude: -6.2088, Longitude: 106.8456, RadiusKm: 25},
+	{Name: "Bandung", Latitude: -6.9175, Longitude: 107.6191, RadiusKm: 20},
+	{Name: "Surabaya", Latitude: -7.2575, Longitude: 112.7521, RadiusKm: 20},
+}
 
 // ErrNoSlot means no container can host the account and auto-create is off.
 var ErrNoSlot = fmt.Errorf("%w: no container slot available", domain.ErrUnavailable)
@@ -34,6 +45,13 @@ type Packer struct {
 	// leaves novnc_service empty, so an auto-spawned card has a disabled Live
 	// view button instead of a dead link.
 	novnc *NovncAllocator
+	// rnd picks the city and the GPS point for an AUTO container. Seeded from
+	// the clock: the choice is stable for the container's life (the row keeps
+	// it), but two spawns in the same run land in different cities.
+	rnd *rand.Rand
+	// cities is the pool an AUTO container's location is drawn from. Defaults
+	// to the three the dashboard groups by; a test can shrink it.
+	cities []domain.City
 }
 
 // PackerConfig tunes packing.
@@ -66,6 +84,8 @@ func NewPacker(workers port.WorkerStore, accounts port.AccountStore, cfg PackerC
 		maxPerContainer: cfg.MaxPerContainer,
 		autoCreate:      cfg.AutoCreate,
 		novnc:           cfg.Novnc,
+		rnd:             rand.New(rand.NewSource(time.Now().UnixNano())),
+		cities:          autoContainerCities,
 	}
 }
 
@@ -229,20 +249,35 @@ func (p *Packer) createWorker(ctx context.Context, source domain.WorkerSource) (
 			return domain.Worker{}, fmt.Errorf("packer: novnc port: %w", err)
 		}
 	}
+	// Anchor the container to a real city. Leaving location and the GPS point
+	// empty — what this did before — put every AUTO container in the
+	// dashboard's "Unlocated" bucket and, worse, left the worker reporting the
+	// browser's REAL position instead of the city its accounts claim to be in.
+	// A login whose GPS contradicts the account's stated location is exactly
+	// the signal that gets a slate challenged.
+	city := p.pickCity()
+	lat, lng := city.RandomPoint(p.rnd)
 	for attempt := 0; attempt < 3; attempt++ {
 		w, err = p.workers.Create(ctx, domain.Worker{
 			Name:           newWorkerName(p.clock),
 			ControlChannel: ptrString(domain.ControlChannel("pending")),
 			ActionQueue:    ptrString(domain.ActionQueue("pending")),
 			SessionPVC:     ptrString("pending"),
-			DesiredState:   domain.DesiredRunning,
-			Source:         source,
-			Region:         "ID",
-			Status:         domain.WorkerPending,
-			Generation:     1,
-			ImageVersion:   "v0.1",
-			NoVNCService:   novncURL,
-			CreatedAt:      p.clock.Now(),
+			// Spawn PAUSED, not running. An auto-created container exists to
+			// hold an account, and the account has no work yet — a slate of
+			// them held ~4GB of RAM in idle browsers. The waker resumes it on
+			// the first login, action, or live-view open.
+			DesiredState: domain.DesiredPaused,
+			Source:       source,
+			Region:       "ID",
+			Location:     ptrString(city.Name),
+			Latitude:     &lat,
+			Longitude:    &lng,
+			Status:       domain.WorkerPending,
+			Generation:   1,
+			ImageVersion: "v0.1",
+			NoVNCService: novncURL,
+			CreatedAt:    p.clock.Now(),
 		})
 		if err == nil {
 			return w, nil
@@ -296,6 +331,16 @@ func (p *Packer) ReapEmpty(ctx context.Context, workerID string) error {
 	}
 	p.logger.Info("packer: reaped empty AUTO container", "workerId", workerID)
 	return nil
+}
+
+// pickCity draws the city an AUTO container is anchored to. Falls back to
+// Jakarta when the pool is empty rather than creating a location-less row —
+// the whole point of this path is that a container always has a place.
+func (p *Packer) pickCity() domain.City {
+	if len(p.cities) == 0 {
+		return autoContainerCities[0]
+	}
+	return p.cities[p.rnd.Intn(len(p.cities))]
 }
 
 // ptrString returns a pointer copy of s.

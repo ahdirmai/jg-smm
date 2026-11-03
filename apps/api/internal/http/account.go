@@ -257,9 +257,9 @@ func (h *AccountHandler) setStatus(c echo.Context) error {
 	var account service.AccountSummary
 	var err error
 	switch req.Status {
-	case oapigen.SetAccountStatusRequestStatusACTIVE:
+	case oapigen.ACTIVE:
 		account, err = h.accounts.Resume(c.Request().Context(), id)
-	case oapigen.SetAccountStatusRequestStatusPAUSED:
+	case oapigen.PAUSED:
 		account, err = h.accounts.Pause(c.Request().Context(), id)
 	default:
 		return echo.NewHTTPError(http.StatusBadRequest, "status must be ACTIVE or PAUSED")

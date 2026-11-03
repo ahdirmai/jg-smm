@@ -104,6 +104,8 @@ function parseJob(raw: string): ActionJob | null {
     action: job.action,
     targetUrl: job.targetUrl,
     ...(typeof job.text === 'string' ? { text: job.text } : {}),
+    ...(typeof job.templateId === 'string' ? { templateId: job.templateId } : {}),
+    ...(typeof job.expectedMention === 'string' ? { expectedMention: job.expectedMention } : {}),
     attempt: typeof job.attempt === 'number' ? job.attempt : 1,
   };
 }

@@ -401,3 +401,59 @@ func TestSearchPostURLsEmpty(t *testing.T) {
 		t.Fatalf("urls = %v, want empty", got)
 	}
 }
+
+// Apify puts the actor's own reason for a failed run in statusMessage. Dropping
+// it is what made a geo-block indistinguishable from a crash in the batch error
+// (it read only "actor FAILED: search actor run: FAILED"), so the reason must
+// reach the operator. A run that fails without one still reads cleanly.
+func TestFailedRunErrorCarriesTheActorsReason(t *testing.T) {
+	cases := []struct{ label, status, msg, want string }{
+		{"search actor", "FAILED", "geo: All 1 keywords returned zero results — blocked or errored — no valid response from any exit.",
+			"search actor run FAILED: geo: All 1 keywords returned zero results — blocked or errored — no valid response from any exit."},
+		{"search actor", "TIMED-OUT", "", "search actor run: TIMED-OUT"},
+		{"threads actor", "ABORTED", "   ", "threads actor run: ABORTED"},
+	}
+	for _, c := range cases {
+		if got := failedRunError(c.label, c.status, c.msg); got != c.want {
+			t.Errorf("failedRunError(%q,%q,%q) = %q, want %q", c.label, c.status, c.msg, got, c.want)
+		}
+	}
+}
+
+// A per-post run input is the same silent-wrong-answer shape as the search
+// input: a key the actor does not have is ignored and the actor returns its
+// own default (usually a profile's recent posts), which the ingestor then
+// discards — after the run was paid for. These assertions pin each actor's
+// own spelling against its live schema.
+func TestRunInputPerPlatform(t *testing.T) {
+	const url = "https://example.com/post/1"
+
+	ig := runInput(domain.PlatformInstagram, url, 10)
+	if _, ok := ig["username"]; !ok {
+		t.Error("instagram: expected `username` (the post actor reads the permalink from it)")
+	}
+	if _, ok := ig["startUrls"]; ok {
+		t.Error("instagram: `startUrls` was removed from this actor's schema; sending it is ignored")
+	}
+
+	tt := runInput(domain.PlatformTikTok, url, 10)
+	urls, ok := tt["url"].([]string)
+	if !ok || len(urls) != 1 || urls[0] != url {
+		t.Errorf("tiktok: expected url:[%q], got %#v (the actor's field is `url`, an ARRAY of strings)", url, tt)
+	}
+	if _, ok := tt["urls"]; ok {
+		t.Error("tiktok: `urls` is the WRONG field — thenetaji's actor takes it but requires minItems 4, " +
+			"which rejects a single-post scrape before the run starts")
+	}
+
+	for _, p := range []domain.Platform{domain.PlatformYouTube, domain.PlatformX} {
+		in := runInput(p, url, 3)
+		start, ok := in["startUrls"].([]map[string]string)
+		if !ok || len(start) != 1 || start[0]["url"] != url {
+			t.Errorf("%s: expected startUrls:[{url:%q}], got %#v", p, url, in)
+		}
+		if in["maxItems"] != 3 {
+			t.Errorf("%s: maxItems = %v, want 3 (both actors honour it as a real cap)", p, in["maxItems"])
+		}
+	}
+}

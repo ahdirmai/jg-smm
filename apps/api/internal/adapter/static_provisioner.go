@@ -55,22 +55,24 @@ func (p *StaticProvisioner) DeleteWorker(ctx context.Context, workerID string) e
 
 // Observe reports the generation stored on the Worker row. A live worker
 // heartbeat updates that row, so this is the local equivalent of reading the
-// pod label. Returns (0, false) when the row is missing or the store is unset.
-func (p *StaticProvisioner) Observe(ctx context.Context, workerID string) (int, bool, error) {
+// pod label. Returns ContainerAbsent when the row is missing or the store is
+// unset; the static tier cannot see run state, so an existing row reports
+// ContainerRunning (the row's observed state is the platform view locally).
+func (p *StaticProvisioner) Observe(ctx context.Context, workerID string) (int, port.ContainerState, error) {
 	if p.workers == nil {
-		return 0, false, nil
+		return 0, port.ContainerAbsent, nil
 	}
 	w, err := p.workers.GetByID(ctx, workerID)
 	if err == domain.ErrNotFound {
-		return 0, false, nil
+		return 0, port.ContainerAbsent, nil
 	}
 	if err != nil {
-		return 0, false, err
+		return 0, port.ContainerAbsent, err
 	}
 	if w.ObservedGen != nil {
-		return *w.ObservedGen, true, nil
+		return *w.ObservedGen, port.ContainerRunning, nil
 	}
-	return w.Generation, true, nil
+	return w.Generation, port.ContainerRunning, nil
 }
 
 // ListRunning returns every worker the local tier observes: since local
@@ -90,4 +92,19 @@ func (p *StaticProvisioner) ListRunning(ctx context.Context) ([]string, error) {
 		ids = append(ids, w.ID)
 	}
 	return ids, nil
+}
+
+// StopWorker is bookkeeping only. This driver has no container platform to
+// act on (local tier scales workers by hand), so it records the intent by
+// flipping the Worker row to PAUSED. The reconciler then treats it as
+// in-sync, which is the truthful description of a driver that cannot act.
+func (p *StaticProvisioner) StopWorker(_ context.Context, _ string) error {
+	return nil
+}
+
+// StartWorker is the matching no-op for the static driver. It does NOT fetch
+// or mutate the row: the caller already flipped desired_state to RUNNING, and
+// rewriting it here would race that write.
+func (p *StaticProvisioner) StartWorker(_ context.Context, _ domain.Worker) error {
+	return nil
 }

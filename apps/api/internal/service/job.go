@@ -254,6 +254,13 @@ func (s *JobService) RecordAuthOutcome(ctx context.Context, o AuthOutcome) error
 		// scheduled (a stale date must not keep matching the due query).
 		acc.CookieExpiryAt = o.CookieExpiresAt
 		acc.RefreshFailures = 0
+		// A verified login clears the recorded error. Without this the column
+		// is a one-way latch: a single failed attempt wrote "login did not
+		// complete" and a later successful login left it there, so the
+		// dashboard showed AUTHENTICATED beside a failure message and every
+		// audit of the row read as a broken account. The streak counters below
+		// reset on success for the same reason; the error string has to as well.
+		acc.LastError = nil
 		if acc.Status == domain.AccountPending {
 			acc.Status = domain.AccountActive
 		}

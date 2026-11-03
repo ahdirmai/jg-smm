@@ -1,0 +1,59 @@
+# Ingress: dashboard at /, API under /api on the same origin.
+#
+# Same origin is the point: the dashboard's fetch calls and the SSE stream both
+# hit the browser-visible API URL baked at build time, and cookies are
+# same-site. Splitting them across origins needs CORS_ALLOWED_ORIGINS plus
+# cross-site cookie handling — avoid it.
+#
+# proxy-buffering off is set cluster-wide on the controller (docs/DEPLOY_K8S.md
+# §3) because it is a ConfigMap-level nginx setting; the annotation is repeated
+# here so a single-object override still streams.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: smm
+  namespace: smm
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [DASHBOARD_DOMAIN_PLACEHOLDER]
+      secretName: smm-tls
+  rules:
+    - host: DASHBOARD_DOMAIN_PLACEHOLDER
+      http:
+        paths:
+          # Longest prefix wins, so /api goes to the API even though / goes
+          # to web.
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: api
+                port:
+                  number: 8080
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  number: 3000
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-prod
+    solvers:
+      - http01:
+          ingress:
+            class: nginx

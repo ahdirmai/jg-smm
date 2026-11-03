@@ -448,7 +448,7 @@ func (r *Runner) RunSearch(ctx context.Context, in port.ApifySearchInput) (port.
 	}
 	r.log("apify: search run started", "run", runID, "keywords", in.Keywords, "resumed", in.ResumeRunID != "")
 
-	items, runStatus, err := r.pollRunDatasetWithin(ctx, runID, searchPollBudget)
+	items, runStatus, statusMessage, err := r.pollRunDatasetWithin(ctx, runID, searchPollBudget)
 	if err != nil {
 		return port.ApifyOutput{RunID: runID}, err
 	}
@@ -456,7 +456,7 @@ func (r *Runner) RunSearch(ctx context.Context, in port.ApifySearchInput) (port.
 		return port.ApifyOutput{
 			RunID:  runID,
 			Status: runStatus,
-			Error:  truncate("search actor run: "+runStatus, 500),
+			Error:  truncate(failedRunError("search actor", runStatus, statusMessage), 500),
 		}, nil
 	}
 
@@ -530,15 +530,36 @@ func (r *Runner) Run(ctx context.Context, in port.ApifyInput) (port.ApifyOutput,
 
 // runInput builds the actor payload for one post scrape, per platform.
 //
+// The zero-value fallback is startUrls in logical_scrapers' object form, which
+// is what most Apify actors take. Each branch below is pinned against the
+// actor's own live schema, because a wrong key here is SILENT: the actor falls
+// back to its own default (often "scrape this profile's recent posts") and the
+// paid run returns rows we then have to throw away.
+//
 //   - instagram-post-scraper: `username` accepts usernames, profile URLs AND
 //     post URLs; a post URL yields exactly that post. (The old
 //     startUrls/directUrls fields are gone from the current build.)
-//   - Other platforms fall back to startUrls (logical_scrapers' object form).
+//   - youtube-scraper-api / twitter-scraper-lite: `startUrls[]` — the SAME
+//     actors their keyword search uses, which accept one video/tweet URL and
+//     return that one row. Verified by running each with a single URL.
+//   - tiktok-realtime-post-details-scraper: its field is `url` (singular) as an
+//     ARRAY of strings — not `urls`, and not objects. Sending `startUrls` here
+//     returns the actor's default profile scrape.
 func runInput(p domain.Platform, targetURL string, maxItems int) map[string]any {
-	if p == domain.PlatformInstagram {
+	switch p {
+	case domain.PlatformInstagram:
 		return map[string]any{
 			"username":     []string{targetURL},
 			"resultsLimit": maxItems,
+		}
+	case domain.PlatformTikTok:
+		return map[string]any{
+			"url": []string{targetURL},
+		}
+	case domain.PlatformYouTube, domain.PlatformX:
+		return map[string]any{
+			"startUrls": []map[string]string{{"url": targetURL}},
+			"maxItems":  maxItems,
 		}
 	}
 	return map[string]any{
@@ -636,7 +657,7 @@ func (r *Runner) runThreadsPost(ctx context.Context, actorID, scrapeJobID, targe
 	runID := started.Data.ID
 	r.log("apify: threads run started", "run", runID, "url", targetURL)
 
-	items, runStatus, err := r.pollRunDataset(ctx, runID)
+	items, runStatus, statusMessage, err := r.pollRunDataset(ctx, runID)
 	if err != nil {
 		return port.ApifyOutput{RunID: runID}, err
 	}
@@ -644,7 +665,7 @@ func (r *Runner) runThreadsPost(ctx context.Context, actorID, scrapeJobID, targe
 		return port.ApifyOutput{
 			RunID:  runID,
 			Status: runStatus,
-			Error:  truncate("threads actor run: "+runStatus, 500),
+			Error:  truncate(failedRunError("threads actor", runStatus, statusMessage), 500),
 		}, nil
 	}
 	// Namespace the stored items by the caller's job id, like the sync path
@@ -657,8 +678,22 @@ func (r *Runner) runThreadsPost(ctx context.Context, actorID, scrapeJobID, targe
 // downloads its dataset items. The poll window is the run budget: the sync
 // endpoint blocks for exactly this long in the normal path anyway.
 
+// failedRunError renders the error for a run that reached a terminal
+// non-success status. Apify's statusMessage carries the actor's OWN reason for
+// the failure ("geo: all 1 keywords returned zero results — blocked or
+// errored"), and dropping it left operators with a bare "actor FAILED" and no
+// way to tell a geo-block from a crash without opening the Apify console.
+func failedRunError(label, status, statusMessage string) string {
+	msg := strings.TrimSpace(statusMessage)
+	if msg == "" {
+		return label + " run: " + status
+	}
+	return label + " run " + status + ": " + msg
+}
+
 // pollRunDataset waits up to pollBudget for a run to reach a terminal status.
-func (r *Runner) pollRunDataset(ctx context.Context, runID string) ([]json.RawMessage, string, error) {
+// statusMessage is Apify's own reason for a failed run; it is empty on success.
+func (r *Runner) pollRunDataset(ctx context.Context, runID string) ([]json.RawMessage, string, string, error) {
 	return r.pollRunDatasetWithin(ctx, runID, pollBudget)
 }
 
@@ -669,42 +704,43 @@ func (r *Runner) pollRunDataset(ctx context.Context, runID string) ([]json.RawMe
 // keyword search drives a browser and takes ~40-60s PER KEYWORD. One shared
 // constant either cuts the slow actor off (the batch died at 5 minutes while the
 // run was still healthy) or makes a fast failure take a quarter hour to surface.
-func (r *Runner) pollRunDatasetWithin(ctx context.Context, runID string, budget time.Duration) ([]json.RawMessage, string, error) {
+func (r *Runner) pollRunDatasetWithin(ctx context.Context, runID string, budget time.Duration) ([]json.RawMessage, string, string, error) {
 	deadline := time.Now().Add(budget)
 	for {
 		if err := ctx.Err(); err != nil {
-			return nil, "", fmt.Errorf("apify: poll canceled: %w", err)
+			return nil, "", "", fmt.Errorf("apify: poll canceled: %w", err)
 		}
 		if time.Now().After(deadline) {
-			return nil, "", fmt.Errorf("apify: run %s did not finish in %s", runID, budget)
+			return nil, "", "", fmt.Errorf("apify: run %s did not finish in %s", runID, budget)
 		}
 		time.Sleep(pollInterval)
 
 		url := fmt.Sprintf("%s/actor-runs/%s?token=%s", r.baseURL, runID, r.token)
 		resp, err := r.client.Get(url)
 		if err != nil {
-			return nil, "", fmt.Errorf("apify: run status: %w", err)
+			return nil, "", "", fmt.Errorf("apify: run status: %w", err)
 		}
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 		resp.Body.Close()
 		var st struct {
 			Data struct {
-				Status    string `json:"status"`
-				DatasetID string `json:"defaultDatasetId"`
+				Status        string `json:"status"`
+				StatusMessage string `json:"statusMessage"`
+				DatasetID     string `json:"defaultDatasetId"`
 			} `json:"data"`
 		}
 		if err := json.Unmarshal(raw, &st); err != nil {
-			return nil, "", fmt.Errorf("apify: run status body: %w", err)
+			return nil, "", "", fmt.Errorf("apify: run status body: %w", err)
 		}
 		switch st.Data.Status {
 		case statusSucceeded:
 			items, err := r.fetchDataset(ctx, st.Data.DatasetID)
 			if err != nil {
-				return nil, "", err
+				return nil, "", "", err
 			}
-			return items, statusSucceeded, nil
+			return items, statusSucceeded, "", nil
 		case "FAILED", "ABORTED", "TIMED-OUT":
-			return nil, st.Data.Status, nil
+			return nil, st.Data.Status, st.Data.StatusMessage, nil
 		}
 	}
 }

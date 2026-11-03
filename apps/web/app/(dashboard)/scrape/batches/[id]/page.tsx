@@ -17,8 +17,6 @@ import {
 import {
   AlertCircle,
   ArrowLeft,
-  Check,
-  Copy,
   ExternalLink,
   Loader2,
   Megaphone,
@@ -32,45 +30,13 @@ import { useParams } from 'next/navigation';
 import { api, type KeywordBatch, type PostInsight, type ScrapedComment, type ScrapedPost } from '@/lib/api';
 import { metricsLine, platformLabel } from '@/lib/platforms';
 import { actionDeepLink, postPermalink } from '@/lib/permalink';
+import { CopyButton } from '@/components/copy-button';
 import { PostMedia } from '@/components/post-media';
 import { CommentPreview, RankedPostList } from '@/components/ranked-post-list';
 
 /** Posts per page. The fetch asks for one more than this purely to detect a
  *  next page, so the pager never offers one that does not exist. */
 const PAGE_SIZE = 50;
-
-/** Copy-to-clipboard button. Falls back to a hidden textarea where the async
- *  Clipboard API is unavailable (non-secure origin), so it never silently no-ops. */
-function CopyButton({ value, label }: { value: string; label: string }) {
-  const [done, setDone] = useState(false);
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(value);
-    } catch {
-      const el = document.createElement('textarea');
-      el.value = value;
-      el.style.position = 'fixed';
-      el.style.opacity = '0';
-      document.body.appendChild(el);
-      el.select();
-      try {
-        document.execCommand('copy');
-      } catch {
-        return;
-      } finally {
-        document.body.removeChild(el);
-      }
-    }
-    setDone(true);
-    setTimeout(() => setDone(false), 1500);
-  }
-  return (
-    <Button variant="outline" size="sm" onClick={copy} aria-label={label}>
-      {done ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-      {done ? 'Copied' : 'Copy'}
-    </Button>
-  );
-}
 
 export default function BatchDetailPage() {
   const { id } = useParams<{ id: string }>();

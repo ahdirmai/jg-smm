@@ -102,6 +102,23 @@ func (q *Queries) CountAccountsByWorker(ctx context.Context, workerID pgtype.UUI
 	return count, err
 }
 
+const countInFlightLogins = `-- name: CountInFlightLogins :one
+SELECT count(*) FROM account WHERE auth_status IN ('AUTHENTICATING', 'NEEDS_INPUT')
+`
+
+// How many logins are unresolved right now, fleet-wide. AUTHENTICATING is the
+// state BeginSessionRefresh and the operator Login both set, and it is cleared
+// only by an outcome callback or the stale sweep; NEEDS_INPUT is a login parked
+// for the operator, which is still a live browser holding a platform session.
+// Both count toward the concurrency ceiling, because both are open logins from
+// this fleet's IP.
+func (q *Queries) CountInFlightLogins(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countInFlightLogins)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createAccount = `-- name: CreateAccount :one
 INSERT INTO account (
     platform, username, password_enc, auth_status, proxy_group_id,
@@ -411,9 +428,16 @@ SELECT
     proxy_group_id, health_score, status, tags, worker_id, last_used_at,
     last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at
 FROM account
-WHERE cookie_expiry_at IS NOT NULL
-  AND cookie_expiry_at <= $1
-  AND auth_status IN ('AUTHENTICATED', 'FAILED')
+WHERE (
+    -- A first login: never attempted, so there is no expiry to compare. PENDING
+    -- is the only status that means this (see 000022); it is due immediately.
+    (auth_status = 'PENDING' AND cookie_expiry_at IS NULL)
+    OR (
+      cookie_expiry_at IS NOT NULL
+      AND cookie_expiry_at <= $1
+      AND auth_status IN ('AUTHENTICATED', 'FAILED')
+    )
+  )
   AND status = 'ACTIVE'
   AND worker_id IS NOT NULL
   AND (last_checked_at IS NULL OR last_checked_at <= $2)
@@ -468,9 +492,10 @@ type ListAccountsDueForRefreshRow struct {
 // last_checked_at (stamped at dispatch) instead of re-firing on every tick.
 //
 // These gates MUST stay in sync with the partial predicate of
-// `account_refresh_due_idx` (000015): Postgres only uses a partial index whose
-// predicate the query provably implies, so widening one here without the other
-// silently degrades this query to a seq scan.
+// `account_refresh_due_idx` (000023, which replaced the 000015 one): Postgres
+// only uses a partial index whose predicate the query provably implies, so
+// widening one here without the other silently degrades this query to a seq
+// scan.
 func (q *Queries) ListAccountsDueForRefresh(ctx context.Context, arg ListAccountsDueForRefreshParams) ([]ListAccountsDueForRefreshRow, error) {
 	rows, err := q.db.Query(ctx, listAccountsDueForRefresh, arg.CookieExpiryAt, arg.LastCheckedAt, arg.Limit)
 	if err != nil {
@@ -507,6 +532,132 @@ func (q *Queries) ListAccountsDueForRefresh(ctx context.Context, arg ListAccount
 		return nil, err
 	}
 	return items, nil
+}
+
+const listStaleLoginAttempts = `-- name: ListStaleLoginAttempts :many
+SELECT
+    id, platform, username, auth_status, handle, last_verified_at,
+    proxy_group_id, health_score, status, tags, worker_id, last_used_at,
+    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at
+FROM account
+WHERE auth_status = 'AUTHENTICATING'
+  AND last_checked_at IS NOT NULL
+  AND last_checked_at <= $1
+ORDER BY last_checked_at
+LIMIT $2
+`
+
+type ListStaleLoginAttemptsParams struct {
+	LastCheckedAt pgtype.Timestamptz `json:"last_checked_at"`
+	Limit         int32              `json:"limit"`
+}
+
+type ListStaleLoginAttemptsRow struct {
+	ID              pgtype.UUID        `json:"id"`
+	Platform        Platform           `json:"platform"`
+	Username        string             `json:"username"`
+	AuthStatus      AuthStatus         `json:"auth_status"`
+	Handle          *string            `json:"handle"`
+	LastVerifiedAt  pgtype.Timestamptz `json:"last_verified_at"`
+	ProxyGroupID    pgtype.UUID        `json:"proxy_group_id"`
+	HealthScore     int32              `json:"health_score"`
+	Status          AccountStatus      `json:"status"`
+	Tags            []string           `json:"tags"`
+	WorkerID        pgtype.UUID        `json:"worker_id"`
+	LastUsedAt      pgtype.Timestamptz `json:"last_used_at"`
+	LastCheckedAt   pgtype.Timestamptz `json:"last_checked_at"`
+	LastError       *string            `json:"last_error"`
+	CookieExpiryAt  pgtype.Timestamptz `json:"cookie_expiry_at"`
+	RefreshFailures int32              `json:"refresh_failures"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+}
+
+// Accounts stranded in AUTHENTICATING: a login was dispatched and no callback
+// ever came back, so the row sits in a state the due query deliberately
+// excludes (see ListAccountsDueForRefresh above) and nothing else would ever
+// move it. A paused worker that never wakes, a control message published
+// before the worker subscribed, or a container killed mid-login all land here,
+// and the account is invisible to the operator until a human notices.
+//
+// `$1` is the cutoff: attempts older than it are considered abandoned. It is
+// deliberately generous relative to the worker's own 180s poll, because a
+// login through noVNC is the OPERATOR's turn — a human reading a 2FA prompt
+// holds the row legitimately for minutes. Only an attempt that has outlived
+// any plausible human interaction is reclaimed.
+//
+// NEEDS_INPUT is NOT included: that state means the worker is parked and
+// waiting, which is a stable resting state, not a lost one.
+func (q *Queries) ListStaleLoginAttempts(ctx context.Context, arg ListStaleLoginAttemptsParams) ([]ListStaleLoginAttemptsRow, error) {
+	rows, err := q.db.Query(ctx, listStaleLoginAttempts, arg.LastCheckedAt, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListStaleLoginAttemptsRow{}
+	for rows.Next() {
+		var i ListStaleLoginAttemptsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Platform,
+			&i.Username,
+			&i.AuthStatus,
+			&i.Handle,
+			&i.LastVerifiedAt,
+			&i.ProxyGroupID,
+			&i.HealthScore,
+			&i.Status,
+			&i.Tags,
+			&i.WorkerID,
+			&i.LastUsedAt,
+			&i.LastCheckedAt,
+			&i.LastError,
+			&i.CookieExpiryAt,
+			&i.RefreshFailures,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const reclaimStaleLoginAttempt = `-- name: ReclaimStaleLoginAttempt :exec
+UPDATE account SET
+    auth_status      = 'FAILED',
+    last_error       = 'login attempt abandoned: no callback from the worker',
+    last_checked_at  = now(),
+    cookie_expiry_at = NULL
+WHERE id = $1
+  AND auth_status = 'AUTHENTICATING'
+  AND last_checked_at = $2
+`
+
+type ReclaimStaleLoginAttemptParams struct {
+	ID            pgtype.UUID        `json:"id"`
+	LastCheckedAt pgtype.Timestamptz `json:"last_checked_at"`
+}
+
+// Return one abandoned AUTHENTICATING row to a state the scheduler will pick
+// up again. FAILED (not AUTHENTICATED) because the truthful summary of "we
+// never learned the outcome" is that the session is unproven: claiming
+// AUTHENTICATED would put the dashboard and the action path on a cookie we
+// have no evidence for, and AUTHENTICATED rows are only re-checked near their
+// expiry, so the account would stay wrong for days.
+//
+// cookie_expiry_at is cleared with it. Leaving a stale future date in place
+// would make the next dispatch look like a REFRESH of a live session, which
+// counts toward the P2-06 quarantine streak (RecordAuthOutcome only increments
+// when an expiry exists) — so reclaiming must not manufacture that history.
+// The timestamp guard keeps this idempotent: if the worker reported back
+// between the list and this write, the row is no longer AUTHENTICATING and the
+// update is a no-op rather than a stomp over a real outcome.
+func (q *Queries) ReclaimStaleLoginAttempt(ctx context.Context, arg ReclaimStaleLoginAttemptParams) error {
+	_, err := q.db.Exec(ctx, reclaimStaleLoginAttempt, arg.ID, arg.LastCheckedAt)
+	return err
 }
 
 const unassignAccount = `-- name: UnassignAccount :one

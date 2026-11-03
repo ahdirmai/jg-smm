@@ -770,11 +770,15 @@ func TestWakerResumesPausedWorker(t *testing.T) {
 	driver := newFakeDriver()
 	driver.running["w1"] = 0 // present, stopped
 	store := newFakeWorkerStore()
-	// A fresh heartbeat + READY is what awaitReady waits for; without it the
-	// waker would correctly block, and the test would sit out the full timeout.
-	store.seed(readyFixture(workerFixture("w1", domain.DesiredPaused, 1, intPtr(1))))
-	// The resume writes PENDING; the booted container's first heartbeat writes
-	// READY back. The store replays that transition.
+	// The row carries a STALE READY from before the pause, which is the state a
+	// real paused worker is in. Accepting it is the bug this guards: the waker
+	// would return before the new process subscribed and the login was dropped.
+	stale := readyFixture(workerFixture("w1", domain.DesiredPaused, 1, intPtr(1)))
+	old := time.Now().Add(-time.Hour)
+	stale.LastHeartbeat = &old
+	store.seed(stale)
+	// The booted container reports a NEW heartbeat once it is up. The store
+	// replays that transition, stamped after the wake so it is genuinely fresh.
 	store.onReady = func(s *fakeWorkerStore, id string) {
 		row := s.get(id)
 		fresh := readyFixture(row)

@@ -36,6 +36,60 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
     ),
     novncUrl: parseNovncUrl(env),
     internalSecret: env.INTERNAL_API_SECRET?.trim() || '',
+    ...parseProxy(env),
+  };
+}
+
+/**
+ * Resolve the egress proxy (P1-07's `proxy_group`, delivered per container).
+ *
+ * Absent `PROXY_URL` is the direct-dial case and stays the default: a local
+ * stack has no proxy to route through, and demanding one would break every dev
+ * setup. The credentials are separate env vars rather than userinfo inside the
+ * URL so the provider's password is never escaped into a string that gets
+ * logged, and so a missing half is detectable instead of silently producing a
+ * malformed URL.
+ *
+ * A URL that fails to parse is treated as absent, with the failure reported by
+ * the caller's boot log — a container that silently dials direct when it was
+ * configured to route is worse than one that says so.
+ */
+export function parseProxy(
+  env: NodeJS.ProcessEnv,
+): Pick<WorkerConfig, 'proxyUrl' | 'proxyAuth'> {
+  const raw = env.PROXY_URL?.trim();
+  if (!raw) return { proxyUrl: null, proxyAuth: null };
+
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return { proxyUrl: null, proxyAuth: null };
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:' && parsed.protocol !== 'socks5:') {
+    return { proxyUrl: null, proxyAuth: null };
+  }
+  if (!parsed.hostname || !parsed.port) {
+    return { proxyUrl: null, proxyAuth: null };
+  }
+
+  const username = env.PROXY_USERNAME?.trim() ?? '';
+  const password = env.PROXY_PASSWORD ?? '';
+  // A half-supplied credential is refused outright. Playwright would send the
+  // username with an empty password and collect a 407 on every request, and
+  // dialling direct instead is at least a working, honest fallback.
+  const hasUsername = username !== '';
+  const hasPassword = password !== '';
+  if (hasUsername !== hasPassword) return { proxyUrl: null, proxyAuth: null };
+
+  return {
+    // The operator's own string, not `parsed.toString()`: the WHATWG URL
+    // normaliser appends a trailing slash to a bare authority
+    // ("http://gate.example.com:8080" -> ".../"), which is noise in the boot
+    // log and in every comparison against what was configured. The URL object
+    // is used only to validate.
+    proxyUrl: raw,
+    proxyAuth: hasUsername ? { username, password } : null,
   };
 }
 

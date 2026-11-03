@@ -1,0 +1,105 @@
+# API deployment (production tier). The provisioner is the k8s driver, so this
+# pod must run IN-cluster: k8s.New uses rest.InClusterConfig().
+#
+# Deliberately absent: the compose tier's `user: root` + /var/run/docker.sock.
+# That is a local-only tradeoff (docs/SECURITY_REVIEW.md); here the provisioner
+# talks to the API server through the smm-provisioner service account.
+#
+# Replace IMAGE_PLACEHOLDER with the built tag (docs/DEPLOY_K8S.md §7) and
+# DASHBOARD_DOMAIN in the CORS origin below.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: smm
+spec:
+  # INFRA_ANALYST §6.1: "BE (1 dari 3 replica) -> 0 dampak".
+  # Provisioning admission is serialized within one API process.
+  # Keep one replica until distributed fleet admission is implemented.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      serviceAccountName: smm-provisioner
+      containers:
+        - name: api
+          image: IMAGE_PLACEHOLDER
+          env:
+            - name: API_ADDR
+              value: ":8080"
+            # k8s inside the cluster, docker on a workstation, static for
+            # bookkeeping-only. Anything but k8s means no worker is ever
+            # created from the dashboard.
+            - name: PROVISIONER_MODE
+              value: k8s
+            - name: K8S_NAMESPACE
+              value: smm
+            # The k8s driver creates every worker pod with this image. It must
+            # be a pullable reference (the worker image, not the API image).
+            - name: WORKER_IMAGE
+              value: WORKER_IMAGE_PLACEHOLDER
+            - name: RECONCILE_INTERVAL_SECONDS
+              value: "5"
+            - name: DATABASE_URL
+              value: postgres://smm:$(POSTGRES_PASSWORD)@postgres:5432/smm?sslmode=disable
+            - name: REDIS_URL
+              value: redis://redis:6379
+            - name: MINIO_ENDPOINT
+              value: minio:9000
+            - name: MINIO_BUCKET
+              value: smm-raw
+            - name: CORS_ALLOWED_ORIGINS
+              value: https://DASHBOARD_DOMAIN_PLACEHOLDER
+            # HTTPS terminates at the ingress, so cookies must be Secure.
+            - name: SECURE_COOKIES
+              value: "true"
+            - name: TZ
+              value: Asia/Jakarta
+          envFrom:
+            # JWT_SECRET, CREDENTIAL_KEY, INTERNAL_API_SECRET,
+            # MINIO_ROOT_USER, MINIO_ROOT_PASSWORD, POSTGRES_PASSWORD.
+            - secretRef:
+                name: smm-secrets
+          ports:
+            - containerPort: 8080
+              name: http
+          # /healthz is liveness, /readyz reports dependency health
+          # (apps/api/internal/http/health.go).
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            timeoutSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+            periodSeconds: 10
+            timeoutSeconds: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: smm
+spec:
+  selector:
+    app: api
+  ports:
+    - port: 8080
+      targetPort: 8080

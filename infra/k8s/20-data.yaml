@@ -1,0 +1,230 @@
+# Data plane: Postgres+Timescale, Redis, MinIO (INFRA-07, single-node MVP).
+#
+# Image tags MUST match compose.yaml: the API was tested against these
+# versions and the Timescale extension is tied to the image tag.
+#
+# Service names are `postgres`, `redis`, `minio` because those are the CPU/URL
+# defaults baked into the API and worker images (apps/api/internal/config,
+# apps/worker/src/core/config.ts). Renaming one silently breaks the other.
+#
+# MVP accepts the SPOFs documented in INFRA_ANALYST §6.2 (Postgres single,
+# Redis single, MinIO 1-node single-drive). Node-pool pinning arrives with the
+# second node (INFRA-01); on one node it would be a no-op.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: smm
+spec:
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: smm
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: timescale/timescaledb:2.17.2-pg16
+          env:
+            - name: POSTGRES_DB
+              value: smm
+            - name: POSTGRES_USER
+              value: smm
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: smm-secrets
+                  key: POSTGRES_PASSWORD
+            # Logs and now() answer in WIB regardless of node TZ.
+            - name: TZ
+              value: Asia/Jakarta
+          ports:
+            - containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "smm", "-d", "smm"]
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              memory: 4Gi
+          volumeMounts:
+            - name: pgdata
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: pgdata
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 100Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: smm
+spec:
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+      targetPort: 6379
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+  namespace: smm
+spec:
+  serviceName: redis
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          # AOF on: the action queue is a durable Redis list (ADR-0006). The
+          # maxmemory policy matches INFRA_ANALYST §3.2; evicting a queue key
+          # loses jobs, which is why the alert on evicted_keys exists.
+          args:
+            - redis-server
+            - --appendonly
+            - "yes"
+            - --maxmemory
+            - 512mb
+            - --maxmemory-policy
+            - allkeys-lru
+          env:
+            - name: TZ
+              value: Asia/Jakarta
+          ports:
+            - containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            periodSeconds: 5
+            timeoutSeconds: 3
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+          volumeMounts:
+            - name: redisdata
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: redisdata
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 5Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: smm
+spec:
+  selector:
+    app: minio
+  ports:
+    - name: s3
+      port: 9000
+      targetPort: 9000
+    - name: console
+      port: 9001
+      targetPort: 9001
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: minio
+  namespace: smm
+spec:
+  serviceName: minio
+  replicas: 1
+  selector:
+    matchLabels:
+      app: minio
+  template:
+    metadata:
+      labels:
+        app: minio
+    spec:
+      containers:
+        - name: minio
+          image: pgsty/minio:latest
+          # Single drive in the MVP. The compose 4-drive layout is the v1
+          # erasure-coded topology (INFRA_ANALYST §6.2), not this one.
+          args: ["server", "/data", "--console-address", ":9001"]
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: smm-secrets
+                  key: MINIO_ROOT_USER
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: smm-secrets
+                  key: MINIO_ROOT_PASSWORD
+            - name: TZ
+              value: Asia/Jakarta
+          ports:
+            - containerPort: 9000
+            - containerPort: 9001
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: 9000
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              memory: 2Gi
+          volumeMounts:
+            - name: miniodata
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: miniodata
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 500Gi

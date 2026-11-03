@@ -463,28 +463,56 @@ func parseIGFlatPostItems(raw []byte, window port.KeywordTimeWindow) ([]scrapeIt
 	}}, nil
 }
 
-// tiktokPost is one dataset row from xmolodtsov/tiktok-search-scraper. The
-// author and the media are each a nested object, so this platform still needs
-// its own parser — there is no underscore/camel bridging to save us here.
+// tiktokPost is one dataset row from EITHER TikTok actor, which disagree on
+// field names for the same facts. One struct covers both because the two
+// shapes differ only in spelling, not in structure — every field below is
+// present under one name or the other:
+//
+//	                    search actor                     post actor
+//	text                title                            desc
+//	author handle       channel.username                 author.uniqueId
+//	author id           channel.id                       author.id
+//	media               video.cover / video.thumbnail     video.cover
+//	metrics             top-level views/likes/comments   stats.{play,digg,comment}Count
+//	published           uploadedAtFormatted / uploadedAt createTime (Unix, as a string)
+//
+// A second near-copy of this struct would be two parsers to keep in step for
+// one platform, which is exactly how the seven-platform normalisation drifted
+// the first time.
 type tiktokPost struct {
 	ID   string `json:"id"`
 	Text string `json:"title"`
-	// UploadedAtFormatted is ISO and is what this actor always sends;
+	// TextAlt is the post actor's name for the same caption.
+	TextAlt string `json:"desc"`
+	// UploadedAtFormatted is ISO and is what the search actor always sends;
 	// UploadedAt is the same instant as Unix seconds and is the fallback.
 	UploadedAtFormatted string `json:"uploadedAtFormatted"`
 	UploadedAt          int64  `json:"uploadedAt"`
-	// Pointers so a genuine 0 is stored and an absent field is not. A plain int
-	// plus a `!= 0` guard conflates the two, which made TikTok serialise a real
-	// zero differently from the other six parsers.
+	// CreateTime is the post actor's upload instant, Unix seconds as a STRING
+	// ("1790936438") rather than a number — hence its own field and its own
+	// parse, since uploading as int64 would fail the whole row.
+	CreateTime string `json:"createTime"`
+	// Search-actor metrics: flat, pointers so a genuine 0 is stored and an
+	// absent field is not.
 	Views     *int64 `json:"views"`
 	Likes     *int64 `json:"likes"`
 	Comments  *int64 `json:"comments"`
 	Shares    *int64 `json:"shares"`
 	Bookmarks *int64 `json:"bookmarks"`
-	Video     struct {
+	// Post-actor metrics: the same measures under TikTok's own names, with
+	// collectCount as a STRING ("47") because TikTok serialises it that way.
+	// Pointers for the same reason as above.
+	Stats struct {
+		DiggCount    *int64 `json:"diggCount"`
+		ShareCount   *int64 `json:"shareCount"`
+		CommentCount *int64 `json:"commentCount"`
+		PlayCount    *int64 `json:"playCount"`
+		CollectCount string `json:"collectCount"`
+	} `json:"stats"`
+	Video struct {
 		// Both are plain TikTok CDN URLs present on every row, and neither is
 		// behind a billed flag: cover is the full-size frame, thumbnail the
-		// smaller one. cover is preferred.
+		// smaller one. cover is preferred. The post actor sends only `cover`.
 		Cover     string `json:"cover"`
 		Thumbnail string `json:"thumbnail"`
 	} `json:"video"`
@@ -492,13 +520,24 @@ type tiktokPost struct {
 		ID       string `json:"id"`
 		Username string `json:"username"`
 	} `json:"channel"`
+	// Author is the post actor's spelling of channel; uniqueId carries the
+	// handle WITHOUT an "@", matching every other platform's author_handle.
+	Author struct {
+		ID       string `json:"id"`
+		UniqueID string `json:"uniqueId"`
+	} `json:"author"`
 }
 
-// parseTikTokItems maps one xmolodtsov/tiktok-search-scraper dataset row.
+// parseTikTokItems maps one TikTok dataset row, from EITHER actor.
 //
-// The window is applied here and nowhere else: this actor has no date input at
-// all, so unlike the previous one there is no server-side filter to lean on and
-// a window the payload cannot express is a window this function must enforce.
+// The window is applied here and nowhere else: neither actor takes a date
+// input, so nothing upstream can narrow the pool and this check is the only
+// backstop between what we paid for and what we store.
+//
+// The two actors are handled by taking whichever spelling is populated per
+// field rather than by branching on the row. A branch would have to guess
+// which actor sent the row, and a guess that is wrong yields a post with an
+// empty caption or a 1970 date instead of an error.
 func parseTikTokItems(raw []byte, window port.KeywordTimeWindow) ([]scrapeItem, error) {
 	var src tiktokPost
 	if err := json.Unmarshal(raw, &src); err != nil {
@@ -511,6 +550,13 @@ func parseTikTokItems(raw []byte, window port.KeywordTimeWindow) ([]scrapeItem, 
 	if publishedAt.IsZero() && src.UploadedAt != 0 {
 		publishedAt = time.Unix(src.UploadedAt, 0).UTC()
 	}
+	if publishedAt.IsZero() {
+		// createTime is Unix seconds as a string; parsing it with
+		// strconv rather than a layout because it is not a date string.
+		if secs, err := strconv.ParseInt(strings.TrimSpace(src.CreateTime), 10, 64); err == nil && secs > 0 {
+			publishedAt = time.Unix(secs, 0).UTC()
+		}
+	}
 	if !inWindow(publishedAt, window) {
 		return nil, nil
 	}
@@ -520,39 +566,60 @@ func parseTikTokItems(raw []byte, window port.KeywordTimeWindow) ([]scrapeItem, 
 	if cover := orDefault(src.Video.Cover, src.Video.Thumbnail); cover != "" {
 		media = append(media, cover)
 	}
+	// The canonical keys the snapshot writer reads (views/likes/comments/
+	// shares), filled from whichever actor's spelling is present. A new key
+	// like `plays` would be stored and then read by nobody, which shows up as
+	// a zero on a post that otherwise looks entirely correct.
 	metrics := map[string]any{}
-	if src.Likes != nil {
-		metrics["likes"] = *src.Likes
+	if v := firstPtr(src.Views, src.Stats.PlayCount); v != nil {
+		metrics["views"] = *v
 	}
-	if src.Comments != nil {
-		metrics["comments"] = *src.Comments
+	if v := firstPtr(src.Likes, src.Stats.DiggCount); v != nil {
+		metrics["likes"] = *v
 	}
-	if src.Shares != nil {
-		metrics["shares"] = *src.Shares
+	if v := firstPtr(src.Comments, src.Stats.CommentCount); v != nil {
+		metrics["comments"] = *v
 	}
-	if src.Bookmarks != nil {
-		// Stored under the same key the previous actor's `collectCount` used.
-		// TikTok's save count is the same measure under the other name, and
-		// renaming the key would orphan the value on every stored post.
-		metrics["collects"] = *src.Bookmarks
+	if v := firstPtr(src.Shares, src.Stats.ShareCount); v != nil {
+		metrics["shares"] = *v
 	}
-	if src.Views != nil {
-		// `views`, not a new `plays` key. The snapshot writer reads
-		// metricsInt("views", "viewCount", "playCount") — an unfamiliar key is
-		// stored and then read by nobody, which is a stored view count of zero
-		// on a post that otherwise looks entirely correct.
-		metrics["views"] = *src.Views
+	// TikTok's save count is `collects` under either actor, so the key does not
+	// move when the actor does.
+	if v := firstPtr(src.Bookmarks, int64PtrFromString(src.Stats.CollectCount)); v != nil {
+		metrics["collects"] = *v
 	}
 	return []scrapeItem{{
 		Platform:     string(domain.PlatformTikTok),
 		ExternalID:   src.ID,
-		AuthorHandle: orDefault(src.Channel.Username, "unknown"),
-		AuthorID:     src.Channel.ID,
-		Text:         src.Text,
+		AuthorHandle: orDefault(orDefault(src.Channel.Username, src.Author.UniqueID), "unknown"),
+		AuthorID:     orDefault(src.Channel.ID, src.Author.ID),
+		Text:         orDefault(src.Text, src.TextAlt),
 		MediaURLs:    media,
 		Metrics:      metrics,
 		PublishedAt:  publishedAtPtr(publishedAt),
 	}}, nil
+}
+
+// firstPtr returns the first non-nil pointer, so a field present under either
+// actor's spelling wins without a branch per field.
+func firstPtr(vals ...*int64) *int64 {
+	for _, v := range vals {
+		if v != nil {
+			return v
+		}
+	}
+	return nil
+}
+
+// int64PtrFromString parses a count the actor serialised as a string ("47").
+// A blank or non-numeric value returns nil, which reads as "the field was
+// absent" — the same thing a missing number means.
+func int64PtrFromString(s string) *int64 {
+	n, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
+	if err != nil {
+		return nil
+	}
+	return &n
 }
 
 // parseIGPostItems maps apify/instagram-post-scraper's post row: the post

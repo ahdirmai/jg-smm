@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strings"
 	"time"
 
@@ -143,6 +144,32 @@ type PostDetail struct {
 	Cached bool `json:"cached"`
 }
 
+// permalinkShape names the routes postExternalIDFromURL accepts, so the
+// validation error tells the operator what to paste instead of which helper
+// returned empty.
+func permalinkShape(p domain.Platform) string {
+	switch p {
+	case domain.PlatformInstagram:
+		return "expected /p/, /reel/ or /tv/ on instagram.com"
+	case domain.PlatformThreads:
+		return "expected /post/ on threads.com"
+	case domain.PlatformTikTok:
+		return "expected /@handle/video/<id> on tiktok.com"
+	case domain.PlatformYouTube:
+		return "expected /watch?v=<id>, /shorts/<id> or youtu.be/<id>"
+	case domain.PlatformX:
+		return "expected /<handle>/status/<id> on x.com"
+	}
+	return "expected a post permalink"
+}
+
+// platformFetchesComments reports whether the platform's POST actor returns
+// comment bodies. Only these two do, so only these two may mark a post as
+// comment-fetched (see the call site).
+func platformFetchesComments(p domain.Platform) bool {
+	return p == domain.PlatformInstagram || p == domain.PlatformThreads
+}
+
 // platformFromURL infers the platform from a post permalink. The dashboard
 // passes the platform explicitly, but the fallback keeps a thin client working.
 func platformFromURL(raw string) domain.Platform {
@@ -151,6 +178,12 @@ func platformFromURL(raw string) domain.Platform {
 		return domain.PlatformInstagram
 	case strings.Contains(raw, "threads.com"), strings.Contains(raw, "threads.net"):
 		return domain.PlatformThreads
+	case strings.Contains(raw, "tiktok.com"):
+		return domain.PlatformTikTok
+	case strings.Contains(raw, "youtube.com"), strings.Contains(raw, "youtu.be"):
+		return domain.PlatformYouTube
+	case strings.Contains(raw, "x.com"), strings.Contains(raw, "twitter.com"):
+		return domain.PlatformX
 	}
 	return ""
 }
@@ -212,7 +245,7 @@ func (s *ScrapeService) scrapeTarget(ctx context.Context, platform domain.Platfo
 	// profile link would silently buy a paid 100-post scrape that ingests 100
 	// unrelated rows before readBack fails. A target must address one post.
 	if postExternalIDFromURL(platform, u.String()) == "" {
-		return PostDetail{}, fmt.Errorf("%w: %q is not a post permalink for %s (expected /p/, /reel/ or /tv/ on instagram.com, /post/ on threads)", domain.ErrValidation, rawURL, platform)
+		return PostDetail{}, fmt.Errorf("%w: %q is not a post permalink for %s (%s)", domain.ErrValidation, rawURL, platform, permalinkShape(platform))
 	}
 	rawURL = u.String()
 
@@ -331,11 +364,17 @@ func (s *ScrapeService) scrapeTarget(ctx context.Context, platform domain.Platfo
 		return PostDetail{}, fmt.Errorf("%w: scrape produced no post for %s", domain.ErrValidation, rawURL)
 	}
 	s.scrapes.LinkTargetPost(ctx, tgt.ID, detail.Post.ID)
-	// A permalink scrape fetched the comment bodies even when the post has
-	// none, so the row is now cache-eligible for the next 6h. Without this the
-	// operator would pay for the same empty answer again on every repeat.
-	if err := s.scrapes.MarkPostCommentsFetched(ctx, detail.Post.ID); err != nil {
-		s.log.Warn("scrape: mark comments fetched failed", "post", detail.Post.ID, "err", err)
+	// Only the actors that actually RETURN comment bodies may stamp the post as
+	// comment-fetched. Instagram's post actor and the Threads one emit comments
+	// on the row/siblings; the TikTok, YouTube and X actors emit the post alone.
+	// Stamping those would make the 6h cache answer "this post has no comments"
+	// for a post nobody ever asked for comments — the exact stale-empty answer
+	// MarkPostCommentsFetched exists to prevent, and one that costs the operator
+	// nothing to fix by simply not writing it.
+	if platformFetchesComments(platform) {
+		if err := s.scrapes.MarkPostCommentsFetched(ctx, detail.Post.ID); err != nil {
+			s.log.Warn("scrape: mark comments fetched failed", "post", detail.Post.ID, "err", err)
+		}
 	}
 	if _, err := s.scrapes.CompleteScrapeJob(ctx, job.ID, domain.JobStatusSuccess, nil); err != nil {
 		s.log.Warn("scrape: complete job failed", "job", job.ID, "err", err)
@@ -418,22 +457,53 @@ func (s *ScrapeService) resolvePost(ctx context.Context, tgt domain.Target) (dom
 	return s.scrapes.GetPostByExternalID(ctx, tgt.Platform, code)
 }
 
-// postExternalIDFromURL pulls the post's external id (its shortcode) out of a
-// permalink — the id the ingestor keys the stored post on. IG permalinks put
-// the code after /p/, /reel(s)/ or /tv/; Threads puts it after /post/. Query
-// and fragment are dropped (…/p/CODE/?img_index=1 → CODE).
+// postExternalIDFromURL pulls the post's external id out of a permalink — the
+// id the ingestor keys the stored post on:
+//
+//	instagram  /p/<code>/, /reel(s)/<code>/, /tv/<code>/   → <code>
+//	threads    /post/<code>                                → <code>
+//	tiktok     /@<handle>/video/<id>                       → <id>
+//	youtube    /watch?v=<id>, /shorts/<id>, youtu.be/<id>  → <id>
+//	x          /<handle>/status/<id>                       → <id>
+//
+// Query and fragment are dropped first (…/p/CODE/?img_index=1 → CODE), and
+// YouTube's `v` is read from the QUERY, not from a path segment — no marker
+// search can find it.
 func postExternalIDFromURL(p domain.Platform, rawURL string) string {
 	u := rawURL
 	if i := strings.IndexAny(u, "?#"); i >= 0 {
 		u = u[:i]
 	}
+	// Split the PATH, not the whole URL: youtu.be/<id> has no marker segment,
+	// and splitting "https://youtu.be/<id>" leaves "https:" as segment 0.
+	if parsed, err := url.Parse(strings.TrimSpace(rawURL)); err == nil {
+		u = parsed.Path
+	}
 	segs := strings.Split(strings.Trim(u, "/"), "/")
+	if p == domain.PlatformYouTube {
+		// youtu.be/<id> puts it in the path; every other YouTube permalink
+		// carries it as the `v` parameter. Read the query first.
+		if parsed, err := url.Parse(strings.TrimSpace(rawURL)); err == nil {
+			if v := parsed.Query().Get("v"); v != "" {
+				return v
+			}
+		}
+		if len(segs) == 1 && segs[0] != "" && strings.Contains(rawURL, "youtu.be") {
+			return segs[0]
+		}
+	}
 	markers := map[string]struct{}{}
 	switch p {
 	case domain.PlatformInstagram:
 		markers = map[string]struct{}{"p": {}, "reel": {}, "reels": {}, "tv": {}}
 	case domain.PlatformThreads:
 		markers = map[string]struct{}{"post": {}}
+	case domain.PlatformTikTok:
+		markers = map[string]struct{}{"video": {}}
+	case domain.PlatformYouTube:
+		markers = map[string]struct{}{"shorts": {}, "embed": {}, "live": {}}
+	case domain.PlatformX:
+		markers = map[string]struct{}{"status": {}, "statuses": {}}
 	}
 	for i := 0; i+1 < len(segs); i++ {
 		if _, ok := markers[segs[i]]; ok {

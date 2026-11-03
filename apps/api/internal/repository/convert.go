@@ -88,9 +88,12 @@ func isForeignKeyViolation(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23503"
 }
 
-// pageBounds clamps limit/offset to sane bounds for list queries.
+// pageBounds clamps limit/offset to sane bounds for list queries. The upper
+// bound is 500 because internal scan loops (reconciler, elastic pool, sweeper)
+// pass 500 to see the whole fleet and must not be silently cut to 100; a
+// dashboard page never asks for more than 200.
 func pageBounds(limit, offset int) (int32, int32) {
-	if limit <= 0 || limit > 200 {
+	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
 	if offset < 0 {

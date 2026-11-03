@@ -49,7 +49,7 @@ func (d *LoggingDriver) DeleteWorker(ctx context.Context, workerID string) error
 }
 
 // Observe passes through untouched; it is a read, not a provisioning op.
-func (d *LoggingDriver) Observe(ctx context.Context, workerID string) (int, bool, error) {
+func (d *LoggingDriver) Observe(ctx context.Context, workerID string) (int, port.ContainerState, error) {
 	return d.next.Observe(ctx, workerID)
 }
 
@@ -82,4 +82,20 @@ func (d *LoggingDriver) record(ctx context.Context, w domain.Worker, op domain.P
 		d.logger.Warn("provision audit write failed",
 			"workerId", w.ID, "op", op, "err", appendErr)
 	}
+}
+
+// StopWorker pauses through the wrapped driver and records the outcome. The
+// audit op is DELETE-reasoned as "pause" only in the message; the row itself
+// records OpStop so a paused fleet is distinguishable from a deleted one.
+func (d *LoggingDriver) StopWorker(ctx context.Context, workerID string) error {
+	err := d.next.StopWorker(ctx, workerID)
+	d.record(ctx, domain.Worker{ID: workerID}, domain.OpPause, err)
+	return err
+}
+
+// StartWorker resumes through the wrapped driver and records the outcome.
+func (d *LoggingDriver) StartWorker(ctx context.Context, w domain.Worker) error {
+	err := d.next.StartWorker(ctx, w)
+	d.record(ctx, w, domain.OpResume, err)
+	return err
 }

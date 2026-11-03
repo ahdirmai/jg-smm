@@ -8,6 +8,7 @@
     "login": "tsx src/run.ts login",
     "like": "tsx src/run.ts like",
     "comment": "tsx src/run.ts comment",
+    "comment-reply": "tsx src/run.ts comment-reply",
     "harness": "tsx src/run.ts"
   },
   "devDependencies": {

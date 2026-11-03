@@ -180,7 +180,7 @@ func main() {
 			logger.Error("provisioner init failed", "err", err)
 			os.Exit(1)
 		}
-		driver := service.NewLoggingDriver(raw, logRepo, adapter.SystemClock{}, logger)
+		driver := service.NewLoggingDriver(service.NewCapacityDriver(raw, cfg.ElasticPoolMaxActive), logRepo, adapter.SystemClock{}, logger)
 
 		// Redis is the transport for action queues and worker control
 		// channels. It is optional: an unset URL leaves both the action
@@ -456,6 +456,11 @@ func main() {
 				Clock:  time.Now,
 				Logger: logger,
 				Sealer: sealer,
+				// A refresh must wake its container: the fleet's steady state
+				// is PAUSED, and a control message published to a stopped
+				// worker's channel has nobody to deliver it to.
+				Waker: waker,
+				Spacing: time.Duration(cfg.SessionRefreshSpacingSeconds) * time.Second,
 				// Bound how many logins this fleet runs at once. TickBudget
 				// alone bounds a TICK, not concurrency: with a login taking
 				// minutes and ticks repeating every few seconds, the ceiling

@@ -1040,7 +1040,7 @@ export interface components {
             id: string;
             name: string;
             /** @enum {string} */
-            desiredState: "RUNNING" | "STOPPED";
+            desiredState: "RUNNING" | "PAUSED" | "STOPPED";
             /** @enum {string} */
             source: "MANUAL" | "AUTO";
             /** @description ISO 3166-1 alpha-2 country code the worker operates in. */

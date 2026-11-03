@@ -34,7 +34,9 @@ import {
   replyToComment,
 } from '../../../apps/worker/src/platforms/dom.js';
 import { selectorsFor, type SelectorSet } from '../../../apps/worker/src/sel/index.js';
-import { launchBrowser, newAccountContext } from '../../../apps/worker/src/core/browser.js';
+// Local launcher: same worker options, but points at a mac-launchable chromium
+// (the pinned 1140 build cannot spawn here — see browser-local.ts).
+import { launchBrowser, newAccountContext } from './browser-local.js';
 import { instagramAdapter } from '../../../apps/worker/src/platforms/instagram.js';
 import { threadsAdapter } from '../../../apps/worker/src/platforms/threads.js';
 import type { PlatformAdapter } from '../../../apps/worker/src/platforms/adapter.js';

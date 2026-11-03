@@ -1,0 +1,41 @@
+# Namespace + governance for the production tier (INFRA-02).
+# Baseline, not restricted: the worker image runs an Xvfb/x11vnc/websockify
+# shell entrypoint that was never validated under restricted. Tighten after a
+# smoke login on staging — see docs/DEPLOY_K8S.md §10.5.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: smm
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: smm-quota
+  namespace: smm
+spec:
+  hard:
+    # INFRA_ANALYST §14 INFRA-02: 500 pods is the namespace ceiling for the
+    # 50-worker MVP with room for rolling updates and one-shot jobs.
+    pods: "500"
+    requests.cpu: "40"
+    requests.memory: "64Gi"
+    limits.memory: "128Gi"
+    persistentvolumeclaims: "600"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: smm-limits
+  namespace: smm
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        cpu: 100m
+        memory: 256Mi
+      default:
+        cpu: "1"
+        memory: 1Gi

@@ -277,19 +277,15 @@ export default function ActionsPage() {
         onScraped={() => setHistoryRefresh((n) => n + 1)}
       />
 
-      <ScrapeHistory
-        onPickPostAction={(platform, url) => {
-          // The history list is all seven platforms; on-demand post scrape has
-          // an actor for two. This used to cast the value into the form's union
-          // unchecked, so picking a YouTube post sent platform:"youtube" and the
-          // API answered 400 "no actor configured". Narrowed instead: the call
-          // is made only when the platform is actually scrapable this way.
-          if (platform === 'instagram' || platform === 'threads') {
-            formRef.current?.loadPost(platform, url);
-          }
-        }}
-        refreshKey={historyRefresh}
-      />
+      {/*
+        No onPick callback any more: a history row opens the post detail panel
+        rather than feeding the New Action form. That hand-off only worked for
+        Instagram and Threads, so five of seven rows were dead clicks that still
+        looked live. Creating an action from a scraped post is offered where the
+        post is already open and its platform is known to be actable — the batch
+        page's "Buat Action" button, which gates on actionDeepLink().
+      */}
+      <ScrapeHistory refreshKey={historyRefresh} />
 
       <Card>
         <CardHeader className="flex-row items-center justify-between space-y-0">

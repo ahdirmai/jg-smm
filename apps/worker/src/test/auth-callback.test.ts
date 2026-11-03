@@ -75,6 +75,27 @@ test('a failed login reports FAILED with a reason', async () => {
   });
 });
 
+// The worker knows WHY a login failed — which required cookie never arrived and
+// where the page sat — and that sentence is what makes the dashboard row
+// actionable. Sending the fixed fallback over it would throw the diagnosis away
+// at the last hop, so the reason must survive to the wire verbatim.
+test('a failed login carries the worker diagnosis, not the fixed fallback', async () => {
+  const calls: Array<{ url: string; body: unknown }> = [];
+  const cb = createAuthCallback(cfg, silentLogger, {
+    fetchImpl: recordingFetch(calls, 200) as unknown as typeof fetch,
+  });
+
+  const reason =
+    'session incomplete: left https://www.instagram.com/ but missing cookie(s) ds_user_id (platform handed a partial session, likely a verification interstitial)';
+  await cb.post('a1', { outcome: 'failed', reason });
+
+  assert.deepEqual(calls[0]?.body, {
+    accountId: 'a1',
+    authStatus: 'FAILED',
+    error: reason,
+  });
+});
+
 test('a 4xx is permanent: one attempt, no throw', async () => {
   let hits = 0;
   const fetch = async () => {

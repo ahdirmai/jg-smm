@@ -4,6 +4,31 @@
 > Format: `Ticket · Status · Commit · Date · Notes`. Source of truth for
 > backlog remains `TICKETS.md`; this file records what is actually **done**.
 
+## Checkpoint — 2026-11-03
+
+Status: **WIP saved**. This commit records the existing workspace changes together
+with the logic/infra audit and a successfully started local runtime. It is not a
+release sign-off.
+
+- Account sessions persisted server-side; migrations 000020–000023 cover session
+  storage, paused workers, pending authentication, and backfill.
+- Account/worker authentication, session refresh, proxy resolution, scrape
+  ingestion, multi-platform scrape forms, and dashboard changes included.
+- Shared capacity driver protects create/resume across interactive and reconciler
+  paths; default cap 5. Kubernetes API kept at one replica with Recreate until
+  distributed admission exists. Queue parser preserves reply/template metadata.
+- Runtime verified: dashboard /login HTTP 200, API /healthz and /readyz OK,
+  PostgreSQL/Redis/MinIO healthy, migrations version 23 clean, 485 Instagram
+  accounts loaded, one worker healthy with successful heartbeat. No Instagram
+  login or five-worker runtime load test performed.
+- API runs as locally built Docker image; dashboard runs Next.js on host.
+  Reproduction notes: `docs/LOCAL_RUNTIME_2026-11-03.md`.
+- Prior Go config/service/server and capacity tests passed. Worker build passed;
+  worker suite still has failing credential-autofill tests. See audit for open
+  idle/busy scheduling and readiness concerns.
+- Secrets, database/session data, local binaries, image cache, and runtime logs
+  remain outside the commit. No push performed.
+
 ## Legend
 
 - **Status**: `TODO` · `WIP` · `DONE` · `BLOCKED`

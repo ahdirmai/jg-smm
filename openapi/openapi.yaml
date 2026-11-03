@@ -1724,7 +1724,7 @@ components:
           type: string
         desiredState:
           type: string
-          enum: [RUNNING, STOPPED]
+          enum: [RUNNING, PAUSED, STOPPED]
         source:
           type: string
           enum: [MANUAL, AUTO]

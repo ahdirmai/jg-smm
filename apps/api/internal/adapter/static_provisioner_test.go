@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/port"
 	"github.com/ahdirmai/jg-smm/apps/api/internal/service"
 )
 
@@ -22,9 +23,9 @@ func TestStaticProvisionerObserveReadsWorkerRow(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Absent worker -> (0, false), not an error (converges to absent).
-	if gen, exists, err := p.Observe(ctx, "missing"); err != nil || exists || gen != 0 {
-		t.Fatalf("observe missing = (%d,%v,%v), want (0,false,nil)", gen, exists, err)
+	// Absent worker -> (0, absent), not an error (converges to absent).
+	if gen, state, err := p.Observe(ctx, "missing"); err != nil || state != port.ContainerAbsent || gen != 0 {
+		t.Fatalf("observe missing = (%d,%v,%v), want (0,absent,nil)", gen, state, err)
 	}
 
 	// Create records the audit intent without touching a cluster.
@@ -40,8 +41,8 @@ func TestStaticProvisionerObserveReadsWorkerRow(t *testing.T) {
 	if _, err := store.Create(ctx, w); err != nil {
 		t.Fatalf("seed worker: %v", err)
 	}
-	if gen, exists, err := p.Observe(ctx, "w1"); err != nil || !exists || gen != 3 {
-		t.Fatalf("observe = (%d,%v,%v), want (3,true,nil)", gen, exists, err)
+	if gen, state, err := p.Observe(ctx, "w1"); err != nil || state != port.ContainerRunning || gen != 3 {
+		t.Fatalf("observe = (%d,%v,%v), want (3,running,nil)", gen, state, err)
 	}
 
 	// An observed generation is authoritative once a heartbeat has landed.
@@ -66,8 +67,8 @@ func TestStaticProvisionerObserveReadsWorkerRow(t *testing.T) {
 // wired: no store means Observe reports absent instead of panicking.
 func TestStaticProvisionerWithoutStores(t *testing.T) {
 	p := NewStaticProvisioner(nil, nil, nil, nil)
-	if gen, exists, err := p.Observe(context.Background(), "any"); err != nil || exists || gen != 0 {
-		t.Fatalf("nil-store observe = (%d,%v,%v), want (0,false,nil)", gen, exists, err)
+	if gen, state, err := p.Observe(context.Background(), "any"); err != nil || state != port.ContainerAbsent || gen != 0 {
+		t.Fatalf("nil-store observe = (%d,%v,%v), want (0,absent,nil)", gen, state, err)
 	}
 	if err := p.CreateWorker(context.Background(), domain.Worker{ID: "x", Generation: 1}); err != nil {
 		t.Fatalf("create with nil stores: %v", err)

@@ -20,6 +20,8 @@ const cfg: WorkerConfig = {
   heartbeatIntervalSec: 30,
   novncUrl: null,
   internalSecret: '',
+  proxyUrl: null,
+  proxyAuth: null,
 };
 
 const silentLogger: Logger = {

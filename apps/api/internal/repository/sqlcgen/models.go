@@ -196,6 +196,7 @@ const (
 	AuthStatusNEEDSINPUT     AuthStatus = "NEEDS_INPUT"
 	AuthStatusAUTHENTICATED  AuthStatus = "AUTHENTICATED"
 	AuthStatusFAILED         AuthStatus = "FAILED"
+	AuthStatusPENDING        AuthStatus = "PENDING"
 )
 
 func (e *AuthStatus) Scan(src interface{}) error {
@@ -238,6 +239,7 @@ type DesiredState string
 const (
 	DesiredStateRUNNING DesiredState = "RUNNING"
 	DesiredStateSTOPPED DesiredState = "STOPPED"
+	DesiredStatePAUSED  DesiredState = "PAUSED"
 )
 
 func (e *DesiredState) Scan(src interface{}) error {
@@ -510,6 +512,8 @@ type ProvisionOp string
 const (
 	ProvisionOpCREATE ProvisionOp = "CREATE"
 	ProvisionOpDELETE ProvisionOp = "DELETE"
+	ProvisionOpPAUSE  ProvisionOp = "PAUSE"
+	ProvisionOpRESUME ProvisionOp = "RESUME"
 )
 
 func (e *ProvisionOp) Scan(src interface{}) error {
@@ -786,6 +790,15 @@ type Account struct {
 	LastError       *string            `json:"last_error"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	RefreshFailures int32              `json:"refresh_failures"`
+}
+
+type AccountSession struct {
+	AccountID    pgtype.UUID        `json:"account_id"`
+	StorageState []byte             `json:"storage_state"`
+	ExpiresAt    pgtype.Timestamptz `json:"expires_at"`
+	CapturedOn   pgtype.UUID        `json:"captured_on"`
+	CapturedAt   pgtype.Timestamptz `json:"captured_at"`
+	LastUsedAt   pgtype.Timestamptz `json:"last_used_at"`
 }
 
 type ActionJob struct {

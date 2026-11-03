@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"testing"
@@ -68,6 +69,47 @@ func (f *fakeRefreshStore) BeginRefresh(_ context.Context, accountID string) err
 // delivery uses the same narrow read as the operator login.
 func (f *fakeRefreshStore) GetPasswordEnc(ctx context.Context, id string) ([]byte, error) {
 	return f.accounts.GetPasswordEnc(ctx, id)
+}
+
+// ListStaleLoginAttempts mirrors the query's contract: only AUTHENTICATING rows
+// whose last_checked_at is at or before the cutoff. The cutoff being the thing
+// under test, the fake keeps the comparison honest rather than filtering on a
+// hardcoded age.
+func (f *fakeRefreshStore) ListStaleLoginAttempts(_ context.Context, olderThan time.Time) ([]domain.Account, error) {
+	var out []domain.Account
+	for _, a := range f.accounts.accounts {
+		if a.AuthStatus != domain.AuthAuthenticating {
+			continue
+		}
+		if a.LastChecked == nil || a.LastChecked.After(olderThan) {
+			continue
+		}
+		out = append(out, a)
+	}
+	return out, nil
+}
+
+// ReclaimStaleLoginAttempt mirrors the guarded UPDATE: it only fires when the
+// row is still AUTHENTICATING and still carries the timestamp it was listed at,
+// and reports whether it did. The FAILED (not AUTHENTICATED) target is part of
+// the contract — a reclaimed attempt has an UNPROVEN session.
+func (f *fakeRefreshStore) ReclaimStaleLoginAttempt(_ context.Context, accountID string, expectedLastChecked time.Time) (bool, error) {
+	a, ok := f.accounts.accounts[accountID]
+	if !ok {
+		return false, domain.ErrNotFound
+	}
+	if a.AuthStatus != domain.AuthAuthenticating {
+		return false, nil
+	}
+	if a.LastChecked == nil || !a.LastChecked.Equal(expectedLastChecked) {
+		return false, nil
+	}
+	a.AuthStatus = domain.AuthFailed
+	errMsg := "login attempt abandoned: no callback from the worker"
+	a.LastError = &errMsg
+	a.CookieExpiryAt = nil
+	f.accounts.accounts[accountID] = a
+	return true, nil
 }
 
 // refreshFixture wires the refresher + the JobService that consumes its
@@ -276,6 +318,38 @@ func TestSessionRefreshSuccessResetsStreak(t *testing.T) {
 	}
 }
 
+// TestSessionRefreshSuccessClearsRecordedError: a verified login must clear
+// `last_error`, not just the failure streak. The column is written on every
+// failure but was never cleared on success, so an account that failed once and
+// then logged in cleanly kept the message forever — AUTHENTICATED rows in the
+// live DB carried "login did not complete" from a stale attempt.
+func TestSessionRefreshSuccessClearsRecordedError(t *testing.T) {
+	_, jobs, store, _ := refreshFixture(t)
+	seedExpiring(store.accounts, "acc-1", 6*24*time.Hour)
+	ctx := context.Background()
+
+	if err := jobs.RecordAuthOutcome(ctx, AuthOutcome{
+		AccountID: "acc-1", AuthStatus: domain.AuthFailed, Error: strPtr("login did not complete"),
+	}); err != nil {
+		t.Fatalf("record failure: %v", err)
+	}
+	if got := store.accounts.get("acc-1"); got.LastError == nil {
+		t.Fatal("last_error not recorded on failure; fixture is not exercising the bug")
+	}
+
+	next := refreshStart.Add(30 * 24 * time.Hour)
+	if err := jobs.RecordAuthOutcome(ctx, AuthOutcome{
+		AccountID:       "acc-1",
+		AuthStatus:      domain.AuthAuthenticated,
+		CookieExpiresAt: &next,
+	}); err != nil {
+		t.Fatalf("record success: %v", err)
+	}
+	if got := store.accounts.get("acc-1").LastError; got != nil {
+		t.Errorf("last_error = %q after a verified login, want cleared", *got)
+	}
+}
+
 // TestSessionRefreshParkedLoginIsNotAFailure: a login parked for 2FA is the
 // operator's turn, not a dead session. Counting it would march a healthy
 // account toward quarantine while a human is mid-typing.
@@ -320,6 +394,184 @@ func TestSessionRefreshIgnoresOnboardingFailure(t *testing.T) {
 	}
 	if acc.Status == domain.AccountQuarantined {
 		t.Error("never-authenticated account was quarantined by the refresh counter")
+	}
+}
+
+// TestSessionRefreshReclaimsAbandonedLogin: a row stranded in AUTHENTICATING —
+// the worker was killed, the control message landed before the subscriber was
+// up, the callback was lost — is invisible to the due query, which excludes
+// AUTHENTICATING precisely so it does not stampede a login in flight. Without a
+// sweep the row stays there forever and the account silently drops out of every
+// scheduler the system has. The sweep must return it to FAILED so the due query
+// sees it again.
+func TestSessionRefreshReclaimsAbandonedLogin(t *testing.T) {
+	refresher, _, store, _ := refreshFixture(t)
+	worker := "worker-1"
+
+	// Stamped well outside the human-interaction window: no operator is still
+	// sitting on this one.
+	stale := refreshStart.Add(-2 * StaleLoginTimeout)
+	store.accounts.seedLocked(domain.Account{
+		ID: "acc-stuck", Platform: domain.PlatformInstagram, Username: "stuck",
+		AuthStatus: domain.AuthAuthenticating, Status: domain.AccountActive,
+		WorkerID: &worker, LastChecked: &stale,
+	})
+
+	if err := refresher.Tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	acc := store.accounts.get("acc-stuck")
+	if acc.AuthStatus != domain.AuthFailed {
+		t.Errorf("authStatus = %q after reclaim, want FAILED (an unproven session)", acc.AuthStatus)
+	}
+	if acc.LastError == nil || *acc.LastError == "" {
+		t.Error("reclaimed account carries no error explaining why it was reclaimed")
+	}
+	// A stale expiry left in place would make the next dispatch look like a
+	// refresh of a live session and count toward the quarantine streak.
+	if acc.CookieExpiryAt != nil {
+		t.Errorf("cookieExpiryAt = %v after reclaim, want cleared", acc.CookieExpiryAt)
+	}
+}
+
+// TestSessionRefreshLeavesRecentLoginAlone: a login inside the human window is
+// the OPERATOR's turn. Sweeping it would kill the very login the live view is
+// waiting on, so the bound must sit well clear of any plausible 2FA/checkpoint
+// interaction.
+func TestSessionRefreshLeavesRecentLoginAlone(t *testing.T) {
+	refresher, _, store, _ := refreshFixture(t)
+	worker := "worker-1"
+
+	recent := refreshStart.Add(-2 * time.Minute)
+	store.accounts.seedLocked(domain.Account{
+		ID: "acc-live", Platform: domain.PlatformInstagram, Username: "live",
+		AuthStatus: domain.AuthAuthenticating, Status: domain.AccountActive,
+		WorkerID: &worker, LastChecked: &recent,
+	})
+
+	if err := refresher.Tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	if acc := store.accounts.get("acc-live"); acc.AuthStatus != domain.AuthAuthenticating {
+		t.Errorf("authStatus = %q, want the in-flight login left untouched", acc.AuthStatus)
+	}
+}
+
+// TestSessionRefreshReclaimDoesNotStompARealOutcome: the sweep lists stale rows
+// and then writes, and a worker can report back in that gap. The write is
+// timestamp-guarded for exactly that reason — a real verdict must win over the
+// sweep's guess, or a successful login would be recorded as abandoned.
+func TestSessionRefreshReclaimDoesNotStompARealOutcome(t *testing.T) {
+	_, _, store, _ := refreshFixture(t)
+	worker := "worker-1"
+
+	// Listed as stale, but the row has since moved on (the worker reported),
+	// so the guard timestamp no longer matches.
+	moved := refreshStart.Add(-3 * StaleLoginTimeout)
+	store.accounts.seedLocked(domain.Account{
+		ID: "acc-race", Platform: domain.PlatformInstagram, Username: "race",
+		AuthStatus: domain.AuthAuthenticating, Status: domain.AccountActive,
+		WorkerID: &worker, LastChecked: &moved,
+	})
+
+	// The sweep lists it at `moved`, then the worker's real outcome lands.
+	store.accounts.seedLocked(domain.Account{
+		ID: "acc-race", Platform: domain.PlatformInstagram, Username: "race",
+		AuthStatus: domain.AuthAuthenticated, Status: domain.AccountActive,
+		WorkerID: &worker, LastChecked: &moved,
+	})
+
+	reclaimed, err := store.ReclaimStaleLoginAttempt(context.Background(), "acc-race", moved)
+	if err != nil {
+		t.Fatalf("reclaim: %v", err)
+	}
+	if reclaimed {
+		t.Error("sweep reclaimed an account that had already reported a real outcome")
+	}
+	if acc := store.accounts.get("acc-race"); acc.AuthStatus != domain.AuthAuthenticated {
+		t.Errorf("authStatus = %q, want AUTHENTICATED preserved", acc.AuthStatus)
+	}
+}
+
+// TestSessionRefreshRespectsFleetLoginCeiling: TickBudget bounds one tick, not
+// concurrency. With ticks repeating every few seconds and a login taking
+// minutes, an ungated loop starts every due account long before the first
+// resolves — 30 headful logins at Instagram from one IP, which is what gets the
+// range rate-limited. The gate must hold the fleet at the ceiling.
+func TestSessionRefreshRespectsFleetLoginCeiling(t *testing.T) {
+	accounts := newFakeAccountStore()
+	now := refreshStart
+	store := &fakeRefreshStore{accounts: accounts, now: &now}
+	pub := &recordingPublisher{}
+	refresher := NewSessionRefresher(store, pub, SessionRefreshConfig{
+		Clock:               func() time.Time { return now },
+		Logger:              slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Sealer:              stubSealer{},
+		MaxConcurrentLogins: 3,
+		InFlightLogins:      func(context.Context) (int, error) { return 2, nil },
+	})
+	// Ten accounts are due; two logins are already in flight, so only one more
+	// may start this tick.
+	for i := range 10 {
+		seedExpiring(accounts, "acc-"+string(rune('a'+i)), 6*24*time.Hour)
+	}
+
+	if err := refresher.Tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if len(store.begun) != 1 {
+		t.Errorf("dispatched %d logins with 2 in flight at a ceiling of 3, want 1", len(store.begun))
+	}
+}
+
+// TestSessionRefreshStopsAtCeiling: once the fleet is full, a tick dispatches
+// nothing rather than one more.
+func TestSessionRefreshStopsAtCeiling(t *testing.T) {
+	accounts := newFakeAccountStore()
+	now := refreshStart
+	store := &fakeRefreshStore{accounts: accounts, now: &now}
+	pub := &recordingPublisher{}
+	refresher := NewSessionRefresher(store, pub, SessionRefreshConfig{
+		Clock:               func() time.Time { return now },
+		Logger:              slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Sealer:              stubSealer{},
+		MaxConcurrentLogins: 3,
+		InFlightLogins:      func(context.Context) (int, error) { return 3, nil },
+	})
+	seedExpiring(accounts, "acc-full", 6*24*time.Hour)
+
+	if err := refresher.Tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if len(store.begun) != 0 {
+		t.Errorf("dispatched %d logins at a full ceiling, want 0", len(store.begun))
+	}
+}
+
+// TestSessionRefreshFailsClosedWhenCountUnavailable: if the in-flight count
+// cannot be read, the safe move is to dispatch nothing. Guessing would be
+// exactly the stampede the gate exists to prevent, and the accounts stay due.
+func TestSessionRefreshFailsClosedWhenCountUnavailable(t *testing.T) {
+	accounts := newFakeAccountStore()
+	now := refreshStart
+	store := &fakeRefreshStore{accounts: accounts, now: &now}
+	pub := &recordingPublisher{}
+	refresher := NewSessionRefresher(store, pub, SessionRefreshConfig{
+		Clock:               func() time.Time { return now },
+		Logger:              slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Sealer:              stubSealer{},
+		MaxConcurrentLogins: 3,
+		InFlightLogins:      func(context.Context) (int, error) { return 0, errors.New("db down") },
+	})
+	seedExpiring(accounts, "acc-x", 6*24*time.Hour)
+
+	if err := refresher.Tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if len(store.begun) != 0 {
+		t.Errorf("dispatched %d logins without a usable in-flight count, want 0", len(store.begun))
 	}
 }
 

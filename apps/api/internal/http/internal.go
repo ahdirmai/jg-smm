@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -51,6 +52,9 @@ type InternalHandler struct {
 // concrete type. SECURITY: implementations must not persist or log the value.
 type SessionExportSink interface {
 	DeliverExportedSession(requestID string, session json.RawMessage)
+	// PersistSession stores a session the worker reported outside any operator
+	// request (a successful login). Sealed at rest like an exported one.
+	PersistSession(ctx context.Context, accountID string, session json.RawMessage) error
 }
 
 // NewInternalHandler builds the handler. A nil JobService keeps the API bootable
@@ -124,6 +128,21 @@ func (h *InternalHandler) sessionExport(c echo.Context) error {
 	}
 	if h.sessions == nil {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "session export sink unavailable")
+	}
+	// A login that just succeeded reports its session under this well-known id.
+	// It has no operator waiting, so it is STORED rather than relayed: the
+	// session is the whole point of the login, and a container that is
+	// recreated later (the fleet's normal lifecycle) would otherwise take the
+	// only copy with it. Observed live: an account logged in successfully, the
+	// cookie existed on the container volume, and account_session stayed empty.
+	if req.RequestID == service.SessionPersistRequestID {
+		if len(req.Session) == 0 || string(req.Session) == "null" {
+			return c.JSON(http.StatusOK, oapigen.CallbackAck{Accepted: false})
+		}
+		if err := h.sessions.PersistSession(c.Request().Context(), req.AccountID, req.Session); err != nil {
+			return h.translate(c, err)
+		}
+		return c.JSON(http.StatusOK, oapigen.CallbackAck{Accepted: true})
 	}
 	// A JSON `null` (no session on the container) becomes an empty payload so the
 	// waiter reports "no session" rather than relaying the literal null.

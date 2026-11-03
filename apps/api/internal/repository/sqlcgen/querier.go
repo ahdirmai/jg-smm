@@ -86,6 +86,13 @@ type Querier interface {
 	// The per-post distribution the dashboard renders. Unanalysed rows are counted
 	// by the caller (count - analysed), so this only returns labels that exist.
 	CountCommentsBySentiment(ctx context.Context, postID pgtype.UUID) ([]CountCommentsBySentimentRow, error)
+	// How many logins are unresolved right now, fleet-wide. AUTHENTICATING is the
+	// state BeginSessionRefresh and the operator Login both set, and it is cleared
+	// only by an outcome callback or the stale sweep; NEEDS_INPUT is a login parked
+	// for the operator, which is still a live browser holding a platform session.
+	// Both count toward the concurrency ceiling, because both are open logins from
+	// this fleet's IP.
+	CountInFlightLogins(ctx context.Context) (int64, error)
 	// Same filter as the list it counts: a per-platform count that included
 	// archived accounts would disagree with the table shown beside it.
 	CountOfficialAccountsByPlatform(ctx context.Context, platform Platform) (int64, error)
@@ -130,6 +137,7 @@ type Querier interface {
 	CreateUser(ctx context.Context, arg CreateUserParams) (CreateUserRow, error)
 	CreateWorker(ctx context.Context, arg CreateWorkerParams) (Worker, error)
 	DeleteAccount(ctx context.Context, id pgtype.UUID) error
+	DeleteAccountSession(ctx context.Context, accountID pgtype.UUID) error
 	// Hard delete is allowed: ON DELETE SET NULL keeps the history readable, it
 	// only loses the link to the variant's definition.
 	DeleteCommentTemplate(ctx context.Context, id pgtype.UUID) error
@@ -146,6 +154,16 @@ type Querier interface {
 	// the worker can fill the login form. No read model, API response, or log
 	// line ever carries the value.
 	GetAccountPasswordEnc(ctx context.Context, id pgtype.UUID) ([]byte, error)
+	// Account session queries. storage_state is AES-256-GCM ciphertext and shares
+	// password_enc's rule: it is read ONLY by the control-message dispatch that
+	// hands it back to a worker, never by a read model, an API response, or a log
+	// line. GetAccountSessionState is the single decrypting read, exactly as
+	// GetAccountPasswordEnc is for the password.
+	// Metadata only — no ciphertext. Safe for scheduling and diagnostics.
+	GetAccountSession(ctx context.Context, accountID pgtype.UUID) (GetAccountSessionRow, error)
+	// The narrow credential read: the auth-import dispatch unseals this once and
+	// puts it on the private per-worker control channel.
+	GetAccountSessionState(ctx context.Context, accountID pgtype.UUID) (GetAccountSessionStateRow, error)
 	GetActionJobByID(ctx context.Context, id pgtype.UUID) (ActionJob, error)
 	// The latest attempt of a job, by (job, attempt).
 	GetActionLog(ctx context.Context, arg GetActionLogParams) (ActionLog, error)
@@ -171,6 +189,17 @@ type Querier interface {
 	// proxy_group queries. pool_key is encrypted at rest (AES-256-GCM, P1-07) and
 	// is only ever written by the credential-aware service, never decrypted here.
 	GetProxyGroupByID(ctx context.Context, id pgtype.UUID) (ProxyGroup, error)
+	// The proxy pool a worker's container should egress through, or no rows when
+	// the worker's accounts carry no group.
+	//
+	// Derived from the worker's FIRST account rather than stored on `worker`,
+	// because the binding lives on `account` (P1-07: a pool is bound "at region
+	// level" per account) and a container is a device, not a pool member. Several
+	// accounts on one container may name different groups; the container can only
+	// have one egress (Playwright fixes the proxy at launch), so the earliest
+	// binding wins and is stable across reconciles, which is what keeps a
+	// reconciled container on the same IP it had before.
+	GetProxyGroupForWorker(ctx context.Context, workerID pgtype.UUID) (ProxyGroup, error)
 	GetScrapeJobByID(ctx context.Context, id pgtype.UUID) (ScrapeJob, error)
 	// Target: the scrape/action join point. Deduped by (platform, external_id).
 	// Upsert returns the canonical row so callers get an id whether it existed or
@@ -230,9 +259,10 @@ type Querier interface {
 	// last_checked_at (stamped at dispatch) instead of re-firing on every tick.
 	//
 	// These gates MUST stay in sync with the partial predicate of
-	// `account_refresh_due_idx` (000015): Postgres only uses a partial index whose
-	// predicate the query provably implies, so widening one here without the other
-	// silently degrades this query to a seq scan.
+	// `account_refresh_due_idx` (000023, which replaced the 000015 one): Postgres
+	// only uses a partial index whose predicate the query provably implies, so
+	// widening one here without the other silently degrades this query to a seq
+	// scan.
 	ListAccountsDueForRefresh(ctx context.Context, arg ListAccountsDueForRefreshParams) ([]ListAccountsDueForRefreshRow, error)
 	ListActionJobs(ctx context.Context, arg ListActionJobsParams) ([]ActionJob, error)
 	ListActionJobsByAccount(ctx context.Context, arg ListActionJobsByAccountParams) ([]ActionJob, error)
@@ -290,6 +320,26 @@ type Querier interface {
 	ListRecentPostsByPlatform(ctx context.Context, arg ListRecentPostsByPlatformParams) ([]Post, error)
 	ListScrapeJobs(ctx context.Context, arg ListScrapeJobsParams) ([]ScrapeJob, error)
 	ListScrapeJobsByStatus(ctx context.Context, arg ListScrapeJobsByStatusParams) ([]ScrapeJob, error)
+	// Refresh sweep: sessions whose dated cookie dies before the cutoff. Undated
+	// (session-cookie) rows are excluded by the index predicate and by the NOT
+	// NULL check, because a date we do not have cannot be scheduled against.
+	ListSessionsExpiringBefore(ctx context.Context, arg ListSessionsExpiringBeforeParams) ([]ListSessionsExpiringBeforeRow, error)
+	// Accounts stranded in AUTHENTICATING: a login was dispatched and no callback
+	// ever came back, so the row sits in a state the due query deliberately
+	// excludes (see ListAccountsDueForRefresh above) and nothing else would ever
+	// move it. A paused worker that never wakes, a control message published
+	// before the worker subscribed, or a container killed mid-login all land here,
+	// and the account is invisible to the operator until a human notices.
+	//
+	// `$1` is the cutoff: attempts older than it are considered abandoned. It is
+	// deliberately generous relative to the worker's own 180s poll, because a
+	// login through noVNC is the OPERATOR's turn — a human reading a 2FA prompt
+	// holds the row legitimately for minutes. Only an attempt that has outlived
+	// any plausible human interaction is reclaimed.
+	//
+	// NEEDS_INPUT is NOT included: that state means the worker is parked and
+	// waiting, which is a stable resting state, not a lost one.
+	ListStaleLoginAttempts(ctx context.Context, arg ListStaleLoginAttemptsParams) ([]ListStaleLoginAttemptsRow, error)
 	ListTargets(ctx context.Context, arg ListTargetsParams) ([]Target, error)
 	// Top-N posts by a single metric on a platform, for the P2-05 aggregation and
 	// the dashboard's "top posts" table. metric_key must be a jsonb text field;
@@ -307,6 +357,21 @@ type Querier interface {
 	// caller does the weighted random pick over this candidate set (see the
 	// template service) — weighting in SQL needs a seed and is harder to test.
 	PickForTarget(ctx context.Context, arg PickForTargetParams) ([]CommentTemplate, error)
+	// Return one abandoned AUTHENTICATING row to a state the scheduler will pick
+	// up again. FAILED (not AUTHENTICATED) because the truthful summary of "we
+	// never learned the outcome" is that the session is unproven: claiming
+	// AUTHENTICATED would put the dashboard and the action path on a cookie we
+	// have no evidence for, and AUTHENTICATED rows are only re-checked near their
+	// expiry, so the account would stay wrong for days.
+	//
+	// cookie_expiry_at is cleared with it. Leaving a stale future date in place
+	// would make the next dispatch look like a REFRESH of a live session, which
+	// counts toward the P2-06 quarantine streak (RecordAuthOutcome only increments
+	// when an expiry exists) — so reclaiming must not manufacture that history.
+	// The timestamp guard keeps this idempotent: if the worker reported back
+	// between the list and this write, the row is no longer AUTHENTICATING and the
+	// update is a no-op rather than a stomp over a real outcome.
+	ReclaimStaleLoginAttempt(ctx context.Context, arg ReclaimStaleLoginAttemptParams) error
 	// Backoff/jitter path (P3-11): the attempt failed with a retryable class, so
 	// the job goes back to PENDING at a future scheduled_at for the next tick.
 	// Also serves "run pending now", where the row is already PENDING.
@@ -346,6 +411,10 @@ type Querier interface {
 	// P2-05 aggregation: top-100 posts by a metric over a trailing window, via a
 	// continuous-look-alike query on the latest snapshot per post.
 	TopPostsByMetric(ctx context.Context, arg TopPostsByMetricParams) ([]TopPostsByMetricRow, error)
+	// Records that a worker hydrated from this session successfully. Distinguishes
+	// a cookie that has actually been reused from one that was captured and never
+	// tried.
+	TouchAccountSession(ctx context.Context, accountID pgtype.UUID) error
 	TouchAuthSession(ctx context.Context, id pgtype.UUID) error
 	// written by the ingestor only after a successful snapshot write, so
 	// last_fetched_at always means "data present", not "attempt ran".
@@ -372,6 +441,11 @@ type Querier interface {
 	UpdateProxyGroup(ctx context.Context, arg UpdateProxyGroupParams) (ProxyGroup, error)
 	UpdateUser(ctx context.Context, arg UpdateUserParams) (UpdateUserRow, error)
 	UpdateWorker(ctx context.Context, arg UpdateWorkerParams) (Worker, error)
+	// A fresh login replaces whatever was stored: the new cookie is strictly
+	// better, and keeping the old one would let a revoked session shadow a live
+	// one. captured_on records which container produced it, so a bad cookie can be
+	// traced to a worker.
+	UpsertAccountSession(ctx context.Context, arg UpsertAccountSessionParams) (UpsertAccountSessionRow, error)
 	// The upsert heart of the callback path. A worker first reports RUNNING (no
 	// screenshot yet, no verdict) and later the terminal verdict on the SAME row:
 	// UNIQUE (action_job_id, attempt) makes the pair one row.

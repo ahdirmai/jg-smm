@@ -49,7 +49,7 @@ import { api } from '@/lib/api';
 
 import { useAccounts } from '@/lib/hooks/use-accounts';
 import { useContainers } from '@/lib/hooks/use-containers';
-import type { Account } from '@/lib/api';
+import type { Account, Container } from '@/lib/api';
 import { AddAccountDialog } from '@/components/add-account-dialog';
 import { ImportAccountsDialog } from '@/components/import-accounts-dialog';
 import { AccountDetailPanel, profileUrlFor } from '@/components/account-detail-panel';
@@ -165,6 +165,19 @@ export default function AccountsPage() {
 
   const novncFor = (a: Account): string | null =>
     a.workerId ? (novncByWorker.get(a.workerId) ?? null) : null;
+
+  // workerId → desiredState, so the STATUS column can show what the fleet
+  // controller is enforcing (RUNNING/PAUSED) next to the account's own
+  // lifecycle. An account's ACTIVE used to read as "the process is up"; on a
+  // paused fleet that was a lie the table told at a glance.
+  const workerState = useMemo(() => {
+    const m = new Map<string, Container['desiredState']>();
+    for (const c of containers) m.set(c.id, c.desiredState);
+    return m;
+  }, [containers]);
+
+  const workerStateFor = (a: Account): Container['desiredState'] | null =>
+    a.workerId ? (workerState.get(a.workerId) ?? null) : null;
 
   // Containers that can take a login right now. Read by the first-run panel,
   // where "no accounts" is only actionable if the fleet says whether there is
@@ -653,7 +666,17 @@ export default function AccountsPage() {
                           <AuthBadge status={a.authStatus} />
                         </TableCell>
                         <TableCell>
-                          <StatusBadge status={a.status} />
+                          {/* Primary: the worker's enforced state (what is
+                           * actually running). Secondary: the account's own
+                           * lifecycle. Two pills, no colour lie. */}
+                          <div className="flex items-center gap-1.5">
+                            {workerStateFor(a) === 'PAUSED' ? (
+                              <Badge variant="warning">PAUSED</Badge>
+                            ) : workerStateFor(a) === 'RUNNING' ? (
+                              <Badge variant="success">ACTIVE</Badge>
+                            ) : null}
+                            <StatusBadge status={a.status} />
+                          </div>
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center justify-end gap-1">

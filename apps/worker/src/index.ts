@@ -92,7 +92,21 @@ const geolocation = createGeolocation({
 // default) no page is ever opened, so a dev box without Xvfb still boots clean.
 let browserHandle: BrowserHandle | undefined;
 async function browser() {
-  if (!browserHandle) browserHandle = await launchBrowser({ display: config.display });
+  if (!browserHandle) {
+    browserHandle = await launchBrowser({
+      display: config.display,
+      // Null `proxyUrl` is the direct-dial default (a local stack has none).
+      // When set it is the container's assigned residential pool: the fix for
+      // a fleet of workers all presenting one datacentre IP to Instagram.
+      proxy: config.proxyUrl
+        ? {
+            server: config.proxyUrl,
+            ...(config.proxyAuth ? { username: config.proxyAuth.username } : {}),
+            ...(config.proxyAuth ? { password: config.proxyAuth.password } : {}),
+          }
+        : null,
+    });
+  }
   return browserHandle.browser;
 }
 // The live-view context, kept open across "open profile" calls so repeated
@@ -143,6 +157,16 @@ const authDeps = {
   log: (msg: string, data?: Record<string, unknown>) => logger.warn(msg, data),
   workerId: config.workerId,
   ...(process.env.SCREENSHOT_DIR ? { screenshotDir: process.env.SCREENSHOT_DIR } : {}),
+  // A verified login reports its session so it outlives this container. The
+  // well-known requestId marks it as a store, not an operator export.
+  onSession: async (accountId: string, platform: string, state: unknown) => {
+    await sessionCallback.post({
+      accountId,
+      platform,
+      requestId: 'login-success',
+      session: state,
+    });
+  },
 };
 
 // The login outcome is reported back so the dashboard's auth badge moves on

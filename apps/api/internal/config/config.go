@@ -56,6 +56,15 @@ type Config struct {
 	MaxAccountsPerContainer int
 	// ActionBatchParallelism caps how many worker containers act concurrently.
 	ActionBatchParallelism int
+	// ElasticPoolMaxActive caps how many worker containers may be RUNNING at
+	// once across the whole fleet. Work beyond the cap waits in Redis and is
+	// served when a slot frees. 0 disables the pool entirely (every worker
+	// keeps its own desired_state, the pre-pool behaviour).
+	ElasticPoolMaxActive int
+	// ElasticPoolIdleSeconds is how long a pool-managed worker must have an
+	// empty queue AND no recent action before the pool pauses it. Pausing
+	// frees its RAM to zero; the waker resumes it in seconds when work arrives.
+	ElasticPoolIdleSeconds int
 	// ActionIntervalSeconds runs the action scheduler loop in the API process
 	// (P3-07): it claims due action jobs, enforces the cooldown + rate-limit
 	// gates, and publishes survivors to the worker queues. 0 disables it (local
@@ -144,6 +153,12 @@ type Config struct {
 	// actor publishes under a third-party namespace, so "<prefix>/<name>" would
 	// address a store entry that does not exist (404 on every Threads scrape).
 	ApifyPostActorThreads string
+	// ApifyPostActorTikTok is the full id of the per-POST TikTok scraper. Same
+	// rule as Threads: third-party namespace, never prefix-derived. The keyword
+	// search actor cannot stand in for it — xmolodtsov/tiktok-search-scraper
+	// was measured failing every run on the free plan (all exits zero-byte), so
+	// a permalink scrape needs an actor that does not go through search at all.
+	ApifyPostActorTikTok string
 	// ApifySearchActorInstagram / ApifySearchActorThreads are the full ids of
 	// the keyword-search actors. They are not prefix-derived: the Instagram and
 	// Threads search actors publish under different Apify namespaces.
@@ -190,6 +205,16 @@ type Config struct {
 	// SessionRefreshLeadHours is how far ahead of expiry a refresh is
 	// dispatched (the ticket's "7 hari sebelum expiry").
 	SessionRefreshLeadHours int
+	// SessionRefreshSpacingSeconds is the quiet time between two login
+	// dispatches. Concurrency caps how many run at once; this caps the RATE,
+	// which is what a platform sees. 0 disables pacing.
+	SessionRefreshSpacingSeconds int
+	// MaxConcurrentLogins caps logins in flight across the fleet. A login is a
+	// headful browser against the same platform egress, so an unbounded fleet
+	// presents a burst from one IP — the pattern Instagram rate-limits, and it
+	// rate-limits silently (navigations start failing while the same URL from
+	// an ordinary host returns 200). 0 disables the gate.
+	MaxConcurrentLogins int
 	// AnalyticsProvider selects which 3rd-party provider adapter the ingestor
 	// uses (PRD F5; provider-agnostic by design).
 	AnalyticsProvider string
@@ -242,6 +267,8 @@ func Load() (Config, error) {
 		ProvisionAutoCreate:      envBool("PROVISION_AUTO_CREATE", true),
 		MaxAccountsPerContainer:  envInt("MAX_ACCOUNTS_PER_CONTAINER", 7),
 		ActionBatchParallelism:   envInt("ACTION_BATCH_PARALLELISM", 2),
+		ElasticPoolMaxActive:     envInt("ELASTIC_POOL_MAX_ACTIVE", 5),
+		ElasticPoolIdleSeconds:   envInt("ELASTIC_POOL_IDLE_SECONDS", 300),
 		ActionIntervalSeconds:    envInt("ACTION_INTERVAL_SECONDS", 0),
 		RedisURL:                 os.Getenv("REDIS_URL"),
 		ActionCooldownSeconds:    envInt("ACTION_COOLDOWN_SECONDS", 60),
@@ -285,6 +312,7 @@ func Load() (Config, error) {
 		ApifySearchActorX:         env("APIFY_SEARCH_ACTOR_X", "apidojo/twitter-scraper-lite"),
 		ApifySearchActorFacebook:  env("APIFY_SEARCH_ACTOR_FACEBOOK", "danek/facebook-search-ppr"),
 		ApifyPostActorThreads:     env("APIFY_POST_ACTOR_THREADS", "themineworks/threads-scraper"),
+		ApifyPostActorTikTok:      env("APIFY_POST_ACTOR_TIKTOK", "logical_scrapers/tiktok-realtime-post-details-scraper"),
 		ApifyBudgetUSD:            envFloat("APIFY_BUDGET_USD", 0),
 		ProxyBudgetGB:             envFloat("PROXY_BUDGET_GB", 0),
 
@@ -297,6 +325,8 @@ func Load() (Config, error) {
 		AggregateIntervalSeconds:       envInt("AGGREGATE_INTERVAL_SECONDS", 0),
 		SessionRefreshIntervalSeconds:  envInt("SESSION_REFRESH_INTERVAL_SECONDS", 0),
 		SessionRefreshLeadHours:        envInt("SESSION_REFRESH_LEAD_HOURS", 168),
+		MaxConcurrentLogins:            envInt("MAX_CONCURRENT_LOGINS", 3),
+		SessionRefreshSpacingSeconds:   envInt("SESSION_REFRESH_SPACING_SECONDS", 0),
 		AnalyticsProvider:              env("ANALYTICS_PROVIDER", "thirdparty_a"),
 		AnalyticsProviderBaseURL:       env("ANALYTICS_PROVIDER_BASE_URL", "https://provider.example.com/v1"),
 		AnalyticsProviderKey:           os.Getenv("ANALYTICS_PROVIDER_KEY"),
@@ -330,6 +360,12 @@ func Load() (Config, error) {
 	}
 	if cfg.ActionBatchParallelism < 1 {
 		return Config{}, fmt.Errorf("config: ACTION_BATCH_PARALLELISM must be >= 1, got %d", cfg.ActionBatchParallelism)
+	}
+	if cfg.ElasticPoolMaxActive < 0 {
+		return Config{}, fmt.Errorf("config: ELASTIC_POOL_MAX_ACTIVE must be >= 0 (0 disables the pool), got %d", cfg.ElasticPoolMaxActive)
+	}
+	if cfg.ElasticPoolMaxActive > 0 && cfg.ElasticPoolIdleSeconds < 1 {
+		return Config{}, fmt.Errorf("config: ELASTIC_POOL_IDLE_SECONDS must be >= 1 when the pool is enabled, got %d", cfg.ElasticPoolIdleSeconds)
 	}
 	if cfg.MaxAccountsPerContainer < 1 {
 		return Config{}, fmt.Errorf("config: MAX_ACCOUNTS_PER_CONTAINER must be >= 1, got %d", cfg.MaxAccountsPerContainer)
@@ -366,6 +402,9 @@ func Load() (Config, error) {
 	}
 	if cfg.SessionRefreshLeadHours <= 0 {
 		return Config{}, fmt.Errorf("config: SESSION_REFRESH_LEAD_HOURS must be > 0, got %d", cfg.SessionRefreshLeadHours)
+	}
+	if cfg.MaxConcurrentLogins < 0 {
+		return Config{}, fmt.Errorf("config: MAX_CONCURRENT_LOGINS must be >= 0, got %d", cfg.MaxConcurrentLogins)
 	}
 	if cfg.ActionCooldownSeconds < 0 {
 		return Config{}, fmt.Errorf("config: ACTION_COOLDOWN_SECONDS must be >= 0, got %d", cfg.ActionCooldownSeconds)

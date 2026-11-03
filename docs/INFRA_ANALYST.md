@@ -315,6 +315,8 @@ Compute total = ~$680 (20%). Optimasi compute lebih kecil dampaknya dari proxy.
 
 **Aturan parity:** image sama (tag sama), config via env/Secret, **tidak ada** perbedaan kode antar-env. Deploy: `main` → staging otomatis; prod **manual promote** (`workflow_dispatch`).
 
+Pemasangan tier K8s (urutan fase, manifest `infra/k8s/`, gate verifikasi, dan gap yang belum ditutup): [DEPLOY_K8S.md](DEPLOY_K8S.md).
+
 ---
 
 ## 11. Observability (spesifik infra)

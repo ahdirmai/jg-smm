@@ -48,6 +48,24 @@ func (r *ProxyGroupRepo) List(ctx context.Context) ([]domain.ProxyGroup, error) 
 	return out, nil
 }
 
+// GetPoolKeyForWorker returns the encrypted pool key of the proxy group bound
+// to a worker's container, or ErrNotFound when the worker has no account with
+// a group (the direct-dial case, which is the normal local state).
+//
+// The ciphertext is returned raw, not unsealed: this repo layer is deliberately
+// credential-blind (see the package comment), so the caller that owns the
+// sealer does the decrypting.
+func (r *ProxyGroupRepo) GetPoolKeyForWorker(ctx context.Context, workerID string) ([]byte, error) {
+	row, err := r.q.GetProxyGroupForWorker(ctx, uuidValue(workerID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("repository.proxy_group.GetPoolKeyForWorker: %w", err)
+	}
+	return row.PoolKey, nil
+}
+
 // Create inserts a proxy group. Duplicate name -> domain.ErrConflict.
 func (r *ProxyGroupRepo) Create(ctx context.Context, g domain.ProxyGroup) (domain.ProxyGroup, error) {
 	row, err := r.q.CreateProxyGroup(ctx, sqlcgen.CreateProxyGroupParams{

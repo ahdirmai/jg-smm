@@ -567,6 +567,11 @@ func validateActionType(t domain.JobType) error {
 var platformHosts = map[domain.Platform][]string{
 	domain.PlatformInstagram: {"instagram.com", "www.instagram.com"},
 	domain.PlatformThreads:   {"threads.net", "www.threads.net", "threads.com", "www.threads.com"},
+	// Read-only scrape surface: no worker acts on these yet, but the on-demand
+	// scrape navigates to them, so the same SSRF floor applies.
+	domain.PlatformTikTok:  {"tiktok.com", "www.tiktok.com", "m.tiktok.com"},
+	domain.PlatformYouTube: {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"},
+	domain.PlatformX:       {"x.com", "www.x.com", "twitter.com", "www.twitter.com", "mobile.twitter.com"},
 }
 
 // safeTargetURL is the enqueue floor (SSRF): http/https on a host that belongs

@@ -45,8 +45,24 @@ Playwright Chromium is already installed on this machine
 npx playwright install chromium
 ```
 
-The runtime browser driver is resolved from `apps/worker/node_modules`
-(Playwright 1.48.2), so the headful browser matches the worker's version.
+### macOS: the pinned chromium does not launch
+
+The harness pins `playwright@1.48.2`, which resolves **chromium-1140**. On this
+machine that build fails to spawn:
+
+```
+browserType.launch: spawn Unknown system error -88
+```
+
+even though its binary reports `arm64` and is unsigned. Chromium-1228 (already
+in the cache) launches fine. `src/browser-local.ts` therefore resolves a working
+binary and passes it as `executablePath` into the worker's own `launchBrowser`
+— so the worker's real options still apply and only the binary differs.
+
+Override with `DISPLAY_BROWSER=/path/to/Chrome tsx src/run.ts ...`.
+
+The runtime browser **driver** still comes from `apps/worker/node_modules`
+(Playwright 1.48.2); only the launched binary is overridden (see above).
 
 ## Commands
 
@@ -84,6 +100,23 @@ tsx src/run.ts comment --url https://www.instagram.com/p/XXXX/ --text "OKE"
 # real, irreversible comment:
 tsx src/run.ts comment --url https://www.instagram.com/p/XXXX/ --text "OKE" --commit
 ```
+
+### comment-reply — reply to a SPECIFIC comment
+
+The URL is a **comment permalink** (`.../p/<postCode>/c/<commentId>/`), not a post
+permalink. Only this form threads the reply under that comment; a bare post URL
+is rejected by the API for a reply job.
+
+```bash
+tsx src/run.ts comment-reply --url https://www.instagram.com/p/XXXX/c/1789/ --text "setuju" --commit
+```
+
+On IG the reply box **pre-fills an `@username` mention**, and the worker keeps it
+(that mention is what tags the person). Verified live: the commit result echoes
+the rendered text, e.g. `"@rackytampubolon setuju, roadmap dulu baru janji"`.
+
+A reply on IG is **collapsed behind "View replies (N)"** until expanded, so a
+later check on the post will not show it without clicking that toggle.
 
 ## Flags
 

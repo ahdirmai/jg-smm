@@ -35,6 +35,9 @@ type ContainerService struct {
 	// Optional: nil leaves novnc_service empty and the dashboard shows a
 	// disabled Live view button instead of a dead link.
 	novnc *NovncAllocator
+	// waker resumes a PAUSED container before the live view is opened on it.
+	// Optional: nil assumes it is running.
+	waker *Waker
 	// stream fans container lifecycle frames to dashboards over SSE (ADR 0010).
 	// Optional: a nil publisher means the write still lands, the dashboard just
 	// has to poll. Create/Delete publish so every open tab sees the fleet change
@@ -64,6 +67,8 @@ type ContainerConfig struct {
 	Novnc *NovncAllocator
 	// Control publishes ephemeral manual-browser messages to workers.
 	Control port.Publisher
+	// Waker resumes a PAUSED container when its live view is opened. Optional.
+	Waker *Waker
 }
 
 // NewContainerService wires the service. packer may be nil; deletion then only
@@ -86,6 +91,7 @@ func NewContainerService(workers port.WorkerStore, accounts port.AccountStore, p
 		stream:   cfg.Stream,
 		control:  cfg.Control,
 		novnc:    cfg.Novnc,
+		waker:    cfg.Waker,
 		// Per-worker coordinates are chosen once; a fresh source per service is
 		// fine because stability is per-worker, not per-process.
 		rnd:    rand.New(rand.NewSource(time.Now().UnixNano())),
@@ -403,6 +409,14 @@ func (s *ContainerService) OpenBrowser(ctx context.Context, workerID string, pla
 	}
 	if _, err := safeProfileURL(url, platform); err != nil {
 		return err
+	}
+	// The live view is useless on a stopped container: noVNC has nothing
+	// serving it. Resume first, so the operator's click actually shows a
+	// browser instead of a connection error they cannot diagnose.
+	if s.waker != nil {
+		if err := s.waker.Wake(ctx, w.ID); err != nil {
+			return fmt.Errorf("%w: could not start the container: %v", domain.ErrUnavailable, err)
+		}
 	}
 	payload := map[string]string{}
 	if url != "" {

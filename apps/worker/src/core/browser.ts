@@ -28,6 +28,11 @@ export interface LaunchOptions {
   executablePath?: string;
   /** Skip the real driver entirely (unit tests). */
   launchImpl?: (opts: Record<string, unknown>) => Promise<Browser>;
+  /**
+   * Egress proxy for the whole browser. Playwright binds the proxy at launch,
+   * so this cannot vary per account — see the note at the launch call.
+   */
+  proxy?: { server: string; username?: string; password?: string } | null;
 }
 
 /**
@@ -41,6 +46,19 @@ export async function launchBrowser(options: LaunchOptions = {}): Promise<Browse
     headless: false,
     executablePath: options.executablePath,
     env: { ...process.env, DISPLAY: display },
+    // The proxy is a LAUNCH option, not a context one: Playwright fixes the
+    // egress at browser start, so per-account routing would need one browser
+    // per account. That is why the proxy comes from the container's own
+    // `proxy_group` binding rather than from whichever account is logging in.
+    ...(options.proxy
+      ? {
+          proxy: {
+            server: options.proxy.server,
+            ...(options.proxy.username ? { username: options.proxy.username } : {}),
+            ...(options.proxy.password ? { password: options.proxy.password } : {}),
+          },
+        }
+      : {}),
     args: [
       // noVNC sees a real desktop; the container's entrypoint starts Xvfb.
       '--start-maximized',

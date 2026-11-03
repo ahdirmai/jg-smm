@@ -21,6 +21,7 @@ import { newAccountContext } from './browser.js';
 import type { Geolocation } from './geolocation.js';
 import { captureScreenshot } from './screenshot.js';
 import { readSession, writeSession } from './session.js';
+import { blockReason, detectLoginBlock } from './login-block.js';
 
 /** Live login contexts awaiting operator input, keyed by accountId. */
 export const authContexts = new Map<string, BrowserContext>();
@@ -40,6 +41,13 @@ export interface LoginResult {
    * cannot be scheduled against — such an account is refreshed only by hand.
    */
   expiresAt?: number;
+  /**
+   * Why a `failed` login failed, in operator terms: which required cookie never
+   * arrived and where the page was sitting when the poll gave up. Absent for
+   * every other outcome. This crosses the wire as the callback's `error`, so
+   * the dashboard shows the real diagnosis instead of "login did not complete".
+   */
+  reason?: string;
 }
 
 export interface AuthDeps {
@@ -61,6 +69,11 @@ export interface AuthDeps {
   /** Diagnostics sink: the operator only sees the final verdict, so the
    * failure reason must at least reach the container log. */
   log?: (msg: string, data?: Record<string, unknown>) => void;
+  /** Called with the freshly persisted storageState after a VERIFIED login.
+   * The worker cannot store it durably itself: the volume lives with the
+   * container, and the container is recreated whenever the fleet rebalances.
+   * Absent in tests and in any caller that has no API to report to. */
+  onSession?: (accountId: string, platform: Platform, state: unknown) => Promise<void> | void;
 }
 
 /**
@@ -144,10 +157,17 @@ export async function pollLoginOutcome(
   ctx: BrowserContext,
   deps: { now?: () => number } = {},
 ): Promise<LoginResult> {
+  const adapter = await adapterFor(platform);
+  const wanted = adapter?.sessionCookies ?? [];
   const started = (deps.now ?? Date.now)();
+  // The last page state observed while polling. A timeout verdict without this
+  // is the "login did not complete" mystery the operator could not act on: the
+  // reason a form is still unproven is nearly always visible in the URL or the
+  // missing cookies, and both are free to capture on the final pass.
+  let lastURL = '';
   for (;;) {
     if ((deps.now ?? Date.now)() - started > LOGIN_TIMEOUT_MS) {
-      return { outcome: 'failed' };
+      return { outcome: 'failed', reason: await describeFailedLogin(platform, ctx, lastURL, wanted) };
     }
     const verdict = await probeSession(platform, ctx);
     if (verdict.proven) {
@@ -158,10 +178,63 @@ export async function pollLoginOutcome(
       };
     }
     if (verdict.needsInput) return { outcome: 'needs_input' };
+    // A wall is a terminal verdict, not something to wait out. Without this the
+    // poll burned the full LOGIN_TIMEOUT_MS and reported one unactionable
+    // sentence for four different problems; a fleet run then filled the
+    // operator's sheet with identical rows and hid the distinction that matters
+    // (a wrong password is a credential to fix, a CAPTCHA is an egress problem).
+    // Nothing is solved automatically: the loop just stops and labels it.
+    const block = await detectLoginBlock(ctx);
+    if (block) {
+      return { outcome: 'failed', reason: blockReason(block, 'stopped at login wall') };
+    }
+    // Cheap and non-throwing: the page may be mid-navigation, which is itself
+    // a state worth reporting if the poll then times out.
+    const pages = ctx.pages();
+    const page = pages[pages.length - 1];
+    if (page) {
+      try {
+        lastURL = page.url();
+      } catch {
+        // A closed page between the take and the read: keep the last good URL.
+      }
+    }
     await sleep(POLL_INTERVAL_MS);
   }
 }
 
+/**
+ * Turn a timed-out login into an actionable sentence. Every branch here is a
+ * distinct operator action, so the string is not a formatted error — it is the
+ * diagnosis:
+ *
+ *   - still on the login URL  -> the submit never landed (bad credential, a
+ *     challenge that never rendered an OTP field, or a dead form)
+ *   - past login, cookies short -> the platform accepted the submit but did
+ *     not grant every required cookie, i.e. an incomplete/2FA interstitial
+ *   - every cookie present but unproven is unreachable (proven would have
+ *     returned), so that case means the context lost them mid-poll
+ */
+async function describeFailedLogin(
+  platform: Platform,
+  ctx: BrowserContext,
+  lastURL: string,
+  wanted: readonly string[],
+): Promise<string> {
+  const cookies = await ctx.cookies().catch(() => []);
+  const have = new Set(cookies.map((c) => c.name));
+  const missing = wanted.filter((name) => !have.has(name));
+  const onLoginPage = lastURL.includes('/accounts/login') || lastURL.endsWith('/login');
+  if (onLoginPage) {
+    return missing.length > 0
+      ? `submit did not complete: still on ${lastURL || 'the login page'}, missing cookie(s) ${missing.join(', ')}`
+      : `submit did not complete: still on ${lastURL || 'the login page'}`;
+  }
+  if (missing.length > 0) {
+    return `session incomplete: left ${lastURL || 'the login page'} but missing cookie(s) ${missing.join(', ')} (platform handed a partial session, likely a verification interstitial)`;
+  }
+  return `login timed out on ${platform} after ${Math.round(LOGIN_TIMEOUT_MS / 1000)}s without session proof (url ${lastURL || 'unknown'})`;
+}
 /**
  * Start a login and block until an outcome is reached. When the API delivers
  * the operator's credentials on the dispatch they are filled into the login
@@ -226,11 +299,16 @@ export async function runLogin(
   } catch (err) {
     // Swallowing this was the "login did not complete" mystery: the operator
     // sees the verdict, the container log must carry the reason.
+    const detail = err instanceof Error ? err.message : String(err);
     deps.log?.('auth-login: navigation or session probe failed', {
       accountId,
-      error: err instanceof Error ? err.message : String(err),
+      error: detail,
     });
-    return failedResult(accountId);
+    // Carry the reason out with the verdict, not just into the log. The log is
+    // only reachable by someone with shell access to the container; the row in
+    // the dashboard is what the operator actually looks at, and a bare
+    // "failed" there is unactionable.
+    return { ...failedResult(accountId), reason: `navigation failed: ${detail.split('\n')[0]}` };
   }
 }
 
@@ -285,7 +363,18 @@ async function waitForOutcome(
     // Persist so a restart needs no re-login. A disk failure must never
     // downgrade a verified login to failed — the session is an optimisation.
     try {
-      await writeSession(platform, await ctx.storageState(), deps.sessionDir);
+      const state = await ctx.storageState();
+      await writeSession(platform, state, deps.sessionDir);
+      // Report it for durable storage. The volume copy serves this container;
+      // this copy is what survives the container being recreated, which the
+      // PAUSED/RUNNING fleet does routinely.
+      if (deps.onSession) {
+        try {
+          await deps.onSession(accountId, platform, state);
+        } catch (err) {
+          deps.log?.('login session report failed', { err: String(err) });
+        }
+      }
     } catch {
       // Best effort; the login itself already succeeded.
     }

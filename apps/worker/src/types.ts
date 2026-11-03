@@ -82,4 +82,22 @@ export interface WorkerConfig {
    * single-host dev case); the API skips the check in that case too.
    */
   internalSecret: string;
+  /**
+   * Residential proxy this container's browser egresses through, or null to
+   * dial direct. The MVP ran every worker from one datacentre IP, which is the
+   * pattern Instagram rate-limits first: logins began failing with
+   * ERR_HTTP_RESPONSE_CODE_FAILURE on some fraction of navigations while the
+   * same request from a normal host returned 200.
+   *
+   * Baked at container creation from the account's `proxy_group` and passed as
+   * `PROXY_URL`, because Playwright's launch options are per-browser, not
+   * per-context — the proxy cannot be decided per account at login time.
+   */
+  proxyUrl: string | null;
+  /**
+   * Credentials for `proxyUrl` when the provider requires auth. Kept separate
+   * from the URL so a provider-issued `user:pass` never has to be string-escaped
+   * into it and so the pair can be logged as "present/absent", never in value.
+   */
+  proxyAuth: { username: string; password: string } | null;
 }

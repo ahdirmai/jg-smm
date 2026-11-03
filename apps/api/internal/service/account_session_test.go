@@ -284,3 +284,151 @@ func TestLoginWithoutStoredPasswordSendsNoPayload(t *testing.T) {
 		t.Fatalf("payload = %v, want empty (operator types manually)", msg.Payload)
 	}
 }
+
+// fakeSessionStore is an in-memory port.BrowserSessionStore. It records the
+// SEALED bytes, so a test can assert the plaintext cookie never reaches it.
+type fakeSessionStore struct {
+	mu      sync.Mutex
+	states  map[string][]byte
+	touched []string
+}
+
+func newFakeSessionStore() *fakeSessionStore {
+	return &fakeSessionStore{states: map[string][]byte{}}
+}
+
+func (f *fakeSessionStore) GetState(_ context.Context, id string) ([]byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.states[id], nil
+}
+
+func (f *fakeSessionStore) Save(_ context.Context, id string, sealed []byte, _ *time.Time, _ *string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.states[id] = append([]byte(nil), sealed...)
+	return nil
+}
+
+func (f *fakeSessionStore) Touch(_ context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.touched = append(f.touched, id)
+	return nil
+}
+
+func (f *fakeSessionStore) Delete(_ context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.states, id)
+	return nil
+}
+
+func (f *fakeSessionStore) DueBefore(context.Context, time.Time, int) ([]string, error) {
+	return nil, nil
+}
+
+// A session captured by one container must be handed back to the next one, so a
+// rotating fleet does not pay for a login per swap. Two properties matter and
+// both are asserted here: the cookie is stored SEALED (never plaintext at rest),
+// and the next Login dispatch pushes it BEFORE the login message, unsealed, so
+// the worker can hydrate and skip the form.
+func TestLoginReimportsStoredSessionBeforeLoggingIn(t *testing.T) {
+	accounts := newFakeAccountStore()
+	workers := newFakeWorkerStore()
+	pub := &recordingPublisher{}
+	sessions := newFakeSessionStore()
+	svc := NewAccountService(accounts, workers, nil, AccountConfig{
+		Sealer: stubSealer{}, Control: pub, Sessions: sessions,
+	})
+	worker := "worker-1"
+	novnc := "http://127.0.0.1:24100"
+	workers.seed(domain.Worker{ID: worker, NoVNCService: &novnc})
+	a := accounts.seedLockedForTest(domain.Account{
+		Platform: domain.PlatformInstagram,
+		Username: "growthco",
+		WorkerID: &worker,
+	})
+
+	// Seed a captured session the way ExportSession would have stored it.
+	const rawSession = `{"cookies":[{"name":"sessionid","value":"abc"}],"origins":[]}`
+	if err := sessions.Save(context.Background(), a.ID, mustSeal(t, rawSession), nil, &worker); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	stored := sessions.states[a.ID]
+	if string(stored) == rawSession {
+		t.Fatal("session stored in PLAINTEXT: a session cookie is a bearer credential")
+	}
+
+	if _, err := svc.Login(context.Background(), a.ID); err != nil {
+		t.Fatalf("login: %v", err)
+	}
+
+	pub.mu.Lock()
+	msgs := append([][]byte(nil), pub.control...)
+	pub.mu.Unlock()
+	if len(msgs) < 2 {
+		t.Fatalf("published %d control messages, want import then login", len(msgs))
+	}
+	var first struct {
+		Type    string `json:"type"`
+		Payload struct {
+			Session json.RawMessage `json:"session"`
+		} `json:"payload"`
+	}
+	if err := json.Unmarshal(msgs[0], &first); err != nil {
+		t.Fatalf("parse first message: %v", err)
+	}
+	if first.Type != "auth-import" {
+		t.Fatalf("first control message type = %q, want auth-import (import must precede login)", first.Type)
+	}
+	if got := string(first.Payload.Session); got != rawSession {
+		t.Errorf("imported session = %q, want the original cookie %q", got, rawSession)
+	}
+	var second struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(msgs[len(msgs)-1], &second); err != nil {
+		t.Fatalf("parse last message: %v", err)
+	}
+	if second.Type != "auth-login" {
+		t.Errorf("last control message type = %q, want auth-login", second.Type)
+	}
+	if len(sessions.touched) != 1 {
+		t.Errorf("session touched %d times, want 1 (a reuse should be recorded)", len(sessions.touched))
+	}
+}
+
+// An account that has never logged in must still log in normally: no stored
+// session is the normal state, not an error that blocks the flow.
+func TestLoginWithoutStoredSessionStillLogsIn(t *testing.T) {
+	accounts := newFakeAccountStore()
+	workers := newFakeWorkerStore()
+	pub := &recordingPublisher{}
+	svc := NewAccountService(accounts, workers, nil, AccountConfig{
+		Sealer: stubSealer{}, Control: pub, Sessions: newFakeSessionStore(),
+	})
+	worker := "worker-1"
+	novnc := "http://127.0.0.1:24100"
+	workers.seed(domain.Worker{ID: worker, NoVNCService: &novnc})
+	a := accounts.seedLockedForTest(domain.Account{
+		Platform: domain.PlatformInstagram,
+		Username: "freshacct",
+		WorkerID: &worker,
+	})
+	if _, err := svc.Login(context.Background(), a.ID); err != nil {
+		t.Fatalf("login on a fresh account: %v", err)
+	}
+	if pub.last() == nil {
+		t.Fatal("no control message published for a fresh account")
+	}
+}
+
+func mustSeal(t *testing.T, s string) []byte {
+	t.Helper()
+	b, err := stubSealer{}.Seal([]byte(s))
+	if err != nil {
+		t.Fatalf("seal: %v", err)
+	}
+	return b
+}

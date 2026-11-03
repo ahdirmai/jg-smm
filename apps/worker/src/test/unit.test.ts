@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { loadConfig, parseNovncUrl, parsePlatforms, parsePositiveInt } from '../core/config.js';
+import {
+  loadConfig,
+  parseNovncUrl,
+  parsePlatforms,
+  parsePositiveInt,
+  parseProxy,
+} from '../core/config.js';
 import { computeJitter } from '../core/controller.js';
 import {
   automatedPlatforms,
@@ -57,6 +63,54 @@ test('parseNovncUrl resolves the live view URL or null when unpublished', () => 
     parseNovncUrl({ NOVNC_BASE_URL: 'http://worker-1', NOVNC_PORT: 'junk' }),
     'http://worker-1:6080',
   );
+});
+
+test('parseProxy resolves the egress, defaulting to direct dial', () => {
+  // No PROXY_URL is the local single-host case and must stay the default:
+  // demanding a proxy would break every dev stack.
+  assert.deepEqual(parseProxy({}), { proxyUrl: null, proxyAuth: null });
+  assert.deepEqual(parseProxy({ PROXY_URL: '  ' }), { proxyUrl: null, proxyAuth: null });
+
+  // A bare URL with no credentials is an open / IP-allowlisted pool.
+  assert.deepEqual(parseProxy({ PROXY_URL: 'socks5://gate.example.com:1080' }), {
+    proxyUrl: 'socks5://gate.example.com:1080',
+    proxyAuth: null,
+  });
+
+  // Credentials are carried separately so the password never has to be
+  // escaped into the URL (where it would also be logged).
+  assert.deepEqual(
+    parseProxy({
+      PROXY_URL: 'http://gate.example.com:8080',
+      PROXY_USERNAME: 'pooluser',
+      PROXY_PASSWORD: 'poolpass',
+    }),
+    {
+      proxyUrl: 'http://gate.example.com:8080',
+      proxyAuth: { username: 'pooluser', password: 'poolpass' },
+    },
+  );
+});
+
+test('parseProxy refuses a half-configured or unusable proxy', () => {
+  // Half a credential would 407 every request; better to dial direct and say
+  // nothing than to route into a guaranteed failure.
+  assert.deepEqual(parseProxy({ PROXY_URL: 'http://gate.example.com:8080', PROXY_USERNAME: 'u' }), {
+    proxyUrl: null,
+    proxyAuth: null,
+  });
+  assert.deepEqual(parseProxy({ PROXY_URL: 'http://gate.example.com:8080', PROXY_PASSWORD: 'p' }), {
+    proxyUrl: null,
+    proxyAuth: null,
+  });
+
+  // A malformed URL or an unsupported scheme routes nowhere: refuse it rather
+  // than hand Playwright something that silently dials direct.
+  assert.deepEqual(parseProxy({ PROXY_URL: 'not a url' }), { proxyUrl: null, proxyAuth: null });
+  assert.deepEqual(parseProxy({ PROXY_URL: 'ftp://gate.example.com:21' }), {
+    proxyUrl: null,
+    proxyAuth: null,
+  });
 });
 
 test('computeJitter stays within the range and is injectable', () => {

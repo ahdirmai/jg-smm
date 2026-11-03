@@ -1,0 +1,42 @@
+# RBAC for the API's k8s provisioner (INFRA-03).
+#
+# apps/api/internal/adapter/k8s/client.go sets
+#   Spec.ServiceAccountName: "smm-provisioner"
+# on every worker pod, and only ever creates/deletes/gets/lists Pods, PVCs and
+# Services. It never patches: a generation bump deletes and recreates, so the
+# Role deliberately grants no `update`/`patch`.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: smm-provisioner
+  namespace: smm
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: smm-provisioner
+  namespace: smm
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [create, delete, get, list, watch]
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims]
+    verbs: [create, delete, get, list]
+  - apiGroups: [""]
+    resources: [services]
+    verbs: [create, delete, get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: smm-provisioner
+  namespace: smm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: smm-provisioner
+subjects:
+  - kind: ServiceAccount
+    name: smm-provisioner
+    namespace: smm

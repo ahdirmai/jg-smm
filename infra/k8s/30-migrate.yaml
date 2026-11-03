@@ -1,0 +1,41 @@
+# One-shot schema migration (the API does not migrate on boot; compose runs a
+# one-shot `migrate` service, and this is its cluster equivalent).
+#
+# Prerequisites (docs/DEPLOY_K8S.md §6):
+#   kubectl -n smm create configmap smm-migrations --from-file=apps/api/db/migrations
+#
+# Job names are immutable, so re-applying after a schema change needs the
+# `kubectl delete job -n smm migrate` documented in the deploy guide.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: migrate
+  namespace: smm
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: up
+          image: migrate/migrate:v4.17.1
+          args:
+            - -path=/migrations
+            # $(POSTGRES_PASSWORD) is expanded from the env below, which is
+            # the only place the runtime substitutes into args.
+            - -database=postgres://smm:$(POSTGRES_PASSWORD)@postgres:5432/smm?sslmode=disable
+            - up
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: smm-secrets
+                  key: POSTGRES_PASSWORD
+          volumeMounts:
+            - name: migrations
+              mountPath: /migrations
+              readOnly: true
+      volumes:
+        - name: migrations
+          configMap:
+            name: smm-migrations

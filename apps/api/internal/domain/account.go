@@ -6,6 +6,12 @@ package domain
 type AuthStatus string
 
 const (
+	// AuthPending is an account that has never attempted a login: imported or
+	// seeded, with no outcome to report. It must NOT be AUTHENTICATING — that
+	// state means a dispatch is in flight, and the scheduler, the stale-login
+	// sweeper and the in-flight gate all read it that way. An account parked
+	// there with no dispatch was invisible to all three.
+	AuthPending        AuthStatus = "PENDING"
 	AuthAuthenticating AuthStatus = "AUTHENTICATING"
 	AuthNeedsInput     AuthStatus = "NEEDS_INPUT"
 	AuthAuthenticated  AuthStatus = "AUTHENTICATED"
@@ -14,7 +20,7 @@ const (
 
 func (s AuthStatus) Valid() bool {
 	switch s {
-	case AuthAuthenticating, AuthNeedsInput, AuthAuthenticated, AuthFailed:
+	case AuthPending, AuthAuthenticating, AuthNeedsInput, AuthAuthenticated, AuthFailed:
 		return true
 	default:
 		return false
@@ -70,11 +76,20 @@ type DesiredState string
 
 const (
 	DesiredRunning DesiredState = "RUNNING"
+	// DesiredPaused stops the container but KEEPS it (and its volumes). It is
+	// the default for an auto-spawned container that has no work: a 50-account
+	// slate spent ~4GB of RAM holding browsers open that nobody was using. The
+	// reconciler stops/ starts the existing container rather than deleting it,
+	// so a resume costs seconds and the persisted session survives.
+	DesiredPaused DesiredState = "PAUSED"
+	// DesiredStopped deletes the container. Kept distinct from Paused on
+	// purpose: "I want this gone" and "wake it when needed" are different
+	// intents, and collapsing them is how a pause becomes data loss.
 	DesiredStopped DesiredState = "STOPPED"
 )
 
 func (s DesiredState) Valid() bool {
-	return s == DesiredRunning || s == DesiredStopped
+	return s == DesiredRunning || s == DesiredPaused || s == DesiredStopped
 }
 
 // WorkerSource records how a worker came to exist. It gates auto-deletion:
@@ -92,6 +107,12 @@ type ProvisionOp string
 const (
 	OpCreate ProvisionOp = "CREATE"
 	OpDelete ProvisionOp = "DELETE"
+	// OpPause / OpResume record the container being stopped and started back.
+	// Distinct from OpDelete on purpose: the audit trail must make it obvious
+	// that a paused container still EXISTS, so a later reader does not assume
+	// its session was destroyed.
+	OpPause  ProvisionOp = "PAUSE"
+	OpResume ProvisionOp = "RESUME"
 )
 
 // ProvisionStatus is the outcome of a provisioning op.

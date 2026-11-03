@@ -72,6 +72,9 @@ type ActionScheduler struct {
 	// screen cannot name a rule to enforce, and composeText falls back to
 	// template composition — never to shipping the body unscreened.
 	templates port.TemplateStore
+	// waker resumes a PAUSED container before a job is queued on it, so the
+	// worker exists to drain that queue. Optional: nil assumes it is running.
+	waker *Waker
 }
 
 // ActionSchedulerConfig bounds the loop. Zero values fall back to documented
@@ -95,6 +98,8 @@ type ActionSchedulerConfig struct {
 	RateLimits map[string]int
 	// Clock is injectable; defaults to time.Now.
 	Clock func() time.Time
+	// Waker resumes a PAUSED container before a job is queued on it. Optional.
+	Waker *Waker
 	// Logger defaults to slog.Default.
 	Logger *slog.Logger
 }
@@ -141,6 +146,7 @@ func NewActionScheduler(
 		transport: transport,
 		texts:     texts,
 		templates: templates,
+		waker:     cfg.Waker,
 		cfg:       cfg,
 		clock:     cfg.Clock,
 		log:       cfg.Logger,
@@ -462,6 +468,15 @@ func (s *ActionScheduler) publish(ctx context.Context, job domain.ActionJob, acc
 	})
 	if err != nil {
 		return fmt.Errorf("marshal action job: %w", err)
+	}
+	// Wake BEFORE enqueueing. The queue is durable, so a container that starts
+	// a second later still drains it — but a container that stays PAUSED would
+	// leave the job sitting there until the operator noticed, and the job's own
+	// backoff would blame the platform for it.
+	if s.waker != nil {
+		if err := s.waker.Wake(ctx, workerID); err != nil {
+			return fmt.Errorf("wake worker: %w", err)
+		}
 	}
 	if err := s.transport.Enqueue(ctx, workerID, payload); err != nil {
 		return fmt.Errorf("enqueue: %w", err)

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"sort"
 	"sync"
 	"testing"
@@ -316,8 +317,11 @@ func TestPackAutoCreatesWhenNoSlot(t *testing.T) {
 	if w.Source != domain.SourceAuto {
 		t.Fatalf("auto-created source = %q, want AUTO", w.Source)
 	}
-	if w.DesiredState != domain.DesiredRunning {
-		t.Fatalf("desired state = %q, want RUNNING", w.DesiredState)
+	// Spawn PAUSED: an auto-created container has no work yet, and holding
+	// browsers open for a whole slate cost ~4GB. The waker resumes it on the
+	// first login / action / live-view open.
+	if w.DesiredState != domain.DesiredPaused {
+		t.Fatalf("desired state = %q, want PAUSED", w.DesiredState)
 	}
 	if w.Generation != 1 {
 		t.Fatalf("generation = %d, want 1", w.Generation)
@@ -327,6 +331,44 @@ func TestPackAutoCreatesWhenNoSlot(t *testing.T) {
 	}
 	if store.get(w.ID).ID != w.ID {
 		t.Fatalf("auto container not persisted: %s", w.ID)
+	}
+}
+
+// An AUTO container MUST come out anchored to a city with a GPS point. Leaving
+// both empty is silent — the row is created and packs fine — but it put every
+// auto-spawned container in the dashboard's "Unlocated" bucket and, worse, left
+// the worker reporting the browser's REAL position instead of the city its
+// accounts claim to be in.
+func TestPackAutoCreateAnchorsLocationAndGPS(t *testing.T) {
+	store := newFakeWorkerStore()
+	accounts := newFakeAccountStore()
+	p := NewPacker(store, accounts, PackerConfig{MaxPerContainer: 2, AutoCreate: true})
+	accounts.seed(accountFixture("a1", domain.PlatformInstagram))
+
+	_, w, err := p.Pack(context.Background(), "a1", domain.PlatformInstagram)
+	if err != nil {
+		t.Fatalf("pack: %v", err)
+	}
+	if w.Location == nil || *w.Location == "" {
+		t.Fatal("auto container has no location: it lands in the dashboard's Unlocated bucket")
+	}
+	if _, ok := domain.FindCity(*w.Location); !ok {
+		t.Errorf("location %q is not a known city", *w.Location)
+	}
+	if w.Latitude == nil || w.Longitude == nil {
+		t.Fatal("auto container has no GPS point: the worker would report the browser's real position")
+	}
+	// The point must sit INSIDE the chosen city's radius, not merely be
+	// non-zero: a coordinate in the wrong hemisphere would pass a naive check
+	// while putting the account somewhere it never claimed to be.
+	city, _ := domain.FindCity(*w.Location)
+	const kmPerDegLat = 111.32
+	kmPerDegLng := kmPerDegLat * math.Cos(city.Latitude*math.Pi/180)
+	dLatKm := (*w.Latitude - city.Latitude) * kmPerDegLat
+	dLngKm := (*w.Longitude - city.Longitude) * kmPerDegLng
+	if dist := math.Hypot(dLatKm, dLngKm); dist > float64(city.RadiusKm) {
+		t.Errorf("GPS (%.4f, %.4f) is %.1fkm from %s, outside its %vkm radius",
+			*w.Latitude, *w.Longitude, dist, city.Name, city.RadiusKm)
 	}
 }
 

@@ -277,3 +277,61 @@ func (r *AccountRepo) BeginRefresh(ctx context.Context, accountID string) error 
 	}
 	return nil
 }
+
+// CountInFlightLogins reports how many logins are unresolved fleet-wide, which
+// is the number the refresher's concurrency gate is measured against. See the
+// query for why a parked (NEEDS_INPUT) login counts.
+func (r *AccountRepo) CountInFlightLogins(ctx context.Context) (int, error) {
+	n, err := r.q.CountInFlightLogins(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("repository.account.CountInFlightLogins: %w", err)
+	}
+	return int(n), nil
+}
+
+// ListStaleLoginAttempts returns accounts stuck in AUTHENTICATING whose last
+// dispatch is older than `olderThan`. A login whose worker never reported back
+// is invisible to every other query — the due query excludes AUTHENTICATING so
+// it does not stampede an in-flight login — so this is the only way such a row
+// is ever noticed again.
+func (r *AccountRepo) ListStaleLoginAttempts(ctx context.Context, olderThan time.Time) ([]domain.Account, error) {
+	rows, err := r.q.ListStaleLoginAttempts(ctx, sqlcgen.ListStaleLoginAttemptsParams{
+		LastCheckedAt: tsPtr(&olderThan),
+		Limit:         200,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("repository.account.ListStaleLoginAttempts: %w", err)
+	}
+	out := make([]domain.Account, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, toAccount(accountFields(row)))
+	}
+	return out, nil
+}
+
+// ReclaimStaleLoginAttempt returns one abandoned AUTHENTICATING account to
+// FAILED so the scheduler picks it up again. `expectedLastChecked` is the
+// timestamp the row was listed at; the update is a no-op (and returns false)
+// when the row has moved on since — that is a worker that reported back while
+// the reclaim was in flight, and its outcome must win over this guess.
+func (r *AccountRepo) ReclaimStaleLoginAttempt(
+	ctx context.Context,
+	accountID string,
+	expectedLastChecked time.Time,
+) (bool, error) {
+	err := r.q.ReclaimStaleLoginAttempt(ctx, sqlcgen.ReclaimStaleLoginAttemptParams{
+		ID:            uuidValue(accountID),
+		LastCheckedAt: tsPtr(&expectedLastChecked),
+	})
+	if err != nil {
+		return false, fmt.Errorf("repository.account.ReclaimStaleLoginAttempt: %w", err)
+	}
+	// The query is conditional, and sqlc's :exec does not report rowcount, so
+	// re-read to learn whether the guard actually matched. One row, by uuid:
+	// cheap, and the alternative is claiming a reclaim that did not happen.
+	acc, err := r.GetByID(ctx, accountID)
+	if err != nil {
+		return false, err
+	}
+	return acc.AuthStatus == domain.AuthFailed, nil
+}

@@ -283,8 +283,8 @@ export default function WorkersPage() {
         {(
           [
             ['Containers', containers.length],
-            ['Ready', containers.filter((c) => c.status === 'READY' || c.status === 'IDLE').length],
-            ['Busy', containers.filter((c) => c.status === 'BUSY').length],
+            ['Active', containers.filter((c) => c.desiredState === 'RUNNING').length],
+            ['Paused', containers.filter((c) => c.desiredState === 'PAUSED').length],
             [
               'Error',
               containers.filter((c) => ['ERROR', 'DEAD', 'QUARANTINED'].includes(c.status)).length,
@@ -466,17 +466,27 @@ export default function WorkersPage() {
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2 pt-1">
-                      <Badge
-                        variant={containerTone(c.status)}
-                        className={isStarting(c.status) ? 'animate-pulse' : undefined}
-                      >
-                        {isStarting(c.status) ? `${c.status} · starting…` : c.status}
+                      {/* The primary badge is DESIRED STATE — what the fleet
+                       * controller is actually enforcing right now. READY on a
+                       * paused worker is a stale heartbeat, not liveness, so
+                       * reading it alone showed every paused worker as up.
+                       * PAUSED gets the warning tone: it must out-shout the
+                       * accounts' own ACTIVE badges on the same card. */}
+                      {c.desiredState === 'PAUSED' ? (
+                        <Badge variant="warning">PAUSED</Badge>
+                      ) : c.desiredState === 'STOPPED' ? (
+                        <Badge variant="destructive">REMOVED</Badge>
+                      ) : (
+                        <Badge
+                          variant={containerTone(c.status)}
+                          className={isStarting(c.status) ? 'animate-pulse' : undefined}
+                        >
+                          {isStarting(c.status) ? `${c.status} · starting…` : 'ACTIVE'}
+                        </Badge>
+                      )}
+                      <Badge variant="outline" className="text-muted-foreground">
+                        {c.status}
                       </Badge>
-                      {/* A stopped container is the one desired-state an operator
-                       * acts on; running is the norm and stays unstated. */}
-                      {c.desiredState === 'STOPPED' ? (
-                        <Badge variant="secondary">paused</Badge>
-                      ) : null}
                       {c.observedGeneration !== c.generation ? (
                         <Badge variant="outline" className="text-muted-foreground">
                           reconciling
@@ -537,7 +547,13 @@ export default function WorkersPage() {
                               </div>
                             </div>
                             <div className="flex items-center gap-1">
-                              <Badge variant={a.status === 'ACTIVE' ? 'success' : 'secondary'}>
+                              {/* Account row state, not the worker's: a green
+                               * ACTIVE here read as "this container is up" —
+                               * it is the account's enrollment, which stays
+                               * ACTIVE while its container is paused. Neutral
+                               * outline keeps the operator's eye on the
+                               * card-level PAUSED/RUNNING badge. */}
+                              <Badge variant="outline">
                                 {a.status}
                               </Badge>
                               {a.status === 'ACTIVE' ? (

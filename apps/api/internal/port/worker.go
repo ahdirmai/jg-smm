@@ -6,6 +6,23 @@ import (
 	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
 )
 
+// ContainerState is what Observe reports about one worker's platform presence:
+// nothing exists, something exists but is stopped (resumable), or it is
+// running. The reconciler's diff needs all three — a PAUSED worker whose
+// container is already stopped is in sync and must not be stopped again every
+// tick.
+type ContainerState int
+
+const (
+	// ContainerAbsent: no container/pod exists for the worker.
+	ContainerAbsent ContainerState = iota
+	// ContainerStopped: the container exists but is not running; its volumes
+	// (and session) survive, so StartWorker resumes it.
+	ContainerStopped
+	// ContainerRunning: the container is up.
+	ContainerRunning
+)
+
 // K8sClient is the provisioner's view of the container platform. The concrete
 // implementation (k8s.io/client-go, or a static/local driver for dev) lives in
 // adapter/. Keeping it behind a port lets the reconciler be unit-tested with a
@@ -17,13 +34,25 @@ type K8sClient interface {
 	// DeleteWorker removes all resources for a worker. Missing resources are not
 	// an error (converges toward "absent").
 	DeleteWorker(ctx context.Context, workerID string) error
-	// Observe returns the currently-existing generation for a worker, or
-	// (0, false) when nothing exists. Used by the reconciler's diff.
-	Observe(ctx context.Context, workerID string) (generation int, exists bool, err error)
+	// Observe returns the generation on the platform for a worker and whether
+	// it is running. Used by the reconciler's diff. A stopped container is
+	// (gen, ContainerStopped): it still exists and can be resumed.
+	Observe(ctx context.Context, workerID string) (generation int, state ContainerState, err error)
 	// ListRunning returns the IDs of every worker the driver currently observes
 	// as existing. Used by the orphan sweeper: any ID here without a Worker row
 	// is a resource leaking on the platform.
 	ListRunning(ctx context.Context) ([]string, error)
+	// StopWorker halts a container WITHOUT removing it or its volumes, so a
+	// later StartWorker resumes the same instance (and the session on it).
+	// Idempotent: stopping an already-stopped or missing container is success,
+	// because the desired end state is "not running".
+	StopWorker(ctx context.Context, workerID string) error
+	// StartWorker resumes a stopped container that still exists. The Worker row
+	// is passed in because some drivers (k8s) must rebuild the pod from it, and
+	// none of them hold a store. Idempotent like StopWorker. A container that
+	// was never created is an error, not a silent success: the caller asked to
+	// wake something that is not there.
+	StartWorker(ctx context.Context, w domain.Worker) error
 }
 
 // Publisher pushes jobs and control messages onto the transport. Implementations

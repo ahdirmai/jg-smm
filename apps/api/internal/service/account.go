@@ -29,6 +29,13 @@ type AccountService struct {
 	control  port.Publisher
 	imports  *importLimiter
 	logger   *slog.Logger
+	// sessions keeps one encrypted browser session per account so a rotating
+	// container can pick an account up without a fresh login (migration 000020).
+	// Optional: nil keeps CRUD working but every container swap needs a login.
+	sessions port.BrowserSessionStore
+	// waker resumes a PAUSED container before a login is dispatched. Optional:
+	// nil means containers are assumed to be running (the pre-pause behaviour).
+	waker *Waker
 
 	// exports correlates an in-flight session export with the worker callback
 	// that fulfils it. In-memory and short-lived: a plaintext session is never
@@ -46,7 +53,13 @@ type AccountConfig struct {
 	// Optional: nil keeps account CRUD working, only the operator login flow is
 	// unavailable.
 	Control port.Publisher
-	Logger  *slog.Logger
+	// Sessions persists the per-account cookie so a container swap does not
+	// force a re-login. Optional: nil falls back to login-per-container.
+	Sessions port.BrowserSessionStore
+	// Waker resumes a paused container before a login. Optional: nil assumes it
+	// is already running.
+	Waker  *Waker
+	Logger *slog.Logger
 }
 
 // NewAccountService wires the service. packer may be nil; accounts are then
@@ -67,6 +80,8 @@ func NewAccountService(accounts port.AccountStore, workers port.WorkerStore, pac
 		stream:   cfg.Stream,
 		control:  cfg.Control,
 		imports:  newImportLimiter(time.Minute, ImportRateLimit),
+		sessions: cfg.Sessions,
+		waker:    cfg.Waker,
 		logger:   cfg.Logger,
 		exports:  map[string]chan json.RawMessage{},
 	}
@@ -321,6 +336,27 @@ func (s *AccountService) Login(ctx context.Context, accountID string) (AccountSu
 	if w.NoVNCService == nil {
 		return AccountSummary{}, fmt.Errorf("%w: worker has no live view to log in through", domain.ErrConflict)
 	}
+	// A login is a human-facing flow: the container has to be running before
+	// the dispatch lands, or the control message sits in a queue nothing is
+	// draining and the operator stares at a dead live view. Resume it first.
+	if s.waker != nil {
+		if err := s.waker.Wake(ctx, w.ID); err != nil {
+			return AccountSummary{}, fmt.Errorf("%w: could not start the container for login: %v", domain.ErrUnavailable, err)
+		}
+	}
+	// Hand the worker the stored session FIRST when we have one. The worker
+	// hydrates its context from `auth-import` and then probes: a live cookie
+	// reports `verified` on the first poll, so the login never reaches the
+	// form. That is what makes a rotating container viable — the account is
+	// picked up by a different container without paying for another login.
+	// When the cookie is dead the login proceeds exactly as before, so this is
+	// an optimisation that cannot make a healthy login worse.
+	if err := s.pushStoredSession(ctx, a, w.ID); err != nil {
+		// Not fatal: a missing/unreadable session is the normal state of a
+		// fresh account, and an import failure just means a real login runs.
+		s.logger.Warn("account service: session restore skipped", "accountId", accountID, "err", err)
+	}
+
 	payload := authLoginPayload(s.sealer, a, enc, s.logger)
 	msg, err := json.Marshal(controlMessage{
 		Type:      "auth-login",
@@ -337,6 +373,14 @@ func (s *AccountService) Login(ctx context.Context, accountID string) (AccountSu
 	// Optimistic state: the callback is the authority, but the operator should
 	// not have to refresh to see the login started.
 	a.AuthStatus = domain.AuthAuthenticating
+	// Stamp the dispatch time. This is what the stale-login sweep measures
+	// from: without it an operator login whose callback never arrived left the
+	// row in AUTHENTICATING with a null timestamp, which the sweep skips (it
+	// must, or it would reclaim the 41 never-logged-in accounts created with
+	// AUTHENTICATING as their birth state) — so the row would be stranded
+	// permanently with nothing able to tell the two cases apart.
+	dispatchedAt := s.clock.Now()
+	a.LastChecked = &dispatchedAt
 	if _, err := s.accounts.Update(ctx, a); err != nil {
 		return AccountSummary{}, fmt.Errorf("account service: mark pending auth: %w", err)
 	}
@@ -344,6 +388,46 @@ func (s *AccountService) Login(ctx context.Context, accountID string) (AccountSu
 	view := toAccountView(a)
 	s.publishAccount(ctx, view)
 	return view, nil
+}
+
+// pushStoredSession hands a worker the account's saved cookie, if there is one.
+//
+// Returns nil (not an error) when no session is stored — that is the normal
+// state of an account that has never logged in. The session is unsealed here
+// and crosses exactly one private wire hop, like the password does.
+func (s *AccountService) pushStoredSession(ctx context.Context, a domain.Account, workerID string) error {
+	if s.sessions == nil || s.sealer == nil || s.control == nil {
+		return nil
+	}
+	sealed, err := s.sessions.GetState(ctx, a.ID)
+	if err != nil {
+		return fmt.Errorf("read stored session: %w", err)
+	}
+	if len(sealed) == 0 {
+		return nil
+	}
+	plain, err := s.sealer.Open(sealed)
+	if err != nil {
+		return fmt.Errorf("unseal stored session: %w", err)
+	}
+	var ctrl sessionImportControl
+	ctrl.Type = "auth-import"
+	ctrl.AccountID = a.ID
+	ctrl.Platform = string(a.Platform)
+	ctrl.Payload.Session = json.RawMessage(plain)
+	msg, err := json.Marshal(ctrl)
+	if err != nil {
+		return fmt.Errorf("marshal auth-import: %w", err)
+	}
+	if err := s.control.PublishControl(ctx, workerID, msg); err != nil {
+		return fmt.Errorf("publish auth-import: %w", err)
+	}
+	// Record the reuse: distinguishes a cookie that has actually carried an
+	// account across containers from one that was captured and never tried.
+	if err := s.sessions.Touch(ctx, a.ID); err != nil {
+		s.logger.Warn("account service: touch session failed", "accountId", a.ID, "err", err)
+	}
+	return nil
 }
 
 // SubmitInput carries a 2FA / checkpoint code to a parked login. Valid while
@@ -471,6 +555,18 @@ func (s *AccountService) ExportSession(ctx context.Context, accountID string) (j
 		if len(session) == 0 {
 			return nil, fmt.Errorf("%w: no session is persisted for this account", domain.ErrNotFound)
 		}
+		// Persist on the way OUT, not only when the operator asks: the export
+		// is the one moment the plaintext cookie is already in hand, and a
+		// rotating fleet needs it stored to avoid a re-login on the next
+		// container. Best-effort — a store failure must not deny the operator
+		// the session they asked for, since they still hold it client-side.
+		if s.sessions != nil && s.sealer != nil {
+			if sealed, err := s.sealer.Seal(session); err != nil {
+				s.logger.Warn("account service: seal session failed", "accountId", accountID, "err", err)
+			} else if err := s.sessions.Save(ctx, accountID, sealed, a.CookieExpiryAt, a.WorkerID); err != nil {
+				s.logger.Warn("account service: store session failed", "accountId", accountID, "err", err)
+			}
+		}
 		return session, nil
 	case <-time.After(sessionExportTimeout):
 		return nil, fmt.Errorf("%w: worker did not return a session in time", domain.ErrUnavailable)
@@ -534,6 +630,43 @@ func (s *AccountService) DeliverExportedSession(requestID string, session json.R
 	case ch <- session:
 	default:
 	}
+}
+
+// SessionPersistRequestID is the requestId a worker uses when it reports the
+// session of a login it just completed. It is not an operator export: nothing
+// is waiting on the channel, so the callback handler stores the session instead
+// of relaying it. Fixed rather than per-request because the worker has no
+// request to correlate with — the login was its own.
+const SessionPersistRequestID = "login-success"
+
+// PersistSession stores a session the worker reported on a successful login.
+// This is the write that makes AUTHENTICATED mean something: before it, the
+// cookie lived only on the container volume, so recreating the container (the
+// fleet's normal PAUSED/RUNNING lifecycle) silently destroyed the proof and the
+// row kept claiming a session that no longer existed.
+//
+// Best-effort by contract: the callback handler translates the error, but the
+// login itself already succeeded and must not be reported as failed for it.
+func (s *AccountService) PersistSession(ctx context.Context, accountID string, session json.RawMessage) error {
+	if s.sessions == nil || s.sealer == nil {
+		return fmt.Errorf("%w: session store is not configured", domain.ErrUnavailable)
+	}
+	if len(session) == 0 {
+		return nil
+	}
+	a, err := s.accounts.GetByID(ctx, accountID)
+	if err != nil {
+		return fmt.Errorf("account service: get: %w", err)
+	}
+	sealed, err := s.sealer.Seal(session)
+	if err != nil {
+		return fmt.Errorf("account service: seal session: %w", err)
+	}
+	if err := s.sessions.Save(ctx, accountID, sealed, a.CookieExpiryAt, a.WorkerID); err != nil {
+		return fmt.Errorf("account service: store session: %w", err)
+	}
+	s.logger.Info("login session persisted", "accountId", accountID, "workerId", a.WorkerID)
+	return nil
 }
 
 func (s *AccountService) registerExport(requestID string, ch chan json.RawMessage) {

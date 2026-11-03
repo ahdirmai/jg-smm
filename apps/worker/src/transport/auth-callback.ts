@@ -51,7 +51,13 @@ export function createAuthCallback(
       ...(result.expiresAt !== undefined
         ? { cookieExpiresAt: new Date(result.expiresAt).toISOString() }
         : {}),
-      ...(result.outcome === 'failed' ? { error: 'login did not complete' } : {}),
+      // The worker's own diagnosis when it has one. It replaced a fixed
+      // "login did not complete" that told the operator nothing: the reason
+      // (which cookie never arrived, where the page sat) is known at the
+      // worker and is the only actionable part of a failed login.
+      ...(result.outcome === 'failed'
+        ? { error: result.reason ?? 'login did not complete' }
+        : {}),
     });
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {

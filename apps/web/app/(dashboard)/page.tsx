@@ -160,7 +160,7 @@ export default function HomePage() {
                 {containers.containers.length} worker{containers.containers.length === 1 ? '' : 's'}{' '}
                 ·{' '}
                 {
-                  containers.containers.filter((c) => c.status === 'READY' || c.status === 'IDLE')
+                  containers.containers.filter((c) => c.desiredState === 'RUNNING')
                     .length
                 }{' '}
                 live

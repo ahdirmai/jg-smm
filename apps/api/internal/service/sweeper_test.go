@@ -118,9 +118,9 @@ func TestLoggingDriverPassesThroughReads(t *testing.T) {
 
 	ctx := context.Background()
 	driver.running["w1"] = 4
-	gen, exists, err := ld.Observe(ctx, "w1")
-	if err != nil || !exists || gen != 4 {
-		t.Fatalf("observe passthrough = (%d,%v,%v), want (4,true,nil)", gen, exists, err)
+	gen, state, err := ld.Observe(ctx, "w1")
+	if err != nil || state != port.ContainerRunning || gen != 4 {
+		t.Fatalf("observe passthrough = (%d,%v,%v), want (4,running,nil)", gen, state, err)
 	}
 	ids, err := ld.ListRunning(ctx)
 	if err != nil || len(ids) != 1 || ids[0] != "w1" {

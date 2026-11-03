@@ -1,0 +1,59 @@
+# Web (Next.js standalone). NEXT_PUBLIC_API_URL / NEXT_PUBLIC_SSE_URL are
+# compiled into the client bundle at BUILD time (apps/web/Dockerfile), so they
+# are not env here — build with --build-arg pointing at the ingress.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: smm
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: web
+          image: WEB_IMAGE_PLACEHOLDER
+          env:
+            - name: TZ
+              value: Asia/Jakarta
+            # Load-bearing: Docker/k8s set HOSTNAME to the pod name, and Next's
+            # standalone server binds process.env.HOSTNAME when present. Without
+            # this pin the pod serves on its eth0 address only and the image's
+            # own 127.0.0.1 healthcheck fails (see compose.yaml, same reason).
+            - name: HOSTNAME
+              value: "0.0.0.0"
+            - name: PORT
+              value: "3000"
+          ports:
+            - containerPort: 3000
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /login
+              port: 3000
+            periodSeconds: 10
+            timeoutSeconds: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: smm
+spec:
+  selector:
+    app: web
+  ports:
+    - port: 3000
+      targetPort: 3000
