@@ -177,6 +177,8 @@ const authCallback = createAuthCallback({ ...config, workerId }, logger);
 // (cookies) off a container before deleting it. The session never appears in a
 // log line — only the accountId does.
 const sessionCallback = createSessionCallback({ ...config, workerId }, logger);
+// A new login or auth-clear invalidates callbacks from an earlier attempt.
+const authAttempts = new Map<string, symbol>();
 
 void control
   .start(async (message) => {
@@ -191,13 +193,33 @@ void control
         // so the form can be filled; absent, the operator types in the noVNC
         // view as before. The payload is never logged (line above logs type +
         // accountId only).
-        const username = typeof message.payload?.username === 'string' ? message.payload.username : '';
-        const password = typeof message.payload?.password === 'string' ? message.payload.password : '';
+        const username =
+          typeof message.payload?.username === 'string' ? message.payload.username : '';
+        const password =
+          typeof message.payload?.password === 'string' ? message.payload.password : '';
         const credentials = username && password ? { username, password } : undefined;
-        await authCallback.post(
-          message.accountId,
-          await runLogin(message.accountId, message.platform, authDeps, credentials),
-        );
+        const attempt = Symbol();
+        authAttempts.set(message.accountId, attempt);
+        try {
+          const result = await runLogin(
+            message.accountId,
+            message.platform,
+            {
+              ...authDeps,
+              onNeedsInput: async (accountId, input) => {
+                if (authAttempts.get(accountId) === attempt)
+                  await authCallback.post(accountId, input);
+              },
+            },
+            credentials,
+          );
+          if (authAttempts.get(message.accountId) === attempt) {
+            await authCallback.post(message.accountId, result);
+          }
+        } finally {
+          if (authAttempts.get(message.accountId) === attempt)
+            authAttempts.delete(message.accountId);
+        }
         break;
       }
       case 'auth-input': {
@@ -206,13 +228,17 @@ void control
           logger.warn('auth-input without a value', { accountId: message.accountId });
           break;
         }
-        await authCallback.post(
-          message.accountId,
-          await submitAuthInput(message.accountId, code, message.platform, authDeps),
-        );
+        const attempt = authAttempts.get(message.accountId);
+        const result = await submitAuthInput(message.accountId, code, message.platform, authDeps);
+        // The active login owns the final callback when code submission joins
+        // its poll. A legacy parked context still needs its own callback.
+        if (!attempt && !authAttempts.has(message.accountId)) {
+          await authCallback.post(message.accountId, result);
+        }
         break;
       }
       case 'auth-clear':
+        authAttempts.delete(message.accountId);
         clearAuthContext(message.accountId);
         break;
       case 'auth-export': {
@@ -283,7 +309,10 @@ void control
           }
           const page: Page = manualContext.pages()[0] ?? (await manualContext.newPage());
           await page.goto(target, { waitUntil: 'domcontentloaded' }).catch(() => undefined);
-          logger.info('browser-open: opened in live view', { url: target, platform: message.platform });
+          logger.info('browser-open: opened in live view', {
+            url: target,
+            platform: message.platform,
+          });
         } catch (err) {
           logger.warn('browser-open failed', { error: (err as Error).message, url: target });
         }

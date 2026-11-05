@@ -66,6 +66,11 @@ func errorHandler(err error, c echo.Context) {
 	}
 
 	message := http.StatusText(httpStatus)
+	if he != nil && httpStatus >= 400 && httpStatus < 500 {
+		if msg, ok := he.Message.(string); ok && msg != "" {
+			message = msg
+		}
+	}
 	if err := c.JSON(httpStatus, errorBody{Error: errorDetail{Code: code, Message: message}}); err != nil {
 		c.Logger().Error(err)
 	}

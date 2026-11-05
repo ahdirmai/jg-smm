@@ -189,7 +189,7 @@ func (s *ContainerService) Logs(ctx context.Context, workerID string, limit int)
 
 // List returns every container with the accounts it hosts.
 func (s *ContainerService) List(ctx context.Context) ([]ContainerView, error) {
-	workers, err := s.workers.List(ctx, port.WorkerFilter{Limit: 200})
+	workers, err := listAllWorkers(ctx, s.workers)
 	if err != nil {
 		return nil, fmt.Errorf("container service: list: %w", err)
 	}

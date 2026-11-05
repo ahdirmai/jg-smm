@@ -30,6 +30,10 @@ import {
 import {
   AlertCircle,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
   ExternalLink,
   KeyRound,
   MonitorPlay,
@@ -43,7 +47,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { api } from '@/lib/api';
 
@@ -66,11 +70,35 @@ import { platformIcon } from '@/components/platform-icon';
 
 const STATUSES = ['PENDING', 'ACTIVE', 'PAUSED', 'QUARANTINED', 'DEAD', 'ARCHIVED'] as const;
 
-const AUTH_STATUSES = ['AUTHENTICATING', 'NEEDS_INPUT', 'AUTHENTICATED', 'FAILED', 'QUARANTINED'] as const;
+const AUTH_STATUSES = [
+  'PENDING',
+  'AUTHENTICATING',
+  'NEEDS_INPUT',
+  'AUTHENTICATED',
+  'FAILED',
+  'QUARANTINED',
+] as const;
+
+function loginResultNote(error: string): string {
+  const historical = error.match(/^historical_login_result: ([^ ]+)/);
+  if (historical) {
+    return historical[1] === 'OK'
+      ? 'Login lama OK; session perlu diverifikasi ulang'
+      : `Hasil login lama: ${historical[1]}`;
+  }
+  if (error.startsWith('historical_login_verified:'))
+    return 'Pernah terverifikasi; session perlu dicek ulang';
+  if (error.includes('wrong_password')) return 'Password salah';
+  if (error.includes('captcha')) return 'Memerlukan CAPTCHA';
+  if (error.includes('otp_required') || error.includes('codeentry') || error.includes('email_code'))
+    return 'Perlu OTP';
+  return 'Login belum selesai; cek melalui panel login';
+}
 
 // Action-first ordering: accounts that need the operator sit on top, a failed
 // login next, the healthy fleet underneath. Ties break by platform, then name.
 const AUTH_RANK: Record<Account['authStatus'], number> = {
+  PENDING: 2,
   AUTHENTICATING: 0,
   NEEDS_INPUT: 0,
   FAILED: 1,
@@ -105,7 +133,9 @@ function Stat({
         <Icon className="size-4" />
       </span>
       <div className="min-w-0 space-y-1">
-        <div className="text-2xl leading-none font-semibold tracking-tight tabular-nums">{value}</div>
+        <div className="text-2xl leading-none font-semibold tracking-tight tabular-nums">
+          {value}
+        </div>
         <div className="text-xs tracking-wide text-muted-foreground uppercase">{label}</div>
         {hint ? <div className="truncate text-xs text-muted-foreground">{hint}</div> : null}
       </div>
@@ -142,7 +172,12 @@ export default function AccountsPage() {
   const [platform, setPlatform] = useState<string>('all');
   const [status, setStatusFilter] = useState<string>('all');
   const [auth, setAuthFilter] = useState<string>('all');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
   const [busy, setBusy] = useState<string | null>(null);
+  const [operationError, setOperationError] = useState<string | null>(null);
+
+  useEffect(() => setPage(1), [platform, status, auth, pageSize]);
   // The detail drawer is shared by the row click and the dropdown items. The
   // row is addressed by id so the panel re-renders from the live `accounts`
   // list (an in-flight login settling is visible without reopening). `watch`
@@ -204,19 +239,29 @@ export default function AccountsPage() {
       );
   }, [accounts, platform, status, auth]);
 
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const currentPage = Math.min(page, pageCount);
+  const pageStart = (currentPage - 1) * pageSize;
+  const pageEnd = Math.min(pageStart + pageSize, filtered.length);
+  const pageAccounts = useMemo(
+    () => filtered.slice(pageStart, pageEnd),
+    [filtered, pageStart, pageEnd],
+  );
+
   // The open panel's row, read live from the list (null = closed, or the row
   // was deleted while open — the panel unmounts in that case).
-  const detailAccount = detail ? accounts.find((a) => a.id === detail.id) ?? null : null;
+  const detailAccount = detail ? (accounts.find((a) => a.id === detail.id) ?? null) : null;
   const isWatching = detail?.watch ?? false;
 
-  const visibleIds = useMemo(() => new Set(filtered.map((a) => a.id)), [filtered]);
+  const filteredIds = useMemo(() => new Set(filtered.map((a) => a.id)), [filtered]);
+  const pageIds = useMemo(() => new Set(pageAccounts.map((a) => a.id)), [pageAccounts]);
   // Drop selections that the current filter hid, so the bulk bar never
   // counts rows the operator cannot see.
   const effective = useMemo(
-    () => [...selected].filter((id) => visibleIds.has(id)),
-    [selected, visibleIds],
+    () => [...selected].filter((id) => filteredIds.has(id)),
+    [selected, filteredIds],
   );
-  const allSelected = effective.length > 0 && effective.length === filtered.length;
+  const allSelected = pageAccounts.length > 0 && pageAccounts.every((a) => selected.has(a.id));
   // Selections the filter is hiding. Not zero while a filter is on and rows are
   // checked, and the bar has to keep saying so: dropping the bar when `effective`
   // empties takes Clear with it, and Clear is the only way back — the operator
@@ -226,19 +271,20 @@ export default function AccountsPage() {
   const toggleAll = () => {
     setSelected((prev) => {
       const next = new Set(prev);
-      if (allSelected) visibleIds.forEach((id) => next.delete(id));
-      else visibleIds.forEach((id) => next.add(id));
+      if (allSelected) pageIds.forEach((id) => next.delete(id));
+      else pageIds.forEach((id) => next.add(id));
       return next;
     });
   };
 
   const onBulk = async (fn: (id: string) => Promise<void>) => {
     setBusy('__bulk__');
+    setOperationError(null);
     try {
       for (const id of effective) await fn(id);
       setSelected(new Set());
     } catch (err) {
-      console.error('bulk account op failed', err);
+      setOperationError(err instanceof Error ? err.message : 'Account operation failed');
     } finally {
       setBusy(null);
     }
@@ -246,11 +292,12 @@ export default function AccountsPage() {
 
   const onAct = async (id: string, fn: (id: string) => Promise<void>) => {
     setBusy(id);
+    setOperationError(null);
     try {
       await fn(id);
     } catch (err) {
       // Keep the table usable; the SSE refresh restores truth on the next tick.
-      console.error('account op failed', err);
+      setOperationError(err instanceof Error ? err.message : 'Account operation failed');
     } finally {
       setBusy(null);
     }
@@ -300,7 +347,6 @@ export default function AccountsPage() {
   // click away from this list.
   const needsLiveView = (a: Account): boolean =>
     a.authStatus === 'AUTHENTICATING' || a.authStatus === 'NEEDS_INPUT';
-
 
   // Fleet rollup for the stat strip. Counted over ALL accounts, not the
   // filtered view: the numbers answer "how healthy is the fleet", and a filter
@@ -446,7 +492,7 @@ export default function AccountsPage() {
               <div className="space-y-1.5">
                 <CardTitle>Fleet accounts</CardTitle>
                 <CardDescription>
-                  {loading ? 'Loading…' : `${filtered.length} of ${accounts.length} shown`}
+                  {loading ? 'Loading…' : `${filtered.length} of ${accounts.length} accounts`}
                 </CardDescription>
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -545,10 +591,10 @@ export default function AccountsPage() {
               </div>
             ) : null}
 
-            {error ? (
+            {operationError || error ? (
               <div className="flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
                 <AlertCircle className="size-4" />
-                {error}
+                {operationError || error}
               </div>
             ) : null}
 
@@ -594,7 +640,7 @@ export default function AccountsPage() {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    filtered.map((a) => (
+                    pageAccounts.map((a) => (
                       <TableRow
                         key={a.id}
                         // The row is the primary action: one click opens the
@@ -607,7 +653,9 @@ export default function AccountsPage() {
                         // keyboard users have the same actions one Tab away.)
                         className="cursor-pointer transition-colors hover:bg-accent/60"
                         onClick={() =>
-                          setDetail(detail?.id === a.id ? null : { id: a.id, watch: needsLiveView(a) })
+                          setDetail(
+                            detail?.id === a.id ? null : { id: a.id, watch: needsLiveView(a) },
+                          )
                         }
                       >
                         <TableCell>
@@ -664,6 +712,11 @@ export default function AccountsPage() {
                         </TableCell>
                         <TableCell>
                           <AuthBadge status={a.authStatus} />
+                          {a.lastError && (
+                            <p className="mt-1 max-w-56 text-xs text-muted-foreground">
+                              {loginResultNote(a.lastError)}
+                            </p>
+                          )}
                         </TableCell>
                         <TableCell>
                           {/* Primary: the worker's enforced state (what is
@@ -744,7 +797,9 @@ export default function AccountsPage() {
                                   Log in
                                 </DropdownMenuItem>
                                 {a.authStatus === 'NEEDS_INPUT' ? (
-                                  <DropdownMenuItem onClick={() => setDetail({ id: a.id, watch: true })}>
+                                  <DropdownMenuItem
+                                    onClick={() => setDetail({ id: a.id, watch: true })}
+                                  >
                                     <KeyRound />
                                     Enter code
                                   </DropdownMenuItem>
@@ -756,7 +811,9 @@ export default function AccountsPage() {
                               re-check a failed login) without starting a new one.
                             */}
                                 {novncFor(a) ? (
-                                  <DropdownMenuItem onClick={() => setDetail({ id: a.id, watch: true })}>
+                                  <DropdownMenuItem
+                                    onClick={() => setDetail({ id: a.id, watch: true })}
+                                  >
                                     <MonitorPlay />
                                     Live view
                                   </DropdownMenuItem>
@@ -779,13 +836,79 @@ export default function AccountsPage() {
                 </TableBody>
               </Table>
             </div>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <label htmlFor="accounts-page-size">Rows per page</label>
+                <Select
+                  value={String(pageSize)}
+                  onValueChange={(value) => setPageSize(Number(value))}
+                >
+                  <SelectTrigger
+                    id="accounts-page-size"
+                    className="w-20"
+                    aria-label="Rows per page"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {[25, 50, 100].map((size) => (
+                      <SelectItem key={size} value={String(size)}>
+                        {size}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <span className="text-sm tabular-nums text-muted-foreground" role="status">
+                {filtered.length === 0 ? 0 : pageStart + 1}–{pageEnd} of {filtered.length} accounts
+              </span>
+              <nav className="flex items-center gap-1" aria-label="Accounts pagination">
+                <Button
+                  variant="outline"
+                  size="icon"
+                  aria-label="First page"
+                  disabled={loading || currentPage === 1}
+                  onClick={() => setPage(1)}
+                >
+                  <ChevronsLeft />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  aria-label="Previous page"
+                  disabled={loading || currentPage === 1}
+                  onClick={() => setPage(currentPage - 1)}
+                >
+                  <ChevronLeft />
+                </Button>
+                <span className="px-2 text-sm tabular-nums">
+                  Page {currentPage} of {pageCount}
+                </span>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  aria-label="Next page"
+                  disabled={loading || currentPage === pageCount}
+                  onClick={() => setPage(currentPage + 1)}
+                >
+                  <ChevronRight />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  aria-label="Last page"
+                  disabled={loading || currentPage === pageCount}
+                  onClick={() => setPage(pageCount)}
+                >
+                  <ChevronsRight />
+                </Button>
+              </nav>
+            </div>
           </CardContent>
         </Card>
       )}
 
       <AddAccountDialog open={addOpen} onOpenChange={setAddOpen} />
-
     </div>
   );
 }
-

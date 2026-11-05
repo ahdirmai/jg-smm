@@ -159,15 +159,20 @@ func (s *AccountService) Create(ctx context.Context, in AccountInput) (AccountSu
 
 // List returns every account, newest first, without credentials.
 func (s *AccountService) List(ctx context.Context) ([]AccountSummary, error) {
-	accounts, err := s.accounts.List(ctx, port.AccountFilter{Limit: 200})
-	if err != nil {
-		return nil, fmt.Errorf("account service: list: %w", err)
+	const pageSize = 200
+	views := make([]AccountSummary, 0)
+	for offset := 0; ; offset += pageSize {
+		accounts, err := s.accounts.List(ctx, port.AccountFilter{Limit: pageSize, Offset: offset})
+		if err != nil {
+			return nil, fmt.Errorf("account service: list: %w", err)
+		}
+		for _, a := range accounts {
+			views = append(views, toAccountView(a))
+		}
+		if len(accounts) < pageSize {
+			return views, nil
+		}
 	}
-	views := make([]AccountSummary, 0, len(accounts))
-	for _, a := range accounts {
-		views = append(views, toAccountView(a))
-	}
-	return views, nil
 }
 
 // RegionGroup is the accounts operating from one region ("wilayah"), the unit
@@ -333,15 +338,22 @@ func (s *AccountService) Login(ctx context.Context, accountID string) (AccountSu
 	if err != nil {
 		return AccountSummary{}, fmt.Errorf("account service: worker: %w", err)
 	}
-	if w.NoVNCService == nil {
-		return AccountSummary{}, fmt.Errorf("%w: worker has no live view to log in through", domain.ErrConflict)
-	}
 	// A login is a human-facing flow: the container has to be running before
 	// the dispatch lands, or the control message sits in a queue nothing is
 	// draining and the operator stares at a dead live view. Resume it first.
 	if s.waker != nil {
 		if err := s.waker.Wake(ctx, w.ID); err != nil {
 			return AccountSummary{}, fmt.Errorf("%w: could not start the container for login: %v", domain.ErrUnavailable, err)
+		}
+	}
+	// A legacy paused worker publishes its live URL only after provisioning.
+	if w.NoVNCService == nil || strings.TrimSpace(*w.NoVNCService) == "" {
+		w, err = s.workers.GetByID(ctx, w.ID)
+		if err != nil {
+			return AccountSummary{}, fmt.Errorf("account service: refresh worker: %w", err)
+		}
+		if w.NoVNCService == nil || strings.TrimSpace(*w.NoVNCService) == "" {
+			return AccountSummary{}, fmt.Errorf("%w: worker has no live view to log in through", domain.ErrConflict)
 		}
 	}
 	// Hand the worker the stored session FIRST when we have one. The worker

@@ -44,7 +44,11 @@ test('a verified login posts AUTHENTICATED with the session handle', async () =>
 
   assert.equal(calls.length, 1);
   assert.equal(calls[0]?.url, 'http://api:8080/internal/account-callback');
-  assert.deepEqual(calls[0]?.body, { accountId: 'a1', authStatus: 'AUTHENTICATED', handle: 'sess-123' });
+  assert.deepEqual(calls[0]?.body, {
+    accountId: 'a1',
+    authStatus: 'AUTHENTICATED',
+    handle: 'sess-123',
+  });
 });
 
 test('needs_input posts NEEDS_INPUT so the dashboard can prompt for a code', async () => {
@@ -58,6 +62,22 @@ test('needs_input posts NEEDS_INPUT so the dashboard can prompt for a code', asy
   // The screenshot is not sent: the operator reads it from the worker's live
   // view, not from this callback.
   assert.deepEqual(calls[0]?.body, { accountId: 'a1', authStatus: 'NEEDS_INPUT' });
+});
+
+test('manual challenge callback carries its reason so the dashboard asks for CAPTCHA input', async () => {
+  const calls: Array<{ url: string; body: unknown }> = [];
+  const cb = createAuthCallback(cfg, silentLogger, {
+    fetchImpl: recordingFetch(calls, 200) as unknown as typeof fetch,
+  });
+  await cb.post('a1', {
+    outcome: 'needs_input',
+    reason: 'captcha: complete the challenge in the live browser',
+  });
+  assert.deepEqual(calls[0]?.body, {
+    accountId: 'a1',
+    authStatus: 'NEEDS_INPUT',
+    error: 'captcha: complete the challenge in the live browser',
+  });
 });
 
 test('a failed login reports FAILED with a reason', async () => {

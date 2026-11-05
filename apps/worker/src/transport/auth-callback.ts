@@ -57,7 +57,9 @@ export function createAuthCallback(
       // worker and is the only actionable part of a failed login.
       ...(result.outcome === 'failed'
         ? { error: result.reason ?? 'login did not complete' }
-        : {}),
+        : result.outcome === 'needs_input' && result.reason
+          ? { error: result.reason }
+          : {}),
     });
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {

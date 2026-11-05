@@ -167,7 +167,7 @@ func (p *ElasticPool) Reconcile(ctx context.Context) (int, error) {
 	if !p.Enabled() {
 		return 0, nil
 	}
-	workers, err := p.workers.List(ctx, port.WorkerFilter{Limit: poolListLimit})
+	workers, err := listAllWorkers(ctx, p.workers)
 	if err != nil {
 		return 0, err
 	}
@@ -257,12 +257,6 @@ func (p *ElasticPool) Run(ctx context.Context, interval time.Duration) {
 	}
 }
 
-// poolListLimit bounds one pass. The pool must see EVERY worker to rank them
-// correctly, so unlike the dashboard's page it must not be silently truncated:
-// pageBounds clamps anything above 500 down to 100, which would hide the oldest
-// workers from the ranking entirely. 500 is that ceiling.
-const poolListLimit = 500
-
 // owns reports whether the pool may steer this worker. AUTO containers are
 // pool-owned by construction (the packer spawns them PAUSED precisely so the
 // pool can decide). MANUAL containers belong to the operator, and STOPPED ones
@@ -270,6 +264,9 @@ const poolListLimit = 500
 func (p *ElasticPool) owns(w domain.Worker) bool {
 	if w.Source != domain.SourceAuto {
 		return false
+	}
+	if w.DesiredState == domain.DesiredPaused && isLoginWorkerHold(w.LastError) {
+		return false // a completed test or OTP skip stays off until a new wake
 	}
 	return w.DesiredState == domain.DesiredRunning || w.DesiredState == domain.DesiredPaused
 }

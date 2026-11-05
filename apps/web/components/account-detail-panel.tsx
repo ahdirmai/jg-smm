@@ -89,6 +89,8 @@ export function AccountDetailPanel({
   useEffect(() => setCode(''), [account.id]);
 
   const Icon = platformIcon(account.platform);
+  const manualChallenge =
+    account.authStatus === 'NEEDS_INPUT' && /^(captcha|checkpoint):/.test(account.lastError ?? '');
 
   return (
     <div className="space-y-4 p-5">
@@ -112,12 +114,7 @@ export function AccountDetailPanel({
           <AuthBadge status={account.authStatus} />
           <StatusBadge status={account.status} />
           <Badge variant="outline">{platformLabel(account.platform)}</Badge>
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label="Close account panel"
-            onClick={onClose}
-          >
+          <Button variant="ghost" size="icon" aria-label="Close account panel" onClick={onClose}>
             <X />
           </Button>
         </div>
@@ -149,7 +146,13 @@ export function AccountDetailPanel({
         ) : null}
 
         <div className="space-y-3">
-          {account.authStatus === 'NEEDS_INPUT' ? (
+          {manualChallenge ? (
+            <p role="status" className="text-sm text-muted-foreground">
+              Complete the CAPTCHA or security check in the live browser. Login is saved
+              automatically after verification succeeds.
+            </p>
+          ) : null}
+          {account.authStatus === 'NEEDS_INPUT' && !manualChallenge ? (
             <div className="space-y-2">
               <Label htmlFor="account-panel-code">Verification code</Label>
               <div className="flex gap-2">
@@ -223,7 +226,11 @@ export function AccountDetailPanel({
           ) : null}
 
           {account.authStatus !== 'QUARANTINED' ? (
-            <Button className="w-full" disabled={busy || !canAct} onClick={() => onStartLogin(account.id)}>
+            <Button
+              className="w-full"
+              disabled={busy || !canAct}
+              onClick={() => onStartLogin(account.id)}
+            >
               <KeyRound />
               Log in
             </Button>

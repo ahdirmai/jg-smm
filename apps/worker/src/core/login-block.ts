@@ -4,14 +4,14 @@
  * The poll loop needs three distinct verdicts where it previously had one:
  *
  *   verified     cookies are present (proven)
- *   needs_input  a code field is showing — the operator answers it
- *   blocked      a wall that no amount of waiting will clear
+ *   needs_input  CAPTCHA or checkpoint needs the operator
+ *   blocked      OTP, credentials, rate limiting or an account lock stops login
  *
  * That third case used to fall through to the timeout, and every wall produced
  * the same unactionable sentence ("submit did not complete"), so a fleet run
  * wrote ~400 identical rows into the operator's sheet and hid the one thing
- * they needed to know: a wrong password is a CREDENTIAL problem to fix, a
- * CAPTCHA is an EGRESS problem, and a checkpoint needs a human. Verified live:
+ * they needed to know: a wrong password needs corrected credentials, while a
+ * CAPTCHA or checkpoint needs manual completion in the live browser. Verified live:
  * Instagram showed "The login information you entered is incorrect" while the
  * worker reported "still on https://www.instagram.com/accounts/login/".
  *
@@ -26,6 +26,7 @@ import type { BrowserContext, Page } from 'playwright';
 /** Why a login is stuck, in the operator's terms. */
 export type LoginBlock =
   | 'wrong_password'
+  | 'otp_required'
   | 'captcha'
   | 'checkpoint'
   | 'rate_limited'
@@ -45,10 +46,19 @@ const CHECKPOINT_TEXT = [
   'confirm it',
   "we've detected suspicious",
   'suspicious login attempt',
-  'enter the security code',
-  'send security code',
   'help us confirm',
 ];
+
+const OTP_TEXT = [
+  'enter the code sent to',
+  'enter the security code',
+  'enter your authentication code',
+  'enter your verification code',
+  'send security code',
+  'send you a security code',
+];
+
+const OTP_URL = /\/auth_platform\/codeentry(?:[/?#]|$)|\/accounts\/login\/two_factor(?:[/?#]|$)/i;
 
 const RATE_LIMIT_TEXT = [
   'try again later',
@@ -92,20 +102,22 @@ async function classifyPage(page: Page): Promise<LoginBlock | undefined> {
     return undefined; // mid-navigation: not a verdict
   }
 
-  // reCAPTCHA is cross-origin, so its text is unreadable; the URL is the proof.
-  if (CAPTCHA_URL.test(url)) return 'captcha';
+  if (OTP_URL.test(url)) return 'otp_required';
 
   const body = await page
     .locator('body')
     .innerText({ timeout: 2_000 })
     .catch(() => '');
-  if (!body) return undefined;
   const text = body.toLowerCase();
 
   // Credentials first: a rejected password outranks every other banner.
   if (WRONG_PASSWORD_TEXT.some((t) => text.includes(t))) return 'wrong_password';
   if (LOCKED_TEXT.some((t) => text.includes(t))) return 'account_locked';
   if (RATE_LIMIT_TEXT.some((t) => text.includes(t))) return 'rate_limited';
+  if (OTP_TEXT.some((t) => text.includes(t))) return 'otp_required';
+  // OTP text can occur on a checkpoint URL. Only the remaining challenge
+  // pages are kept open for manual CAPTCHA completion.
+  if (CAPTCHA_URL.test(url)) return 'captcha';
   if (CHECKPOINT_TEXT.some((t) => text.includes(t))) return 'checkpoint';
   return undefined;
 }

@@ -12,11 +12,7 @@ import type { Browser, BrowserContext } from 'playwright';
 import type { Platform } from '@smm/shared';
 
 import type { LoginCredentials, PlatformAdapter } from '../platforms/adapter.js';
-import {
-  META_OTP_SELECTOR,
-  detectAuthInputWith,
-  submitAuthInputWith,
-} from '../platforms/otp.js';
+import { META_OTP_SELECTOR, detectAuthInputWith, submitAuthInputWith } from '../platforms/otp.js';
 import { newAccountContext } from './browser.js';
 import type { Geolocation } from './geolocation.js';
 import { captureScreenshot } from './screenshot.js';
@@ -25,6 +21,9 @@ import { blockReason, detectLoginBlock } from './login-block.js';
 
 /** Live login contexts awaiting operator input, keyed by accountId. */
 export const authContexts = new Map<string, BrowserContext>();
+// Code submission joins the existing poll instead of racing it to close and
+// persist the same context twice.
+const authOutcomes = new WeakMap<BrowserContext, Promise<LoginResult>>();
 
 export type LoginOutcome = 'verified' | 'needs_input' | 'rejected' | 'failed';
 
@@ -42,10 +41,8 @@ export interface LoginResult {
    */
   expiresAt?: number;
   /**
-   * Why a `failed` login failed, in operator terms: which required cookie never
-   * arrived and where the page was sitting when the poll gave up. Absent for
-   * every other outcome. This crosses the wire as the callback's `error`, so
-   * the dashboard shows the real diagnosis instead of "login did not complete".
+   * Failure diagnosis or manual challenge instructions. Crosses the wire as
+   * the callback's `error` so the dashboard can show the next operator action.
    */
   reason?: string;
 }
@@ -74,6 +71,8 @@ export interface AuthDeps {
    * container, and the container is recreated whenever the fleet rebalances.
    * Absent in tests and in any caller that has no API to report to. */
   onSession?: (accountId: string, platform: Platform, state: unknown) => Promise<void> | void;
+  /** Publish the parked challenge while this login keeps watching for proof. */
+  onNeedsInput?: (accountId: string, result: LoginResult) => Promise<void> | void;
 }
 
 /**
@@ -92,8 +91,11 @@ async function adapterFor(platform: Platform): Promise<PlatformAdapter | undefin
 }
 
 const POLL_INTERVAL_MS = 1_000;
+const OTP_REQUIRED_REASON = 'otp_required: perlu OTP';
 /** Upper bound on a login attempt before it is reported `failed`. */
 export const LOGIN_TIMEOUT_MS = 180_000;
+/** Time allowed for an operator to finish a challenge directly in noVNC. */
+export const MANUAL_LOGIN_TIMEOUT_MS = 10 * 60_000;
 
 export interface SessionVerdict {
   proven: boolean;
@@ -167,7 +169,10 @@ export async function pollLoginOutcome(
   let lastURL = '';
   for (;;) {
     if ((deps.now ?? Date.now)() - started > LOGIN_TIMEOUT_MS) {
-      return { outcome: 'failed', reason: await describeFailedLogin(platform, ctx, lastURL, wanted) };
+      return {
+        outcome: 'failed',
+        reason: await describeFailedLogin(platform, ctx, lastURL, wanted),
+      };
     }
     const verdict = await probeSession(platform, ctx);
     if (verdict.proven) {
@@ -177,16 +182,24 @@ export async function pollLoginOutcome(
         ...(verdict.expiresAt !== undefined ? { expiresAt: verdict.expiresAt } : {}),
       };
     }
-    if (verdict.needsInput) return { outcome: 'needs_input' };
-    // A wall is a terminal verdict, not something to wait out. Without this the
-    // poll burned the full LOGIN_TIMEOUT_MS and reported one unactionable
-    // sentence for four different problems; a fleet run then filled the
-    // operator's sheet with identical rows and hid the distinction that matters
-    // (a wrong password is a credential to fix, a CAPTCHA is an egress problem).
-    // Nothing is solved automatically: the loop just stops and labels it.
+    if (verdict.needsInput) return { outcome: 'failed', reason: OTP_REQUIRED_REASON };
+    // Credentials and rate limits fail promptly. Human challenges keep the
+    // browser parked so the operator can complete them through noVNC.
     const block = await detectLoginBlock(ctx);
     if (block) {
-      return { outcome: 'failed', reason: blockReason(block, 'stopped at login wall') };
+      if (block === 'captcha' || block === 'checkpoint') {
+        return {
+          outcome: 'needs_input',
+          reason: blockReason(block, 'complete the challenge in the live browser'),
+        };
+      }
+      return {
+        outcome: 'failed',
+        reason:
+          block === 'otp_required'
+            ? OTP_REQUIRED_REASON
+            : blockReason(block, 'stopped at login wall'),
+      };
     }
     // Cheap and non-throwing: the page may be mid-navigation, which is itself
     // a state worth reporting if the poll then times out.
@@ -248,6 +261,7 @@ export async function runLogin(
   deps: AuthDeps,
   credentials?: LoginCredentials,
 ): Promise<LoginResult> {
+  clearAuthContext(accountId);
   const browser = await deps.browser();
   // Hydrate the persisted session before the first poll. This is what makes a
   // refresh autonomous: `pollLoginOutcome` proves a session by the presence of
@@ -308,7 +322,10 @@ export async function runLogin(
     // only reachable by someone with shell access to the container; the row in
     // the dashboard is what the operator actually looks at, and a bare
     // "failed" there is unactionable.
-    return { ...failedResult(accountId), reason: `navigation failed: ${detail.split('\n')[0]}` };
+    return {
+      ...failedResult(accountId, ctx),
+      reason: `navigation failed: ${detail.split('\n')[0]}`,
+    };
   }
 }
 
@@ -340,7 +357,7 @@ export async function submitAuthInput(
     else await submitAuthInputWith(ctx, value, META_OTP_SELECTOR);
     return await waitForOutcome(accountId, platform, ctx, deps);
   } catch {
-    return failedResult(accountId);
+    return failedResult(accountId, ctx);
   }
 }
 
@@ -351,14 +368,46 @@ export function clearAuthContext(accountId: string): void {
   void ctx?.close().catch(() => undefined);
 }
 
-async function waitForOutcome(
+function waitForOutcome(
   accountId: string,
   platform: Platform,
   ctx: BrowserContext,
   deps: AuthDeps,
 ): Promise<LoginResult> {
-  // Persist on success and park on needs_input; pollLoginOutcome only decides.
-  const outcome = await pollLoginOutcome(platform, ctx, deps.now ? { now: deps.now } : {});
+  const existing = authOutcomes.get(ctx);
+  if (existing) return existing;
+  const pending = resolveOutcome(accountId, platform, ctx, deps).finally(() => {
+    authOutcomes.delete(ctx);
+  });
+  authOutcomes.set(ctx, pending);
+  return pending;
+}
+
+async function resolveOutcome(
+  accountId: string,
+  platform: Platform,
+  ctx: BrowserContext,
+  deps: AuthDeps,
+): Promise<LoginResult> {
+  let outcome = await pollLoginOutcome(platform, ctx, deps.now ? { now: deps.now } : {});
+  if (outcome.outcome === 'needs_input') {
+    const shot = await takeScreenshot(ctx, accountId, deps);
+    const input: LoginResult = {
+      ...outcome,
+      reason: outcome.reason ?? 'verification: complete verification in the live browser',
+      ...(shot ? { screenshot: shot } : {}),
+    };
+    // Standalone callers keep the parked-context contract. The live worker
+    // publishes NEEDS_INPUT immediately and then watches manual completion.
+    if (!deps.onNeedsInput) return input;
+    await deps.onNeedsInput(accountId, input);
+    outcome = await waitForManualCompletion(accountId, platform, ctx, deps);
+  }
+  // A restart/clear supersedes this attempt. Its caller suppresses stale
+  // callbacks; it must never close a newer attempt's browser.
+  if (authContexts.get(accountId) !== ctx) {
+    return { outcome: 'failed', reason: 'login attempt was cancelled' };
+  }
   if (outcome.outcome === 'verified') {
     // Persist so a restart needs no re-login. A disk failure must never
     // downgrade a verified login to failed — the session is an optimisation.
@@ -379,12 +428,46 @@ async function waitForOutcome(
       // Best effort; the login itself already succeeded.
     }
   }
-  if (outcome.outcome === 'needs_input') {
-    const shot = await takeScreenshot(ctx, accountId, deps);
-    return { outcome: 'needs_input', ...(shot ? { screenshot: shot } : {}) };
-  }
-  clearAuthContext(accountId);
+  if (authContexts.get(accountId) === ctx) clearAuthContext(accountId);
   return outcome;
+}
+
+async function waitForManualCompletion(
+  accountId: string,
+  platform: Platform,
+  ctx: BrowserContext,
+  deps: AuthDeps,
+): Promise<LoginResult> {
+  const now = deps.now ?? Date.now;
+  const started = now();
+  for (;;) {
+    if (authContexts.get(accountId) !== ctx) {
+      return { outcome: 'failed', reason: 'login attempt was cancelled' };
+    }
+    if (now() - started > MANUAL_LOGIN_TIMEOUT_MS) {
+      return { outcome: 'failed', reason: 'manual verification timed out: start the login again' };
+    }
+    const verdict = await probeSession(platform, ctx);
+    if (verdict.proven) {
+      return {
+        outcome: 'verified',
+        ...(verdict.handle ? { handle: verdict.handle } : {}),
+        ...(verdict.expiresAt !== undefined ? { expiresAt: verdict.expiresAt } : {}),
+      };
+    }
+    if (verdict.needsInput) return { outcome: 'failed', reason: OTP_REQUIRED_REASON };
+    const block = await detectLoginBlock(ctx);
+    if (block && block !== 'captcha' && block !== 'checkpoint') {
+      return {
+        outcome: 'failed',
+        reason:
+          block === 'otp_required'
+            ? OTP_REQUIRED_REASON
+            : blockReason(block, 'stopped at login wall'),
+      };
+    }
+    await sleep(POLL_INTERVAL_MS);
+  }
 }
 
 /**
@@ -424,8 +507,8 @@ async function loginUrlFor(platform: Platform, deps: AuthDeps): Promise<string> 
   return (await adapterFor(platform))?.loginUrl ?? `https://www.${platform}.com/login`;
 }
 
-function failedResult(accountId: string): LoginResult {
-  clearAuthContext(accountId);
+function failedResult(accountId: string, expected?: BrowserContext): LoginResult {
+  if (!expected || authContexts.get(accountId) === expected) clearAuthContext(accountId);
   return { outcome: 'failed' };
 }
 

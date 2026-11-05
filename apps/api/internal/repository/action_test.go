@@ -469,7 +469,7 @@ func TestActionLogUpsertIdempotent(t *testing.T) {
 		Type:        domain.JobTypeActionComment,
 		TargetID:    targetID,
 		AccountID:   accountID,
-		ScheduledAt: time.Now().UTC(),
+		ScheduledAt: time.Now().UTC().Add(-time.Minute),
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -642,7 +642,7 @@ func TestActionLogConstraints(t *testing.T) {
 		Type:        domain.JobTypeActionLike,
 		TargetID:    targetID,
 		AccountID:   accountID,
-		ScheduledAt: time.Now().UTC(),
+		ScheduledAt: time.Now().UTC().Add(-time.Minute),
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)

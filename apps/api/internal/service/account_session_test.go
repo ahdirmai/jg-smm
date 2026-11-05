@@ -199,6 +199,29 @@ func TestImportSessionValidatesObject(t *testing.T) {
 // carries the stored credentials: the auth-login control payload holds the
 // username and the unsealed password (the same wire hop that carries 2FA
 // codes via auth-input), while the row keeps holding only the sealed blob.
+func TestLoginPreparesMissingLiveViewBeforeDispatch(t *testing.T) {
+	accounts := newFakeAccountStore()
+	workers := newFakeWorkerStore()
+	w := workerFixture("w1", domain.DesiredPaused, 1, nil)
+	workers.seed(w)
+	workers.onReady = func(s *fakeWorkerStore, id string) {
+		ready := readyFixture(s.get(id))
+		ready.NoVNCService = strPtr("http://localhost:24105")
+		s.seed(ready)
+	}
+	pub := &recordingPublisher{}
+	svc := NewAccountService(accounts, workers, nil, AccountConfig{
+		Control: pub, Waker: NewWaker(workers, newFakeDriver(), nil),
+	})
+	a := accounts.seedLockedForTest(domain.Account{Platform: domain.PlatformInstagram, Username: "legacy", WorkerID: &w.ID})
+	if _, err := svc.Login(context.Background(), a.ID); err != nil {
+		t.Fatalf("login must wake and prepare a legacy worker's live view: %v", err)
+	}
+	if pub.last() == nil {
+		t.Fatal("login was not dispatched after live view became ready")
+	}
+}
+
 func TestLoginDeliversUnsealedCredentials(t *testing.T) {
 	accounts := newFakeAccountStore()
 	workers := newFakeWorkerStore()

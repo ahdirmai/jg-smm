@@ -20,6 +20,7 @@ const (
 	AccountAuthStatusAUTHENTICATING AccountAuthStatus = "AUTHENTICATING"
 	AccountAuthStatusFAILED         AccountAuthStatus = "FAILED"
 	AccountAuthStatusNEEDSINPUT     AccountAuthStatus = "NEEDS_INPUT"
+	AccountAuthStatusPENDING        AccountAuthStatus = "PENDING"
 	AccountAuthStatusQUARANTINED    AccountAuthStatus = "QUARANTINED"
 )
 
@@ -114,6 +115,7 @@ const (
 	ContainerAccountAuthStatusAUTHENTICATING ContainerAccountAuthStatus = "AUTHENTICATING"
 	ContainerAccountAuthStatusFAILED         ContainerAccountAuthStatus = "FAILED"
 	ContainerAccountAuthStatusNEEDSINPUT     ContainerAccountAuthStatus = "NEEDS_INPUT"
+	ContainerAccountAuthStatusPENDING        ContainerAccountAuthStatus = "PENDING"
 	ContainerAccountAuthStatusQUARANTINED    ContainerAccountAuthStatus = "QUARANTINED"
 )
 

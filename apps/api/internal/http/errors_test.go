@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -11,6 +12,24 @@ import (
 
 	"github.com/labstack/echo/v4"
 )
+
+func TestExplicitConflictKeepsActionableMessage(t *testing.T) {
+	e := echo.New()
+	rec := httptest.NewRecorder()
+	c := e.NewContext(httptest.NewRequest(http.MethodPost, "/login", nil), rec)
+	errorHandler(echo.NewHTTPError(http.StatusConflict, "worker has no live view"), c)
+	var body struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error.Message != "worker has no live view" {
+		t.Fatalf("lost actionable reason: %s", rec.Body.String())
+	}
+}
 
 // A client that vanishes mid-request (page reload, tab close, proxy drop) shows
 // up as context.Canceled. That is not a server fault, and a 500 here makes the

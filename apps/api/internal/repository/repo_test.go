@@ -97,6 +97,7 @@ func TestWorkerRoundTrip(t *testing.T) {
 	if created.Status != domain.WorkerIdle || created.DesiredState != domain.DesiredRunning {
 		t.Fatalf("enum round trip mismatch: %+v", created)
 	}
+	w.ID = created.ID
 	if created.SessionPVC == nil || *created.SessionPVC != "smm-session-00000000-0000-0000-0000-000000000001" {
 		t.Fatalf("session pvc not round-tripped: %v", created.SessionPVC)
 	}
@@ -170,14 +171,12 @@ func TestAccountAssignProvesUniqueConstraint(t *testing.T) {
 		Status:       domain.WorkerIdle,
 		Generation:   1,
 	}
-	t.Cleanup(func() {
-		_ = accounts.Delete(ctx, "00000000-0000-0000-0000-0000000000a1")
-		_ = accounts.Delete(ctx, "00000000-0000-0000-0000-0000000000a2")
-		_ = workers.Delete(ctx, w.ID)
-	})
-	if _, err := workers.Create(ctx, w); err != nil {
+	createdWorker, err := workers.Create(ctx, w)
+	if err != nil {
 		t.Fatalf("create worker: %v", err)
 	}
+	w.ID = createdWorker.ID
+	t.Cleanup(func() { _ = workers.Delete(ctx, w.ID) })
 
 	ig1 := domain.Account{
 		ID:          "00000000-0000-0000-0000-0000000000a1",
@@ -193,12 +192,18 @@ func TestAccountAssignProvesUniqueConstraint(t *testing.T) {
 		PasswordEnc: []byte("cipher-2"),
 		Status:      domain.AccountPending,
 	}
-	if _, err := accounts.Create(ctx, ig1); err != nil {
+	created1, err := accounts.Create(ctx, ig1)
+	if err != nil {
 		t.Fatalf("create ig1: %v", err)
 	}
-	if _, err := accounts.Create(ctx, ig2); err != nil {
+	ig1.ID = created1.ID
+	t.Cleanup(func() { _ = accounts.Delete(ctx, ig1.ID) })
+	created2, err := accounts.Create(ctx, ig2)
+	if err != nil {
 		t.Fatalf("create ig2: %v", err)
 	}
+	ig2.ID = created2.ID
+	t.Cleanup(func() { _ = accounts.Delete(ctx, ig2.ID) })
 
 	// First IG account packs fine.
 	if _, err := accounts.Assign(ctx, ig1.ID, w.ID); err != nil {
@@ -270,9 +275,11 @@ func TestProvisionLogAppend(t *testing.T) {
 		Generation:   1,
 	}
 	t.Cleanup(func() { _ = workers.Delete(ctx, w.ID) })
-	if _, err := workers.Create(ctx, w); err != nil {
+	created, err := workers.Create(ctx, w)
+	if err != nil {
 		t.Fatalf("create worker: %v", err)
 	}
+	w.ID = created.ID
 
 	if err := logs.Append(ctx, domain.ProvisionLog{
 		WorkerID:   w.ID,

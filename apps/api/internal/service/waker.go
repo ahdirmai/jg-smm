@@ -63,9 +63,8 @@ func NewWaker(workers port.WorkerStore, driver port.K8sClient, logger *slog.Logg
 // it. It returns nil when the worker is already running, when it was resumed,
 // or when there is no provisioner to resume with.
 //
-// It deliberately does NOT wait for a worker heartbeat: the caller's next step
-// (a control publish, or a Redis enqueue the worker drains when it starts) is
-// already durable, so the container joining late is a delay, not a lost job.
+// Control instructions use ephemeral Pub/Sub, so both a resumed worker and an
+// already-RUNNING intent must have a fresh heartbeat before dispatch proceeds.
 func (w *Waker) Wake(ctx context.Context, workerID string) error {
 	if w.driver == nil || workerID == "" {
 		return nil
@@ -74,9 +73,12 @@ func (w *Waker) Wake(ctx context.Context, workerID string) error {
 	if err != nil {
 		return fmt.Errorf("waker: get worker: %w", err)
 	}
-	// Only PAUSED is woken. A RUNNING worker needs nothing, and a STOPPED one
-	// was a deliberate teardown — resurrecting it would undo an operator's
-	// intent to delete.
+	if wk.DesiredState == domain.DesiredRunning {
+		// The reconciler may still be creating this container. A RUNNING row
+		// alone does not prove a subscriber exists to receive the login.
+		return w.awaitReady(ctx, workerID)
+	}
+	// Only PAUSED is resumed. STOPPED is deliberate teardown.
 	if wk.DesiredState != domain.DesiredPaused {
 		return nil
 	}
@@ -84,6 +86,12 @@ func (w *Waker) Wake(ctx context.Context, workerID string) error {
 	// container was asked to boot to prove the NEW process is up. Taking it
 	// after the call would let a heartbeat written during the start be accepted.
 	wokeAt := time.Now()
+	// Renew activity before starting: the pool otherwise sees the pre-pause
+	// heartbeat and can stop a newly booting login before its first heartbeat.
+	wk.LastActionAt = &wokeAt
+	if _, err := w.workers.Update(ctx, wk); err != nil {
+		return fmt.Errorf("waker: mark wake activity: %w", err)
+	}
 	if err := w.driver.StartWorker(ctx, wk); err != nil {
 		return fmt.Errorf("waker: start worker %s: %w", workerID, err)
 	}
@@ -94,6 +102,9 @@ func (w *Waker) Wake(ctx context.Context, workerID string) error {
 	// Status follows: the old process's READY is dead. PENDING says "booting"
 	// until the fresh heartbeat arrives; the dashboard shows it as starting.
 	wk.Status = domain.WorkerPending
+	if isLoginWorkerHold(wk.LastError) {
+		wk.LastError = nil
+	}
 	if _, err := w.workers.Update(ctx, wk); err != nil {
 		// The container IS running now; a failed row write is a bookkeeping
 		// lag the reconciler corrects, not a reason to fail the work.

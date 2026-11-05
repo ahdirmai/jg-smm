@@ -20,6 +20,7 @@ import (
 // rows, which lets it validate enums, truncate text and normalise paths.
 type JobService struct {
 	workers  port.WorkerStore
+	driver   port.K8sClient
 	accounts port.AccountStore
 	logs     port.ProvisionLogStore
 	// actions persists action verdicts (P3-11). Nil in earlier phases or tests;
@@ -42,6 +43,13 @@ type JobService struct {
 	// does not see the verdict.
 	metrics *obs.Metrics
 	logger  *slog.Logger
+}
+
+// WithWorkerDriver enables immediate shutdown after a skipped OTP login.
+// A nil driver leaves the persisted pause intent for the reconciler.
+func (s *JobService) WithWorkerDriver(driver port.K8sClient) *JobService {
+	s.driver = driver
+	return s
 }
 
 // RetryPolicy is the action retry budget (P3-11): a retryable failure gets at
@@ -268,6 +276,11 @@ func (s *JobService) RecordAuthOutcome(ctx context.Context, o AuthOutcome) error
 		if o.Error != nil {
 			acc.LastError = o.Error
 		}
+		if isOTPRequired(o.Error) {
+			// An intentionally skipped challenge must not schedule another
+			// automatic login or count toward refresh quarantine.
+			acc.CookieExpiryAt = nil
+		}
 		// Only a failure of a session that WAS alive counts toward the P2-06
 		// streak. A first-time login that fails is an onboarding problem, not a
 		// dying session, and counting it would quarantine a brand-new account
@@ -307,6 +320,58 @@ func (s *JobService) RecordAuthOutcome(ctx context.Context, o AuthOutcome) error
 	// its open detail panel without a manual refresh (ADR 0010: the worker's
 	// callback is the authority; the UI must not outlive it by one tick).
 	s.publishAccountView(ctx, acc)
+	if o.AuthStatus == domain.AuthFailed && isOTPRequired(o.Error) && acc.WorkerID != nil {
+		return s.stopOTPWorker(ctx, *acc.WorkerID, o.Error)
+	}
+	return nil
+}
+
+func isOTPRequired(reason *string) bool {
+	return reason != nil && strings.HasPrefix(strings.TrimSpace(*reason), "otp_required:")
+}
+
+// Login test runs pause completed workers to release fleet capacity. Preserve
+// this explicit hold just like an OTP skip until a new wake requests work.
+func isLoginWorkerHold(reason *string) bool {
+	return isOTPRequired(reason) || (reason != nil && strings.HasPrefix(strings.TrimSpace(*reason), "login_test_complete:"))
+}
+
+func (s *JobService) stopOTPWorker(ctx context.Context, workerID string, reason *string) error {
+	if s.workers == nil {
+		return nil
+	}
+	w, err := s.workers.GetByID(ctx, workerID)
+	if err != nil {
+		return fmt.Errorf("OTP shutdown: get worker: %w", err)
+	}
+	if w.DesiredState == domain.DesiredStopped {
+		return nil // preserve a deliberate teardown
+	}
+	w.DesiredState = domain.DesiredPaused
+	w.Status = domain.WorkerIdle
+	w.BrowserStatus = "cold"
+	w.LastError = reason
+	if _, err := s.workers.Update(ctx, w); err != nil {
+		return fmt.Errorf("OTP shutdown: persist pause: %w", err)
+	}
+	if s.stream != nil {
+		payload, err := json.Marshal(map[string]string{
+			"id": w.ID, "desiredState": string(w.DesiredState), "status": string(w.Status),
+		})
+		if err == nil {
+			s.stream.Publish(ctx, port.EventWorkerHealth, payload)
+		}
+	}
+	if s.driver != nil {
+		// Stopping the reporting worker closes its callback connection. The
+		// shutdown must finish even when that request context is cancelled.
+		stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+		defer cancel()
+		if err := s.driver.StopWorker(stopCtx, w.ID); err != nil {
+			return fmt.Errorf("OTP shutdown: stop worker: %w", err)
+		}
+	}
+	s.logger.Info("OTP-required account skipped; worker paused", "workerId", w.ID)
 	return nil
 }
 

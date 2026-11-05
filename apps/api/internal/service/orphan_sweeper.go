@@ -69,7 +69,7 @@ func (s *OrphanSweeper) Sweep(ctx context.Context) ([]string, error) {
 		return nil, nil
 	}
 
-	known, err := s.workers.List(ctx, port.WorkerFilter{Limit: 500})
+	known, err := listAllWorkers(ctx, s.workers)
 	if err != nil {
 		return nil, fmt.Errorf("sweeper: list workers: %w", err)
 	}

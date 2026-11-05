@@ -106,7 +106,10 @@ export async function dismissContinueInterstitial(page: Page): Promise<boolean> 
  * job fails.
  */
 export async function dismissMetaAccountModal(page: Page): Promise<boolean> {
-  const dialog = page.locator('div[role="dialog"]').filter({ hasText: /Meta Account is here/i }).first();
+  const dialog = page
+    .locator('div[role="dialog"]')
+    .filter({ hasText: /Meta Account is here/i })
+    .first();
   if ((await dialog.count().catch(() => 0)) === 0) return false;
 
   // Prefer the X: it leaves the page exactly as it was. The primary button is a
@@ -135,7 +138,6 @@ export async function dismissMetaAccountModal(page: Page): Promise<boolean> {
   }
   return clicked;
 }
-
 
 /**
  * Open a post permalink. `domcontentloaded` only: `networkidle` never fires on
@@ -302,7 +304,14 @@ export async function likePost(d: DomDeps): Promise<AdapterResult> {
   // single state read here would race that paint and misreport "button not
   // found", so wait (bounded) for the button to be present first.
   const present = await pollUntil(
-    async () => (await (await likeRoot(d)).locator(sel.likeButton!).first().count().catch(() => 0)) > 0,
+    async () =>
+      (await (
+        await likeRoot(d)
+      )
+        .locator(sel.likeButton!)
+        .first()
+        .count()
+        .catch(() => 0)) > 0,
     d.pollMs ?? POLL_MS,
     LIKE_BUTTON_TIMEOUT_MS,
     d.now,
@@ -357,7 +366,9 @@ async function firstCommentLike(d: DomDeps, commentSel: string): Promise<Locator
   // it by identity rather than by a brittle index.
   let postHandle: import('playwright').ElementHandle | null = null;
   if (sel.likeButtonScope && sel.likeButton) {
-    postHandle = await (await likeRoot(d))
+    postHandle = await (
+      await likeRoot(d)
+    )
       .locator(sel.likeButton)
       .first()
       .elementHandle()
@@ -368,7 +379,9 @@ async function firstCommentLike(d: DomDeps, commentSel: string): Promise<Locator
     const cand = all.nth(i);
     if (postHandle) {
       const h = await cand.elementHandle().catch(() => null);
-      const same = h ? await page.evaluate(([a, b]) => a === b, [h, postHandle]).catch(() => false) : false;
+      const same = h
+        ? await page.evaluate(([a, b]) => a === b, [h, postHandle]).catch(() => false)
+        : false;
       if (h) await h.dispose().catch(() => undefined);
       if (same) continue; // this is the post heart, not a comment
     }
@@ -386,12 +399,19 @@ async function firstCommentLike(d: DomDeps, commentSel: string): Promise<Locator
 export async function likeComment(d: DomDeps): Promise<AdapterResult> {
   const { page, sel } = d;
   if (!sel.commentLikeButton) {
-    return { ok: false, error: 'like-comment is not supported on this platform yet (no comment-like selector)' };
+    return {
+      ok: false,
+      error: 'like-comment is not supported on this platform yet (no comment-like selector)',
+    };
   }
 
   // Wait (bounded) for at least one comment like heart to paint.
   const present = await pollUntil(
-    async () => (await page.locator(sel.commentLikeButton!).count().catch(() => 0)) > 0,
+    async () =>
+      (await page
+        .locator(sel.commentLikeButton!)
+        .count()
+        .catch(() => 0)) > 0,
     d.pollMs ?? POLL_MS,
     LIKE_BUTTON_TIMEOUT_MS,
     d.now,
@@ -428,7 +448,9 @@ export async function likeComment(d: DomDeps): Promise<AdapterResult> {
     })
     .catch(() => false);
   if (!clicked) {
-    const clickable = target.locator('xpath=ancestor-or-self::*[self::button or @role="button"][1]');
+    const clickable = target.locator(
+      'xpath=ancestor-or-self::*[self::button or @role="button"][1]',
+    );
     const btnTarget = (await clickable.count().catch(() => 0)) > 0 ? clickable.first() : target;
     await btnTarget.click({ timeout: 6_000, force: true });
   }
@@ -701,7 +723,8 @@ async function submitReply(
   // contenteditable reads '' — which composerStillHas reports as "sent". So
   // re-run the two guards before claiming success; otherwise the API records
   // Verified: true and the operator gets SUCCESS with a login-page screenshot.
-  if (await needsLogin(page)) return failShot(d, 'auth: login required (session expired or login wall)');
+  if (await needsLogin(page))
+    return failShot(d, 'auth: login required (session expired or login wall)');
   if (await pageUnavailable(page)) return failShot(d, TARGET_UNAVAILABLE_ERROR);
   return { ok: true, renderedText: rendered };
 }
@@ -826,9 +849,16 @@ export async function waitForCommentText(
   // includes a rendered comment; the pinned feed is a narrowing hint, not a gate.
   const started = (d.now ?? Date.now)();
   for (;;) {
-    let body = await d.page.locator('body').innerText().catch(() => '');
+    let body = await d.page
+      .locator('body')
+      .innerText()
+      .catch(() => '');
     if (!body && d.sel.feed) {
-      body = await d.page.locator(d.sel.feed).first().innerText().catch(() => '');
+      body = await d.page
+        .locator(d.sel.feed)
+        .first()
+        .innerText()
+        .catch(() => '');
     }
     if (body.includes(text)) return text;
     if ((d.now ?? Date.now)() - started >= timeoutMs) return undefined;
@@ -982,8 +1012,8 @@ async function firstPresent(page: Page, selectors: string[]): Promise<Locator> {
 /**
  * Fill and submit the Meta credential form (IG + Threads share the markup).
  * Used by the adapters' autonomous login and by the operator headful flow's
- * autofill — one definition of the form (DRY). Pressing Enter in the password
- * field submits; the verdict always comes from the cookie poll, never from the
+ * autofill — one definition of the form (DRY). Click the visible login button,
+ * falling back to Enter when no button exists. The verdict comes from cookies, never from the
  * URL landing.
  */
 export async function fillMetaCredentials(
@@ -994,7 +1024,12 @@ export async function fillMetaCredentials(
   await username.fill(credentials.username);
   const password = await firstPresent(page, PASSWORD_FIELD_SELECTORS);
   await password.fill(credentials.password);
-  await password.press('Enter');
+  const submit = page.getByRole('button', { name: /^log in$/i }).first();
+  if ((await submit.count()) > 0) {
+    await submit.click({ timeout: 10_000, noWaitAfter: true });
+  } else {
+    await password.press('Enter');
+  }
 }
 
 // --- internals ------------------------------------------------------------

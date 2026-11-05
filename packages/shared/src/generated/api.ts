@@ -1095,7 +1095,7 @@ export interface components {
             platform: "instagram" | "threads" | "facebook" | "linkedin" | "x" | "youtube" | "tiktok";
             username: string;
             /** @enum {string} */
-            authStatus: "AUTHENTICATING" | "NEEDS_INPUT" | "AUTHENTICATED" | "FAILED" | "QUARANTINED";
+            authStatus: "PENDING" | "AUTHENTICATING" | "NEEDS_INPUT" | "AUTHENTICATED" | "FAILED" | "QUARANTINED";
             /** @enum {string} */
             status: "ACTIVE" | "PAUSED" | "ARCHIVED" | "DEAD";
         };
@@ -1163,7 +1163,7 @@ export interface components {
             username: string;
             handle?: string | null;
             /** @enum {string} */
-            authStatus: "AUTHENTICATING" | "NEEDS_INPUT" | "AUTHENTICATED" | "FAILED" | "QUARANTINED";
+            authStatus: "PENDING" | "AUTHENTICATING" | "NEEDS_INPUT" | "AUTHENTICATED" | "FAILED" | "QUARANTINED";
             /** @enum {string} */
             status: "ACTIVE" | "PAUSED" | "ARCHIVED" | "DEAD";
             workerId?: string | null;

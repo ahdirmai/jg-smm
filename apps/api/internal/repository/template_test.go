@@ -153,10 +153,11 @@ func TestTemplatePickDedupe(t *testing.T) {
 	// Execute one comment with `used` against target A: a job + an action_log
 	// linking the template is what dedupe reads.
 	job, err := actionRepo.CreateActionJob(ctx, domain.ActionJob{
-		Type:       domain.JobTypeActionComment,
-		TargetID:   targetA,
-		AccountID:  accountID,
-		TemplateID: used.ID,
+		Type:        domain.JobTypeActionComment,
+		TargetID:    targetA,
+		AccountID:   accountID,
+		TemplateID:  used.ID,
+		ScheduledAt: time.Now().UTC().Add(-time.Minute),
 	})
 	if err != nil {
 		t.Fatalf("create job: %v", err)
@@ -277,9 +278,10 @@ func TestTemplateDedupeSeesDispatchRecordedVariant(t *testing.T) {
 	}
 
 	if _, err := actionRepo.CreateActionJob(ctx, domain.ActionJob{
-		Type:      domain.JobTypeActionComment,
-		TargetID:  target,
-		AccountID: accountID,
+		Type:        domain.JobTypeActionComment,
+		TargetID:    target,
+		AccountID:   accountID,
+		ScheduledAt: time.Now().UTC().Add(-time.Minute),
 	}); err != nil {
 		t.Fatalf("create job: %v", err)
 	}

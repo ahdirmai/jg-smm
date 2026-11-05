@@ -23,6 +23,11 @@ func TestPendingAccountIsDueForFirstLogin(t *testing.T) {
 	ctx := context.Background()
 
 	username := "pending-" + p2Suffix(t)
+	var workerID string
+	if err := pool.QueryRow(ctx, `INSERT INTO worker (name, region) VALUES ($1, 'ID') RETURNING id::text`, username+"-worker").Scan(&workerID); err != nil {
+		t.Fatalf("seed worker: %v", err)
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM worker WHERE id=$1`, workerID) })
 	var id string
 	// No auth_status and no worker_id: the defaults the importer inherits.
 	if err := pool.QueryRow(ctx,
@@ -31,9 +36,10 @@ func TestPendingAccountIsDueForFirstLogin(t *testing.T) {
 		 RETURNING id::text`, username).Scan(&id); err != nil {
 		t.Fatalf("seed account: %v", err)
 	}
+	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM account WHERE id=$1`, id) })
 	if _, err := pool.Exec(ctx,
-		`UPDATE account SET worker_id = (SELECT id FROM worker LIMIT 1) WHERE id = $1`, id); err != nil {
-		t.Skipf("no worker row to bind the account to: %v", err)
+		`UPDATE account SET worker_id = $2 WHERE id = $1`, id, workerID); err != nil {
+		t.Fatalf("bind account to worker: %v", err)
 	}
 
 	var status string

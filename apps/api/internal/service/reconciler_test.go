@@ -194,6 +194,13 @@ func (s *fakeWorkerStore) List(ctx context.Context, f port.WorkerFilter) ([]doma
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].CreatedAt.Before(out[j].CreatedAt)
 	})
+	if f.Offset >= len(out) {
+		return nil, nil
+	}
+	out = out[max(f.Offset, 0):]
+	if f.Limit > 0 && f.Limit < len(out) {
+		out = out[:f.Limit]
+	}
 	return out, nil
 }
 
@@ -803,7 +810,7 @@ func TestWakerResumesPausedWorker(t *testing.T) {
 func TestWakerLeavesRunningWorkerAlone(t *testing.T) {
 	driver := newFakeDriver()
 	store := newFakeWorkerStore()
-	store.seed(workerFixture("w1", domain.DesiredRunning, 1, intPtr(1)))
+	store.seed(readyFixture(workerFixture("w1", domain.DesiredRunning, 1, intPtr(1))))
 	w := NewWaker(store, driver, nil)
 
 	if err := w.Wake(context.Background(), "w1"); err != nil {
@@ -811,6 +818,17 @@ func TestWakerLeavesRunningWorkerAlone(t *testing.T) {
 	}
 	if driver.startCalls != 0 {
 		t.Fatalf("startCalls = %d, want 0", driver.startCalls)
+	}
+}
+
+func TestWakerDoesNotDispatchToRunningIntentWithoutHeartbeat(t *testing.T) {
+	store := newFakeWorkerStore()
+	store.seed(workerFixture("w1", domain.DesiredRunning, 1, nil))
+	w := NewWaker(store, newFakeDriver(), nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if err := w.Wake(ctx, "w1"); err == nil {
+		t.Fatal("RUNNING intent without a live subscriber must not admit a login dispatch")
 	}
 }
 

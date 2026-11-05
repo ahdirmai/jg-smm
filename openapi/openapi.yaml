@@ -1799,7 +1799,7 @@ components:
           type: string
         authStatus:
           type: string
-          enum: [AUTHENTICATING, NEEDS_INPUT, AUTHENTICATED, FAILED, QUARANTINED]
+          enum: [PENDING, AUTHENTICATING, NEEDS_INPUT, AUTHENTICATED, FAILED, QUARANTINED]
         status:
           type: string
           enum: [ACTIVE, PAUSED, ARCHIVED, DEAD]
@@ -1933,7 +1933,7 @@ components:
           nullable: true
         authStatus:
           type: string
-          enum: [AUTHENTICATING, NEEDS_INPUT, AUTHENTICATED, FAILED, QUARANTINED]
+          enum: [PENDING, AUTHENTICATING, NEEDS_INPUT, AUTHENTICATED, FAILED, QUARANTINED]
         status:
           type: string
           enum: [ACTIVE, PAUSED, ARCHIVED, DEAD]

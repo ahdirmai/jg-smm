@@ -72,7 +72,7 @@ func (a *NovncAllocator) pick(taken map[int]bool, requested *int) (int, error) {
 // UsedPorts is the set of ports already claimed by existing workers, derived
 // from the URLs stored on their rows. A malformed value is skipped, not fatal.
 func (a *NovncAllocator) UsedPorts(ctx context.Context) (map[int]bool, error) {
-	workers, err := a.workers.List(ctx, port.WorkerFilter{Limit: 500})
+	workers, err := listAllWorkers(ctx, a.workers)
 	if err != nil {
 		return nil, fmt.Errorf("novnc allocator: list: %w", err)
 	}

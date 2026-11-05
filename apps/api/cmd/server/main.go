@@ -181,6 +181,7 @@ func main() {
 			os.Exit(1)
 		}
 		driver := service.NewLoggingDriver(service.NewCapacityDriver(raw, cfg.ElasticPoolMaxActive), logRepo, adapter.SystemClock{}, logger)
+		jobSvc.WithWorkerDriver(driver)
 
 		// Redis is the transport for action queues and worker control
 		// channels. It is optional: an unset URL leaves both the action
@@ -459,7 +460,7 @@ func main() {
 				// A refresh must wake its container: the fleet's steady state
 				// is PAUSED, and a control message published to a stopped
 				// worker's channel has nobody to deliver it to.
-				Waker: waker,
+				Waker:   waker,
 				Spacing: time.Duration(cfg.SessionRefreshSpacingSeconds) * time.Second,
 				// Bound how many logins this fleet runs at once. TickBudget
 				// alone bounds a TICK, not concurrency: with a login taking

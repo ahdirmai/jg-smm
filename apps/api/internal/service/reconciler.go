@@ -174,7 +174,7 @@ func staleObservedGen(w domain.Worker) bool {
 // of Run; calling it directly is safe too. A failure on one worker never aborts
 // the rest — the next tick retries it.
 func (r *Reconciler) ReconcileAll(ctx context.Context) (int, error) {
-	workers, err := r.workers.List(ctx, port.WorkerFilter{Limit: 500})
+	workers, err := listAllWorkers(ctx, r.workers)
 	if err != nil {
 		return 0, err
 	}
