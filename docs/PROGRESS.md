@@ -4,6 +4,16 @@
 > Format: `Ticket · Status · Commit · Date · Notes`. Source of truth for
 > backlog remains `TICKETS.md`; this file records what is actually **done**.
 
+## Login status sync — 2026-11-04
+
+**DONE (reconciliation/display), login validation still open.** Reconciled 59
+Instagram rows against historical evidence without overwriting checked DB results
+or marking missing sessions authenticated. Fixed the 200-row account-list cap,
+PENDING auth contract/filter/sort, and visible historical login notes. Live API
+returns all 486 accounts; Instagram counts: 274 pending, 178 failed, 26 needs
+input, 6 authenticating, 1 authenticated. No new platform login performed.
+See `LOGIN_STATUS_SYNC_2026-11-04.md` for rules, verification, and remaining gaps.
+
 ## Checkpoint — 2026-11-03
 
 Status: **WIP saved**. This commit records the existing workspace changes together
