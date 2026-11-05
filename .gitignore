@@ -8,6 +8,11 @@
 .env
 .env.*
 !.env.example
+.boxenv
+.boxenv.*
+*.boxenv
+.local-runtime/
+/outputs/
 *.pem
 *.key
 
