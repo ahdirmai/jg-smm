@@ -8,6 +8,7 @@ import (
 	"math/rand/v2"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
@@ -219,6 +220,85 @@ func (s *ContainerService) List(ctx context.Context) ([]ContainerView, error) {
 		views = append(views, toContainerView(w, accounts))
 	}
 	return views, nil
+}
+
+// WorkerHealth is one worker's live reachability. It is produced by an
+// explicit probe: on boxd, GET /healthz is itself the inbound request that
+// wakes a hibernated microVM, so there is no passive way to ask a sleeping
+// machine whether it is asleep. The UI calls this only when it is about to
+// block or after the operator presses Start.
+type WorkerHealth struct {
+	ID           string     `json:"id"`
+	Name         string     `json:"name"`
+	Status       string     `json:"status"`
+	Awake        bool       `json:"awake"`
+	AccountID    *string    `json:"accountId,omitempty"`
+	Error        string     `json:"error,omitempty"`
+	LastActionAt *time.Time `json:"lastActionAt,omitempty"`
+}
+
+// WorkerHealth probes every configured worker concurrently. A worker with no
+// endpoint is reported unavailable rather than silently omitted: the gate must
+// be able to name the machine that cannot be started.
+func (s *ContainerService) WorkerHealth(ctx context.Context) ([]WorkerHealth, error) {
+	workers, err := s.workers.List(ctx, port.WorkerFilter{Limit: 1000})
+	if err != nil {
+		return nil, fmt.Errorf("container service: list workers: %w", err)
+	}
+	out := make([]WorkerHealth, len(workers))
+	var wg sync.WaitGroup
+	probeCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	defer cancel()
+	for i := range workers {
+		w := workers[i]
+		out[i] = WorkerHealth{ID: w.ID, Name: w.Name, Status: string(w.Status), LastActionAt: w.LastActionAt}
+		if w.EndpointURL == nil || *w.EndpointURL == "" || s.rpc == nil {
+			out[i].Error = "worker has no RPC endpoint"
+			continue
+		}
+		wg.Add(1)
+		go func(i int, endpoint string) {
+			defer wg.Done()
+			accountID, err := s.rpc.BusyAccount(probeCtx, endpoint)
+			if err != nil {
+				out[i].Error = err.Error()
+				return
+			}
+			out[i].Awake = true
+			if accountID != "" {
+				out[i].AccountID = &accountID
+			}
+		}(i, *w.EndpointURL)
+	}
+	wg.Wait()
+	return out, nil
+}
+
+// WakeWorkers sends one authenticated keepalive to every configured worker,
+// which is the explicit "start" action for a boxd microVM. The health probe
+// follows so the caller gets the post-wake state in one round trip.
+func (s *ContainerService) WakeWorkers(ctx context.Context) ([]WorkerHealth, error) {
+	workers, err := s.workers.List(ctx, port.WorkerFilter{Limit: 1000})
+	if err != nil {
+		return nil, fmt.Errorf("container service: list workers: %w", err)
+	}
+	if s.rpc == nil {
+		return nil, fmt.Errorf("%w: worker RPC is not configured", domain.ErrUnavailable)
+	}
+	var wg sync.WaitGroup
+	for i := range workers {
+		w := workers[i]
+		if w.EndpointURL == nil || *w.EndpointURL == "" {
+			continue
+		}
+		wg.Add(1)
+		go func(endpoint string) {
+			defer wg.Done()
+			_ = s.rpc.PingKeepalive(ctx, endpoint)
+		}(*w.EndpointURL)
+	}
+	wg.Wait()
+	return s.WorkerHealth(ctx)
 }
 
 // Delete tears a container down: accounts are released first (so an AUTO

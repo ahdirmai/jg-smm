@@ -30,6 +30,10 @@ func NewContainerHandler(containers *service.ContainerService) *ContainerHandler
 func (h *ContainerHandler) Register(g *echo.Group) {
 	g.POST("/containers", h.create, RequirePermission(domain.PermAct))
 	g.GET("/containers", h.list)
+	// Worker liveness/start for the dashboard's workspace gate. This probes
+	// worker hostnames directly; on boxd the probe is the wake request.
+	g.GET("/workers/health", h.workerHealth)
+	g.POST("/workers/wake", h.wakeWorkers, RequirePermission(domain.PermAct))
 	g.GET("/containers/:containerId", h.listLogs)
 	g.DELETE("/containers/:containerId", h.delete, RequirePermission(domain.PermAct))
 	g.POST("/containers/:containerId/browser", h.openBrowser, RequirePermission(domain.PermAct))
@@ -173,6 +177,31 @@ func (h *ContainerHandler) clearSessions(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "container service unavailable")
 	}
 	return c.JSON(http.StatusOK, h.containers.ClearSessions(c.Request().Context()))
+}
+
+// workerHealth reports the live reachability of every configured worker.
+func (h *ContainerHandler) workerHealth(c echo.Context) error {
+	if h.containers == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "container service unavailable")
+	}
+	workers, err := h.containers.WorkerHealth(c.Request().Context())
+	if err != nil {
+		return translateContainerError(err)
+	}
+	return c.JSON(http.StatusOK, map[string]any{"workers": workers})
+}
+
+// wakeWorkers starts (or keeps awake) every configured worker, then returns
+// the same health shape so the UI can render progress immediately.
+func (h *ContainerHandler) wakeWorkers(c echo.Context) error {
+	if h.containers == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "container service unavailable")
+	}
+	workers, err := h.containers.WakeWorkers(c.Request().Context())
+	if err != nil {
+		return translateContainerError(err)
+	}
+	return c.JSON(http.StatusOK, map[string]any{"workers": workers})
 }
 
 // translateContainerError maps domain errors to HTTP statuses.
