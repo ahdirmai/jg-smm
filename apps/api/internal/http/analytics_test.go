@@ -292,6 +292,28 @@ func TestAnalyticsHandlerBreakdownKeepsAbsentPartsNull(t *testing.T) {
 	if b.EngagementRatePct == nil || string(*b.EngagementRatePct) == "null" {
 		t.Errorf("engagement rate: want 10%%, got %s", string(*b.EngagementRatePct))
 	}
+
+	// A nil pointer must produce a present JSON key with null, not an omitted
+	// key. Decoding through *json.Number cannot tell those apart.
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode raw envelope: %v", err)
+	}
+	var rawBreakdown []map[string]json.RawMessage
+	if err := json.Unmarshal(envelope["breakdown"], &rawBreakdown); err != nil {
+		t.Fatalf("decode raw breakdown: %v", err)
+	}
+	for _, key := range []string{"saves", "shares", "likes", "comments", "engagementRatePct"} {
+		if _, ok := rawBreakdown[0][key]; !ok {
+			t.Errorf("breakdown key %q is missing from JSON", key)
+		}
+	}
+	if string(rawBreakdown[0]["saves"]) != "null" {
+		t.Errorf("saves raw = %s, want null", rawBreakdown[0]["saves"])
+	}
+	if string(rawBreakdown[0]["shares"]) != "0" {
+		t.Errorf("shares raw = %s, want 0", rawBreakdown[0]["shares"])
+	}
 }
 
 func TestAnalyticsContentRejectsBadLimit(t *testing.T) {

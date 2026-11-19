@@ -89,7 +89,10 @@ func translateAuditError(err error) error {
 	case errors.Is(err, domain.ErrValidation):
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	default:
-		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+		// Do not wrap a store/query failure in an explicit HTTPError: that would
+		// copy err.Error() into the response. The generic error handler maps it to
+		// a plain 500 with no internal text.
+		return err
 	}
 }
 

@@ -56,20 +56,23 @@ func errorHandler(err error, c echo.Context) {
 		httpStatus, code = http.StatusServiceUnavailable, "unavailable"
 	}
 
-	// Echo's own HTTPError (e.g. 404 route, 405) carries an explicit status.
+	// Echo's own HTTPError (e.g. 404 route, 405) carries an explicit status and
+	// optionally an explicit message. Read the message once; use it as the public
+	// code only for 4xx. A 500's raw text can name a query, host, or driver and
+	// must not be copied into the response.
 	var he *echo.HTTPError
+	var explicitMessage string
 	if errors.As(err, &he) {
 		httpStatus = he.Code
-		if msg, ok := he.Message.(string); ok && msg != "" {
-			code = msg
+		explicitMessage, _ = he.Message.(string)
+		if explicitMessage != "" && httpStatus < 500 {
+			code = explicitMessage
 		}
 	}
 
 	message := http.StatusText(httpStatus)
-	if he != nil && httpStatus >= 400 && httpStatus < 500 {
-		if msg, ok := he.Message.(string); ok && msg != "" {
-			message = msg
-		}
+	if explicitMessage != "" && httpStatus >= 400 && httpStatus < 500 {
+		message = explicitMessage
 	}
 	if err := c.JSON(httpStatus, errorBody{Error: errorDetail{Code: code, Message: message}}); err != nil {
 		c.Logger().Error(err)

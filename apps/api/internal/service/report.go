@@ -96,19 +96,18 @@ func (s *ReportService) AnalyticsReport(ctx context.Context, f ReportFilter) (st
 	if metric == "" {
 		metric = string(domain.AnalyticsMetricFollowers)
 	}
-	accs, err := s.analytics.ListOfficialAccounts(ctx, nil, nil)
+	// Look the account up by id. The old implementation walked the first page
+	// of the monitored-account list (100 rows), so account 101 was reported as
+	// unknown even though it existed. GetOfficialAccount is idempotent and does
+	// not apply a page; the ARCHIVED check preserves the list contract.
+	account, err := s.analytics.GetOfficialAccount(ctx, *f.AccountID)
 	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return "", nil, fmt.Errorf("%w: unknown official account", domain.ErrNotFound)
+		}
 		return "", nil, fmt.Errorf("report.analytics: %w", err)
 	}
-	var platform *domain.Platform
-	for _, a := range accs {
-		if a.ID == *f.AccountID {
-			p := a.Platform
-			platform = &p
-			break
-		}
-	}
-	if platform == nil {
+	if account.Status == domain.OfficialAccountArchived {
 		return "", nil, fmt.Errorf("%w: unknown official account", domain.ErrNotFound)
 	}
 	window := reportWindow(f)
@@ -207,10 +206,7 @@ func (s *ReportService) exportCSV(ctx context.Context, kind ExportKind, f Report
 			return err
 		}
 		for _, r := range rows {
-			if err := cw.Write([]string{
-				r.Day.Format(time.DateOnly), r.AccountID, r.Username, string(r.Platform),
-				r.ActionType, fmt.Sprint(r.Total), fmt.Sprint(r.Succeeded), fmt.Sprint(r.Failed),
-			}); err != nil {
+			if err := cw.Write(actionCSVRow(r)); err != nil {
 				return err
 			}
 		}
@@ -220,10 +216,7 @@ func (s *ReportService) exportCSV(ctx context.Context, kind ExportKind, f Report
 			return err
 		}
 		for _, r := range rows {
-			if err := cw.Write([]string{
-				r.ID, r.URL, string(r.Platform),
-				fmt.Sprint(r.Total), fmt.Sprint(r.Succeeded), fmt.Sprint(r.Failed),
-			}); err != nil {
+			if err := cw.Write(targetCSVRow(r)); err != nil {
 				return err
 			}
 		}
@@ -233,12 +226,33 @@ func (s *ReportService) exportCSV(ctx context.Context, kind ExportKind, f Report
 			return err
 		}
 		for _, p := range series {
-			if err := cw.Write([]string{*f.AccountID, metric, p.Bucket.Format(time.RFC3339), fmt.Sprint(p.Value)}); err != nil {
+			if err := cw.Write(analyticsCSVRow(*f.AccountID, metric, p)); err != nil {
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+// The three row layouts are pure mappings, kept next to the header so a CSV
+// column and its value cannot drift. I/O, query selection, flush timing and
+// error handling stay in exportCSV.
+func actionCSVRow(r ActionRow) []string {
+	return []string{
+		r.Day.Format(time.DateOnly), r.AccountID, r.Username, string(r.Platform),
+		r.ActionType, fmt.Sprint(r.Total), fmt.Sprint(r.Succeeded), fmt.Sprint(r.Failed),
+	}
+}
+
+func targetCSVRow(r TargetRow) []string {
+	return []string{
+		r.ID, r.URL, string(r.Platform),
+		fmt.Sprint(r.Total), fmt.Sprint(r.Succeeded), fmt.Sprint(r.Failed),
+	}
+}
+
+func analyticsCSVRow(accountID, metric string, p domain.TrendPoint) []string {
+	return []string{accountID, metric, p.Bucket.Format(time.RFC3339), fmt.Sprint(p.Value)}
 }
 
 func (s *ReportService) exportJSON(ctx context.Context, kind ExportKind, f ReportFilter, w io.Writer) error {

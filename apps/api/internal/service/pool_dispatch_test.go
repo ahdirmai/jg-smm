@@ -96,7 +96,7 @@ func (f *fakeSlots) ClearWorkerSlot(_ context.Context, workerID string) error {
 	return nil
 }
 
-type fakeRPC struct{
+type fakeRPC struct {
 	mu   sync.Mutex
 	sent []port.ExecuteActionRequest
 	err  error
