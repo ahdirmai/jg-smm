@@ -372,7 +372,8 @@ for VM in smm-login-01 smm-worker-01 smm-worker-10; do
 done
 
 # WebSocket tanpa ticket harus 403; dengan ticket valid harus 101
-# (ticket dibuat API lewat POST /api/accounts/<id>/live-view)
+# (ticket dibuat API lewat POST /api/accounts/<id>/live-view
+# atau POST /api/containers/<id>/live-view untuk halaman Workers)
 ```
 
 Bukti browser yang sudah dijalankan: noVNC membuka canvas dan
@@ -382,15 +383,21 @@ Bukti browser yang sudah dijalankan: noVNC membuka canvas dan
 
 ### 4.1 Cek cepat noVNC
 
-1. `POST /api/accounts/<id>/live-view` harus `200` dan mengembalikan URL
-   `https://<worker>.boxd.sh/novnc/vnc.html?...`.
+1. `POST /api/accounts/<id>/live-view` (atau
+   `POST /api/containers/<id>/live-view` untuk Workers) harus `200` dan
+   mengembalikan URL `https://<worker>.boxd.sh/novnc/vnc.html?...` yang punya
+   query `path=…ticket=…`.
 2. Halaman `/novnc/vnc.html` harus `200`.
 3. WebSocket dengan ticket harus `101`; tanpa ticket harus `403` (uji dengan
    `curl --http1.1`, bukan HTTP/2).
 4. Jika API berkata `account has no worker to view`, itu **bukan** masalah
    nginx: pool API masih legacy. Cek log `stateless worker pool enabled`.
-5. Jika iframe dashboard kosong tetapi URL itu bekerja di tab langsung, tutup
-   panel/refresh cache ticket — ticket lama kedaluwarsa dalam beberapa menit.
+5. URL mentah `https://<worker>.boxd.sh/novnc/vnc.html?autoconnect=1` **tidak
+   akan pernah terhubung**: tidak ada `path=ticket`, jadi noVNC memanggil
+   `/websockify` dan nginx menolaknya. Buka dari tombol Live view di Akun atau
+   Workers; tombol itu yang meminta ticket baru.
+6. Jika iframe dashboard kosong tetapi URL berticket bekerja di tab langsung,
+   tutup panel/refresh cache ticket — ticket lama kedaluwarsa dalam beberapa menit.
 
 ## 5. Operasional & biaya
 
