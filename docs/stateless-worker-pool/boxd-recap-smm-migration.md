@@ -116,7 +116,7 @@ boxd manage billing activity       # saldo & mutasi
 **Arsitektur fleet yang efisien di boxd:**
 - Bikin **1 "golden worker"**: semua dependency (Playwright, Chromium, skrip, profile dirs) terpasang & teruji → `snapshots save golden` → mesin worker dibuat dengan `--from-snapshot` / `fork` (**<200 ms**, proses & state ikut) — jangan setup 10× manual.
 - **1 akun per mesin** memaksimalkan pemisahan IP (sesuai keputusan); jangan campur banyak akun di 1 mesin.
-- Sizing worker browser: mulai `2vCPU/8G` (Chromium + Node cukup); naikkan ke `4/16G` bila banyak tab/paralel.
+- Sizing worker browser: mulai `1vCPU/4G` (Chromium + Node cukup untuk satu akun; terukur ~0,8 GiB saat browser aktif); naikkan bila banyak tab/paralel. `smm-hub` tetap `2vCPU/8G`.
 - **Hibernation:** job yang dipicu lewat `boxd machine exec` / SSH **membangunkan** mesin otomatis; worker yang selesai kerja akan hibernate sendiri (murah). Untuk job panjang tanpa traffic, set `auto-hibernate.timeout 0` agar tidak tidur di tengah kerja.
 - Mesin sekali-pakai: `--delete-after 2h` sebagai jaring aman + `boxd machine remove` di akhir job.
 - Region: **fra** (paling dekat dari 2 pilihan).

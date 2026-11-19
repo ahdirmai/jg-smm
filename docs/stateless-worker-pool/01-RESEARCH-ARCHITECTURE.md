@@ -35,7 +35,7 @@ flowchart LR
         API <--> PG & RD & MN
     end
 
-    subgraph FLEET["10x boxd MicroVMs: smm-worker-01..10 (2vCPU/8G, Auto-Suspend/Hibernate)"]
+    subgraph FLEET["10x boxd MicroVMs: smm-worker-01..10 (1vCPU/4G, Auto-Suspend/Hibernate)"]
         W1["smm-worker-01<br/>nginx:8000 -> RPC:8090 + noVNC:6080"]
         W2["smm-worker-02<br/>nginx:8000 -> RPC:8090 + noVNC:6080"]
         W10["smm-worker-10<br/>nginx:8000 -> RPC:8090 + noVNC:6080"]

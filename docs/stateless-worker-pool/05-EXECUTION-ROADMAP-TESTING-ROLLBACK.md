@@ -83,7 +83,7 @@ Eksekusi dibagi menjadi **dua tahap tegas dengan Approval Gate** agar perubahan 
 **Estimasi:** ~1.5 jam | **Referensi:** [`06-BOXD-INFRA-DEPLOYMENT-RUNBOOK.md`](./06-BOXD-INFRA-DEPLOYMENT-RUNBOOK.md)
 
 1. Buat VM `smm-hub` (`2vCPU/8G`, region `fra`, `auto-suspend=0`, `auto-hibernate=0`, `bot-protection=off`). Pasang DNS Cloudflare `A smm.ahdirmai.my.id -> 152.236.3.23` (**DNS-only / grey cloud**) lebih dulu, lalu ikat `boxd machine domain add smm.ahdirmai.my.id --vm smm-hub -y` hingga TLS `active`. Siapkan Docker (`postgres`, `redis`, `minio`), `pm2` (`smm-api`, `smm-web`), dan `nginx:8000`.
-2. Buat 1 VM `smm-worker-golden` (`2vCPU/8G`, region `fra`), pasang `Xvfb`, `x11vnc`, `websockify`/noVNC, Playwright Chromium, `@smm/worker` di `pm2`, dan `nginx:8000` (dengan `auth_request` tiket noVNC).
+2. Buat 1 VM `smm-worker-golden` (`1vCPU/4G`, region `fra`), pasang `Xvfb`, `x11vnc`, `websockify`/noVNC, Playwright Chromium, `@smm/worker` di `pm2`, dan `nginx:8000` (dengan `auth_request` tiket noVNC).
 3. Uji 1 siklus eksekusi & wake dari `standby` pada `smm-worker-golden`.
 4. Simpan snapshot `smm-golden-v1`, lalu luncurkan **`smm-worker-01` s/d `smm-worker-10`** dari snapshot tersebut (`--label app=smm --label role=worker`) dengan `API_URL=https://smm.ahdirmai.my.id`, pastikan `bot-protection=off`, `idle.ignore-outbound=on`, `auto-suspend.timeout=300`, `auto-hibernate.timeout=3600`.
 

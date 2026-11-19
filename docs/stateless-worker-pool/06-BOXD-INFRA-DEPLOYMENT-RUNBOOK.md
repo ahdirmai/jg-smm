@@ -38,9 +38,9 @@ sendiri karena API/SSE relatif. Tidak perlu rebuild saat berpindah hostname.
 | Mesin | Ukuran | Role | Tidur | Isi |
 | --- | --- | --- | --- | --- |
 | `smm-hub` | `2x8G` | `app=smm,role=hub` | selalu hidup | `compose.hub.yaml`: postgres, redis, minio, migrate, api, web, nginx:8000 |
-| `smm-worker-golden` | `2x8G` | `golden` | stopped setelah snapshot | Xvfb/x11vnc/websockify, Playwright, worker RPC, nginx |
-| `smm-login-01` | `2x8G` | `login` | selalu hidup | worker yang sama; menahan login/CAPTCHA yang diparkir |
-| `smm-worker-01..10` | `2x8G` | `worker` | suspend 300s / hibernate 3600s | worker yang sama, satu akun per job |
+| `smm-worker-golden` | `1x4G` | `golden` | stopped setelah snapshot | Xvfb/x11vnc/websockify, Playwright, worker RPC, nginx |
+| `smm-login-01` | `1x4G` | `login` | selalu hidup | worker yang sama; menahan login/CAPTCHA yang diparkir |
+| `smm-worker-01..10` | `1x4G` | `worker` | suspend 300s / hibernate 3600s | worker yang sama, satu akun per job |
 
 Semua worker memakai nginx port `8000` sebagai satu-satunya gerbang:
 
@@ -218,7 +218,7 @@ produksi berjalan.
 ### 3.1 Build
 
 ```bash
-boxd machine new smm-worker-golden --region fra --vcpu 2 --memory 8G \
+boxd machine new smm-worker-golden --region fra --vcpu 1 --memory 4G \
   --auto-suspend-timeout=0 --auto-hibernate-timeout=0 \
   --label app=smm --label role=golden --json
 boxd machine config set smm-worker-golden bot-protection off

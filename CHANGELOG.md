@@ -49,6 +49,10 @@
   resolves the worker's hostname to its row UUID before writing `action_log`.
   `ActionJob.workerId` is exposed to the client; the queue row and detail dialog
   resolve it to the worker name (or show a short id after a worker is removed).
+### Infrastructure
+- **Worker boxes downsized to 1 vCPU / 4 GiB.** All 10 pool workers and
+  `smm-login-01` now use `1 vCPU · 4 GiB`; `smm-hub` stays `2 vCPU · 8 GiB`.
+  Measured browser footprint after resize: ~0.8 GiB used of 3.8 GiB.
 ### Fixed
 - **Release session now works even after the lease is already gone.** Closing
   a parked login with `worker_id = NULL` returned 204 without settling the
