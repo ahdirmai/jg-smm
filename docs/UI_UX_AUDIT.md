@@ -29,15 +29,28 @@ the nav and produced routes that were no longer part of the approved surface.
 template hook, client template methods, and their e2e specs. Every remaining nav
 item points at a real route; the dead-link sweep now enumerates only those pages.
 
-### F-03 — Fake or ambiguous data on the overview
+### F-03 — The overview showed analytics before it showed work
 
-The overview drew a decorative trend sketch, reported zero likes/reports/replies
-that were not measured, and labelled a link to another page “Export CSV”.
+The overview drew a decorative trend sketch and a reach/likes/comments KPI strip
+that was blank for most of the workspace's life. It also labelled a link to
+another page “Export CSV”.
 
-**Implemented:** queue, failure, fleet, and authentication numbers now come from
-the live hooks. The analytics KPIs stay as an em dash until the API returns a
-snapshot. The trend card explains the empty state and links to Reports. Queue
-health counts actions by their real `actionType`. “Open reports” is the label.
+**Implemented:** the overview is now decision-first. It leads with a ranked
+attention list (failed actions, accounts needing sign-in, offline workers),
+then fleet readiness, account health, platform mix, and the latest real queue
+entries. Every count comes from the live hooks; there is no decorative chart or
+invented delta. Queue health counts real `actionType` values. “Open reports” is
+the label.
+
+### F-09 — Add account left the list
+
+The Accounts page offered “Add account” as a link to a separate route, which
+lost the fleet context while an operator added credentials.
+
+**Implemented:** the button opens `AddAccountDialog` over the current list. It
+mirrors the full page step for step — explicit Auto/city location, all seven
+platforms (including YouTube), username/password/tags, and review — and
+refreshes the list on success; closing it returns to the same filtered view.
 
 ### F-04 — Low-contrast grey-on-glass risk
 
@@ -95,6 +108,26 @@ Several cards said “No data” or rendered a spinner without context.
 and the next action (“No trend series yet… connect an official account”);
 failed queue copy points to Retry/Cancel. The onboarding state remains a
 three-step path to the first action.
+
+### F-10 — Actions carried three competing control clusters
+
+The form, scraped history, and queue were stacked in one long page; the queue
+also showed disabled Cancel/Run controls when there was nothing to act on, and
+status labels used internal names (“PENDING”).
+
+**Implemented:** Actions is now three sections — Create action, Scraped
+posts, Job queue — with a count badge for failed work. Queue controls appear
+only when relevant: failed jobs show Retry, queued jobs show Run, and the
+destructive Cancel sits apart. Status labels are operator language (Queued,
+Running, Succeeded, Failed, Cancelled). Rows keep the action type on mobile and
+name the executing worker when one was recorded.
+
+### F-11 — Release session looked broken on a stale parked login
+
+`CloseLiveView` returned success when `worker_id` was already NULL, but left
+the account `NEEDS_INPUT`; the UI then refreshed to the same row with no
+visible change. The backend now settles that state to `FAILED` with a reason,
+and the Accounts UI closes the panel and reports “Session released”.
 
 ## 2. Verification
 

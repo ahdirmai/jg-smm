@@ -156,8 +156,8 @@ export type NewActionFormHandle = {
 
 export const NewActionForm = forwardRef<
   NewActionFormHandle,
-  { onScraped?: () => void }
->(function NewActionForm({ onScraped }, ref) {
+  { onScraped?: () => void; onEnqueued?: () => void }
+>(function NewActionForm({ onScraped, onEnqueued }, ref) {
   const { accounts } = useAccounts();
   const { enqueue } = useActions();
   const session = useSession();
@@ -418,6 +418,7 @@ export const NewActionForm = forwardRef<
       );
       setSelected({});
       setText({});
+      onEnqueued?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Enqueue failed');
     } finally {
@@ -428,9 +429,9 @@ export const NewActionForm = forwardRef<
   return (
     <Card>
       <CardHeader>
-        <CardTitle>New action</CardTitle>
+        <CardTitle>Create an action</CardTitle>
         <CardDescription>
-          Load a target (scrape it once, or pick a stored post from Scrape History), then queue the
+          Load a target (scrape it once, or pick a stored post from Scraped posts), then queue the
           action. Executed by the owning worker via Playwright.
         </CardDescription>
       </CardHeader>
@@ -708,7 +709,7 @@ export const NewActionForm = forwardRef<
               {flow === 'comment' || flow === 'reply' ? (
                 <div className="flex items-center gap-1.5">
                   <Select value={aiMode} onValueChange={(v) => setAiMode(v as 'support' | 'counter')}>
-                    <SelectTrigger className="h-8 w-32" aria-label="AI mode">
+                    <SelectTrigger className="w-32" aria-label="AI mode">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -718,7 +719,7 @@ export const NewActionForm = forwardRef<
                   </Select>
                   {/* How long each draft is; medium is the server default. */}
                   <Select value={length} onValueChange={(v) => setLength(v as CommentLength)}>
-                    <SelectTrigger className="h-8 w-24" aria-label="Comment length">
+                    <SelectTrigger className="w-24" aria-label="Comment length">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>

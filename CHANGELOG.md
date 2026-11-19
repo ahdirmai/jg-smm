@@ -20,12 +20,30 @@
   authenticated keepalive to every worker, then polls `/api/workers/health`
   every two seconds and unlocks only when every worker answers. The background
   is inert while blocked; there is no dismiss path that bypasses the check.
-- **Overview leads with the operator's next decision, not a decorative KPI row.**
-  Real queue, failure, fleet, and authentication counts drive the copy; the
-  analytics KPI strip stays blank until a snapshot exists instead of drawing a
-  fake trend. "Export CSV" became "Open reports", and the dead Filter button was
-  removed. Accounts keeps only the columns that fit a phone, with auth and status
-  combined below the breakpoint.
+- **Overview is now a decision page, not an analytics dashboard.** The
+  reach/likes/comments KPI strip and the decorative trend sketch were removed.
+  The page leads with a ranked attention list (failed actions, account
+  sign-ins, offline workers), then fleet readiness, account health, platform
+  mix, and the latest real queue entries. Every count comes from the live
+  workers/accounts/actions hooks. "Export CSV" became "Open reports", and the
+  dead Filter button was removed. Accounts keeps only the columns that fit a
+  phone, with auth and status combined below the breakpoint.
+- **Add account is an inline modal on Accounts.** The button no longer
+  navigates to `/accounts/new`; it opens the same four-step funnel over the
+  list: explicit location (Auto or a city), every platform including YouTube,
+  credentials/tags, and review. The account list stays behind the dialog, and
+  a successful add refreshes it without a navigation.
+- **Job history now records the worker that executed it.** The pooled dispatcher
+  writes `action_job.worker_id` after a worker accepts the push, and the callback
+  resolves the worker's hostname to its row UUID before writing `action_log`.
+  `ActionJob.workerId` is exposed to the client; the queue row and detail dialog
+  resolve it to the worker name (or show a short id after a worker is removed).
+### Fixed
+- **Release session now works even after the lease is already gone.** Closing
+  a parked login with `worker_id = NULL` returned 204 without settling the
+  account, so it stayed `NEEDS_INPUT` with no browser to submit a code into.
+  The idempotent second click now marks the login `FAILED` with an explanation;
+  the Accounts UI clears the panel and shows a success notice.
 ### Removed
 - **Monitoring and Templates are gone from the dashboard.** Their routes, nav
   entries, page titles, client hooks, API-client template methods, and e2e specs

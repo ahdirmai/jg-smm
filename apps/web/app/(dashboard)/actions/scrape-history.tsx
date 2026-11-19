@@ -240,7 +240,7 @@ export function ScrapeHistory({
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search caption or @handle"
                 aria-label="Search caption or handle"
-                className="h-8 pl-8 text-sm"
+                className="pl-8"
               />
             </div>
             <label className="flex items-center gap-1 text-xs text-muted-foreground">
@@ -249,7 +249,7 @@ export function ScrapeHistory({
                 type="date"
                 value={from}
                 onChange={(e) => setFrom(e.target.value)}
-                className="h-8 w-[140px] text-sm"
+                className="w-[140px]"
                 aria-label="Scraped from date"
               />
             </label>
@@ -259,7 +259,7 @@ export function ScrapeHistory({
                 type="date"
                 value={to}
                 onChange={(e) => setTo(e.target.value)}
-                className="h-8 w-[140px] text-sm"
+                className="w-[140px]"
                 aria-label="Scraped to date"
               />
             </label>
@@ -267,7 +267,7 @@ export function ScrapeHistory({
               value={sort}
               onChange={(e) => setSort(e.target.value as Sort)}
               aria-label="Sort order"
-              className="h-8 rounded-lg border border-input bg-transparent px-2 text-sm"
+              
             >
               <option value="newest">Newest scraped</option>
               <option value="oldest">Oldest scraped</option>
@@ -277,7 +277,7 @@ export function ScrapeHistory({
               value={pageSize}
               onChange={(e) => setPageSize(Number(e.target.value))}
               aria-label="Posts per group"
-              className="h-8 rounded-lg border border-input bg-transparent px-2 text-sm"
+              
             >
               {PAGE_SIZES.map((n) => (
                 <option key={n} value={n}>

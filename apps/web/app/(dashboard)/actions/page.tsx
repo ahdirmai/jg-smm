@@ -15,13 +15,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@smm/ui';
-import { AlertCircle, Check, Loader2, Play, RotateCcw, X, XCircle } from 'lucide-react';
+import { AlertCircle, Check, History, ListChecks, Loader2, Play, Plus, RotateCcw, X, XCircle } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { NewActionForm, type NewActionFormHandle } from './new-action-form';
 import { ScrapeHistory } from './scrape-history';
 import { useAccounts } from '@/lib/hooks/use-accounts';
 import { useActions } from '@/lib/hooks/use-actions';
+import { useContainers } from '@/lib/hooks/use-containers';
 import { useVirtualRowWindow } from '@/lib/hooks/use-virtual-window';
 import type { ActionJob, JobStatus } from '@/lib/api';
 import { isOnDemandPlatform } from '@/lib/platforms';
@@ -29,8 +30,16 @@ import { isOnDemandPlatform } from '@/lib/platforms';
 const STATUSES: JobStatus[] = ['PENDING', 'RUNNING', 'SUCCESS', 'FAILED', 'CANCELLED'];
 
 /** The operator-facing name of a status, and of the unfiltered state. */
+const STATUS_LABEL: Record<string, string> = {
+  PENDING: 'Queued',
+  RUNNING: 'Running',
+  SUCCESS: 'Succeeded',
+  FAILED: 'Failed',
+  CANCELLED: 'Cancelled',
+};
+
 function statusLabel(value: string): string {
-  return value === 'all' ? 'All statuses' : value[0] + value.slice(1).toLowerCase();
+  return value === 'all' ? 'All statuses' : (STATUS_LABEL[value] ?? value[0] + value.slice(1).toLowerCase());
 }
 // Uniform row height: group headers and job rows share it so the window math
 // stays fixed-height (see useVirtualRowWindow).
@@ -39,6 +48,11 @@ const ROW_HEIGHT = 44;
 // Sentinel for the header's whole-queue cancel; it shares the arm state with
 // per-row cancels so arming one control disarms the other.
 const CANCEL_ALL = 'all-pending';
+
+function workerLabel(workerId: string | null | undefined, containers: Array<{ id: string; name: string }>): string {
+  if (!workerId) return 'unassigned';
+  return containers.find((c) => c.id === workerId)?.name ?? workerId.slice(0, 8);
+}
 
 // Pipeline the worker actually runs (ADR: publish → dispatch → verify). The
 // stepper below maps a real JobStatus onto it; no stage is invented for show.
@@ -74,7 +88,9 @@ function stageReached(status: JobStatus): number {
 
 export default function ActionsPage() {
   const { accounts } = useAccounts();
+  const { containers } = useContainers();
   const { actions, loading, error, retry, retryFailed, runPendingNow, cancel, cancelPendingNow } = useActions();
+  const [tab, setTab] = useState<'create' | 'scrape' | 'queue'>('create');
 
   const formRef = useRef<NewActionFormHandle>(null);
   // Bumped after a fresh scrape so the history card re-reads the stored list.
@@ -104,6 +120,7 @@ export default function ActionsPage() {
     // Wait one frame: `loadPost` re-enters the form's own state, and on the
     // first paint the imperative handle is attached but the scrape effect has
     // not yet read the url it sets.
+    setTab('create');
     const t = window.setTimeout(() => formRef.current?.loadPost(platform, post), 0);
     window.history.replaceState({}, '', window.location.pathname);
     return () => window.clearTimeout(t);
@@ -310,31 +327,43 @@ export default function ActionsPage() {
   const [selected, setSelected] = useState<ActionJob | null>(null);
 
   return (
-    <div className="mx-auto max-w-6xl space-y-4">
-      {/* New Action: platform → link → scrape → action → per-account comment → submit. */}
-      <NewActionForm
-        ref={formRef}
-        onScraped={() => setHistoryRefresh((n) => n + 1)}
-      />
+    <div className="mx-auto max-w-6xl space-y-5">
+      <div className="grid grid-cols-3 gap-1.5 rounded-2xl border border-border/60 bg-white/40 p-1.5 sm:flex sm:flex-wrap sm:items-center dark:bg-white/5" aria-label="Actions sections">
+        <SectionTab active={tab === 'create'} onClick={() => setTab('create')} icon={Plus} label="Create action" />
+        <SectionTab active={tab === 'scrape'} onClick={() => setTab('scrape')} icon={History} label="Scraped posts" />
+        <SectionTab
+          active={tab === 'queue'}
+          onClick={() => setTab('queue')}
+          icon={ListChecks}
+          label="Job queue"
+          {...(failed > 0 ? { badge: String(failed), danger: true } : inFlight > 0 ? { badge: String(inFlight) } : {})}
+        />
+      </div>
 
-      {/*
-        No onPick callback any more: a history row opens the post detail panel
-        rather than feeding the New Action form. That hand-off only worked for
-        Instagram and Threads, so five of seven rows were dead clicks that still
-        looked live. Creating an action from a scraped post is offered where the
-        post is already open and its platform is known to be actable — the batch
-        page's "Buat Action" button, which gates on actionDeepLink().
-      */}
-      <ScrapeHistory
-        refreshKey={historyRefresh}
-        onUseAsTarget={(post, flow) => {
-          // Stored row, stored comments: no paid re-scrape. The form sets the
-          // platform/URL from the row and preselects the requested flow.
-          formRef.current?.loadStoredPost(post, flow);
-          window.scrollTo({ top: 0, behavior: 'smooth' });
-        }}
-      />
+      <div hidden={tab !== 'create'}>
+        {/* New Action: platform → link → scrape → action → per-account comment → submit. */}
+        <NewActionForm
+          ref={formRef}
+          onScraped={() => setHistoryRefresh((n) => n + 1)}
+          onEnqueued={() => setTab('queue')}
+        />
+      </div>
 
+      <div hidden={tab !== 'scrape'}>
+        {/* A stored row opens the post detail panel. "Use as target" loads the
+          stored row without a second scrape, switches to Create action, and
+          scrolls to the form so the result is visible. */}
+        <ScrapeHistory
+          refreshKey={historyRefresh}
+          onUseAsTarget={(post, flow) => {
+            formRef.current?.loadStoredPost(post, flow);
+            setTab('create');
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }}
+        />
+      </div>
+
+      <div hidden={tab !== 'queue'}>
       <Card>
         <CardHeader className="flex-col items-start gap-3 space-y-0 sm:flex-row sm:items-center sm:justify-between">
           <div>
@@ -358,73 +387,57 @@ export default function ActionsPage() {
           </div>
           <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
             <span className="flex items-center gap-2 text-xs text-muted-foreground">
-              {inFlight > 0 ? (
-                <span className="size-2 animate-pulse rounded-full bg-primary" />
-              ) : null}
+              {inFlight > 0 ? <span className="size-2 animate-pulse rounded-full bg-primary" /> : null}
               {inFlight} in flight
             </span>
-            <Button
-              variant={armedRetryAll ? 'destructive' : 'outline'}
-              size="sm"
-              disabled={retryingAll || failed === 0}
-              onClick={() => void doRetryAll()}
-              onBlur={() => setArmedRetryAll(false)}
-              title={
-                failed === 0
-                  ? 'No failed jobs'
-                  : armedRetryAll
+            {failed > 0 ? (
+              <Button
+                variant={armedRetryAll ? 'destructive' : 'outline'}
+                size="sm"
+                disabled={retryingAll}
+                onClick={() => void doRetryAll()}
+                onBlur={() => setArmedRetryAll(false)}
+                title={
+                  armedRetryAll
                     ? `Press again to retry ${failed} failed job${failed === 1 ? '' : 's'} (real public actions)`
                     : `Retry failed jobs from the last 24h (${failed} failed; older jobs are skipped)`
-              }
-            >
-              {retryingAll ? (
-                <Loader2 className="size-3.5 animate-spin" />
-              ) : (
-                <RotateCcw className="size-3.5" />
-              )}
-              {retryingAll
-                ? 'Retrying…'
-                : armedRetryAll
-                  ? `Confirm retry ${failed}`
-                  : `Retry failed (${failed})`}
-            </Button>
-            <Button
-              variant={armedCancel === CANCEL_ALL ? 'destructive' : 'outline'}
-              size="sm"
-              disabled={sweeping || cancelling !== null || pendingCount === 0}
-              onClick={() => void doCancelPendingNow()}
-              onBlur={() => {
-                if (armedCancel === CANCEL_ALL) setArmedCancel(null);
-              }}
-              title={
-                pendingCount === 0
-                  ? 'No pending jobs'
-                  : armedCancel === CANCEL_ALL
-                    ? `Press again to cancel ${pendingCount} pending job${pendingCount === 1 ? '' : 's'}`
-                    : `Cancel ${pendingCount} pending job${pendingCount === 1 ? '' : 's'} (running jobs are untouched)`
-              }
-            >
-              {armedCancel === CANCEL_ALL ? (
-                <XCircle className="size-3.5" />
-              ) : (
-                <X className="size-3.5" />
-              )}
-              {armedCancel === CANCEL_ALL ? 'Confirm cancel' : 'Cancel pending'}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={sweeping || pendingCount === 0}
-              onClick={() => void doRunPendingNow()}
-              title={
-                pendingCount === 0
-                  ? 'No pending jobs'
-                  : `Move ${pendingCount} pending job${pendingCount === 1 ? '' : 's'} to now, skipping the backoff wait`
-              }
-            >
-              {sweeping ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
-              {sweeping ? 'Running…' : 'Run pending now'}
-            </Button>
+                }
+              >
+                {retryingAll ? <Loader2 className="size-3.5 animate-spin" /> : <RotateCcw className="size-3.5" />}
+                {retryingAll ? 'Retrying…' : armedRetryAll ? `Confirm retry ${failed}` : `Retry failed (${failed})`}
+              </Button>
+            ) : null}
+            {pendingCount > 0 ? (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={sweeping}
+                onClick={() => void doRunPendingNow()}
+                title={`Move ${pendingCount} queued job${pendingCount === 1 ? '' : 's'} to now, skipping the backoff wait`}
+              >
+                {sweeping ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
+                {sweeping ? 'Running…' : 'Run queued now'}
+              </Button>
+            ) : null}
+            {pendingCount > 0 ? (
+              <Button
+                variant={armedCancel === CANCEL_ALL ? 'destructive' : 'ghost'}
+                size="sm"
+                disabled={sweeping || cancelling !== null}
+                onClick={() => void doCancelPendingNow()}
+                onBlur={() => {
+                  if (armedCancel === CANCEL_ALL) setArmedCancel(null);
+                }}
+                title={
+                  armedCancel === CANCEL_ALL
+                    ? `Press again to cancel ${pendingCount} queued job${pendingCount === 1 ? '' : 's'}`
+                    : 'Cancel every queued job. Running jobs are untouched.'
+                }
+              >
+                {armedCancel === CANCEL_ALL ? <XCircle className="size-3.5" /> : <X className="size-3.5" />}
+                {armedCancel === CANCEL_ALL ? 'Confirm cancel' : 'Cancel queued'}
+              </Button>
+            ) : null}
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -507,10 +520,15 @@ export default function ActionsPage() {
                         className="flex w-full min-w-0 cursor-pointer items-center gap-3 overflow-hidden border-b border-border/60 px-3 text-left transition-colors hover:bg-secondary/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring md:gap-4"
                         style={{ height: ROW_HEIGHT }}
                       >
-                        <Badge variant={statusTone(row.job.status)} className="shrink-0">{row.job.status}</Badge>
-                        <span className="hidden w-20 shrink-0 text-sm sm:inline">{actionLabel(row.job.actionType)}</span>
+                        <Badge variant={statusTone(row.job.status)} className="shrink-0">{STATUS_LABEL[row.job.status] ?? row.job.status}</Badge>
+                        <span className="w-16 shrink-0 text-xs font-medium sm:w-20 sm:text-sm">{actionLabel(row.job.actionType)}</span>
                         <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
                           {row.job.targetUrl ?? row.job.targetId}
+                          {row.job.workerId ? (
+                            <span className="ml-2 font-sans text-[10px] text-muted-foreground">
+                              via {workerLabel(row.job.workerId, containers)}
+                            </span>
+                          ) : null}
                         </span>
                         <span className="hidden md:block">
                           <Stepper
@@ -530,7 +548,11 @@ export default function ActionsPage() {
                             <span className="text-muted-foreground">—</span>
                           )}
                         </span>
-                        <span className="hidden w-10 shrink-0 text-right text-sm tabular-nums text-muted-foreground sm:inline">
+                        <span
+                          className="hidden w-10 shrink-0 text-right text-sm tabular-nums text-muted-foreground sm:inline"
+                          title={`${row.job.attempts} attempt${row.job.attempts === 1 ? '' : 's'}`}
+                          aria-label={`${row.job.attempts} attempt${row.job.attempts === 1 ? '' : 's'}`}
+                        >
                           {row.job.attempts}
                         </span>
                         {/* Only meaningful while queued: a finished job's
@@ -603,12 +625,7 @@ export default function ActionsPage() {
           )}
         </CardContent>
       </Card>
-
-      <p className="text-xs text-muted-foreground">
-        Pipeline: <span className="font-mono">{[...PIPELINE, 'Success | Failed'].join(' → ')}</span>
-        . Failure branches mirror the real worker: cooldown gate and verification failure are
-        reported, never silent.
-      </p>
+      </div>
 
       <Dialog open={!!selected} onOpenChange={(o) => !o && setSelected(null)}>
         <DialogContent className="sm:max-w-[520px]">
@@ -630,10 +647,18 @@ export default function ActionsPage() {
                   <Badge variant="destructive">{selected.errorClass}</Badge>
                 ) : null}
               </div>
-              <div className="space-y-1">
-                <div className="text-xs text-muted-foreground">Target</div>
-                <div className="break-all font-mono text-xs">
-                  {selected.targetUrl ?? selected.targetId}
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <div className="text-xs text-muted-foreground">Target</div>
+                  <div className="break-all font-mono text-xs">
+                    {selected.targetUrl ?? selected.targetId}
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <div className="text-xs text-muted-foreground">Executed via</div>
+                  <div className="text-sm font-medium">
+                    {selected.workerId ? workerLabel(selected.workerId, containers) : 'Not recorded for this older job'}
+                  </div>
                 </div>
               </div>
               {selected.renderedText ? (
@@ -715,6 +740,54 @@ function countdown(scheduledAt: string): string {
   if (mins < 60) return `in ${mins}m`;
   const hrs = Math.round(mins / 60);
   return hrs < 48 ? `in ${hrs}h` : `in ${Math.round(hrs / 24)}d`;
+}
+
+function SectionTab({
+  active,
+  onClick,
+  icon: Icon,
+  label,
+  badge,
+  danger = false,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: typeof Plus;
+  label: string;
+  badge?: string;
+  danger?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={[
+        'inline-flex min-h-11 flex-col items-center justify-center gap-1 rounded-xl px-2 py-1 text-[11px] font-medium transition-colors sm:flex-row sm:gap-2 sm:px-3.5 sm:text-sm',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
+        active
+          ? 'bg-primary text-primary-foreground shadow-[inset_0_1px_0_rgb(255_255_255/0.18)]'
+          : 'text-muted-foreground hover:bg-white/55 hover:text-foreground dark:hover:bg-white/10',
+      ].join(' ')}
+    >
+      <Icon className="size-4" />
+      {label}
+      {badge ? (
+        <span
+          className={[
+            'inline-flex min-w-5 items-center justify-center rounded-full px-1.5 text-[10px] font-bold tabular-nums',
+            active
+              ? 'bg-white/20 text-primary-foreground'
+              : danger
+                ? 'bg-destructive/12 text-destructive'
+                : 'bg-secondary text-muted-foreground',
+          ].join(' ')}
+        >
+          {badge}
+        </span>
+      ) : null}
+    </button>
+  );
 }
 
 function FilterChip({

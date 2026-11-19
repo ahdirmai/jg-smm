@@ -360,12 +360,14 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             <div className="hidden sm:block">
               <ModeToggle header />
             </div>
-            <Button asChild size="sm" className="hidden sm:inline-flex">
-              <Link href="/actions">
-                <Plus />
-                New action
-              </Link>
-            </Button>
+            {pathname !== '/actions' ? (
+              <Button asChild size="sm" className="hidden sm:inline-flex">
+                <Link href="/actions">
+                  <Plus />
+                  New action
+                </Link>
+              </Button>
+            ) : null}
           </div>
         </header>
 

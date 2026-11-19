@@ -91,9 +91,9 @@ export default function AuditPage() {
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <Card>
-        <CardContent className="flex flex-wrap items-center gap-3 p-4">
+        <CardContent className="flex flex-wrap items-center gap-3 p-5">
           <div className="w-48">
             <Select value={actorId} onValueChange={setActorId}>
               <SelectTrigger aria-label="Actor">
@@ -140,7 +140,7 @@ export default function AuditPage() {
       </Card>
 
       <Card>
-        <div className="flex items-center justify-between border-b p-4">
+        <div className="flex items-center justify-between border-b p-5">
           <div>
             <h2 className="text-sm font-semibold">Audit trail</h2>
             <p className="text-xs text-muted-foreground">

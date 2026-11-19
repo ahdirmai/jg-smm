@@ -10,7 +10,7 @@ import { KeywordScrapeForm } from './keyword-scrape-form';
 
 export default function ScrapePage() {
   return (
-    <div className="mx-auto max-w-6xl space-y-4">
+    <div className="mx-auto max-w-6xl space-y-5">
       <KeywordScrapeForm />
     </div>
   );

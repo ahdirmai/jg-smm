@@ -190,6 +190,23 @@
     outline-offset: 2px;
   }
 
+  /* Native selects in dense toolbars inherit the same field language as the
+   * shadcn Select. The primitive covers most controls; this keeps the few
+   * native ones from looking like a different product. */
+  select:not([multiple]) {
+    min-height: 2.75rem;
+    border: 1px solid hsl(var(--input) / 0.8);
+    border-radius: 12px;
+    background-color: rgb(255 255 255 / 0.45);
+    padding: 0 0.75rem;
+    color: hsl(var(--foreground));
+    font: inherit;
+  }
+
+  .dark select:not([multiple]) {
+    background-color: rgb(255 255 255 / 0.05);
+  }
+
   h1,
   h2,
   h3 {

@@ -82,13 +82,13 @@ export default function ReportsPage() {
   };
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
+    <div className="mx-auto max-w-6xl space-y-5">
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Filters</CardTitle>
           <CardDescription>Empty dates cover the whole history.</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-5">
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <div className="space-y-2">
               <Label htmlFor="r-kind">Report</Label>
@@ -214,7 +214,7 @@ function ReportBody({ kind, result }: { kind: ReportKind; result: ReportResult }
     const report = result as ActionReport;
     const series: TrendPoint[] = report.series ?? [];
     return (
-      <div className="space-y-4">
+      <div className="space-y-5">
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Volume per day</CardTitle>

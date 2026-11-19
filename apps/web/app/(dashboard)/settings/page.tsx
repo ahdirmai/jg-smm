@@ -52,7 +52,7 @@ export default function SettingsPage() {
   const [tab, setTab] = useState<Tab>('team');
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <Card>
           <CardContent className="space-y-3 p-6">
@@ -153,7 +153,7 @@ export default function SettingsPage() {
 
         {tab === 'appearance' ? (
           <Card>
-            <CardContent className="space-y-4 p-6">
+            <CardContent className="space-y-4 p-5">
               <div className="flex items-center gap-2 text-sm font-semibold">
                 <Palette className="size-4" />
                 Appearance
@@ -216,7 +216,7 @@ function NotWired({
 }) {
   return (
     <Card className={destructive ? 'border-destructive/40' : undefined}>
-      <CardContent className="space-y-4 p-6">
+      <CardContent className="space-y-4 p-5">
         <div
           className={`flex items-center gap-2 text-sm font-semibold ${destructive ? 'text-destructive' : ''}`}
         >

@@ -78,7 +78,7 @@ export function AccountPicker({
             value={query}
             onChange={(e) => onQuery(e.target.value)}
             placeholder="Search by username or city"
-            className="h-9 pl-8"
+            className="pl-8"
             aria-label="Search accounts"
           />
         </div>

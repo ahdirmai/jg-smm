@@ -46,7 +46,6 @@ import {
   Users,
   type LucideIcon,
 } from 'lucide-react';
-import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 
 import { api } from '@/lib/api';
@@ -180,6 +179,12 @@ export default function AccountsPage() {
   const role = session.status === 'authenticated' ? session.role : undefined;
   const canAct = can(role, 'act');
   const [addOpen, setAddOpen] = useState(false);
+
+  // The overview's "No accounts yet" link lands here with ?add=1; opening the
+  // modal directly keeps that CTA from dead-ending on a list with no rows.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('add') === '1') setAddOpen(true);
+  }, []);
   const [importOpen, setImportOpen] = useState(false);
   const [platform, setPlatform] = useState<string>('all');
   const [status, setStatusFilter] = useState<string>('all');
@@ -188,6 +193,7 @@ export default function AccountsPage() {
   const [pageSize, setPageSize] = useState(25);
   const [busy, setBusy] = useState<string | null>(null);
   const [operationError, setOperationError] = useState<string | null>(null);
+  const [operationNotice, setOperationNotice] = useState<string | null>(null);
 
   useEffect(() => setPage(1), [platform, status, auth, pageSize]);
   // The detail drawer is shared by the row click and the dropdown items. The
@@ -366,6 +372,7 @@ export default function AccountsPage() {
   const onAct = async (id: string, fn: (id: string) => Promise<void>) => {
     setBusy(id);
     setOperationError(null);
+    setOperationNotice(null);
     try {
       await fn(id);
     } catch (err) {
@@ -392,6 +399,7 @@ This account still holds a worker from an earlier session. Use "Release session"
   const releaseSession = async (id: string) => {
     setBusy(id);
     setOperationError(null);
+    setOperationNotice(null);
     try {
       await api.closeAccountLiveView(id);
       setLiveView((prev) => {
@@ -400,6 +408,8 @@ This account still holds a worker from an earlier session. Use "Release session"
         return next;
       });
       await refresh();
+      setDetail(null);
+      setOperationNotice('Session released. The account is free to be scheduled again.');
     } catch (err) {
       setOperationError(err instanceof Error ? err.message : 'Could not release the session');
     } finally {
@@ -532,7 +542,7 @@ This account still holds a worker from an earlier session. Use "Release session"
   }, [accounts]);
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
+    <div className="mx-auto max-w-6xl space-y-5">
       {/* Page-level actions. The title/subtitle live in the shell header (h-14),
           so this row carries only the write controls. */}
       <div className="flex flex-wrap items-center justify-end gap-2">
@@ -540,11 +550,9 @@ This account still holds a worker from an earlier session. Use "Release session"
           <Upload />
           Import
         </Button>
-        <Button asChild disabled={!canAct}>
-          <Link href="/accounts/new">
-            <UserPlus />
-            Add account
-          </Link>
+        <Button type="button" disabled={!canAct} onClick={() => setAddOpen(true)}>
+          <UserPlus />
+          Add account
         </Button>
       </div>
 
@@ -687,11 +695,9 @@ This account still holds a worker from an earlier session. Use "Release session"
                 : 'No container ready — create one first'}
             </Badge>
             <div className="flex flex-wrap items-center justify-center gap-2">
-              <Button asChild disabled={!canAct}>
-                <Link href="/accounts/new">
-                  <UserPlus />
-                  Add account
-                </Link>
+              <Button type="button" disabled={!canAct} onClick={() => setAddOpen(true)}>
+                <UserPlus />
+                Add account
               </Button>
               <Button variant="outline" disabled={!canAct} onClick={() => setImportOpen(true)}>
                 <Upload />
@@ -755,7 +761,7 @@ This account still holds a worker from an earlier session. Use "Release session"
               </div>
             </div>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="space-y-5">
             {selected.size > 0 ? (
               <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border/60 bg-secondary/40 p-3">
                 <span className="text-sm font-medium">
@@ -803,6 +809,13 @@ This account still holds a worker from an earlier session. Use "Release session"
                 >
                   Clear
                 </Button>
+              </div>
+            ) : null}
+
+            {operationNotice ? (
+              <div className="flex items-center gap-2 rounded-lg border border-success/30 bg-success/8 p-3 text-sm text-success" role="status">
+                <CheckCircle2 className="size-4 shrink-0" />
+                {operationNotice}
               </div>
             ) : null}
 
@@ -1159,7 +1172,7 @@ This account still holds a worker from an earlier session. Use "Release session"
         </Card>
       )}
 
-      <AddAccountDialog open={addOpen} onOpenChange={setAddOpen} />
+      <AddAccountDialog open={addOpen} onOpenChange={setAddOpen} onCreated={() => void refresh()} />
     </div>
   );
 }
