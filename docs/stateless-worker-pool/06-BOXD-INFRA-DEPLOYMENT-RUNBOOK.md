@@ -135,6 +135,33 @@ Yang harus terlihat: `postgres`, `redis`, `minio`, `api`, `web`, `nginx`
 healthy/running; `migrate` exit 0. Nginx mem-proxy `/api/` dan `/internal/`
 ke `api:8080`, sisanya ke `web:3000`; SSE tidak dibuffer.
 
+**Wajib dicek setelah start** — jangan menyalin `.env` lokal apa adanya:
+
+```bash
+docker logs smm-api-1 2>&1 | grep -E "stateless worker pool enabled|pool mode|reconcile"
+docker exec smm-postgres-1 psql -U smm -d smm -Atc \
+  "select name, endpoint_url from worker order by name"
+```
+
+Expected: log `stateless worker pool enabled` dengan 11 worker, dan setiap
+row punya endpoint `https://rpc.<vm>.boxd.sh`. Jika log justru menunjukkan
+`reconcile: at capacity` dan ada container `smm-worker-smm-worker-*` di hub,
+berarti `.env` masih membawa `WORKER_POOL_MODE=legacy` /
+`PROVISIONER_MODE=docker` dari lokal. Akibatnya live view akun tanpa lease
+menjawab `conflict: account has no worker to view` dan noVNC tidak bisa dibuka.
+Perbaiki empat baris berikut lalu recreate API:
+
+```dotenv
+WORKER_POOL_MODE=stateless
+PROVISIONER_MODE=static
+ELASTIC_POOL_MAX_ACTIVE=0
+RECONCILE_INTERVAL_SECONDS=0
+```
+
+```bash
+docker compose --env-file .env -f infra/boxd/compose.hub.yaml up -d --force-recreate api
+```
+
 ### 2.4 Impor akun + session dari lokal
 
 Session browser adalah **bytea terenkripsi** di `account_session`; menyalin
@@ -352,6 +379,18 @@ Bukti browser yang sudah dijalankan: noVNC membuka canvas dan
 `Connected (encrypted) to …:99` pada worker login.
 
 ---
+
+### 4.1 Cek cepat noVNC
+
+1. `POST /api/accounts/<id>/live-view` harus `200` dan mengembalikan URL
+   `https://<worker>.boxd.sh/novnc/vnc.html?...`.
+2. Halaman `/novnc/vnc.html` harus `200`.
+3. WebSocket dengan ticket harus `101`; tanpa ticket harus `403` (uji dengan
+   `curl --http1.1`, bukan HTTP/2).
+4. Jika API berkata `account has no worker to view`, itu **bukan** masalah
+   nginx: pool API masih legacy. Cek log `stateless worker pool enabled`.
+5. Jika iframe dashboard kosong tetapi URL itu bekerja di tab langsung, tutup
+   panel/refresh cache ticket — ticket lama kedaluwarsa dalam beberapa menit.
 
 ## 5. Operasional & biaya
 
