@@ -10,7 +10,13 @@ set -euo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 
 name="${1:-latest}"
-SRC="$BACKUP_DIR/$name"
+# Accept both a backup NAME (resolved under BACKUP_DIR) and the absolute path
+# that drill.sh hands over. Prefixing twice was the drill-after-wipe bug.
+if [[ "$name" = /* ]]; then
+  SRC="$name"
+else
+  SRC="$BACKUP_DIR/$name"
+fi
 # Follow the `latest` symlink to a concrete directory.
 [ -L "$SRC" ] && SRC="$(cd "$SRC" && pwd)"
 [ -d "$SRC" ] || die "backup not found: $SRC (run 'make backup' first)"
@@ -111,7 +117,7 @@ done < "$SRC/.mc-verify.out"
 
 if [ -f "$SRC/sessions.tar" ]; then
   got_sessions="$("${COMPOSE[@]}" run --rm --no-deps -v "$VOL_SESSIONS:/sessions:ro" \
-    --entrypoint /bin/sh "$SVC_DB" -c 'find /sessions -type f 2>/dev/null | wc -l | tr -d " ')"
+    --entrypoint /bin/sh "$SVC_DB" -c 'find /sessions -type f 2>/dev/null | wc -l | tr -d " "')"
   check "sessions files" "$(manifest_get sessions_files)" "$got_sessions"
 fi
 
