@@ -336,7 +336,7 @@ export default function ActionsPage() {
       />
 
       <Card>
-        <CardHeader className="flex-row items-center justify-between space-y-0">
+        <CardHeader className="flex-col items-start gap-3 space-y-0 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <CardTitle>Job queue</CardTitle>
             <CardDescription>
@@ -356,7 +356,7 @@ export default function ActionsPage() {
                   : null}
             </CardDescription>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
             <span className="flex items-center gap-2 text-xs text-muted-foreground">
               {inFlight > 0 ? (
                 <span className="size-2 animate-pulse rounded-full bg-primary" />
@@ -504,19 +504,21 @@ export default function ActionsPage() {
                             setSelected(row.job);
                           }
                         }}
-                        className="flex w-full cursor-pointer items-center gap-4 border-b border-border/60 px-3 text-left transition-colors hover:bg-secondary/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        className="flex w-full min-w-0 cursor-pointer items-center gap-3 overflow-hidden border-b border-border/60 px-3 text-left transition-colors hover:bg-secondary/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring md:gap-4"
                         style={{ height: ROW_HEIGHT }}
                       >
-                        <Badge variant={statusTone(row.job.status)}>{row.job.status}</Badge>
-                        <span className="w-20 text-sm">{actionLabel(row.job.actionType)}</span>
-                        <span className="max-w-[200px] flex-1 truncate font-mono text-xs text-muted-foreground">
+                        <Badge variant={statusTone(row.job.status)} className="shrink-0">{row.job.status}</Badge>
+                        <span className="hidden w-20 shrink-0 text-sm sm:inline">{actionLabel(row.job.actionType)}</span>
+                        <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
                           {row.job.targetUrl ?? row.job.targetId}
                         </span>
-                        <Stepper
-                          reached={stageReached(row.job.status)}
-                          failed={row.job.status === 'FAILED'}
-                        />
-                        <span className="max-w-[200px] flex-1 truncate text-xs">
+                        <span className="hidden md:block">
+                          <Stepper
+                            reached={stageReached(row.job.status)}
+                            failed={row.job.status === 'FAILED'}
+                          />
+                        </span>
+                        <span className="hidden max-w-[200px] flex-1 truncate text-xs md:block">
                           {row.job.renderedText ? (
                             <span className="text-foreground">{row.job.renderedText}</span>
                           ) : row.job.error ? (
@@ -528,7 +530,7 @@ export default function ActionsPage() {
                             <span className="text-muted-foreground">—</span>
                           )}
                         </span>
-                        <span className="w-10 text-right text-sm tabular-nums text-muted-foreground">
+                        <span className="hidden w-10 shrink-0 text-right text-sm tabular-nums text-muted-foreground sm:inline">
                           {row.job.attempts}
                         </span>
                         {/* Only meaningful while queued: a finished job's
@@ -536,7 +538,7 @@ export default function ActionsPage() {
                             "in 42s" stays readable without losing the instant. */}
                         {row.job.status === 'PENDING' ? (
                           <span
-                            className="w-24 text-right text-xs tabular-nums text-muted-foreground"
+                            className="hidden w-24 shrink-0 text-right text-xs tabular-nums text-muted-foreground sm:inline"
                             title={`Scheduled for ${new Date(row.job.scheduledAt).toLocaleString()}`}
                           >
                             {countdown(row.job.scheduledAt)}
@@ -546,7 +548,7 @@ export default function ActionsPage() {
                           <Button
                             variant="outline"
                             size="sm"
-                            className="h-7 shrink-0"
+                            className="h-9 shrink-0 sm:h-7"
                             disabled={retrying === row.job.id}
                             onClick={(e) => {
                               // The row is clickable; without this the click
@@ -567,7 +569,7 @@ export default function ActionsPage() {
                           <Button
                             variant={armedCancel === row.job.id ? 'destructive' : 'outline'}
                             size="sm"
-                            className="h-7 shrink-0"
+                            className="h-9 shrink-0 sm:h-7"
                             disabled={cancelling === row.job.id}
                             title={
                               row.job.status === 'RUNNING'

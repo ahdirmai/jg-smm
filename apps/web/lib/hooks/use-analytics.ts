@@ -1,28 +1,15 @@
 /**
- * Analytics data hooks (P2-14 / P2-15).
+ * Analytics overview hook.
  *
- * Fetch-only: React Query is deliberately absent (the accounts hook uses plain
- * fetch + EventSource, and analytics is a read path with no SSE yet). A refresh
- * re-fetches rather than mutating local state, so the numbers always come from
- * the server.
+ * Monitoring's per-platform surfaces were removed from the dashboard; the
+ * overview keeps the single read path the home page still uses.
  */
 
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
 
-import {
-  analyticsByPlatform,
-  analyticsContent,
-  analyticsOverview,
-  analyticsRefresh,
-  listOfficialAccounts,
-  type AnalyticsIngestRun,
-  type AnalyticsOverview,
-  type ContentMetricsResponse,
-  type OfficialAccountList,
-  type PlatformAnalytics,
-} from '@/lib/analytics';
+import { analyticsOverview, type AnalyticsOverview } from '@/lib/analytics';
 import { ApiError } from '@/lib/api';
 
 type State<T> = { data: T | null; loading: boolean; error: string | null };
@@ -54,49 +41,6 @@ function useAsync<T>(fn: () => Promise<T>, deps: unknown[]): State<T> & { refres
   return { ...state, refresh };
 }
 
-export function useOfficialAccounts(platform?: string) {
-  return useAsync<OfficialAccountList>(() => listOfficialAccounts(platform), [platform ?? 'all']);
-}
-
 export function useAnalyticsOverview(windowDays = 30) {
   return useAsync<AnalyticsOverview>(() => analyticsOverview(windowDays), [windowDays]);
-}
-
-export function usePlatformAnalytics(platform: string, metric = 'followers', windowDays = 30) {
-  return useAsync<PlatformAnalytics>(
-    () => analyticsByPlatform(platform, metric, windowDays),
-    [platform, metric, windowDays],
-  );
-}
-
-export function useContentMetrics(
-  platform: string,
-  accountId?: string,
-  windowDays = 30,
-  limit = 50,
-) {
-  return useAsync<ContentMetricsResponse>(
-    () => analyticsContent(platform, { accountId, windowDays, limit }),
-    [platform, accountId ?? 'all', windowDays, limit],
-  );
-}
-
-export function useAnalyticsRefresh() {
-  const [run, setRun] = useState<AnalyticsIngestRun | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      setRun(await analyticsRefresh());
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Refresh failed.');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  return { run, loading, error, refresh };
 }

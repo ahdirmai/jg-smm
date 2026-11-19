@@ -5,9 +5,8 @@ import { cn } from '../lib/utils';
 
 // DESIGN_SYSTEM §5.1: only success | warning | destructive | info | outline
 // beyond the base default/secondary variants.
-// Homies Lab: status pills are soft-tinted with a dark label, not a saturated
-// fill (design principle 1 — one saturated hue, reserved for primary actions;
-// a solid status fill would compete with the yellow accent).
+// Coastal Glass: status pills are soft-tinted with a readable label, not a
+// saturated fill. The deep-blue accent stays reserved for primary actions.
 const badgeVariants = cva(
   'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2',
   {

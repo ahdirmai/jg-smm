@@ -33,7 +33,7 @@ const TableBody = React.forwardRef<
 ));
 TableBody.displayName = 'TableBody';
 
-// Homies Lab data table: uppercase tiny-letter-spaced column heads, rows
+// Coastal Glass data table: uppercase tiny-letter-spaced column heads, rows
 // separated by hairlines that fade away at the last row. The card supplies the
 // visual container, so the table itself stays borderless.
 const TableRow = React.forwardRef<

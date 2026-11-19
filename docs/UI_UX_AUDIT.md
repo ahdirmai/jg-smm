@@ -1,166 +1,123 @@
-# UI/UX Audit + Improvement Plan
+# UI/UX Audit — Coastal Glass Redesign
 
-> Audit date: 2026-09-23 · Scope: semua page dashboard (`/`, workers, accounts, actions, scrape,
-> templates, monitoring + per-platform, reports, audit, settings, login) + shared shell + `packages/ui`.
-> Reference: Homies Lab design system (cream canvas, single yellow accent, ink as second accent,
-> generous radius, hero numbers, soft shadows).
+> Audit date: 2026-11-19 · Scope: dashboard shell, overview, accounts, actions,
+> scrape, workers, reports, audit, settings, sign-in, shared UI primitives.
+> Reference: `../dashboard-smm-new` (glossy minimal, layered cool canvas) and
+> ReactBits Spotlight Card + Glare Hover.
+> Removed from scope: Monitoring and Templates.
 
-## 1. Findings (before redesign)
+## 1. What changed, and why
 
-### F-01 Duplicate page titles — inconsistency, double hierarchy
+### F-01 — The shell was the default sidebar + top bar + four cards
 
-`/templates`, `/reports`, `/monitoring`, `/monitoring/[platform]` each render their own `<h1>` +
-subtitle, while the shell header (`h-14`, `TITLES` map) already renders title + subtitle for every
-route. Result: two titles stacked, inconsistent sizing (`text-3xl` on templates/reports vs
-`text-2xl` on monitoring), and a subtitle that can drift from the shell's.
+The old shell was the generic dashboard shape: a solid 240px sidebar, a bordered
+header, then a page of equal cards. It did not express the calm, atmospheric
+reference and it did not prioritise the operator's next action.
 
-**Fix applied:** removed the in-page header from all four; the shell header is the single source
-of page copy. Each page now opens with an actions row (buttons only) or straight into content.
+**Implemented:** a floating glass rail with labelled sections (Workspace,
+Insights, System), a compact header, and a phone dock with Home, Accounts,
+Actions, Scrape, and More. The content canvas is the same at every route; only
+the page sections differ. The shell is the only strong-blur surface; cards use a
+quieter translucent surface, so glass remains a hierarchy signal.
 
-### F-02 KPI cards had no hierarchy
+### F-02 — Navigation carried two features the product no longer supports
 
-`KpiCard` variants across pages put the label above the value, both small, icon floating
-top-right. Numbers were not heroes — nothing led the eye.
+Monitoring (overview + seven platform pages) and Templates occupied a third of
+the nav and produced routes that were no longer part of the approved surface.
 
-**Fix applied:** value is now the hero (`text-2xl/3xl font-semibold tabular-nums`), label is a
-small muted line beneath it, and the icon sits in a soft rounded square (`bg-secondary`,
-principle 6). Applied to: `/`, `/workers`, `/monitoring`, `/monitoring/[platform]`.
+**Implemented:** removed both route trees, nav entries, page titles, the
+template hook, client template methods, and their e2e specs. Every remaining nav
+item points at a real route; the dead-link sweep now enumerates only those pages.
 
-### F-03 Status badges fought the accent
+### F-03 — Fake or ambiguous data on the overview
 
-`Badge` variants `success`/`warning`/`info`/`destructive` used **saturated fills** (solid green,
-solid yellow, solid red). On a page with a yellow primary CTA, a solid-yellow "warning" pill and a
-solid-green "ACTIVE" pill compete with the brand accent — principle 1 (one saturated hue) violated
-on nearly every table row.
+The overview drew a decorative trend sketch, reported zero likes/reports/replies
+that were not measured, and labelled a link to another page “Export CSV”.
 
-**Fix applied:** status pills are now soft-tinted (`bg-<status>/12`–`/16`) with an ink or
-destructive label. Yellow stays reserved for primary actions.
+**Implemented:** queue, failure, fleet, and authentication numbers now come from
+the live hooks. The analytics KPIs stay as an em dash until the API returns a
+snapshot. The trend card explains the empty state and links to Reports. Queue
+health counts actions by their real `actionType`. “Open reports” is the label.
 
-### F-04 Hardcoded colors broke theming
+### F-04 — Low-contrast grey-on-glass risk
 
-`text-emerald-600 dark:text-emerald-400` was sprinkled across workers, reports, actions, and the
-wizard — green that does not track `--success` and would not follow a palette change.
+The reference is atmospheric; glass can quietly lower contrast, especially for
+small labels.
 
-**Fix applied:** replaced with `text-success` (workers live ticker + provision log + reports
-Succeeded columns + action result spans).
+**Implemented:** the light palette uses ink `#1a2c3a` (12.56:1 on the canvas),
+muted `#4b5f70` (5.81:1), and white on primary `#28506b` (8.57:1). Dark mode uses
+`#dce8f2` on `#0e1a24` (14.15:1) and muted `#a9b8c4` (8.68:1). Input borders use
+a stronger `--input` token (3:1 boundary target), while separators stay quiet.
+Cards are 70% white / 80% dark rather than fully transparent.
 
-### F-05 Inconsistent radius scale
+### F-05 — Tables failed at phone width
 
-Mixed `rounded-md` (6px default) on cards, tables, inputs, thumbnails, dialogs — no scale, and
-nothing matched the reference's generous corners. `--radius` was `0.5rem` with no xl step.
+The accounts table had eight columns and a long opaque handle; the action queue
+and scrape history had no shrink boundary. On a 390px viewport the page grew to
+886px wide.
 
-**Fix applied:** token scale `--radius-sm 8 / md 12 / lg 16 / xl 24`; `Card` → `rounded-lg` +
-`shadow-card`; tables/thumbnails/previews → `rounded-lg`; empty states → dashed
-`rounded-lg border`. Control-internal radius (buttons, mode-toggle) left at `rounded-md` for
-small-control density.
+**Implemented:** page sections are allowed to shrink (`min-width: 0`); account
+columns collapse to Account + Status, with auth/status combined below `md`;
+opaque handles fall back to timezone; the queue hides stepper/detail columns on
+phones and wraps its header actions; history captions clamp and truncate. The
+measured page width is now 390px on every audited route.
 
-### F-06 Old palette (indigo on charcoal)
+### F-06 — Keyboard and touch details
 
-Light theme was off-white + indigo; dark was indigo on charcoal — no relation to the reference.
-`.dark` held a completely different hue family from `.light`.
+The old mobile drawer had no focus trap, the mobile nav was a bare hamburger,
+and several controls were below 44px.
 
-**Fix applied:** both themes are now Homies Lab — warm cream light / warm near-black dark, single
-yellow accent in both, ink-on-yellow text preserved. `DESIGN_SYSTEM.md` §3/§4 updated to match
-shipped tokens.
+**Implemented:** skip link; focus-trapped drawer with Escape close and labelled
+More trigger; 44px nav rows and dock items; `:focus-visible` rings on every
+interactive primitive; pointer-coarse-friendly button/input heights; reduced
+motion respected. Status is never colour-only: every badge carries text.
 
-### F-07 Active nav state was gray-tinted
+### F-08 — The workspace had no availability contract
 
-Sidebar active item used `bg-primary/12 text-primary` (a faint yellow tint). It did not read as
-"selected" — principle 5 says active/selected is solid ink (black), never gray.
+Workers can hibernate after an idle hour, but the dashboard had no way to tell
+the operator why a page or an action was slow. A sleeping fleet looked like a
+broken UI.
 
-**Fix applied:** active nav leaf and nested group item are now `bg-foreground text-background`
-(solid ink pill). Settings tab active state follows the same rule.
+**Implemented:** `WorkerGate` mirrors the one-hour idle contract in the browser.
+It blocks the workspace, explains the state, and offers `Start all workers`.
+That calls the new authenticated wake endpoint, then polls the health endpoint
+every 2 seconds; the gate unlocks only when **every** worker answers. The modal
+lists each worker and its realtime awake/unreachable state, marks the page
+`inert`, traps focus, and has no dismiss path. While the workspace is open the
+gate does not poll: a probe every few seconds would itself keep the microVMs
+awake and defeat the idle policy.
 
-### A-01 Account rows had no direct action — only a menu
+### F-07 — Empty and loading states were silent
 
-`/accounts` rows offered a kebab menu (Log in / Pause / Remove) and nothing else. The two things
-an operator actually wants per row depend on login state, and neither was surfaced: during a login
-the noVNC live view (to watch or drive the challenge), and once authenticated the public profile.
-Both required knowing the container, the port, and navigating away.
+Several cards said “No data” or rendered a spinner without context.
 
-**Fix applied:** the row's primary cell is now state-driven.
+**Implemented:** loading copy names what is loading; empty states name the cause
+and the next action (“No trend series yet… connect an official account”);
+failed queue copy points to Retry/Cancel. The onboarding state remains a
+three-step path to the first action.
 
-- `AUTHENTICATING` / `NEEDS_INPUT` → **Live view** button opening `LiveBrowserModal` on that
-  account's worker noVNC URL. The URL is resolved through the containers list
-  (`novncByWorker`, keyed by `Container.id` == the account's packed `workerId`), never guessed;
-  a worker that has not published a heartbeat renders a disabled button with a tooltip naming the
-  reason instead of a dead link.
-- `AUTHENTICATED` (and every other state) → **Profile** link to the derived public profile URL.
-  Worker accounts carry no `profileUrl` in the contract (that field is official-account analytics
-  only), so the URL is derived from `platform` + `handle || username`.
-- The menu keeps its ops, and additionally exposes **Live view** for an authenticated account, so
-  an operator can still watch a running session without starting a new login.
+## 2. Verification
 
-This also lands the same realtime screen viewing `/workers` already had (per-container
-`LiveBrowserModal`) onto `/accounts`.
+- `pnpm --filter @smm/web typecheck` — pass
+- `pnpm --filter @smm/web lint` — pass
+- `pnpm --filter @smm/web build` — pass; 14 routes (Monitoring/Templates gone)
+- Browser pass at 1440×1000 and 390×844 in light and dark themes:
+  overview, accounts, actions, scrape, workers, reports, audit, settings, login.
+- Worker gate: forced an expired `smm:last-active`, confirmed the blocking
+  modal and inert background, clicked Start, and observed the workspace unlock
+  after all 11 health probes returned awake.
+- No horizontal document overflow on audited routes at 390px (`scrollWidth === clientWidth`).
+- Mobile drawer opens, closes on Escape/overlay, and traps Tab; mobile dock stays
+  reachable without covering the final row.
+- Contrast ratios computed with WCAG 2.x relative luminance (see F-04).
 
-**Refined (A-01b):** the buttons were still an extra hop — a click on a button in a cell, not the
-row. The row itself is now the action. Anywhere on the row opens the live view or profile, per
-login state; the icon buttons are kept only as affordances (and stop propagation so they do not
-double-fire). A worker with no published heartbeat shows no disabled button at all — there is
-nothing to open, so the row does nothing rather than presenting a dead control. Secondary line of
-the Account cell now carries the handle, or the container when the handle equals the username
-(previously the container id repeated identically in two columns). Header subtitle states the
-click affordance.
+## 3. Remaining limits
 
-## 2. Component-level changes
-
-| File | Change |
-| --- | --- |
-| `packages/ui/src/components/card.tsx` | `rounded-lg border-border/60 shadow-card` (float, no harsh border) |
-| `packages/ui/src/components/badge.tsx` | status variants → soft tint + ink label; added `gap-1.5` for status-dot pairing |
-| `packages/ui/src/components/table.tsx` | `TableHead` → `text-[11px] uppercase tracking-wider h-11`; row border `border-border/60`; hover `bg-secondary/60` |
-| `apps/web/app/globals.css` | Homies Lab `.light` + `.dark` tokens; radius scale + `--shadow-card` / `--shadow-popover` |
-| `apps/web/components/dashboard-shell.tsx` | active nav = solid ink pill; logo mark `rounded-lg`; header hairline + subtle blur; sidebar/hairline borders `border-border/60` |
-
-## 3. Page-by-page
-
-| Page | Change |
-| --- | --- |
-| `/` | KPI hero cards + icon squares; getting-started step chips → soft square; trend/empty boxes hairline |
-| `/workers` | stat cards → hero; provision log + session dialogs hairline; live dot `bg-success`; raw `<select>` → `rounded-lg` |
-| `/accounts` | bulk bar + table wrap + error banner hairline radius; row action is now one-click by login state (see A-01) |
-| `/actions` | queue table hairline + uppercase group headers; dialog comment/error boxes; dashed empty state |
-| `/actions` (new-action-form) | scrape preview → `bg-secondary/30` panel; error/result radius |
-| `/actions` (scrape-history) | card-title icon in soft square; thumbnails `rounded-lg`; rows hairline |
-| `/scrape` | keyword result rows hairline; raw `<select>` → `rounded-lg` |
-| `/templates` | removed duplicate h1; error + table wrap hairline |
-| `/monitoring` | removed duplicate h1; KPI hero; table wrapped |
-| `/monitoring/[platform]` | removed duplicate h1; platform pill switcher kept; KPI hero + icon squares; monitored list hairline dividers; table wrapped |
-| `/reports` | removed duplicate h1; error banner radius; `text-emerald` → `text-success` |
-| `/audit` | empty-state icon → soft rounded square (`rounded-xl bg-secondary`) |
-| `/settings` | tab active = solid ink (principle 5); already token-clean |
-| `/login` | logo mark already `rounded-lg`; unchanged (token-driven) |
-
-## 4. Remaining plan
-
-Ordered by impact. Each is independently shippable. ✅ = done in the follow-up commit.
-
-| # | Item | Why | Where |
-| --- | --- | --- | --- |
-| P-01 | **Pill tab switcher primitive** | Reference uses a segmented pill control for views; settings tabs + report-kind selector + platform switcher are all button-rows today. A `Tabs`-based pill in `packages/ui` unifies them and gives the reference's inset active pill. | `packages/ui/src/components/tabs.tsx` (new); settings, reports, monitoring/[platform] |
-| P-02 | **Bar chart with rounded-top bars** | Reference's "Employment Status" chart has rounded-top bars + floating percentage chips. `TrendPlaceholder`/`TrendChart` are sparklines only — no categorical bar chart exists. | `components/trend-chart.tsx` or new `components/bar-chart.tsx` |
-| P-03 ✅ | **Density toggle was a dead control** | Settings → Appearance showed two permanently-disabled "Comfortable/Compact" buttons. Removed (no write surface, no request) rather than left as a fake control. | settings page |
-| P-04 ✅ | **⌘K search box was a dummy** | Header search field was a static span ("Search accounts, jobs… ⌘K") with no handler and no `Command` behind it. Removed. | dashboard-shell |
-| P-05 ✅ | **`Filter` buttons were inert** | Dashboard "Last 30 days" button and platform-analytics "Filter" rendered as buttons with no handler; the latter needs a per-post endpoint that does not exist. "Last 30 days" is now a plain muted label; the analytics Filter button is removed. | page.tsx, monitoring/[platform] |
-| P-06 | **Bounce/skeleton loading** | Most pages render "Loading…" text or `—` placeholders. Reference polish level wants `Skeleton` cards (shadcn `Skeleton`) matching the card grid, so load states do not jump layout. | packages/ui + all list pages |
-| P-07 | **Toast/feedback layer missing** | `docs/DESIGN_SYSTEM.md §5.1` documents sonner toasts (default/warning/critical); nothing is installed. Enqueue success/failure currently renders an inline `<span>`. Adds a real feedback channel for the scrape + queue flows. | packages/ui + actions pages |
-| P-08 ✅ | **Mobile nav absent** | Sidebar was `hidden md:flex`; below `md` there was **no navigation at all**. Added a hamburger in the header that opens a fixed overlay drawer reusing the same `NavTree` (closes on navigation). Desktop sidebar untouched. | dashboard-shell |
-| P-09 | **Status = dot + label pairing** | Principle 7: status should be icon+label+dot. `Badge` now has `gap-1.5` ready for it, but no `StatusDot` component is wired into tables yet. | packages/ui |
-| P-10 ✅ | **Audience mix was sample data** | `monitoring/[platform]` rendered a hardcoded `AUDIENCE_MIX` with a `sample` tag. Panel + constant removed — the geo split endpoint does not exist, and no example numbers are shown as data of any kind. | monitoring/[platform] |
-
-## 5. Verification
-
-- `pnpm --filter @smm/web exec tsc --noEmit` — clean
-- `pnpm --filter @smm/web exec eslint app components` — clean
-- `pnpm --filter @smm/web build` — all 15 routes build
-- `python3 scripts/check_docs_links.py` — all 828 cross-references resolve
-
-## 6. Design principles honored
-
-1. Warm cream base + single yellow accent — no second saturated hue (status pills are tints now).
-2. Generous radius — 16px cards, 24px container, 12px inputs, 8px pills.
-3. High whitespace, soft shadow cards, hairline borders.
-4. Numbers are heroes — big, bold, ink, label below.
-5. Ink (black) is the second accent — active nav, active settings tab.
-6. Small monochrome icons in soft rounded squares.
+- The account list keeps a table on phones (combined status cell) rather than a
+  separate card list; at 390px usernames truncate, but the row opens the full
+  detail panel. This is a deliberate density trade-off.
+- The workers page still exposes the legacy “Add container” path because the
+  backend contract exists; in the boxd stateless deployment, fleet creation is
+  an operator/API action, not a dashboard action.
+- The design uses the platform system font stack (SF Pro / Segoe UI) rather than
+  shipping a web font: faster first paint and closer to the reference.

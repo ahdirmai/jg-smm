@@ -87,12 +87,10 @@ event never fires and the default `waitUntil` hangs until timeout.
 | `workers.spec.ts` | Fleet | The create form renders the city list; **Add container lands a container in `docker ps` as `smm-worker-<slug>-<id>` and the card flips READY**; live-view disabled until noVNC publishes; provisioning log panel; delete removes row and container; delete refused while accounts packed; city grouping |
 | `accounts.spec.ts` | Accounts | Empty state, new-account route, row renders with auth badge, pause/resume flips the badge, bulk select counts only visible rows, status filter, row removal |
 | `actions.spec.ts` | Queue | Empty state, enqueue refuses without account/URL, like batch enqueues and renders, over-cap refusal, status filter narrows and reports the count, job card opens the detail dialog. Scrape is stubbed at `/api/scrape/target` (a paid actor run per test buys nothing here) |
-| `templates.spec.ts` | Comment pool | Empty state, create/edit/delete variant, empty-body refusal, platform filter |
-| `monitoring.spec.ts` | Monitoring + shell | KPI strip and its empty state, sync round trip settles, platform subroute, every nav entry routes to its page, header title/subtitle |
 | `reports.spec.ts` | Reports | Filters, empty actions report, targets report, CSV export endpoint, analytics metric picker |
 | `settings.spec.ts` | Settings | Session card and owner permission set, team roster, invite/create/remove member round trip, role change shows Save and reverts, the not-wired panels say so instead of faking controls, theme switch writes `dark` on `<html>` |
 | `audit.spec.ts` | Audit trail | Filter surface renders, an API write appears as a row with its outcome, the text filter narrows to exactly the match, the action filter is populated from real actions, refresh keeps the client filter |
-| `dead-links.spec.ts` | Dead links | Every internal `<a href>` on every dashboard page answers 200, and every monitoring platform subroute the sidebar generates renders the shell |
+| `dead-links.spec.ts` | Dead links | Every internal `<a href>` on every dashboard page answers 200 and the shell renders |
 
 Docker assertions (`workers.spec.ts`) are skipped when no daemon is reachable,
 so the rest of the suite still runs in CI without a socket.

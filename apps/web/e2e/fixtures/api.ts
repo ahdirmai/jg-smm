@@ -104,22 +104,6 @@ export class ApiClient {
     return this.json<void>(`/api/accounts/${id}`, { method: 'DELETE' });
   }
 
-  // Templates -----------------------------------------------------------
-  listTemplates(platform?: string) {
-    return this.json<TemplateList>(
-      `/api/templates${platform ? `?platform=${platform}` : ''}`,
-    );
-  }
-  createTemplate(platform: string, text: string) {
-    return this.json<CommentTemplate>('/api/templates', {
-      method: 'POST',
-      body: JSON.stringify({ platform, text, weight: 1 }),
-    });
-  }
-  deleteTemplate(id: string) {
-    return this.json<void>(`/api/templates/${id}`, { method: 'DELETE' });
-  }
-
   // Actions -------------------------------------------------------------
   listActions(status?: string) {
     return this.json<ActionJobList>(`/api/actions${status ? `?status=${status}` : ''}`);
@@ -173,27 +157,7 @@ export class ApiClient {
     return this.json<MeResponse>('/api/auth/me');
   }
 
-  // Monitoring (/monitoring) --------------------------------------------
-  createOfficialAccount(handle: string, platform = 'instagram') {
-    return this.json<OfficialAccount>('/api/official-accounts', {
-      method: 'POST',
-      body: JSON.stringify({ platform, handle }),
-    });
-  }
-  listOfficialAccounts(platform?: string) {
-    return this.json<OfficialAccountList>(
-      `/api/official-accounts${platform ? `?platform=${platform}` : ''}`,
-    );
-  }
-  deleteOfficialAccount(id: string) {
-    return this.json<OfficialAccount>(`/api/official-accounts/${id}`, { method: 'DELETE' });
-  }
-  refreshAnalytics() {
-    return this.json<AnalyticsIngestRun>('/api/analytics/refresh', { method: 'POST' });
-  }
-  analyticsOverview(windowDays = 30) {
-    return this.json<AnalyticsOverview>(`/api/analytics/overview?windowDays=${windowDays}`);
-  }
+
 }
 
 // Contract-shaped types (mirrors @smm/shared ApiSchemas; duplicated here so the
@@ -223,8 +187,6 @@ export type Account = {
   lastError?: string | null;
 };
 export type AccountList = { accounts: Account[] };
-export type CommentTemplate = { id: string; platform: string; text: string };
-export type TemplateList = { templates: CommentTemplate[] };
 export type ActionJob = {
   id: string;
   actionType: string;

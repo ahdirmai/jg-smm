@@ -100,7 +100,7 @@ export function PostMedia({ urls }: { urls: string[] | null }) {
         {many ? (
           <>
             {/* Arrows, inside soft squares per §3.6 — black as the second
-                accent on the cream ground, never a second saturated hue. */}
+                accent on the glass ground, never a second saturated hue. */}
             <button
               type="button"
               onClick={() => goTo(Math.max(0, index - 1))}

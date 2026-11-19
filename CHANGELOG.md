@@ -5,6 +5,31 @@
 > schema changes are traced here per `docs/DEVELOPMENT_RULE.md` §4.
 
 ## Unreleased
+### Changed
+- **Dashboard visual system replaced with a coastal-glass design.** The command
+  centre now uses a floating, labelled navigation rail, a phone dock with the
+  four primary destinations, a layered atmospheric canvas, and a quieter
+  translucent card surface. The palette is shared by light and dark mode; the
+  accent is reserved for primary actions and the active route. ReactBits
+  Spotlight Card and Glare Hover provide pointer and gloss feedback without
+  running on a loop. The shell adds a skip link, a focus-trapped mobile drawer,
+  visible focus rings, and 44px navigation targets.
+- **A worker-availability gate now protects the workspace.** After an hour of
+  no interaction the shell blocks the dashboard and opens a modal explaining
+  that boxd may have hibernated the fleet. `Start all workers` sends an
+  authenticated keepalive to every worker, then polls `/api/workers/health`
+  every two seconds and unlocks only when every worker answers. The background
+  is inert while blocked; there is no dismiss path that bypasses the check.
+- **Overview leads with the operator's next decision, not a decorative KPI row.**
+  Real queue, failure, fleet, and authentication counts drive the copy; the
+  analytics KPI strip stays blank until a snapshot exists instead of drawing a
+  fake trend. "Export CSV" became "Open reports", and the dead Filter button was
+  removed. Accounts keeps only the columns that fit a phone, with auth and status
+  combined below the breakpoint.
+### Removed
+- **Monitoring and Templates are gone from the dashboard.** Their routes, nav
+  entries, page titles, client hooks, API-client template methods, and e2e specs
+  were removed; the backend endpoints remain for data/API compatibility.
 ### Added
 - **YouTube comments now run end to end, on Shorts and watch pages.** The
   worker opens the video, waits for the "View N comments" control (Shorts does

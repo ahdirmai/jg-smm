@@ -441,7 +441,7 @@ function PostRow({ post, onOpen }: { post: ScrapedPost; onOpen: () => void }) {
     <button
       type="button"
       onClick={onOpen}
-      className="flex items-start gap-3 rounded-lg border border-border/60 bg-background p-2.5 text-left transition-colors hover:bg-secondary/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+      className="flex w-full min-w-0 items-start gap-3 overflow-hidden rounded-lg border border-border/60 bg-background p-2.5 text-left transition-colors hover:bg-secondary/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
     >
       {post.mediaUrls && post.mediaUrls.length > 0 ? (
         <span className="relative size-14 shrink-0 overflow-hidden rounded-lg bg-secondary">
@@ -466,7 +466,7 @@ function PostRow({ post, onOpen }: { post: ScrapedPost; onOpen: () => void }) {
             {platformLabel(post.platform) ?? post.platform}
           </Badge>
         </span>
-        <span className="line-clamp-2 text-xs leading-snug text-muted-foreground">
+        <span className="line-clamp-2 break-words text-xs leading-snug text-muted-foreground">
           {post.text || '(no caption)'}
         </span>
         <span className="flex items-center gap-2 text-[11px] text-muted-foreground">

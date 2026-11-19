@@ -2,260 +2,161 @@
 
 import {
   Activity,
-  ChevronDown,
   FileText,
-  Gauge,
   LayoutDashboard,
   Loader2,
   LogOut,
   Menu,
-  MessageSquareText,
   MonitorSmartphone,
-  ScrollText,
+  Plus,
   Search,
   Settings,
+  ShieldCheck,
   Users,
+  X,
+  type LucideIcon,
 } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { ModeToggle } from '@/components/mode-toggle';
+import { WorkerGate } from '@/components/worker-gate';
 import { Button } from '@smm/ui';
-import { cn } from '@/lib/utils';
 import { api } from '@/lib/api';
 import { useSession } from '@/lib/auth/session-context';
 import { ROLE_LABEL, can } from '@/lib/auth/permissions';
-import { PLATFORMS, PLATFORM_LABEL, platformLabel } from '@/lib/platforms';
+import { PLATFORMS, PLATFORM_LABEL } from '@/lib/platforms';
 import type { Permission } from '@/lib/auth/permissions';
 
-/**
- * Navigation tree (mirrors docs/prototype/shell.js).
- *
- * Flat items first; the "Monitoring" group expands into an Overview plus one
- * page per platform — each platform has its own analytics layout.
- */
-type Leaf = { href: string; label: string; icon: typeof Users; perm?: Permission };
-type Group = {
-  label: string;
-  icon: typeof Users;
-  items: { href: string; label: string }[];
-};
+type Leaf = { href: string; label: string; icon: LucideIcon; perm?: Permission };
+type Section = { label: string; items: Leaf[] };
 
-// Platform ids and display names come from @/lib/platforms. This file used to
-// carry its own seven-item copy, which had already drifted: the /scrape subtitle
-// still read "Instagram and Threads" after TikTok, and then after four more
-// platforms, landed. One list, imported, cannot go stale.
 const PLATFORM_LIST = PLATFORMS.map((p) => PLATFORM_LABEL[p]).join(', ');
 
-const NAV: (Leaf | Group)[] = [
-  { href: '/', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/workers', label: 'Workers', icon: MonitorSmartphone, perm: 'act' },
-  { href: '/accounts', label: 'Accounts', icon: Users, perm: 'act' },
-  { href: '/actions', label: 'Actions', icon: Activity, perm: 'act' },
-  { href: '/scrape', label: 'Scrape', icon: Search, perm: 'act' },
-  { href: '/templates', label: 'Templates', icon: MessageSquareText, perm: 'act' },
+/**
+ * Navigation is deliberately flat and short. Monitoring and Templates were
+ * removed from the product surface, so there is no group here that can expand
+ * into routes the sidebar no longer owns.
+ */
+const NAV: Section[] = [
   {
-    label: 'Monitoring',
-    icon: Gauge,
+    label: 'Workspace',
     items: [
-      { href: '/monitoring', label: 'Overview' },
-      ...PLATFORMS.map((p) => ({
-        href: `/monitoring/${p}`,
-        label: PLATFORM_LABEL[p],
-      })),
+      { href: '/', label: 'Overview', icon: LayoutDashboard },
+      { href: '/workers', label: 'Workers', icon: MonitorSmartphone, perm: 'act' },
+      { href: '/accounts', label: 'Accounts', icon: Users, perm: 'act' },
+      { href: '/actions', label: 'Actions', icon: Activity, perm: 'act' },
+      { href: '/scrape', label: 'Scrape', icon: Search, perm: 'act' },
     ],
   },
-  { href: '/reports', label: 'Reports', icon: FileText },
-  { href: '/audit', label: 'Audit Log', icon: ScrollText },
-  { href: '/settings', label: 'Settings', icon: Settings, perm: 'admin' },
+  {
+    label: 'Insights',
+    items: [
+      { href: '/reports', label: 'Reports', icon: FileText },
+      { href: '/audit', label: 'Audit log', icon: ShieldCheck },
+    ],
+  },
+  {
+    label: 'System',
+    items: [{ href: '/settings', label: 'Settings', icon: Settings, perm: 'admin' }],
+  },
 ];
 
-/**
- * Per-route header copy. The header is owned by the shell (not each page) so
- * the h-14 contract and the page title stay in sync by construction; a page
- * only contributes its own action buttons inside `main`.
- */
 const TITLES: Record<string, { title: string; subtitle: string }> = {
-  '/': { title: 'Dashboard', subtitle: 'Overview · last 30 days · official accounts' },
-  '/workers': { title: 'Workers', subtitle: 'Containers, health, and anchored location' },
-  '/accounts': { title: 'Accounts', subtitle: 'Click a row: live view during login, profile once authenticated' },
-  '/actions': { title: 'Actions', subtitle: 'Targeted like, comment, and report jobs' },
-  '/scrape': { title: 'Scrape', subtitle: `Keyword search over ${PLATFORM_LIST} posts` },
-  '/templates': { title: 'Templates', subtitle: 'Comment pool per platform' },
-  '/monitoring': { title: 'Monitoring', subtitle: 'Official-account reach across platforms' },
-  '/reports': { title: 'Reports', subtitle: 'Read-only pivots over executed work' },
-  '/audit': { title: 'Audit Log', subtitle: 'Who did what, when' },
-  '/settings': { title: 'Settings', subtitle: 'Team and system configuration' },
+  '/': { title: 'Overview', subtitle: 'What needs your attention across the workspace' },
+  '/workers': { title: 'Workers', subtitle: 'Fleet health, capacity, and live screens' },
+  '/accounts': { title: 'Accounts', subtitle: 'Credentials, sessions, and login state' },
+  '/actions': { title: 'Actions', subtitle: 'Queue, retry, and verify social actions' },
+  '/scrape': { title: 'Scrape', subtitle: `Keyword search across ${PLATFORM_LIST}` },
+  '/reports': { title: 'Reports', subtitle: 'Export the work that has already happened' },
+  '/audit': { title: 'Audit log', subtitle: 'Who changed what, and when' },
+  '/settings': { title: 'Settings', subtitle: 'Workspace access and appearance' },
   '/login': { title: 'Sign in', subtitle: '' },
-};
-
-const DEFAULT_TITLE: { title: string; subtitle: string } = {
-  title: 'SMM Automation',
-  subtitle: '',
 };
 
 function titleFor(pathname: string): { title: string; subtitle: string } {
   const exact = TITLES[pathname];
   if (exact) return exact;
-  // /monitoring/<platform> → the platform's analytics page.
-  if (pathname.startsWith('/monitoring/')) {
-    const name = pathname.split('/')[2] || '';
-    const label = platformLabel(name);
-    return {
-      title: label ?? 'Analytics',
-      subtitle: label ? `${label} · official account · reach & engagement` : '',
-    };
+  for (const prefix of ['/accounts', '/workers', '/actions', '/scrape']) {
+    const fallback = TITLES[prefix];
+    if (pathname.startsWith(prefix) && fallback) return fallback;
   }
-  if (pathname.startsWith('/accounts')) return TITLES['/accounts'] ?? DEFAULT_TITLE;
-  if (pathname.startsWith('/workers')) return TITLES['/workers'] ?? DEFAULT_TITLE;
-  return DEFAULT_TITLE;
+  return { title: 'Workspace', subtitle: '' };
 }
 
 function isActive(href: string, pathname: string): boolean {
   return href === '/' ? pathname === '/' : pathname.startsWith(href);
 }
 
-/**
- * The nav tree, rendered by both the desktop sidebar and the mobile drawer —
- * one implementation, so a nav change lands in both places.
- */
+function ShellSplash() {
+  return (
+    <div className="flex min-h-dvh items-center justify-center" data-testid="shell-splash">
+      <div className="card-surface flex items-center gap-3 rounded-2xl px-5 py-4 text-sm text-muted-foreground">
+        <Loader2 className="size-4 animate-spin" />
+        Loading workspace…
+      </div>
+    </div>
+  );
+}
+
+function Brand({ onNavigate }: { onNavigate?: () => void }) {
+  return (
+    <Link
+      href="/"
+      {...(onNavigate ? { onClick: onNavigate } : {})}
+      className="flex items-center gap-3 px-4 pt-5 pb-4"
+    >
+      <span className="grid size-10 place-items-center rounded-[14px] bg-primary text-primary-foreground shadow-[inset_0_1px_0_rgb(255_255_255/0.22),0_10px_20px_-12px_hsl(var(--primary)/0.8)]">
+        <Activity className="size-5" />
+      </span>
+      <span className="min-w-0">
+        <span className="block truncate text-[15px] font-semibold tracking-tight">SMM Automation</span>
+        <span className="block truncate text-[11px] text-muted-foreground">Social operations</span>
+      </span>
+    </Link>
+  );
+}
+
 function NavTree({
   entries,
   pathname,
   onNavigate,
 }: {
-  entries: (Leaf | Group)[];
+  entries: Section[];
   pathname: string;
   onNavigate?: () => void;
 }) {
   return (
-    <nav className="flex-1 space-y-1 overflow-y-auto p-2">
-      {entries.map((entry) =>
-        'items' in entry ? (
-          <NavGroup
-            key={entry.label}
-            group={entry}
-            pathname={pathname}
-            {...(onNavigate ? { onNavigate } : {})}
-          />
-        ) : (
-          <NavLeaf
-            key={entry.href}
-            item={entry}
-            pathname={pathname}
-            {...(onNavigate ? { onNavigate } : {})}
-          />
-        ),
-      )}
+    <nav className="flex-1 overflow-y-auto px-2 pb-4" aria-label="Workspace navigation">
+      {entries.map((section) => (
+        <div key={section.label}>
+          <p className="nav-section-label">{section.label}</p>
+          <div className="space-y-1">
+            {section.items.map((item) => {
+              const active = isActive(item.href, pathname);
+              const Icon = item.icon;
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  aria-current={active ? 'page' : undefined}
+                  {...(onNavigate ? { onClick: onNavigate } : {})}
+                  className="nav-link"
+                >
+                  <Icon className="size-4 shrink-0" aria-hidden="true" />
+                  <span className="truncate">{item.label}</span>
+                </Link>
+              );
+            })}
+          </div>
+        </div>
+      ))}
     </nav>
   );
 }
 
-function NavLeaf({
-  item,
-  pathname,
-  onNavigate,
-}: {
-  item: Leaf;
-  pathname: string;
-  onNavigate?: () => void;
-}) {
-  const active = isActive(item.href, pathname);
-  return (
-    <Link
-      href={item.href}
-      aria-current={active ? 'page' : undefined}
-      {...(onNavigate ? { onClick: onNavigate } : {})}
-      className={cn(
-        'flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
-        active
-          ? // Homies Lab principle 5: active/selected is solid ink (black),
-            // never gray — it is the "second accent".
-            'bg-foreground font-medium text-background'
-          : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
-      )}
-    >
-      <item.icon className="size-4" />
-      {item.label}
-    </Link>
-  );
-}
-
-function NavGroup({
-  group,
-  pathname,
-  onNavigate,
-}: {
-  group: Group;
-  pathname: string;
-  onNavigate?: () => void;
-}) {
-  const hasActive = group.items.some((i) => isActive(i.href, pathname));
-  const [open, setOpen] = useState(hasActive);
-  return (
-    <div>
-      <button
-        type="button"
-        aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-      >
-        <group.icon className="size-4" />
-        {group.label}
-        <ChevronDown className={cn('ml-auto size-4 transition-transform', open && 'rotate-180')} />
-      </button>
-      {open ? (
-        <div className="mt-0.5 space-y-0.5 pl-6">
-          {group.items.map((i) => {
-            const active = isActive(i.href, pathname);
-            return (
-              <Link
-                key={i.href}
-                href={i.href}
-                aria-current={active ? 'page' : undefined}
-                {...(onNavigate ? { onClick: onNavigate } : {})}
-                className={cn(
-                  'flex items-center gap-3 rounded-lg px-3 py-1.5 text-[0.8125rem] transition-colors',
-                  active
-                    ? 'bg-foreground font-medium text-background'
-                    : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
-                )}
-              >
-                {i.label}
-              </Link>
-            );
-          })}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-/**
- * Application shell: sidebar (w-60) + header (h-14) + main (p-6).
- *
- * Layout contract (docs/prototype/shell.js): every page is a `space-y-4`
- * column inside `main` — page authors write top-level sections with no manual
- * mt-*, vertical rhythm comes from the gap.
- */
-function ShellSplash() {
-  return (
-    <div
-      className="flex min-h-screen items-center justify-center bg-background"
-      data-testid="shell-splash"
-    >
-      <Loader2 className="size-6 animate-spin text-muted-foreground" />
-    </div>
-  );
-}
-
-/**
- * Sign out: clear the session server-side (the refresh cookie is what the API
- * needs to revoke), then re-probe so the context flips to anonymous and the
- * shell guard sends us to /login rather than a half-logged-out dashboard.
- */
-function SignOutButton() {
+function SignOutButton({ onNavigate }: { onNavigate?: () => void }) {
   const router = useRouter();
   const session = useSession();
   const [busy, setBusy] = useState(false);
@@ -265,10 +166,10 @@ function SignOutButton() {
     try {
       await api.logout();
     } catch {
-      // Even if the network call failed the local session is stale; still
-      // re-probe so the UI does not leave a dead cookie behind.
+      // A dead cookie is still a dead session; clear the local view either way.
     } finally {
       setBusy(false);
+      onNavigate?.();
       await session.refresh();
       router.replace('/login');
     }
@@ -280,7 +181,7 @@ function SignOutButton() {
       onClick={signOut}
       disabled={busy}
       data-testid="sign-out"
-      className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
+      className="nav-link w-full disabled:opacity-50"
     >
       {busy ? <Loader2 className="size-4 animate-spin" /> : <LogOut className="size-4" />}
       Sign out
@@ -288,137 +189,220 @@ function SignOutButton() {
   );
 }
 
+function SidebarFooter({ role, onNavigate }: { role: string | null; onNavigate?: () => void }) {
+  return (
+    <div className="mt-auto space-y-2 border-t border-white/40 px-3 py-3 dark:border-white/10">
+      <div className="flex items-center gap-2.5 rounded-[14px] bg-white/30 px-2.5 py-2 dark:bg-white/5">
+        <span className="grid size-8 shrink-0 place-items-center rounded-full bg-primary/12 text-[11px] font-bold text-primary">
+          {(role ?? 'OP').slice(0, 2).toUpperCase()}
+        </span>
+        <div className="min-w-0">
+          <p className="truncate text-xs font-semibold">{role ? ROLE_LABEL[role as keyof typeof ROLE_LABEL] : 'Operator'}</p>
+          <p className="truncate text-[10px] text-muted-foreground" data-testid="session-role">
+            signed in
+          </p>
+        </div>
+      </div>
+      <SignOutButton {...(onNavigate ? { onNavigate } : {})} />
+      <ModeToggle />
+    </div>
+  );
+}
+
+/** Primary destinations that stay visible on a phone, one thumb away. */
+function MobileDock({
+  pathname,
+  onMore,
+  navOpen,
+}: {
+  pathname: string;
+  onMore: () => void;
+  navOpen: boolean;
+}) {
+  const primary = [
+    { href: '/', label: 'Home', icon: LayoutDashboard },
+    { href: '/accounts', label: 'Accounts', icon: Users },
+    { href: '/actions', label: 'Actions', icon: Activity },
+    { href: '/scrape', label: 'Scrape', icon: Search },
+  ];
+  return (
+    <nav className="mobile-dock" aria-label="Primary">
+      {primary.map((item) => {
+        const active = isActive(item.href, pathname);
+        const Icon = item.icon;
+        return (
+          <Link key={item.href} href={item.href} aria-current={active ? 'page' : undefined}>
+            <span className="grid place-items-center">
+              <Icon className="size-[18px]" aria-hidden="true" />
+              <span className="mobile-dock__label">{item.label}</span>
+            </span>
+          </Link>
+        );
+      })}
+      <button
+        type="button"
+        onClick={onMore}
+        aria-label="Open more navigation"
+        aria-haspopup="dialog"
+        aria-expanded={navOpen}
+      >
+        <span className="grid place-items-center">
+          <Menu className="size-[18px]" aria-hidden="true" />
+          <span className="mobile-dock__label">More</span>
+        </span>
+      </button>
+    </nav>
+  );
+}
+
 export function DashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const session = useSession();
-  // Mobile nav drawer. Declared with the other hooks — the session early
-  // returns below would otherwise make this a conditional hook call.
   const [navOpen, setNavOpen] = useState(false);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
 
-  // No session = no dashboard. The API client also redirects on a mid-session
-  // 401 (see lib/api.ts); this guard covers a hard navigation/refresh where
-  // /api/auth/me is the only call that runs. Login keeps its `next` param so a
-  // successful sign-in lands back on the page the caller wanted.
   useEffect(() => {
     if (session.status === 'anonymous') {
       router.replace(`/login?next=${encodeURIComponent(pathname)}`);
     }
   }, [session.status, pathname, router]);
 
-  // Resolve before painting: otherwise the nav flashes for an unauthenticated
-  // caller between the first render and the redirect firing.
-  if (session.status === 'loading') {
-    return <ShellSplash />;
-  }
-  if (session.status === 'anonymous') {
+  useEffect(() => {
+    setNavOpen(false);
+  }, [pathname]);
+
+  useEffect(() => {
+    if (!navOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setNavOpen(false);
+        return;
+      }
+      if (event.key !== 'Tab' || !panelRef.current) return;
+      const focusable = Array.from(
+        panelRef.current.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (!first || !last) return;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    document.body.style.overflow = 'hidden';
+    closeRef.current?.focus();
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = '';
+    };
+  }, [navOpen]);
+
+  if (session.status === 'loading' || session.status === 'anonymous') {
     return <ShellSplash />;
   }
 
   const role = session.role;
   const { title, subtitle } = titleFor(pathname);
-
-  const visible = NAV.filter((entry) => {
-    // Read-only roles still see the dashboards; write surfaces are hidden so
-    // the nav cannot route to a page of blocked controls.
-    if ('perm' in entry && entry.perm) return can(role, entry.perm);
-    return true;
-  });
-
-  // Mobile nav drawer. The desktop sidebar is hidden below md, so without this
-  // a phone has no navigation at all.
-  const sidebarFooter = (
-    <div className="space-y-2 border-t border-border/60 p-3">
-      {role ? (
-        <div className="flex items-center gap-2.5">
-          <span className="grid size-8 shrink-0 place-items-center rounded-full bg-secondary text-xs font-semibold">
-            {ROLE_LABEL[role].slice(0, 2).toUpperCase()}
-          </span>
-          <div className="min-w-0">
-            <div className="truncate text-sm font-medium">ahdirmai</div>
-            <div className="truncate text-xs text-muted-foreground" data-testid="session-role">
-              {ROLE_LABEL[role].toLowerCase()}@local.test
-            </div>
-          </div>
-        </div>
-      ) : null}
-      <SignOutButton />
-      <ModeToggle />
-    </div>
-  );
-
-  const brand = (
-    <Link
-      href="/"
-      onClick={() => setNavOpen(false)}
-      className="flex h-14 items-center gap-2.5 border-b border-border/60 px-4"
-    >
-      <span className="grid size-7 place-items-center rounded-lg bg-primary text-primary-foreground">
-        <Activity className="size-4" />
-      </span>
-      <span className="text-sm font-semibold tracking-tight">SMM Automation</span>
-    </Link>
-  );
+  const visible = NAV.map((section) => ({
+    ...section,
+    items: section.items.filter((item) => !item.perm || can(role, item.perm)),
+  })).filter((section) => section.items.length > 0);
 
   return (
-    <div className="flex min-h-screen">
-      <aside className="hidden w-60 shrink-0 flex-col border-r border-border/60 bg-card md:flex">
-        {brand}
+    <WorkerGate>
+      <div className="app-shell">
+      <a
+        href="#main"
+        className="fixed left-4 top-4 z-[100] -translate-y-24 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground focus:translate-y-0"
+      >
+        Skip to content
+      </a>
+
+      <div className="atmosphere" aria-hidden="true">
+        <div className="atmosphere__cloud atmosphere__cloud--one" />
+        <div className="atmosphere__cloud atmosphere__cloud--two" />
+      </div>
+
+      <aside className="app-sidebar" aria-label="Workspace">
+        <Brand />
         <NavTree entries={visible} pathname={pathname} />
-        {sidebarFooter}
+        <SidebarFooter role={role} />
       </aside>
 
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border/60 bg-card/40 px-4 backdrop-blur-sm md:px-6">
-          {/* Below md the sidebar is gone; this button is the only way to reach
-           * another page on a phone. */}
-          <Button
+      <div className="app-main-wrap">
+        <header className="app-header">
+          <button
             type="button"
-            variant="outline"
-            size="icon"
-            className="md:hidden"
+            className="grid size-10 shrink-0 place-items-center rounded-xl border border-border/70 bg-white/35 text-muted-foreground transition-colors hover:bg-white/60 hover:text-foreground lg:hidden dark:bg-white/5 dark:hover:bg-white/10"
             aria-label="Open navigation"
             aria-expanded={navOpen}
             onClick={() => setNavOpen(true)}
           >
             <Menu className="size-4" />
-          </Button>
-          <div className="min-w-0">
-            <h1 className="truncate text-base font-semibold tracking-tight">{title}</h1>
-            {subtitle ? <p className="truncate text-xs text-muted-foreground">{subtitle}</p> : null}
+          </button>
+
+          <div className="min-w-0 flex-1">
+            <h1 className="truncate text-[19px] font-semibold tracking-[-0.025em] md:text-[22px]">{title}</h1>
+            {subtitle ? <p className="mt-0.5 truncate text-xs text-muted-foreground">{subtitle}</p> : null}
           </div>
-          <div className="ml-auto flex items-center gap-2">
-            <ModeToggle header />
+
+          <div className="flex shrink-0 items-center gap-2">
+            <div className="hidden sm:block">
+              <ModeToggle header />
+            </div>
+            <Button asChild size="sm" className="hidden sm:inline-flex">
+              <Link href="/actions">
+                <Plus />
+                New action
+              </Link>
+            </Button>
           </div>
         </header>
 
-        <main className="flex-1 p-4 md:p-6">
-          <div className="space-y-4">{children}</div>
+        <main id="main" tabIndex={-1} className="app-content">
+          <div className="page-stack">{children}</div>
         </main>
       </div>
 
-      {/* Mobile drawer: a fixed overlay, not a component dependency — the shell
-       * stays dependency-light and the drawer closes itself on navigation
-       * (NavTree's onNavigate) and on Escape. */}
+      <MobileDock pathname={pathname} onMore={() => setNavOpen(true)} navOpen={navOpen} />
+
       {navOpen ? (
-        <div className="fixed inset-0 z-50 flex md:hidden" role="dialog" aria-label="Navigation">
+        <div className="fixed inset-0 z-[60] flex lg:hidden" role="dialog" aria-modal="true" aria-label="Navigation">
           <button
             type="button"
+            className="absolute inset-0 bg-[#07131c]/40 backdrop-blur-[2px]"
             aria-label="Close navigation"
-            className="absolute inset-0 bg-foreground/40"
             onClick={() => setNavOpen(false)}
           />
-          <div className="relative flex w-72 max-w-[85vw] flex-col bg-card shadow-popover">
-            {brand}
-            <NavTree
-              entries={visible}
-              pathname={pathname}
-              onNavigate={() => setNavOpen(false)}
-            />
-            {sidebarFooter}
+          <div ref={panelRef} className="glass-strong relative ml-auto flex h-full w-[300px] max-w-[86vw] flex-col rounded-l-[28px] border-y-0 border-r-0">
+            <div className="flex items-center justify-between pr-3">
+              <Brand onNavigate={() => setNavOpen(false)} />
+              <button
+                ref={closeRef}
+                type="button"
+                className="grid size-10 place-items-center rounded-xl text-muted-foreground hover:bg-white/40 hover:text-foreground dark:hover:bg-white/10"
+                aria-label="Close navigation"
+                onClick={() => setNavOpen(false)}
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+            <NavTree entries={visible} pathname={pathname} onNavigate={() => setNavOpen(false)} />
+            <SidebarFooter role={role} onNavigate={() => setNavOpen(false)} />
           </div>
         </div>
       ) : null}
-    </div>
+      </div>
+    </WorkerGate>
   );
 }

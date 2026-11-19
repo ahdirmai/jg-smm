@@ -44,7 +44,7 @@ export function ModeToggle({ header = false }: { header?: boolean }) {
           aria-pressed={!isDark}
           onClick={() => setTheme('light')}
           className={cn(
-            'inline-flex h-7 items-center gap-1.5 rounded-full px-2.5 text-xs font-medium transition-colors',
+            'inline-flex h-8 items-center gap-1.5 rounded-full px-2.5 text-xs font-medium transition-colors',
             !isDark
               ? 'bg-card text-foreground shadow-sm'
               : 'text-muted-foreground hover:text-foreground',
@@ -58,7 +58,7 @@ export function ModeToggle({ header = false }: { header?: boolean }) {
           aria-pressed={isDark}
           onClick={() => setTheme('dark')}
           className={cn(
-            'inline-flex h-7 items-center gap-1.5 rounded-full px-2.5 text-xs font-medium transition-colors',
+            'inline-flex h-8 items-center gap-1.5 rounded-full px-2.5 text-xs font-medium transition-colors',
             isDark
               ? 'bg-card text-foreground shadow-sm'
               : 'text-muted-foreground hover:text-foreground',

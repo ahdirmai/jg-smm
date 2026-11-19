@@ -70,6 +70,18 @@ import { platformIcon } from '@/components/platform-icon';
 
 const STATUSES = ['PENDING', 'ACTIVE', 'PAUSED', 'QUARANTINED', 'DEAD', 'ARCHIVED'] as const;
 
+/**
+ * The handle field can contain a provider token (some imported sessions store
+ * one there). Showing a 200-character opaque token in a table is noise and
+ * pushes every useful column off screen; fall back to the account's timezone.
+ */
+function accountSecondary(account: Account): string {
+  const handle = account.handle?.trim();
+  const looksOpaque = !handle || handle.length > 42 || /[%:]/.test(handle);
+  if (handle && handle !== account.username && !looksOpaque) return handle;
+  return account.timezone || 'no timezone';
+}
+
 const AUTH_STATUSES = [
   'PENDING',
   'AUTHENTICATING',
@@ -538,7 +550,13 @@ This account still holds a worker from an earlier session. Use "Release session"
 
       {/* A wall of zeros is not a stat strip — with no accounts the numbers
           carry nothing, so the empty state below speaks alone. */}
-      {accounts.length > 0 ? (
+      {loading && accounts.length === 0 ? (
+        <section className="grid grid-cols-2 gap-4 lg:grid-cols-4" aria-label="Loading account summary">
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="card-surface h-[92px] animate-pulse rounded-[26px]" />
+          ))}
+        </section>
+      ) : accounts.length > 0 ? (
         <section className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           <Stat
             icon={Users}
@@ -808,7 +826,7 @@ This account still holds a worker from an earlier session. Use "Release session"
             ) : null}
 
             <div className="overflow-hidden rounded-lg border border-border/60">
-              <Table>
+              <Table className="w-full table-fixed">
                 <TableHeader>
                   <TableRow className="bg-secondary/40 hover:bg-secondary/40">
                     <TableHead className="w-10">
@@ -821,21 +839,29 @@ This account still holds a worker from an earlier session. Use "Release session"
                         disabled={!canAct || filtered.length === 0}
                       />
                     </TableHead>
-                    <TableHead>Account</TableHead>
-                    <TableHead>Platform</TableHead>
+                    <TableHead className="w-[52%] md:w-[34%]">Account</TableHead>
+                    <TableHead className="hidden w-24 sm:table-cell">Platform</TableHead>
                     {/* The account's own city. The "worker" column beside it
                         is a LEASE, not a home: an idle pool account has none. */}
-                    <TableHead>Location</TableHead>
-                    <TableHead>Worker</TableHead>
-                    <TableHead>Auth</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="w-10" />
+                    <TableHead className="hidden w-24 lg:table-cell">Location</TableHead>
+                    <TableHead className="hidden w-24 xl:table-cell">Worker</TableHead>
+                    <TableHead className="hidden w-32 md:table-cell">Auth</TableHead>
+                    <TableHead className="w-[36%] md:w-32">Status</TableHead>
+                    <TableHead className="w-12" />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filtered.length === 0 && !loading ? (
+                  {loading && accounts.length === 0 ? (
+                    Array.from({ length: 6 }).map((_, index) => (
+                      <TableRow key={`skeleton-${index}`} className="hover:bg-transparent">
+                        <TableCell colSpan={8} className="py-3">
+                          <div className="h-9 animate-pulse rounded-lg bg-secondary/60" />
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  ) : filtered.length === 0 && !loading ? (
                     <TableRow>
-                      <TableCell colSpan={7} className="py-0">
+                      <TableCell colSpan={8} className="py-0">
                         {/* Reached only with accounts present — the zero-account
                           case never renders this table (see above). */}
                         <div className="flex flex-col items-center gap-3 py-12 text-center">
@@ -904,32 +930,30 @@ This account still holds a worker from an earlier session. Use "Release session"
                                 return <Icon className="size-4" />;
                               })()}
                             </span>
-                            <div className="min-w-0">
-                              <div className="truncate font-medium">@{a.username}</div>
-                              <div className="truncate font-mono text-xs text-muted-foreground">
-                                {a.handle && a.handle !== a.username
-                                  ? a.handle
-                                  : a.timezone || 'no timezone'}
+                            <div className="min-w-0 max-w-[280px]">
+                              <div className="truncate font-medium" title={`@${a.username}`}>@{a.username}</div>
+                              <div className="truncate text-xs text-muted-foreground">
+                                {accountSecondary(a)}
                               </div>
                             </div>
                           </div>
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="hidden sm:table-cell">
                           <Badge variant="outline">{platformLabel(a.platform)}</Badge>
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="hidden lg:table-cell">
                           {a.location ? (
                             <Badge variant="outline">{a.location}</Badge>
                           ) : (
                             <span className="text-xs text-muted-foreground">—</span>
                           )}
                         </TableCell>
-                        <TableCell className="font-mono text-xs text-muted-foreground">
+                        <TableCell className="hidden font-mono text-xs text-muted-foreground xl:table-cell">
                           {/* workerId here is the interactive LEASE, so a dash
                               means idle/schedulable — not unplaced. */}
                           {a.workerId ? a.workerId.slice(0, 12) : 'idle'}
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="hidden md:table-cell">
                           <AuthBadge status={a.authStatus} />
                           {a.lastError && (
                             <p className="mt-1 max-w-56 text-xs text-muted-foreground">
@@ -941,7 +965,10 @@ This account still holds a worker from an earlier session. Use "Release session"
                           {/* Primary: the worker's enforced state (what is
                            * actually running). Secondary: the account's own
                            * lifecycle. Two pills, no colour lie. */}
-                          <div className="flex items-center gap-1.5">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="md:hidden">
+                              <AuthBadge status={a.authStatus} />
+                            </span>
                             {workerStateFor(a) === 'PAUSED' ? (
                               <Badge variant="warning">PAUSED</Badge>
                             ) : workerStateFor(a) === 'RUNNING' ? (
@@ -949,6 +976,11 @@ This account still holds a worker from an earlier session. Use "Release session"
                             ) : null}
                             <StatusBadge status={a.status} />
                           </div>
+                          {a.lastError ? (
+                            <p className="mt-1 line-clamp-2 text-xs text-muted-foreground md:hidden">
+                              {loginResultNote(a.lastError)}
+                            </p>
+                          ) : null}
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center justify-end gap-1">
