@@ -1,0 +1,21 @@
+[Unit]
+Description=SMM stateless worker RPC
+After=network-online.target smm-xvfb.service
+Wants=network-online.target
+Requires=smm-xvfb.service
+[Service]
+Type=simple
+User=boxd
+Group=boxd
+WorkingDirectory=/home/boxd/smm/apps/worker
+Environment=HOME=/home/boxd
+Environment=DISPLAY=:99
+Environment=TZ=Asia/Jakarta
+ExecStartPre=/home/boxd/smm/infra/boxd/render-worker-env.sh
+ExecStart=/bin/sh -c 'set -a; . /home/boxd/smm/.boxenv; set +a; exec /usr/local/bin/node /home/boxd/smm/apps/worker/dist/index.js'
+Restart=always
+RestartSec=3
+StandardOutput=append:/home/boxd/smm/worker.log
+StandardError=append:/home/boxd/smm/worker.log
+[Install]
+WantedBy=multi-user.target

@@ -89,6 +89,17 @@
   Actions card).
 
 ### Fixed
+- **Boxd deployment: the login worker and live view were unreachable.** The
+  pool bootstrapper appended `DefaultLoginEndpoint` even when
+  `WORKER_POOL_ENDPOINTS` already named `smm-login-01`, overwriting the boxd
+  `https://rpc…` URL with `http://smm-login-01:8090` (not resolvable off the
+  compose network); it now only seeds a login worker when the name is absent.
+  The noVNC URL also emitted `/websockify` (noVNC prepends `/`, producing
+  `//websockify`, 404); it is relative and keeps the page directory, and the
+  worker nginx copies `$arg_ticket` into a variable for `auth_request` because
+  the directive does not interpolate variables in its URI. Verified live:
+  accounts/sessions imported, RPC health on all 11 workers, ticketed
+  WebSocket 101, and a browser noVNC connection.
 - **YouTube comment actions failed on live Shorts and watch pages.** The
   "View N comments" selector was wrong, the editor lost focus after the first
   keystroke (leaving only a prefix), and the nav budget was shorter than the

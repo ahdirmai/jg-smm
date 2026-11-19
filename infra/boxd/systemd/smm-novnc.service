@@ -1,0 +1,11 @@
+[Unit]
+Description=SMM noVNC websocket for display :99
+After=smm-x11vnc.service
+Requires=smm-x11vnc.service
+[Service]
+User=boxd
+ExecStart=/usr/bin/websockify --web=/usr/share/novnc 127.0.0.1:6080 127.0.0.1:5900
+Restart=always
+RestartSec=2
+[Install]
+WantedBy=multi-user.target

@@ -38,6 +38,12 @@ production path; see `docs/SYSTEM_DESIGN.md` → Local Tier).
 Production (K8s) install order, manifests and the tier's known gaps:
 [`docs/DEPLOY_K8S.md`](docs/DEPLOY_K8S.md), with manifests in `infra/k8s/`.
 
+The active boxd deployment (hub + login worker + 10 workers) and its session
+import procedure are in
+[`docs/stateless-worker-pool/06-BOXD-INFRA-DEPLOYMENT-RUNBOOK.md`](docs/stateless-worker-pool/06-BOXD-INFRA-DEPLOYMENT-RUNBOOK.md).
+Current demo entry point: `https://smm-hub.boxd.sh` (the custom domain is still
+pending).
+
 ## Bootstrap
 
 ```sh

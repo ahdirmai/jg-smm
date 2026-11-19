@@ -1,0 +1,10 @@
+[Unit]
+Description=SMM Xvfb display :99
+After=network.target
+[Service]
+User=boxd
+ExecStart=/usr/bin/Xvfb :99 -screen 0 1280x800x24 -ac +extension RANDR
+Restart=always
+RestartSec=2
+[Install]
+WantedBy=multi-user.target
