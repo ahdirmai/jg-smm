@@ -13,6 +13,7 @@ import (
 	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
 	"github.com/ahdirmai/jg-smm/apps/api/internal/obs"
 	"github.com/ahdirmai/jg-smm/apps/api/internal/port"
+	"github.com/google/uuid"
 )
 
 // JobService records worker-reported outcomes. Workers never touch the DB
@@ -247,12 +248,33 @@ func (s *JobService) RecordAttempt(ctx context.Context, r AttemptRecord) error {
 	// The verdict is written first: even the retry decision below reads from the
 	// log, and a crash between the upsert and the reschedule leaves a FAILED
 	// row, not a lost one.
+	// The stateless worker sends its NAME in workerId (it is also the live-view
+	// ticket identity), while action_log.worker_id is a UUID FK. Resolve the name
+	// here so the verdict joins to the worker row; a UUID from the legacy path is
+	// already valid. Fall back to the job's recorded worker when the name lookup
+	// fails (e.g. a worker row removed after the job was claimed).
+	workerID := derefStrPtr(r.WorkerID)
+	if workerID != "" {
+		if _, err := uuid.Parse(workerID); err != nil {
+			if s.workers != nil {
+				if w, err := s.workers.GetByName(ctx, workerID); err == nil {
+					workerID = w.ID
+				}
+			}
+		}
+	}
+	if workerID == "" {
+		if job, err := s.actions.GetActionJob(ctx, jobID); err == nil {
+			workerID = job.WorkerID
+		}
+	}
+
 	log := domain.ActionLog{
 		ActionJobID:     jobID,
 		Attempt:         attempt,
 		Status:          r.Status,
 		Verified:        r.Status == domain.AttemptSuccess,
-		WorkerID:        derefStrPtr(r.WorkerID),
+		WorkerID:        workerID,
 		TemplateID:      derefStrPtr(r.TemplateID),
 		RenderedText:    derefStrPtr(r.RenderedText),
 		ResponseExcerpt: derefStrPtr(r.ResponseExcerpt),

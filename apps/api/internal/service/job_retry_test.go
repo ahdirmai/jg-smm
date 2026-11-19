@@ -122,6 +122,17 @@ func (f *fakeActionStore) RequeueFailedActionJob(_ context.Context, id string, a
 	return domain.ActionJob{}, domain.ErrNotFound
 }
 
+// AssignActionJobWorker mirrors the SQL's post-dispatch attribution.
+func (f *fakeActionStore) AssignActionJobWorker(_ context.Context, id, workerID string) error {
+	for i := range f.pending {
+		if f.pending[i].ID == id {
+			f.pending[i].WorkerID = workerID
+			return nil
+		}
+	}
+	return nil
+}
+
 // SetActionJobTemplate mirrors the SQL's post-claim write of the variant id.
 func (f *fakeActionStore) SetActionJobTemplate(_ context.Context, id, templateID string) error {
 	for i := range f.pending {

@@ -11,6 +11,25 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const assignActionJobWorker = `-- name: AssignActionJobWorker :exec
+UPDATE action_job
+SET worker_id = $2
+WHERE id = $1
+`
+
+type AssignActionJobWorkerParams struct {
+	ID       pgtype.UUID `json:"id"`
+	WorkerID pgtype.UUID `json:"worker_id"`
+}
+
+// Records which pool worker actually accepted the pushed job. The legacy path
+// stamps worker_id in ClaimNextActionJob; the stateless path leases a worker
+// AFTER the claim, so the attribution is written here once the push succeeds.
+func (q *Queries) AssignActionJobWorker(ctx context.Context, arg AssignActionJobWorkerParams) error {
+	_, err := q.db.Exec(ctx, assignActionJobWorker, arg.ID, arg.WorkerID)
+	return err
+}
+
 const cancelActionJob = `-- name: CancelActionJob :one
 UPDATE action_job
 SET status      = 'CANCELLED',
@@ -558,6 +577,50 @@ func (q *Queries) ListActionLogsByJob(ctx context.Context, actionJobID pgtype.UU
 	return items, nil
 }
 
+const requeueFailedActionJob = `-- name: RequeueFailedActionJob :one
+UPDATE action_job
+SET status       = 'PENDING',
+    scheduled_at = $2,
+    started_at   = NULL,
+    finished_at  = NULL,
+    worker_id    = NULL,
+    error        = NULL
+WHERE id = $1
+  AND status = 'FAILED'
+RETURNING id, type, target_id, account_id, worker_id, status, scheduled_at, started_at, finished_at, attempts, error, created_at, template_id
+`
+
+type RequeueFailedActionJobParams struct {
+	ID          pgtype.UUID        `json:"id"`
+	ScheduledAt pgtype.Timestamptz `json:"scheduled_at"`
+}
+
+// Manual operator retry. Deliberately separate from RescheduleActionJob:
+// that query's PENDING/RUNNING guard is the terminal-state guard that stops a
+// replayed callback from re-posting a finished action, and it must stay.
+// A retry is an explicit operator decision, so it may resurrect FAILED and
+// starts a fresh attempt budget.
+func (q *Queries) RequeueFailedActionJob(ctx context.Context, arg RequeueFailedActionJobParams) (ActionJob, error) {
+	row := q.db.QueryRow(ctx, requeueFailedActionJob, arg.ID, arg.ScheduledAt)
+	var i ActionJob
+	err := row.Scan(
+		&i.ID,
+		&i.Type,
+		&i.TargetID,
+		&i.AccountID,
+		&i.WorkerID,
+		&i.Status,
+		&i.ScheduledAt,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.Attempts,
+		&i.Error,
+		&i.CreatedAt,
+		&i.TemplateID,
+	)
+	return i, err
+}
+
 const rescheduleActionJob = `-- name: RescheduleActionJob :one
 UPDATE action_job
 SET status       = 'PENDING',
@@ -729,45 +792,6 @@ func (q *Queries) UpsertActionLog(ctx context.Context, arg UpsertActionLogParams
 		&i.ScreenshotUrl,
 		&i.DurationMs,
 		&i.Ts,
-		&i.TemplateID,
-	)
-	return i, err
-}
-
-const requeueFailedActionJob = `-- name: RequeueFailedActionJob :one
-UPDATE action_job
-SET status       = 'PENDING',
-    scheduled_at = $2,
-    started_at   = NULL,
-    finished_at  = NULL,
-    worker_id    = NULL,
-    error        = NULL
-WHERE id = $1
-  AND status = 'FAILED'
-RETURNING id, type, target_id, account_id, worker_id, status, scheduled_at, started_at, finished_at, attempts, error, created_at, template_id
-`
-
-type RequeueFailedActionJobParams struct {
-	ID          pgtype.UUID        `json:"id"`
-	ScheduledAt pgtype.Timestamptz `json:"scheduled_at"`
-}
-
-func (q *Queries) RequeueFailedActionJob(ctx context.Context, arg RequeueFailedActionJobParams) (ActionJob, error) {
-	row := q.db.QueryRow(ctx, requeueFailedActionJob, arg.ID, arg.ScheduledAt)
-	var i ActionJob
-	err := row.Scan(
-		&i.ID,
-		&i.Type,
-		&i.TargetID,
-		&i.AccountID,
-		&i.WorkerID,
-		&i.Status,
-		&i.ScheduledAt,
-		&i.StartedAt,
-		&i.FinishedAt,
-		&i.Attempts,
-		&i.Error,
-		&i.CreatedAt,
 		&i.TemplateID,
 	)
 	return i, err

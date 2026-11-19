@@ -337,6 +337,20 @@ func (s *AccountService) CloseLiveView(ctx context.Context, accountID string) er
 					"accountId", accountID, "slots", cleared)
 			}
 		}
+		// A parked login with no lease is still a trap: the next attempt is
+		// refused with "submit the code", but there is no browser left to
+		// submit it into. Settle the status even when the lease was already
+		// gone — this is the idempotent second click the operator reaches for
+		// after a crash.
+		if acc.AuthStatus == domain.AuthNeedsInput {
+			acc.AuthStatus = domain.AuthFailed
+			msg := "login cancelled: operator released the session"
+			acc.LastError = &msg
+			if _, err := s.accounts.Update(ctx, acc); err != nil {
+				return fmt.Errorf("account service: settle parked login: %w", err)
+			}
+			s.publishAccount(ctx, toAccountView(acc))
+		}
 		return nil
 	}
 	workerID := *acc.WorkerID

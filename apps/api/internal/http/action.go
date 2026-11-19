@@ -233,6 +233,9 @@ func jobToDTO(j domain.ActionJob) oapigen.ActionJob {
 	if j.Error != "" {
 		row.Error = nullable.NewNullableWithValue(j.Error)
 	}
+	if j.WorkerID != "" {
+		row.WorkerId = nullable.NewNullableWithValue(j.WorkerID)
+	}
 	return row
 }
 

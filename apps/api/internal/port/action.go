@@ -23,6 +23,10 @@ type ActionStore interface {
 	// template exists to record. The row is created before the text is composed,
 	// so this is a post-claim write rather than an INSERT field.
 	SetActionJobTemplate(ctx context.Context, id, templateID string) error
+	// AssignActionJobWorker records the worker that accepted a pooled dispatch.
+	// The job is claimed before the pool leases a machine, so this is the only
+	// write that can attribute the attempt to a specific worker.
+	AssignActionJobWorker(ctx context.Context, id, workerID string) error
 	RescheduleActionJob(ctx context.Context, id string, scheduledAt time.Time) (domain.ActionJob, error)
 	// RequeueFailedActionJob is the operator's manual retry: FAILED -> PENDING
 	// with a fresh attempt budget. Separate from RescheduleActionJob, whose
