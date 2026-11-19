@@ -31,6 +31,21 @@ type Account struct {
 	// by any verified login; at the threshold the account is quarantined.
 	RefreshFailures int
 	CreatedAt       time.Time
+
+	// Location, Latitude, Longitude and Timezone are the account's OWN device
+	// identity. A boxd worker is a disposable microVM that wakes anywhere in the
+	// region and sleeps again, so the city can no longer be read off the machine
+	// the account happens to run on. The three location fields are set together
+	// or not at all (DB constraint account_location_coords_pairing).
+	Location  *string
+	Latitude  *float64
+	Longitude *float64
+	// Timezone is the IANA zone the browser context must report (Asia/Jakarta,
+	// Asia/Makassar). Never empty: the column defaults to WIB.
+	Timezone string
+	// UserAgent is the UA the context presents, or nil to use the platform
+	// default. Stored so the fingerprint survives a worker swap unchanged.
+	UserAgent *string
 }
 
 // IsPackable reports whether the account can be assigned to a container. A
@@ -58,8 +73,9 @@ type ProxyGroup struct {
 	CreatedAt      time.Time
 }
 
-// Worker is one container / one "device". It hosts many accounts, at most one
-// per platform (enforced by the account unique constraint at the DB level).
+// Worker is one execution slot. In the stateless pool each row is a boxd
+// microVM (smm-worker-01..10) that runs ONE account at a time: accounts reach it
+// by HTTPS push and account.worker_id is a short lease, not a permanent home.
 type Worker struct {
 	ID             string
 	Name           string
@@ -87,6 +103,11 @@ type Worker struct {
 	RestartCount   int
 	ImageVersion   string
 	CreatedAt      time.Time
+	// EndpointURL is the worker's RPC base the API pushes actions to
+	// (https://rpc.smm-worker-01.boxd.sh in the fleet,
+	// http://smm-worker-01:8090 on a local compose network). The code is
+	// identical in both; only this value differs.
+	EndpointURL *string
 }
 
 // Heartbeat is one worker telemetry sample.

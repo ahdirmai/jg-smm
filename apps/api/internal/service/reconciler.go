@@ -37,6 +37,15 @@ type Reconciler struct {
 	// resume increments it. Reset by ReconcileAll.
 	counted bool
 	running int
+	// poolMode disables the loop entirely: see Run.
+	poolMode bool
+}
+
+// WithPoolMode marks this reconciler as belonging to a stateless fleet, so Run
+// returns immediately instead of provisioning containers those rows do not have.
+func (r *Reconciler) WithPoolMode(on bool) *Reconciler {
+	r.poolMode = on
+	return r
 }
 
 // NewReconciler wires the loop. workers and driver are required; the reconciler
@@ -312,6 +321,14 @@ func (r *Reconciler) Run(ctx context.Context, interval time.Duration) {
 	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	if r.poolMode {
+		// In the stateless pool a worker row is a boxd microVM the hub reaches
+		// over HTTPS. There is no container to create, start or stop from here:
+		// running the loop would try to provision machines the driver cannot
+		// manage and fight boxd's own lifecycle.
+		r.logger.Info("reconciler disabled: stateless worker pool")
+		return
+	}
 	r.logger.Info("reconciler started", "interval", interval.String())
 	for {
 		select {

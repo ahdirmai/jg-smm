@@ -2,12 +2,14 @@ package service
 
 import (
 	"context"
+	"errors"
 	"math"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/port"
 )
 
 // TestContainerCreateManual exercises P1-19: a manual container is created
@@ -263,4 +265,87 @@ func (s *fakeProvisionLogStore) ListByWorker(_ context.Context, workerID string,
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+// clearRPC records which endpoints were asked to drop every browser.
+type clearRPC struct {
+	fakeRPC
+	cleared []string
+	failOn  string
+}
+
+func (c *clearRPC) ClearAuth(_ context.Context, endpointURL, accountID string) error {
+	if endpointURL == c.failOn {
+		return errors.New("dial tcp: no such host")
+	}
+	c.cleared = append(c.cleared, endpointURL+"#"+accountID)
+	return nil
+}
+
+// Clearing sessions must reach every pool worker with an EMPTY account id: the
+// case it exists for is a display stuck busy with an account no lease names, so
+// a per-account clear cannot address it.
+func TestClearSessionsAsksEveryPoolWorker(t *testing.T) {
+	store := newFakeWorkerStore()
+	ep1, ep2 := "http://w1:8090", "http://w2:8090"
+	store.seed(domain.Worker{ID: "w1", Name: "smm-worker-01", EndpointURL: &ep1})
+	store.seed(domain.Worker{ID: "w2", Name: "smm-worker-02", EndpointURL: &ep2})
+	store.seed(domain.Worker{ID: "w3", Name: "legacy"}) // no endpoint: not reachable
+
+	rpc := &clearRPC{}
+	svc := NewContainerService(store, newFakeAccountStore(), nil, ContainerConfig{RPC: rpc})
+
+	res := svc.ClearSessions(context.Background())
+	if len(res.Cleared) != 2 {
+		t.Fatalf("cleared %v, want both pool workers", res.Cleared)
+	}
+	if len(rpc.cleared) != 2 || rpc.cleared[0] != ep1+"#" || rpc.cleared[1] != ep2+"#" {
+		t.Fatalf("clear must be called with an empty account id: %v", rpc.cleared)
+	}
+}
+
+// After the browsers are closed their slots are stale by definition; leaving
+// them makes every cleared worker look busy until a TTL expires.
+type sweepSlots struct{ cleared int }
+
+func (s *sweepSlots) AcquireWorkerSlot(context.Context, string, []domain.Worker, port.SlotKind, bool, time.Duration) (domain.Worker, error) {
+	return domain.Worker{}, domain.ErrUnavailable
+}
+func (s *sweepSlots) ReleaseWorkerSlot(context.Context, string, string) error { return nil }
+func (s *sweepSlots) ClearWorkerSlot(context.Context, string) error           { return nil }
+func (s *sweepSlots) ClearAllWorkerSlots(context.Context) (int, error) {
+	s.cleared++
+	return 3, nil
+}
+
+func TestClearSessionsSweepsWorkerSlots(t *testing.T) {
+	store := newFakeWorkerStore()
+	ep := "http://w1:8090"
+	store.seed(domain.Worker{ID: "w1", Name: "smm-worker-01", EndpointURL: &ep})
+	slots := &sweepSlots{}
+	svc := NewContainerService(store, newFakeAccountStore(), nil, ContainerConfig{RPC: &clearRPC{}, Slots: slots})
+
+	svc.ClearSessions(context.Background())
+	if slots.cleared != 1 {
+		t.Fatalf("slot sweep calls = %d, want 1", slots.cleared)
+	}
+}
+
+// One unreachable machine must not hide the result for the rest.
+func TestClearSessionsReportsFailures(t *testing.T) {
+	store := newFakeWorkerStore()
+	ep1, ep2 := "http://w1:8090", "http://w2:8090"
+	store.seed(domain.Worker{ID: "w1", Name: "smm-worker-01", EndpointURL: &ep1})
+	store.seed(domain.Worker{ID: "w2", Name: "smm-worker-02", EndpointURL: &ep2})
+
+	rpc := &clearRPC{failOn: ep2}
+	svc := NewContainerService(store, newFakeAccountStore(), nil, ContainerConfig{RPC: rpc})
+
+	res := svc.ClearSessions(context.Background())
+	if len(res.Cleared) != 1 || res.Cleared[0] != "smm-worker-01" {
+		t.Fatalf("cleared = %v", res.Cleared)
+	}
+	if len(res.Failed) != 1 || res.Failed[0].Worker != "smm-worker-02" {
+		t.Fatalf("failed = %v", res.Failed)
+	}
 }

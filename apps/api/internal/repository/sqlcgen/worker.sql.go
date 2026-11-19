@@ -15,11 +15,11 @@ const createWorker = `-- name: CreateWorker :one
 INSERT INTO worker (
     name, container_id, control_channel, action_queue, session_pvc,
     novnc_service, desired_state, source, region, status, generation,
-    image_version, location, latitude, longitude
+    image_version, location, latitude, longitude, endpoint_url
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
 )
-RETURNING id, name, container_id, control_channel, action_queue, session_pvc, novnc_service, desired_state, source, region, status, generation, observed_gen, provision_err, browser_status, current_job_id, last_heartbeat, last_action_at, last_error, queue_depth, restart_count, image_version, created_at, location, latitude, longitude
+RETURNING id, name, container_id, control_channel, action_queue, session_pvc, novnc_service, desired_state, source, region, status, generation, observed_gen, provision_err, browser_status, current_job_id, last_heartbeat, last_action_at, last_error, queue_depth, restart_count, image_version, created_at, location, latitude, longitude, endpoint_url
 `
 
 type CreateWorkerParams struct {
@@ -38,6 +38,7 @@ type CreateWorkerParams struct {
 	Location       *string      `json:"location"`
 	Latitude       *float64     `json:"latitude"`
 	Longitude      *float64     `json:"longitude"`
+	EndpointUrl    *string      `json:"endpoint_url"`
 }
 
 func (q *Queries) CreateWorker(ctx context.Context, arg CreateWorkerParams) (Worker, error) {
@@ -57,6 +58,7 @@ func (q *Queries) CreateWorker(ctx context.Context, arg CreateWorkerParams) (Wor
 		arg.Location,
 		arg.Latitude,
 		arg.Longitude,
+		arg.EndpointUrl,
 	)
 	var i Worker
 	err := row.Scan(
@@ -86,6 +88,7 @@ func (q *Queries) CreateWorker(ctx context.Context, arg CreateWorkerParams) (Wor
 		&i.Location,
 		&i.Latitude,
 		&i.Longitude,
+		&i.EndpointUrl,
 	)
 	return i, err
 }
@@ -101,7 +104,7 @@ func (q *Queries) DeleteWorker(ctx context.Context, id pgtype.UUID) error {
 
 const getWorkerByID = `-- name: GetWorkerByID :one
 
-SELECT id, name, container_id, control_channel, action_queue, session_pvc, novnc_service, desired_state, source, region, status, generation, observed_gen, provision_err, browser_status, current_job_id, last_heartbeat, last_action_at, last_error, queue_depth, restart_count, image_version, created_at, location, latitude, longitude FROM worker WHERE id = $1
+SELECT id, name, container_id, control_channel, action_queue, session_pvc, novnc_service, desired_state, source, region, status, generation, observed_gen, provision_err, browser_status, current_job_id, last_heartbeat, last_action_at, last_error, queue_depth, restart_count, image_version, created_at, location, latitude, longitude, endpoint_url FROM worker WHERE id = $1
 `
 
 // Worker (container) lifecycle queries. One worker = one container hosting
@@ -137,12 +140,13 @@ func (q *Queries) GetWorkerByID(ctx context.Context, id pgtype.UUID) (Worker, er
 		&i.Location,
 		&i.Latitude,
 		&i.Longitude,
+		&i.EndpointUrl,
 	)
 	return i, err
 }
 
 const getWorkerByName = `-- name: GetWorkerByName :one
-SELECT id, name, container_id, control_channel, action_queue, session_pvc, novnc_service, desired_state, source, region, status, generation, observed_gen, provision_err, browser_status, current_job_id, last_heartbeat, last_action_at, last_error, queue_depth, restart_count, image_version, created_at, location, latitude, longitude FROM worker WHERE name = $1
+SELECT id, name, container_id, control_channel, action_queue, session_pvc, novnc_service, desired_state, source, region, status, generation, observed_gen, provision_err, browser_status, current_job_id, last_heartbeat, last_action_at, last_error, queue_depth, restart_count, image_version, created_at, location, latitude, longitude, endpoint_url FROM worker WHERE name = $1
 `
 
 func (q *Queries) GetWorkerByName(ctx context.Context, name string) (Worker, error) {
@@ -175,6 +179,7 @@ func (q *Queries) GetWorkerByName(ctx context.Context, name string) (Worker, err
 		&i.Location,
 		&i.Latitude,
 		&i.Longitude,
+		&i.EndpointUrl,
 	)
 	return i, err
 }
@@ -203,8 +208,70 @@ func (q *Queries) InsertHeartbeat(ctx context.Context, arg InsertHeartbeatParams
 	return err
 }
 
+const listPoolWorkers = `-- name: ListPoolWorkers :many
+SELECT id, name, container_id, control_channel, action_queue, session_pvc, novnc_service, desired_state, source, region, status, generation, observed_gen, provision_err, browser_status, current_job_id, last_heartbeat, last_action_at, last_error, queue_depth, restart_count, image_version, created_at, location, latitude, longitude, endpoint_url FROM worker
+WHERE desired_state = 'RUNNING'
+  AND endpoint_url IS NOT NULL
+  AND source = 'MANUAL'
+ORDER BY name
+`
+
+// The workers a slot may be handed to: configured, running, and actually
+// reachable (endpoint_url set). Deliberately NOT a filtered ListWorkers: that
+// one pages in SQL and filters in Go, so a fleet with hundreds of legacy rows
+// would lose real candidates past the page. A stale PAUSED container row with
+// no endpoint must never be a candidate — the affinity hash would land an
+// account on a machine that cannot answer.
+func (q *Queries) ListPoolWorkers(ctx context.Context) ([]Worker, error) {
+	rows, err := q.db.Query(ctx, listPoolWorkers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Worker{}
+	for rows.Next() {
+		var i Worker
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.ContainerID,
+			&i.ControlChannel,
+			&i.ActionQueue,
+			&i.SessionPvc,
+			&i.NovncService,
+			&i.DesiredState,
+			&i.Source,
+			&i.Region,
+			&i.Status,
+			&i.Generation,
+			&i.ObservedGen,
+			&i.ProvisionErr,
+			&i.BrowserStatus,
+			&i.CurrentJobID,
+			&i.LastHeartbeat,
+			&i.LastActionAt,
+			&i.LastError,
+			&i.QueueDepth,
+			&i.RestartCount,
+			&i.ImageVersion,
+			&i.CreatedAt,
+			&i.Location,
+			&i.Latitude,
+			&i.Longitude,
+			&i.EndpointUrl,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listWorkers = `-- name: ListWorkers :many
-SELECT id, name, container_id, control_channel, action_queue, session_pvc, novnc_service, desired_state, source, region, status, generation, observed_gen, provision_err, browser_status, current_job_id, last_heartbeat, last_action_at, last_error, queue_depth, restart_count, image_version, created_at, location, latitude, longitude FROM worker
+SELECT id, name, container_id, control_channel, action_queue, session_pvc, novnc_service, desired_state, source, region, status, generation, observed_gen, provision_err, browser_status, current_job_id, last_heartbeat, last_action_at, last_error, queue_depth, restart_count, image_version, created_at, location, latitude, longitude, endpoint_url FROM worker
 ORDER BY created_at DESC
 LIMIT $1 OFFSET $2
 `
@@ -250,6 +317,7 @@ func (q *Queries) ListWorkers(ctx context.Context, arg ListWorkersParams) ([]Wor
 			&i.Location,
 			&i.Latitude,
 			&i.Longitude,
+			&i.EndpointUrl,
 		); err != nil {
 			return nil, err
 		}
@@ -270,7 +338,7 @@ UPDATE worker SET
     current_job_id = $6,
     novnc_service  = $7
 WHERE id = $1
-RETURNING id, name, container_id, control_channel, action_queue, session_pvc, novnc_service, desired_state, source, region, status, generation, observed_gen, provision_err, browser_status, current_job_id, last_heartbeat, last_action_at, last_error, queue_depth, restart_count, image_version, created_at, location, latitude, longitude
+RETURNING id, name, container_id, control_channel, action_queue, session_pvc, novnc_service, desired_state, source, region, status, generation, observed_gen, provision_err, browser_status, current_job_id, last_heartbeat, last_action_at, last_error, queue_depth, restart_count, image_version, created_at, location, latitude, longitude, endpoint_url
 `
 
 type TouchWorkerHeartbeatParams struct {
@@ -321,6 +389,7 @@ func (q *Queries) TouchWorkerHeartbeat(ctx context.Context, arg TouchWorkerHeart
 		&i.Location,
 		&i.Latitude,
 		&i.Longitude,
+		&i.EndpointUrl,
 	)
 	return i, err
 }
@@ -339,9 +408,10 @@ UPDATE worker SET
     last_action_at = $11,
     last_error     = $12,
     queue_depth    = $13,
-    restart_count  = $14
+    restart_count  = $14,
+    endpoint_url   = $15
 WHERE id = $1
-RETURNING id, name, container_id, control_channel, action_queue, session_pvc, novnc_service, desired_state, source, region, status, generation, observed_gen, provision_err, browser_status, current_job_id, last_heartbeat, last_action_at, last_error, queue_depth, restart_count, image_version, created_at, location, latitude, longitude
+RETURNING id, name, container_id, control_channel, action_queue, session_pvc, novnc_service, desired_state, source, region, status, generation, observed_gen, provision_err, browser_status, current_job_id, last_heartbeat, last_action_at, last_error, queue_depth, restart_count, image_version, created_at, location, latitude, longitude, endpoint_url
 `
 
 type UpdateWorkerParams struct {
@@ -359,6 +429,7 @@ type UpdateWorkerParams struct {
 	LastError     *string            `json:"last_error"`
 	QueueDepth    int32              `json:"queue_depth"`
 	RestartCount  int32              `json:"restart_count"`
+	EndpointUrl   *string            `json:"endpoint_url"`
 }
 
 func (q *Queries) UpdateWorker(ctx context.Context, arg UpdateWorkerParams) (Worker, error) {
@@ -377,6 +448,7 @@ func (q *Queries) UpdateWorker(ctx context.Context, arg UpdateWorkerParams) (Wor
 		arg.LastError,
 		arg.QueueDepth,
 		arg.RestartCount,
+		arg.EndpointUrl,
 	)
 	var i Worker
 	err := row.Scan(
@@ -406,6 +478,76 @@ func (q *Queries) UpdateWorker(ctx context.Context, arg UpdateWorkerParams) (Wor
 		&i.Location,
 		&i.Latitude,
 		&i.Longitude,
+		&i.EndpointUrl,
+	)
+	return i, err
+}
+
+const upsertPoolWorkerByName = `-- name: UpsertPoolWorkerByName :one
+INSERT INTO worker (
+    name, desired_state, source, region, status, endpoint_url, novnc_service
+) VALUES (
+    -- IDLE, not PENDING: a pool worker is provisioned OUTSIDE this fleet (boxd
+    -- snapshot), so nothing here is waiting to be created. PENDING made the
+    -- dashboard claim a worker was mid-provisioning forever, and invited the
+    -- container reconciler to try creating it.
+    $1, 'RUNNING', 'MANUAL', $2, 'IDLE', $3, $4
+)
+ON CONFLICT (name) DO UPDATE SET
+    endpoint_url  = EXCLUDED.endpoint_url,
+    novnc_service = COALESCE(EXCLUDED.novnc_service, worker.novnc_service),
+    desired_state = 'RUNNING',
+    source        = 'MANUAL'
+RETURNING id, name, container_id, control_channel, action_queue, session_pvc, novnc_service, desired_state, source, region, status, generation, observed_gen, provision_err, browser_status, current_job_id, last_heartbeat, last_action_at, last_error, queue_depth, restart_count, image_version, created_at, location, latitude, longitude, endpoint_url
+`
+
+type UpsertPoolWorkerByNameParams struct {
+	Name         string  `json:"name"`
+	Region       string  `json:"region"`
+	EndpointUrl  *string `json:"endpoint_url"`
+	NovncService *string `json:"novnc_service"`
+}
+
+// Idempotent seed of one pool worker from configuration. Keyed on name (the
+// stable identity smm-worker-01..10), so a restart re-points the row at the
+// current endpoint without duplicating it, and a worker the operator stopped by
+// hand is brought back only by this explicit RUNNING intent.
+func (q *Queries) UpsertPoolWorkerByName(ctx context.Context, arg UpsertPoolWorkerByNameParams) (Worker, error) {
+	row := q.db.QueryRow(ctx, upsertPoolWorkerByName,
+		arg.Name,
+		arg.Region,
+		arg.EndpointUrl,
+		arg.NovncService,
+	)
+	var i Worker
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.ContainerID,
+		&i.ControlChannel,
+		&i.ActionQueue,
+		&i.SessionPvc,
+		&i.NovncService,
+		&i.DesiredState,
+		&i.Source,
+		&i.Region,
+		&i.Status,
+		&i.Generation,
+		&i.ObservedGen,
+		&i.ProvisionErr,
+		&i.BrowserStatus,
+		&i.CurrentJobID,
+		&i.LastHeartbeat,
+		&i.LastActionAt,
+		&i.LastError,
+		&i.QueueDepth,
+		&i.RestartCount,
+		&i.ImageVersion,
+		&i.CreatedAt,
+		&i.Location,
+		&i.Latitude,
+		&i.Longitude,
+		&i.EndpointUrl,
 	)
 	return i, err
 }

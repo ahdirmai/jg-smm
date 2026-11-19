@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"math/rand"
+	"math/rand/v2"
 
 	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
 	"github.com/ahdirmai/jg-smm/apps/api/internal/port"
@@ -34,7 +34,7 @@ func NewTemplateService(templates port.TemplateStore, clock port.Clock, rng *ran
 		clock = systemClock{}
 	}
 	if rng == nil {
-		rng = rand.New(rand.NewSource(clock.Now().UnixNano()))
+		rng = rand.New(rand.NewPCG(uint64(clock.Now().UnixNano()), 0x9e3779b97f4a7c15))
 	}
 	return &TemplateService{templates: templates, clock: clock, rng: rng, logger: logger}
 }
@@ -107,9 +107,9 @@ func (s *TemplateService) weightedPick(candidates []domain.CommentTemplate) doma
 	for _, c := range candidates {
 		total += c.Weight
 	}
-	// rand.Intn(total) is uniform over [0,total); walking the weights maps that
+	// rand.IntN(total) is uniform over [0,total); walking the weights maps that
 	// draw onto the template whose slice it lands in.
-	draw := s.rng.Intn(total)
+	draw := s.rng.IntN(total)
 	for _, c := range candidates {
 		draw -= c.Weight
 		if draw < 0 {

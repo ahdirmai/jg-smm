@@ -435,6 +435,7 @@ func (f *fakeScrapeStore) UpdateApifyRun(ctx context.Context, r domain.ApifyRun,
 	f.runs[r.ID] = cur
 	return cur, nil
 }
+
 // GetApifyRun mirrors the real store's read: the resume path needs the stored
 // Apify-side run id, which UpdateApifyRun deliberately keeps when given "".
 func (f *fakeScrapeStore) GetApifyRun(ctx context.Context, id string) (domain.ApifyRun, error) {

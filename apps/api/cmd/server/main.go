@@ -28,10 +28,12 @@ import (
 	"github.com/ahdirmai/jg-smm/apps/api/internal/adapter/dockerprovisioner"
 	"github.com/ahdirmai/jg-smm/apps/api/internal/adapter/k8s"
 	llmadapter "github.com/ahdirmai/jg-smm/apps/api/internal/adapter/llm"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/adapter/poolmgr"
 	"github.com/ahdirmai/jg-smm/apps/api/internal/adapter/proxyresolver"
 	smtpadapter "github.com/ahdirmai/jg-smm/apps/api/internal/adapter/smtp"
 	storageadapter "github.com/ahdirmai/jg-smm/apps/api/internal/adapter/storage"
 	"github.com/ahdirmai/jg-smm/apps/api/internal/adapter/transport"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/adapter/workerrpc"
 	"github.com/ahdirmai/jg-smm/apps/api/internal/config"
 	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
 	apihttp "github.com/ahdirmai/jg-smm/apps/api/internal/http"
@@ -173,7 +175,9 @@ func main() {
 		// IP, which is what Instagram rate-limits first — logins fail with
 		// ERR_HTTP_RESPONSE_CODE_FAILURE while the same request from an
 		// ordinary host returns 200.
-		proxyResolver := proxyresolver.New(repository.NewProxyGroupRepo(pg.Queries()), sealer)
+		proxyGroupRepo := repository.NewProxyGroupRepo(pg.Queries())
+		proxyResolver := proxyresolver.New(proxyGroupRepo, sealer).
+			WithGroups(repository.NewProxyGroupRepo(pg.Queries()))
 
 		raw, err := provisionDriver(ctx, cfg, workerRepo, logRepo, logger, proxyResolver.ForWorker)
 		if err != nil {
@@ -201,6 +205,62 @@ func main() {
 			publisher = transport.NewPublisher(redisClient)
 		}
 
+		// --- stateless worker pool (boxd) ---------------------------------
+		// In pool mode actions are PUSHED over HTTPS to a leased microVM. A nil
+		// dispatcher keeps every legacy path intact, so a deployment that does
+		// not opt in behaves exactly as before.
+		var poolDispatch *service.PoolDispatch
+		// Shared with the container service so a "clear sessions" sweep drops
+		// the same slots the dispatcher leases from.
+		var slotCoord *poolmgr.Slots
+		if cfg.IsStatelessPool() && redisClient != nil {
+			slotCoord = poolmgr.NewSlots(redisClient)
+			poolDispatch = service.NewPoolDispatch(service.PoolDispatch{
+				Workers:         workerRepo.ListPoolWorkers,
+				Slots:           slotCoord,
+				Lock:            poolmgr.NewLock(redisClient),
+				RPC:             workerrpc.New(cfg.InternalAPISecret),
+				Lease:           accountRepo.AcquireLease,
+				Unlease:         accountRepo.ReleaseLease,
+				Accounts:        accountRepo.GetByID,
+				Proxy:           proxyResolver,
+				Sealer:          sealer,
+				Sessions:        repository.NewSessionRepo(pg.Queries()),
+				LoginWorkerName: cfg.LoginWorkerName,
+				LockTTL:         time.Duration(cfg.AccountLockTTLSeconds) * time.Second,
+				SlotTTL:         time.Duration(cfg.WorkerLeaseTTLSeconds) * time.Second,
+				Log:             logger,
+			})
+			// Seed the fleet and give every account its city/GPS/timezone.
+			// Idempotent, so a restart reasserts rather than duplicates.
+			bootstrapper := service.NewPoolBootstrapper(accountRepo, workerRepo, logger)
+			defs, err := service.ParsePoolEndpoints(cfg.WorkerPoolEndpoints)
+			if err != nil {
+				logger.Error("worker pool endpoints invalid", "err", err)
+				os.Exit(1)
+			}
+			if len(defs) == 0 {
+				defs = service.DefaultPoolEndpoints(cfg.WorkerPoolSize)
+			}
+			// The login machine is seeded separately, so it exists even when the
+			// operator listed only action workers.
+			if cfg.LoginWorkerName != "" {
+				defs = append(defs, service.DefaultLoginEndpoint(cfg.LoginWorkerName))
+			}
+			if err := bootstrapper.EnsurePoolWorkers(ctx, defs); err != nil {
+				logger.Error("pool bootstrap: workers", "err", err)
+			}
+			go func() {
+				if _, err := bootstrapper.BackfillAccounts(ctx); err != nil {
+					logger.Error("pool bootstrap: backfill", "err", err)
+				}
+			}()
+			logger.Info("stateless worker pool enabled",
+				"workers", len(defs), "lockTtl", cfg.AccountLockTTLSeconds, "leaseTtl", cfg.WorkerLeaseTTLSeconds)
+		} else if cfg.IsStatelessPool() {
+			logger.Warn("WORKER_POOL_MODE=stateless needs Redis for the slot coordinator; falling back to the legacy dispatch path")
+		}
+
 		// One waker shared by every trigger that needs a PAUSED container back:
 		// a login, an action job, and an operator opening the live view. One
 		// instance so the "is it already running?" check cannot diverge.
@@ -217,6 +277,8 @@ func main() {
 			Novnc:   novnc,
 			Control: publisher,
 			Waker:   waker,
+			RPC:     workerrpc.New(cfg.InternalAPISecret),
+			Slots:   slotCoord,
 		})
 		deps.Containers = apihttp.NewContainerHandler(containerSvc)
 
@@ -243,6 +305,13 @@ func main() {
 			Sessions: repository.NewSessionRepo(pg.Queries()),
 			Waker:    waker,
 			Logger:   logger,
+			PoolMode: cfg.WorkerPoolMode,
+			Pool:     poolDispatch,
+			// Live-view tickets. The signing secret IS the fleet's push secret:
+			// one credential the hub and every worker already share, so a ticket
+			// verifies on the worker without a second distribution.
+			NoVNCSecret:    cfg.InternalAPISecret,
+			NoVNCTicketTTL: time.Duration(cfg.NoVNCTicketTTLSeconds) * time.Second,
 		})
 		deps.Accounts = apihttp.NewAccountHandler(accountSvc)
 		// The account service is the sink for worker session-export callbacks:
@@ -255,7 +324,6 @@ func main() {
 
 		// Proxy groups (P1-14): residential pools, region-matched. The same
 		// sealer covers the pool key and the account password.
-		proxyGroupRepo := repository.NewProxyGroupRepo(pg.Queries())
 		proxyGroupSvc := service.NewProxyGroupService(proxyGroupRepo, accountRepo, workerRepo, service.ProxyGroupConfig{
 			Sealer: sealer,
 			Clock:  adapter.SystemClock{},
@@ -287,6 +355,26 @@ func main() {
 			}
 			rawStorage = storage
 			checkers["minio"] = storageadapter.NewHealth(storage)
+		}
+
+		// Screenshot evidence lives in its own bucket. `minio-init` creates it,
+		// and its readers (and the console) look there — not in the raw-scrape
+		// bucket, which is why the two are separate stores rather than one.
+		var screenshotStore port.RawStorage
+		if cfg.MinioEndpoint != "" {
+			shots, err := storageadapter.New(ctx, storageadapter.Config{
+				Endpoint:   cfg.MinioEndpoint,
+				AccessKey:  cfg.MinioUser,
+				SecretKey:  cfg.MinioPassword,
+				Bucket:     cfg.MinioScreenshotBucket,
+				UseSSL:     cfg.MinioUseSSL,
+				MakeBucket: true,
+			})
+			if err != nil {
+				logger.Error("screenshot storage init failed", "err", err)
+				os.Exit(1)
+			}
+			screenshotStore = shots
 		}
 
 		// Analytics provider. ANALYTICS_PROVIDER picks the adapter: "composio"
@@ -412,6 +500,22 @@ func main() {
 		// ACTION_INTERVAL_SECONDS, mirroring the scrape scheduler: off by
 		// default locally so `make up` never depends on Redis being wired.
 		// redisClient is non-nil whenever publisher is (both gate on RedisURL).
+		// Pool mode wires the callback path regardless of whether the scheduler
+		// runs in this process: the leases it must release are created by the
+		// live view and the refresher too, and stopOTPWorker must never pause a
+		// shared worker even when scheduling happens elsewhere. Gating this on
+		// ACTION_INTERVAL_SECONDS>0 made a local default config behave like the
+		// legacy container fleet.
+		jobSvc.WithPool(service.PoolJobDeps{
+			Mode:     cfg.WorkerPoolMode,
+			Sessions: repository.NewSessionRepo(pg.Queries()),
+			Sealer:   sealer,
+			Blobs:    screenshotStore,
+			// Set below by the scheduler, when one starts in this process.
+			OnJobDone: nil,
+			Pool:      poolDispatch,
+		})
+
 		if cfg.ActionIntervalSeconds > 0 && redisClient != nil {
 			// The composer is the template engine (P3-02/P3-03): it picks an unused
 			// variant for the target, renders it, and denylist-screens the result,
@@ -439,9 +543,13 @@ func main() {
 					RateLimits:  cfg.ActionRateLimits,
 					Clock:       time.Now,
 					Waker:       waker,
+					Pool:        poolDispatch,
 					Logger:      logger,
 				},
 			)
+			// The scheduler owns the pool leases it hands out; the callback path
+			// releases them when a verdict is terminal.
+			jobSvc.SetJobDoneHook(actionSched.ReleaseJob)
 			go actionSched.Run(ctx, time.Duration(cfg.ActionIntervalSeconds)*time.Second)
 		}
 
@@ -460,7 +568,10 @@ func main() {
 				// A refresh must wake its container: the fleet's steady state
 				// is PAUSED, and a control message published to a stopped
 				// worker's channel has nobody to deliver it to.
-				Waker:   waker,
+				Waker: waker,
+				// Pool mode pushes the re-login to a leased worker instead of
+				// publishing on a container channel.
+				Pool:    poolDispatch,
 				Spacing: time.Duration(cfg.SessionRefreshSpacingSeconds) * time.Second,
 				// Bound how many logins this fleet runs at once. TickBudget
 				// alone bounds a TICK, not concurrency: with a login taking
@@ -540,7 +651,8 @@ func main() {
 			// row explains. Without the cap that path materialised the whole
 			// paused fleet and OOM-killed the host.
 			reconciler := service.NewReconciler(workerRepo, driver, logger).
-				WithMaxActive(cfg.ElasticPoolMaxActive)
+				WithMaxActive(cfg.ElasticPoolMaxActive).
+				WithPoolMode(cfg.IsStatelessPool())
 			go reconciler.Run(ctx, time.Duration(cfg.ReconcileIntervalSeconds)*time.Second)
 
 			// Orphan sweeper: deletes platform resources whose Worker row is
@@ -560,8 +672,11 @@ func main() {
 			pool := service.NewElasticPoolWithStream(workerRepo, driver, adapter.SystemClock{}, hub,
 				cfg.ElasticPoolMaxActive,
 				time.Duration(cfg.ElasticPoolIdleSeconds)*time.Second,
-				logger)
-			if pool.Enabled() {
+				logger,
+			).WithLoginWorker(cfg.LoginWorkerName)
+			// In stateless mode the pool's workers sleep on boxd idle timers
+			// themselves; pausing them here would fight the dispatcher.
+			if pool.Enabled() && !cfg.IsStatelessPool() {
 				go pool.Run(ctx, time.Duration(cfg.ReconcileIntervalSeconds)*time.Second)
 			}
 		}
@@ -664,9 +779,12 @@ func provisionDriver(ctx context.Context, cfg config.Config, workers port.Worker
 //     actor cannot, and the popular thenetaji/tiktok-post-scraper was rejected
 //     because its `urls` field declares minItems:4 — a single-post scrape is
 //     rejected by the schema before it runs.
-//   - YouTube / X: the SAME actors as their keyword search, which both accept a
-//     single video/tweet URL through `startUrls` (verified by running each with
-//     one URL and reading the one row back).
+//   - YouTube: streamers/youtube-scraper, a dedicated single-video actor. It
+//     accepts watch and /shorts/ URLs through `startUrls` objects and returns
+//     the one row reliably; the keyword actor's single-URL mode returned ten
+//     noResults rows on this network.
+//   - X: the SAME actor as its keyword search, which accepts a single tweet URL
+//     through `startUrls` (verified by running it with one URL).
 func actorForPlatform(cfg config.Config) func(domain.Platform) string {
 	return func(p domain.Platform) string {
 		switch p {
@@ -677,6 +795,9 @@ func actorForPlatform(cfg config.Config) func(domain.Platform) string {
 		case domain.PlatformTikTok:
 			return cfg.ApifyPostActorTikTok
 		case domain.PlatformYouTube:
+			if cfg.ApifyPostActorYouTube != "" {
+				return cfg.ApifyPostActorYouTube
+			}
 			return cfg.ApifySearchActorYouTube
 		case domain.PlatformX:
 			return cfg.ApifySearchActorX
@@ -693,7 +814,7 @@ func actorForPlatform(cfg config.Config) func(domain.Platform) string {
 // publisher for Threads), so one prefix cannot express both.
 //
 // Actor picks (verified against the live input schemas, 2026-09):
-//   - Instagram: crawlerbros/instagram-keyword-search-scraper, which takes
+//   - Instagram: sasky/instagram-keyword-posts-urls-scraper, which takes
 //     `keywords[]` + `maxPosts` and returns one flat snake_case row per post.
 //     It replaced apify/instagram-scraper (`searchType:hashtag`), and before
 //     that apify/instagram-search-scraper, which resolves a keyword to a *place
@@ -708,11 +829,12 @@ func actorForPlatform(cfg config.Config) func(domain.Platform) string {
 //     as a real result cap. It has no date input at all, so the ingestor's
 //     window is the only backstop, not merely the second one — nothing in the
 //     payload can be set to ask the actor for a narrower pool.
-//   - YouTube: apidojo/youtube-scraper-api. `keywords[]` plus a REAL server-side
-//     `uploadDate` filter (any/l/t/w/m/y) that only applies to keyword search,
-//     so the window can be pushed down to the actor rather than only applied
-//     after billing. `maxItems` caps output. Billed per QUERY too, not only per
-//     result: ~$0.015 a search before a single row is charged.
+//   - YouTube: streamers/youtube-scraper in search mode. `searchQueries[]`,
+//     `maxResults`, and a coarse server-side `dateFilter`
+//     (hour/today/week/month/year); the ingestor narrows to the exact window.
+//     The on-demand app uses the same actor via APIFY_POST_ACTOR_YOUTUBE; the
+//     two resolver cases stay separate so a future swap cannot leak one into
+//     the other.
 //   - LinkedIn: harvestapi/linkedin-post-search. `searchQueries[]` plus
 //     `postedLimitDate` (absolute) and `postedLimit` (relative) — a real
 //     server-side date filter. `maxPosts` is the real per-query cap; measured,

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
@@ -75,6 +76,23 @@ type ActionScheduler struct {
 	// waker resumes a PAUSED container before a job is queued on it, so the
 	// worker exists to drain that queue. Optional: nil assumes it is running.
 	waker *Waker
+	// pool is the stateless fleet: when set, a job is PUSHED over HTTPS to a
+	// leased pool worker instead of being queued on the account's container.
+	// nil keeps the legacy Redis pull path byte-for-byte.
+	pool *PoolDispatch
+	// pending holds the release func of each pushed job, keyed by job id, until
+	// its verdict arrives. The leases (account lock + worker slot) must outlive
+	// the dispatch but not the job.
+	pending sync.Map
+}
+
+// ReleaseJob runs and forgets the leases held for a pushed job. JobService calls
+// it on every terminal attempt; an id that was never pushed (legacy mode) is a
+// no-op.
+func (s *ActionScheduler) ReleaseJob(jobID string) {
+	if v, ok := s.pending.LoadAndDelete(jobID); ok {
+		v.(func())()
+	}
 }
 
 // ActionSchedulerConfig bounds the loop. Zero values fall back to documented
@@ -100,6 +118,9 @@ type ActionSchedulerConfig struct {
 	Clock func() time.Time
 	// Waker resumes a PAUSED container before a job is queued on it. Optional.
 	Waker *Waker
+	// Pool switches the loop to stateless HTTPS push. Optional: nil keeps the
+	// Redis pull path.
+	Pool *PoolDispatch
 	// Logger defaults to slog.Default.
 	Logger *slog.Logger
 }
@@ -147,6 +168,7 @@ func NewActionScheduler(
 		texts:     texts,
 		templates: templates,
 		waker:     cfg.Waker,
+		pool:      cfg.Pool,
 		cfg:       cfg,
 		clock:     cfg.Clock,
 		log:       cfg.Logger,
@@ -246,13 +268,23 @@ func (s *ActionScheduler) dispatchOne(ctx context.Context, job domain.ActionJob)
 		s.fail(ctx, job, fmt.Sprintf("account lookup: %v", err))
 		return
 	}
-	// A job with no worker to run it goes back, not to the scrap heap: the
-	// fleet is elastic and a worker may appear on the next reconcile.
-	if acc.WorkerID == nil || *acc.WorkerID == "" {
-		s.reschedule(ctx, job, s.cfg.Cooldown, "no worker assigned to account")
-		return
+	// Stateless pool: an account is NOT bound to a container. It is idle
+	// (worker_id nil) unless an interactive session holds a worker, so the
+	// dispatch leases one here. Everything downstream is shared with the legacy
+	// path.
+	pooled := s.pool != nil
+	workerID := ""
+	if acc.WorkerID != nil {
+		workerID = *acc.WorkerID
 	}
-	workerID := *acc.WorkerID
+	if !pooled {
+		// A job with no worker to run it goes back, not to the scrap heap: the
+		// fleet is elastic and a worker may appear on the next reconcile.
+		if workerID == "" {
+			s.reschedule(ctx, job, s.cfg.Cooldown, "no worker assigned to account")
+			return
+		}
+	}
 
 	// Compose the comment text before any gate is spent (P3-03): a banned or
 	// unrenderable comment cannot ship no matter how much budget it burns, so
@@ -331,10 +363,16 @@ func (s *ActionScheduler) dispatchOne(ctx context.Context, job domain.ActionJob)
 		}
 	}
 
-	if err := s.publish(ctx, job, acc, workerID, tgt, text); err != nil {
+	var publishErr error
+	if pooled {
+		publishErr = s.publishPooled(ctx, job, acc, tgt, text)
+	} else {
+		publishErr = s.publish(ctx, job, acc, workerID, tgt, text)
+	}
+	if publishErr != nil {
 		// Transport down: the job was NOT delivered, so release the cooldown
 		// slot by simply letting it lapse (TTL is short) and requeue the job.
-		s.reschedule(ctx, job, s.cfg.Cooldown, fmt.Sprintf("publish: %v", err))
+		s.reschedule(ctx, job, s.cfg.Cooldown, fmt.Sprintf("publish: %v", publishErr))
 		return
 	}
 	s.log.Info("action published", "job", job.ID, "worker", workerID, "attempt", job.Attempts)
@@ -434,18 +472,13 @@ type composedText struct {
 	templateID string
 }
 
-// publish serialises the job exactly as the worker's ActionJob expects and
-// appends it to that worker's durable queue (FIFO).
-func (s *ActionScheduler) publish(ctx context.Context, job domain.ActionJob, acc domain.Account, workerID string, tgt domain.Target, text composedText) error {
-	if s.transport == nil {
-		return errors.New("transport not configured")
-	}
-	// A reply must tag the comment's author. Resolve the handle here, from the
-	// comment the target points at, and send it so the worker can verify IG's
-	// pre-filled mention names that person — a top-level composer pre-fills the
-	// POST author, which a bare "@" check accepts. Best-effort: an unresolved
-	// handle leaves the field empty and the worker falls back to its older,
-	// looser check rather than refusing to act.
+// buildJob resolves the target-derived field of a job. A reply must tag the
+// comment's author: the handle is read here, from the comment the target points
+// at, so the worker can verify IG's pre-filled mention names that person — a
+// top-level composer pre-fills the POST author, which a bare "@" check accepts.
+// Best-effort: an unresolved handle leaves the field empty and the worker falls
+// back to its older, looser check rather than refusing to act.
+func (s *ActionScheduler) buildJob(ctx context.Context, job domain.ActionJob, acc domain.Account, tgt domain.Target, text composedText) workerActionJob {
 	expectedMention := ""
 	if job.Type == domain.JobTypeActionReplyComment && tgt.CommentID != nil {
 		if c, err := s.scrapes.GetComment(ctx, *tgt.CommentID); err == nil {
@@ -454,8 +487,7 @@ func (s *ActionScheduler) publish(ctx context.Context, job domain.ActionJob, acc
 			s.log.Warn("action: could not resolve reply target author", "job", job.ID, "comment", *tgt.CommentID, "err", err)
 		}
 	}
-
-	payload, err := json.Marshal(workerActionJob{
+	return workerActionJob{
 		ID:              job.ID,
 		AccountID:       job.AccountID,
 		Platform:        string(acc.Platform),
@@ -465,7 +497,16 @@ func (s *ActionScheduler) publish(ctx context.Context, job domain.ActionJob, acc
 		TemplateID:      text.templateID,
 		ExpectedMention: expectedMention,
 		Attempt:         job.Attempts,
-	})
+	}
+}
+
+// publish serialises the job exactly as the worker's ActionJob expects and
+// appends it to that worker's durable queue (FIFO).
+func (s *ActionScheduler) publish(ctx context.Context, job domain.ActionJob, acc domain.Account, workerID string, tgt domain.Target, text composedText) error {
+	if s.transport == nil {
+		return errors.New("transport not configured")
+	}
+	payload, err := json.Marshal(s.buildJob(ctx, job, acc, tgt, text))
 	if err != nil {
 		return fmt.Errorf("marshal action job: %w", err)
 	}
@@ -481,6 +522,43 @@ func (s *ActionScheduler) publish(ctx context.Context, job domain.ActionJob, acc
 	if err := s.transport.Enqueue(ctx, workerID, payload); err != nil {
 		return fmt.Errorf("enqueue: %w", err)
 	}
+	return nil
+}
+
+// publishPooled pushes the same job over HTTPS to a freshly leased pool worker.
+// There is no queue and no waker: the request IS the wake.
+func (s *ActionScheduler) publishPooled(ctx context.Context, job domain.ActionJob, acc domain.Account, tgt domain.Target, text composedText) error {
+	payload := s.buildJob(ctx, job, acc, tgt, text)
+
+	worker, release, err := s.pool.Acquire(ctx, job, acc)
+	if err != nil {
+		return err
+	}
+	spec, err := s.pool.RuntimeSpec(ctx, acc)
+	if err != nil {
+		release()
+		return err
+	}
+	req := port.ExecuteActionRequest{
+		JobID:           payload.ID,
+		Action:          payload.Action,
+		TargetURL:       payload.TargetURL,
+		Text:            payload.Text,
+		TemplateID:      payload.TemplateID,
+		ExpectedMention: payload.ExpectedMention,
+		Attempt:         payload.Attempt,
+		Runtime:         spec,
+	}
+	if err := s.pool.Push(ctx, worker, req); err != nil {
+		// Nothing reached the worker: free both leases so the next tick can
+		// retry against a different machine.
+		release()
+		return err
+	}
+	// The verdict arrives by callback; JobService.RecordAttempt releases the
+	// leases when it does. Handing the release func over via the job id keeps
+	// the callback path free of scheduler state.
+	s.pending.Store(job.ID, release)
 	return nil
 }
 

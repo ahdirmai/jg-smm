@@ -31,6 +31,12 @@ WHERE id = (
     WHERE aj.account_id = $1
       AND aj.status     = 'PENDING'
       AND aj.scheduled_at <= now()
+      -- A job enqueued before the auth rule existed must not run as a
+      -- logged-out account: the claim is the last gate before dispatch.
+      AND EXISTS (
+          SELECT 1 FROM account a
+          WHERE a.id = aj.account_id AND a.auth_status = 'AUTHENTICATED'
+      )
     ORDER BY aj.scheduled_at
     FOR UPDATE SKIP LOCKED
     LIMIT 1
@@ -79,6 +85,23 @@ SET status       = 'PENDING',
 WHERE id = $1
   AND status IN ('PENDING', 'RUNNING')
 RETURNING *;
+
+-- name: RequeueFailedActionJob :one
+-- Manual operator retry. Deliberately separate from RescheduleActionJob:
+-- that query's PENDING/RUNNING guard is the terminal-state guard that stops a
+-- replayed callback from re-posting a finished action, and it must stay.
+-- A retry is an explicit operator decision, so it may resurrect FAILED and
+-- starts a fresh attempt budget.
+UPDATE action_job
+SET status       = 'PENDING',
+    scheduled_at = $2,
+    started_at   = NULL,
+    finished_at  = NULL,
+    worker_id    = NULL,
+    error        = NULL
+WHERE id = $1
+  AND status = 'FAILED'
+RETURNING id, type, target_id, account_id, worker_id, status, scheduled_at, started_at, finished_at, attempts, error, created_at, template_id;
 
 -- name: SetActionJobTemplate :exec
 -- Records the pool variant a job's text came from. Written at dispatch, after

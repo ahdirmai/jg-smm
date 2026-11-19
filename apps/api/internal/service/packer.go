@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math/rand"
+	"math/rand/v2"
 	"time"
 
 	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
@@ -84,7 +84,7 @@ func NewPacker(workers port.WorkerStore, accounts port.AccountStore, cfg PackerC
 		maxPerContainer: cfg.MaxPerContainer,
 		autoCreate:      cfg.AutoCreate,
 		novnc:           cfg.Novnc,
-		rnd:             rand.New(rand.NewSource(time.Now().UnixNano())),
+		rnd:             rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), uint64(time.Now().UnixNano())>>1)),
 		cities:          autoContainerCities,
 	}
 }
@@ -340,7 +340,7 @@ func (p *Packer) pickCity() domain.City {
 	if len(p.cities) == 0 {
 		return autoContainerCities[0]
 	}
-	return p.cities[p.rnd.Intn(len(p.cities))]
+	return p.cities[p.rnd.IntN(len(p.cities))]
 }
 
 // ptrString returns a pointer copy of s.

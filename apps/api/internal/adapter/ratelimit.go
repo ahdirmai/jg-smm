@@ -32,10 +32,30 @@ func NewRateLimiter(client *redis.Client, keyPrefix string) *RateLimiter {
 
 var _ port.RateLimiter = (*RateLimiter)(nil)
 
-// Allow takes one unit from the platform's budget. The INCR is atomic, so two
+// allowScript takes a unit only when the budget admits it.
+//
+// A refused call MUST NOT consume a unit. The scheduler polls every pending
+// job, so an INCR-on-refusal turns a queue larger than the budget into a
+// self-starvation loop: each poll raises the counter, the window never admits
+// another action, and the operator sees a batch stuck at PENDING for the whole
+// hour. The DECR keeps the stored count equal to the actions actually admitted.
+//
+// KEYS[1] = counter, ARGV[1] = window seconds, ARGV[2] = limit.
+// Returns {1, 0} when admitted, {0, ttlSeconds} when refused.
+var allowScript = redis.NewScript(`
+local n = redis.call('INCR', KEYS[1])
+if n == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end
+if n > tonumber(ARGV[2]) then
+  redis.call('DECR', KEYS[1])
+  return {0, redis.call('TTL', KEYS[1])}
+end
+return {1, 0}
+`)
+
+// Allow takes one unit from the platform's budget. The script is atomic, so two
 // schedulers racing on the same platform cannot both take the last unit; the
-// EXPIRE is only set on the first increment so the window is anchored to the
-// first action, not refreshed by every later one.
+// EXPIRE is only set on the first admitted unit so the window is anchored to
+// the first action, not refreshed by every later one.
 func (r *RateLimiter) Allow(ctx context.Context, platform string, limit int, window time.Duration) (bool, time.Duration, error) {
 	if platform == "" {
 		return false, 0, fmt.Errorf("ratelimit: platform is required")
@@ -49,28 +69,21 @@ func (r *RateLimiter) Allow(ctx context.Context, platform string, limit int, win
 		return false, 0, fmt.Errorf("ratelimit: window must be positive, got %s", window)
 	}
 	key := r.key(platform, window)
-	n, err := r.client.Incr(ctx, key).Result()
+	res, err := allowScript.Run(ctx, r.client, []string{key}, int(window.Seconds()), limit).Slice()
 	if err != nil {
-		return false, 0, fmt.Errorf("ratelimit.Incr %s: %w", key, err)
+		return false, 0, fmt.Errorf("ratelimit.Allow %s: %w", key, err)
 	}
-	// Anchor the window only on the first unit; a boundary reset then clears
-	// the whole budget at once.
-	if n == 1 {
-		if err := r.client.Expire(ctx, key, window).Err(); err != nil {
-			return false, 0, fmt.Errorf("ratelimit.Expire %s: %w", key, err)
-		}
+	if len(res) < 2 {
+		return false, 0, fmt.Errorf("ratelimit.Allow %s: unexpected reply %v", key, res)
+	}
+	admitted, _ := res[0].(int64)
+	seconds, _ := res[1].(int64)
+	if admitted == 1 {
 		return true, 0, nil
 	}
-	if n > int64(limit) {
-		// Budget spent: tell the caller how long until the key expires so a
-		// reschedule can target the reset instead of polling blindly.
-		ttl, err := r.client.TTL(ctx, key).Result()
-		if err != nil {
-			return false, 0, fmt.Errorf("ratelimit.TTL %s: %w", key, err)
-		}
-		return false, ttl, nil
-	}
-	return true, 0, nil
+	// Budget spent: report how long until the key expires so a reschedule can
+	// target the reset instead of polling blindly.
+	return false, time.Duration(seconds) * time.Second, nil
 }
 
 // key is stable per (prefix, platform, window): the window is quantised to the

@@ -6,7 +6,8 @@
 SELECT
     id, platform, username, auth_status, handle, last_verified_at,
     proxy_group_id, health_score, status, tags, worker_id, last_used_at,
-    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at
+    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at,
+    location, latitude, longitude, timezone, user_agent
 FROM account
 WHERE id = $1;
 
@@ -22,7 +23,8 @@ WHERE id = $1;
 SELECT
     id, platform, username, auth_status, handle, last_verified_at,
     proxy_group_id, health_score, status, tags, worker_id, last_used_at,
-    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at
+    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at,
+    location, latitude, longitude, timezone, user_agent
 FROM account
 ORDER BY created_at DESC
 LIMIT $1 OFFSET $2;
@@ -30,14 +32,16 @@ LIMIT $1 OFFSET $2;
 -- name: CreateAccount :one
 INSERT INTO account (
     platform, username, password_enc, auth_status, proxy_group_id,
-    status, tags, worker_id
+    status, tags, worker_id,
+    location, latitude, longitude, timezone, user_agent
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
 )
 RETURNING
     id, platform, username, auth_status, handle, last_verified_at,
     proxy_group_id, health_score, status, tags, worker_id, last_used_at,
-    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at;
+    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at,
+    location, latitude, longitude, timezone, user_agent;
 
 -- name: UpdateAccount :one
 UPDATE account SET
@@ -53,12 +57,20 @@ UPDATE account SET
     last_checked_at  = $11,
     last_error       = $12,
     cookie_expiry_at = $13,
-    refresh_failures = $14
+    refresh_failures = $14,
+    -- The device identity is operator input, not derived state: a boxd worker
+    -- can be any machine, so the account owns the city/GPS/timezone it reports.
+    location         = $15,
+    latitude         = $16,
+    longitude        = $17,
+    timezone         = $18,
+    user_agent       = $19
 WHERE id = $1
 RETURNING
     id, platform, username, auth_status, handle, last_verified_at,
     proxy_group_id, health_score, status, tags, worker_id, last_used_at,
-    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at;
+    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at,
+    location, latitude, longitude, timezone, user_agent;
 
 -- name: AssignAccount :one
 UPDATE account SET
@@ -68,7 +80,8 @@ WHERE id = $1
 RETURNING
     id, platform, username, auth_status, handle, last_verified_at,
     proxy_group_id, health_score, status, tags, worker_id, last_used_at,
-    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at;
+    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at,
+    location, latitude, longitude, timezone, user_agent;
 
 -- name: UnassignAccount :one
 UPDATE account SET worker_id = NULL
@@ -76,7 +89,8 @@ WHERE id = $1
 RETURNING
     id, platform, username, auth_status, handle, last_verified_at,
     proxy_group_id, health_score, status, tags, worker_id, last_used_at,
-    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at;
+    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at,
+    location, latitude, longitude, timezone, user_agent;
 
 -- name: DeleteAccount :exec
 DELETE FROM account WHERE id = $1;
@@ -85,7 +99,8 @@ DELETE FROM account WHERE id = $1;
 SELECT
     id, platform, username, auth_status, handle, last_verified_at,
     proxy_group_id, health_score, status, tags, worker_id, last_used_at,
-    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at
+    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at,
+    location, latitude, longitude, timezone, user_agent
 FROM account
 WHERE worker_id = $1
 ORDER BY platform;
@@ -115,14 +130,15 @@ SELECT count(*) FROM account WHERE worker_id = $1;
 -- last_checked_at (stamped at dispatch) instead of re-firing on every tick.
 --
 -- These gates MUST stay in sync with the partial predicate of
--- `account_refresh_due_idx` (000023, which replaced the 000015 one): Postgres
+-- `account_refresh_due_idx` (000024, which replaced the 000023 one): Postgres
 -- only uses a partial index whose predicate the query provably implies, so
 -- widening one here without the other silently degrades this query to a seq
 -- scan.
 SELECT
     id, platform, username, auth_status, handle, last_verified_at,
     proxy_group_id, health_score, status, tags, worker_id, last_used_at,
-    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at
+    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at,
+    location, latitude, longitude, timezone, user_agent
 FROM account
 WHERE (
     -- A first login: never attempted, so there is no expiry to compare. PENDING
@@ -135,7 +151,9 @@ WHERE (
     )
   )
   AND status = 'ACTIVE'
-  AND worker_id IS NOT NULL
+  -- A leased account (worker_id set) is a login/CAPTCHA/live-view parked on a
+  -- worker; re-dispatching would close that context under the operator.
+  AND worker_id IS NULL
   AND (last_checked_at IS NULL OR last_checked_at <= $2)
 ORDER BY cookie_expiry_at
 LIMIT $3;
@@ -181,7 +199,8 @@ SELECT count(*) FROM account WHERE auth_status IN ('AUTHENTICATING', 'NEEDS_INPU
 SELECT
     id, platform, username, auth_status, handle, last_verified_at,
     proxy_group_id, health_score, status, tags, worker_id, last_used_at,
-    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at
+    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at,
+    location, latitude, longitude, timezone, user_agent
 FROM account
 WHERE auth_status = 'AUTHENTICATING'
   AND last_checked_at IS NOT NULL
@@ -208,7 +227,74 @@ UPDATE account SET
     auth_status      = 'FAILED',
     last_error       = 'login attempt abandoned: no callback from the worker',
     last_checked_at  = now(),
-    cookie_expiry_at = NULL
+    cookie_expiry_at = NULL,
+    -- A worker lease left by an abandoned login must not survive it: the row
+    -- would stay invisible to the due query and the worker would look busy to
+    -- the slot coordinator forever.
+    worker_id        = NULL
 WHERE id = $1
   AND auth_status = 'AUTHENTICATING'
   AND last_checked_at = $2;
+
+-- --- stateless pool: worker lease & location bootstrap (000024) ------------
+
+-- name: AcquireAccountWorkerLease :one
+-- Pin one account to one free pool worker for an interactive session (login,
+-- CAPTCHA, live view). Two conditions, both in the WHERE so the check and the
+-- write cannot race another request:
+--   * the account is unleased or already leased to this same worker
+--     (idempotent re-dispatch),
+--   * no OTHER account holds this worker — the Xvfb display shows one browser,
+--     and the slot coordinator's Redis key is a cache in front of this rule,
+--     not the authority for it.
+-- Returns no row (-> domain.ErrConflict) when either holds.
+UPDATE account AS target SET
+    worker_id       = $2,
+    last_checked_at = now()
+WHERE target.id = $1
+  AND (target.worker_id IS NULL OR target.worker_id = $2)
+  AND NOT EXISTS (
+      SELECT 1 FROM account other
+      WHERE other.id <> target.id AND other.worker_id = $2
+  )
+RETURNING
+    id, platform, username, auth_status, handle, last_verified_at,
+    proxy_group_id, health_score, status, tags, worker_id, last_used_at,
+    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at,
+    location, latitude, longitude, timezone, user_agent;
+
+-- name: ReleaseAccountWorkerLease :exec
+-- Return an account to the schedulable pool. Guarded on the worker id so a
+-- late release from a previous session cannot free a lease a newer one holds.
+--
+-- last_checked_at is cleared with the lease. Acquiring stamps it, and the due
+-- query treats it as "last dispatch, respect the retry backoff" — so leaving
+-- it behind would hide the account for RetryAfter (6h) after every interactive
+-- login, which is the opposite of what releasing means.
+UPDATE account SET worker_id = NULL, last_checked_at = NULL
+WHERE id = $1 AND worker_id = $2;
+
+-- name: ListUnlocatedAccounts :many
+-- Accounts still missing a city/GPS identity, for the startup backfill. Bounded
+-- so one tick cannot pin the whole table in memory.
+SELECT
+    id, platform, username, auth_status, handle, last_verified_at,
+    proxy_group_id, health_score, status, tags, worker_id, last_used_at,
+    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at,
+    location, latitude, longitude, timezone, user_agent
+FROM account
+WHERE location IS NULL
+ORDER BY created_at ASC
+LIMIT $1;
+
+-- name: ListAllAccounts :many
+-- Every account, ordered deterministically, for grouping that cannot be done in
+-- SQL (region rollup). Replaces paginated reads that silently truncated a
+-- 486-account fleet at 200.
+SELECT
+    id, platform, username, auth_status, handle, last_verified_at,
+    proxy_group_id, health_score, status, tags, worker_id, last_used_at,
+    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at,
+    location, latitude, longitude, timezone, user_agent
+FROM account
+ORDER BY created_at DESC;

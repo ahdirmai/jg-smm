@@ -115,6 +115,39 @@ func (q *Queries) ListSessionsExpiringBefore(ctx context.Context, arg ListSessio
 	return items, nil
 }
 
+const refreshAccountSessionState = `-- name: RefreshAccountSessionState :exec
+INSERT INTO account_session (account_id, storage_state, expires_at, captured_on, captured_at, last_used_at)
+VALUES ($1, $2, $3, $4, now(), now())
+ON CONFLICT (account_id) DO UPDATE SET
+    storage_state = EXCLUDED.storage_state,
+    expires_at    = COALESCE(EXCLUDED.expires_at, account_session.expires_at),
+    captured_on   = COALESCE(EXCLUDED.captured_on, account_session.captured_on),
+    captured_at   = now(),
+    last_used_at  = now()
+`
+
+type RefreshAccountSessionStateParams struct {
+	AccountID    pgtype.UUID        `json:"account_id"`
+	StorageState []byte             `json:"storage_state"`
+	ExpiresAt    pgtype.Timestamptz `json:"expires_at"`
+	CapturedOn   pgtype.UUID        `json:"captured_on"`
+}
+
+// Write back the cookie a successful action left behind. An action rotates the
+// platform's session token, so the stored one would otherwise go stale while
+// still looking valid. COALESCE keeps an existing expiry when the new capture
+// dated nothing: erasing a known schedule would drop the account out of the
+// refresh sweep.
+func (q *Queries) RefreshAccountSessionState(ctx context.Context, arg RefreshAccountSessionStateParams) error {
+	_, err := q.db.Exec(ctx, refreshAccountSessionState,
+		arg.AccountID,
+		arg.StorageState,
+		arg.ExpiresAt,
+		arg.CapturedOn,
+	)
+	return err
+}
+
 const touchAccountSession = `-- name: TouchAccountSession :exec
 UPDATE account_session SET last_used_at = now() WHERE account_id = $1
 `

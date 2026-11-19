@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"math/rand"
+	"math/rand/v2"
 	"net/url"
 	"strings"
 	"time"
@@ -47,7 +47,15 @@ type ContainerService struct {
 	// noVNC display so an operator can drive Chrome manually without a login
 	// flow.
 	control port.Publisher
-	logger  *slog.Logger
+	// rpc closes browser contexts on a stateless pool worker, which has no
+	// control channel. Optional: nil makes ClearSessions report the machines it
+	// could not reach instead of silently claiming success.
+	rpc port.WorkerRPC
+	// slots is the fleet's worker-slot coordinator, swept by ClearSessions so a
+	// cleared machine is not still "busy" to the scheduler until a TTL expires.
+	// Optional: nil means the sweep is skipped.
+	slots  port.WorkerSlotCoordinator
+	logger *slog.Logger
 }
 
 // ContainerConfig tunes the container service.
@@ -69,6 +77,12 @@ type ContainerConfig struct {
 	Control port.Publisher
 	// Waker resumes a PAUSED container when its live view is opened. Optional.
 	Waker *Waker
+	// Slots lets ClearSessions drop the (now false) busy markers.
+	Slots port.WorkerSlotCoordinator
+	// RPC reaches a pool worker over HTTPS. Needed to close the browsers a
+	// stateless worker keeps in memory: there is no control channel on that
+	// tier, so without RPC a "clear sessions" request has no transport.
+	RPC port.WorkerRPC
 }
 
 // NewContainerService wires the service. packer may be nil; deletion then only
@@ -92,9 +106,11 @@ func NewContainerService(workers port.WorkerStore, accounts port.AccountStore, p
 		control:  cfg.Control,
 		novnc:    cfg.Novnc,
 		waker:    cfg.Waker,
+		rpc:      cfg.RPC,
+		slots:    cfg.Slots,
 		// Per-worker coordinates are chosen once; a fresh source per service is
 		// fine because stability is per-worker, not per-process.
-		rnd:    rand.New(rand.NewSource(time.Now().UnixNano())),
+		rnd:    rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), uint64(time.Now().UnixNano())>>1)),
 		logger: cfg.Logger,
 	}
 }
@@ -436,6 +452,82 @@ func (s *ContainerService) OpenBrowser(ctx context.Context, workerID string, pla
 	}
 	s.logger.Info("browser-open dispatched", "workerId", w.ID, "platform", platform, "url", url)
 	return nil
+}
+
+// SessionClearResult reports which workers were asked to close their browsers.
+type SessionClearResult struct {
+	Cleared []string `json:"cleared"`
+	Failed  []struct {
+		Worker string `json:"worker"`
+		Error  string `json:"error"`
+	} `json:"failed"`
+}
+
+// ClearSessions closes every browser context on every pool worker.
+//
+// The recovery case: a display still believes it is busy with an account no
+// lease names, so nothing in the DB points at the tab that is actually open. A
+// per-account close cannot reach it; only the machine itself can, and asking it
+// to drop everything needs no account id at all.
+//
+// Best effort per worker on purpose: one unreachable machine must not hide the
+// result for the rest, and the operator needs the list of what stayed open.
+func (s *ContainerService) ClearSessions(ctx context.Context) SessionClearResult {
+	res := SessionClearResult{Cleared: []string{}}
+	workers, err := listAllWorkers(ctx, s.workers)
+	if err != nil {
+		res.Failed = append(res.Failed, struct {
+			Worker string `json:"worker"`
+			Error  string `json:"error"`
+		}{Worker: "*", Error: err.Error()})
+		return res
+	}
+	for _, w := range workers {
+		if w.EndpointURL == nil || *w.EndpointURL == "" || s.rpc == nil {
+			continue // not a reachable pool worker (legacy/static tier)
+		}
+		// Empty account id = drop every parked login and the live view. Safe
+		// because a worker serves one account at a time.
+		if err := s.rpc.ClearAuth(ctx, *w.EndpointURL, ""); err != nil {
+			res.Failed = append(res.Failed, struct {
+				Worker string `json:"worker"`
+				Error  string `json:"error"`
+			}{Worker: w.Name, Error: err.Error()})
+			s.logger.Warn("clear sessions: worker failed", "worker", w.Name, "err", err)
+			continue
+		}
+		res.Cleared = append(res.Cleared, w.Name)
+	}
+	// The browser is gone, so the slot that described it is now a lie: whoever
+	// held it would keep the machine "busy" until the TTL ran out, which is the
+	// exact state this button exists to escape. Drop every slot on cleared
+	// machines — the operator asked for a clean fleet, not a clean display.
+	if cleared, err := s.clearAllSlots(ctx); err != nil {
+		s.logger.Warn("clear sessions: sweep slots failed", "err", err)
+	} else if cleared > 0 {
+		s.logger.Info("clear sessions: dropped worker slots", "slots", cleared)
+	}
+	s.logger.Warn("operator cleared all worker browser sessions",
+		"cleared", len(res.Cleared), "failed", len(res.Failed))
+	return res
+}
+
+// clearAllSlots drops every worker slot in the coordinator.
+//
+// Typed as an optional interface (not added to port.WorkerSlotCoordinator)
+// because the sweep is a recovery action, not part of the leasing contract:
+// a coordinator without it still leases correctly, it just cannot be swept.
+func (s *ContainerService) clearAllSlots(ctx context.Context) (int, error) {
+	if s.slots == nil {
+		return 0, nil
+	}
+	sweeper, ok := s.slots.(interface {
+		ClearAllWorkerSlots(context.Context) (int, error)
+	})
+	if !ok {
+		return 0, nil
+	}
+	return sweeper.ClearAllWorkerSlots(ctx)
 }
 
 // publishContainer fans the container out to dashboards as a provision-updated

@@ -24,6 +24,12 @@ type BrowserSessionStore interface {
 	Save(ctx context.Context, accountID string, sealed []byte, expiresAt *time.Time, capturedOn *string) error
 	// Touch records a successful hydration.
 	Touch(ctx context.Context, accountID string) error
+	// RefreshState writes back the session a successful action left behind. The
+	// platform rotates its tokens during a normal action, so the stored cookie
+	// would otherwise be stale while still looking valid. A nil expiresAt keeps
+	// whatever date is already stored (re-sealing must not drop a live schedule,
+	// or the account falls out of the refresh sweep).
+	RefreshState(ctx context.Context, accountID string, sealed []byte, expiresAt *time.Time, workerID *string) error
 	// Delete drops a session whose login was rejected, so the next dispatch
 	// cannot re-import a cookie the platform has already invalidated.
 	Delete(ctx context.Context, accountID string) error

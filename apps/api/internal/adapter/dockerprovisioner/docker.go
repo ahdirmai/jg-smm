@@ -282,12 +282,12 @@ func (c *Client) CreateWorker(ctx context.Context, w domain.Worker) error {
 			// Hard ceilings: one worker's Chromium stack measured 85MiB idle /
 			// ~460MiB after a session; the 4GiB Memory cap absorbs the spike
 			// while a runaway render can no longer starve the host or siblings.
-			"Memory":     workerMemoryBytes,
-			"PidsLimit":  workerPidsLimit,
+			"Memory":    workerMemoryBytes,
+			"PidsLimit": workerPidsLimit,
 			// Chromium's shared-memory surfaces need far more than the 64MiB
 			// /dev/shm a container gets by default; short of it, tabs crash
 			// under load.
-			"ShmSize":    int64(512 << 20),
+			"ShmSize": int64(512 << 20),
 			// Loopback only (docs/INFRA_ANALYST.md §7): the live view is for the
 			// operator's own browser, never another machine.
 			"PortBindings": map[string]any{

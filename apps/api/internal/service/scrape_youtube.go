@@ -10,8 +10,7 @@ import (
 	"github.com/ahdirmai/jg-smm/apps/api/internal/port"
 )
 
-// youTubeVideo is one dataset row from apidojo/youtube-scraper-api (Apify id
-// gXSReGYeawn5nwDhI), the YouTube keyword-search actor.
+// youTubeVideo is one dataset row from apidojo/youtube-scraper, the YouTube search/post actor.
 //
 // The author and the media are each a nested shape, which is why this platform
 // needs its own parser rather than the loose self-describing struct: Go's
@@ -100,7 +99,71 @@ type youTubeThumbnail struct {
 	Height int    `json:"height"`
 }
 
-// parseYouTubeItems maps one apidojo/youtube-scraper-api dataset row.
+// youTubeStreamersVideo is one row from streamers/youtube-scraper, the
+// on-demand single-video actor. Its keys differ from apidojo's: flat
+// viewCount/commentsCount, channelUsername without `@`, date, and a single
+// thumbnailUrl instead of thumbnails[]. The actor returns no comment bodies,
+// so only the video row is mapped.
+type youTubeStreamersVideo struct {
+	ID              string `json:"id"`
+	Title           string `json:"title"`
+	ThumbnailURL    string `json:"thumbnailUrl"`
+	ViewCount       *int64 `json:"viewCount"`
+	Date            string `json:"date"`
+	Likes           *int64 `json:"likes"`
+	ChannelName     string `json:"channelName"`
+	ChannelUsername string `json:"channelUsername"`
+	ChannelID       string `json:"channelId"`
+	CommentsCount   *int64 `json:"commentsCount"`
+	Type            string `json:"type"`
+}
+
+// parseYouTubeStreamersItem maps the on-demand actor's row. It is detected by
+// the presence of viewCount/channelUsername/thumbnailUrl, which apidojo rows do
+// not carry (they use views, channel{}, thumbnails[]).
+func parseYouTubeStreamersItem(raw []byte, window port.KeywordTimeWindow) ([]scrapeItem, error) {
+	var src youTubeStreamersVideo
+	if err := json.Unmarshal(raw, &src); err != nil {
+		return nil, err
+	}
+	if src.ID == "" {
+		return nil, errors.New("youtube streamers item has no id")
+	}
+	publishedAt := parseActorTime(src.Date)
+	if !inWindow(publishedAt, window) {
+		return nil, nil
+	}
+	media := make([]string, 0, 1)
+	if u := strings.TrimSpace(src.ThumbnailURL); u != "" {
+		media = append(media, u)
+	}
+	metrics := map[string]any{}
+	if src.ViewCount != nil {
+		metrics["views"] = *src.ViewCount
+	}
+	if src.Likes != nil {
+		metrics["likes"] = *src.Likes
+	}
+	if src.CommentsCount != nil {
+		metrics["comments"] = *src.CommentsCount
+	}
+	handle := strings.TrimSpace(src.ChannelUsername)
+	if handle != "" && !strings.HasPrefix(handle, "@") {
+		handle = "@" + handle
+	}
+	return []scrapeItem{{
+		Platform:     string(domain.PlatformYouTube),
+		ExternalID:   src.ID,
+		AuthorHandle: orDefault(handle, orDefault(strings.TrimSpace(src.ChannelName), "unknown")),
+		AuthorID:     orDefault(src.ChannelID, src.ID),
+		Text:         src.Title,
+		MediaURLs:    media,
+		Metrics:      metrics,
+		PublishedAt:  publishedAtPtr(publishedAt),
+	}}, nil
+}
+
+// parseYouTubeItems maps one apidojo/youtube-scraper dataset row.
 //
 // The window is applied here for the same reason as the TikTok, X, Facebook and
 // LinkedIn parsers: the ingestor's window is the backstop between what we paid
@@ -115,6 +178,15 @@ type youTubeThumbnail struct {
 // caller skips it with a warning) rather than being stored as a post keyed by an
 // error message. A row with no video id is the same kind of malformed.
 func parseYouTubeItems(raw []byte, window port.KeywordTimeWindow) ([]scrapeItem, error) {
+	var shape struct {
+		ViewCount       *int64 `json:"viewCount"`
+		ChannelUsername string `json:"channelUsername"`
+		ThumbnailURL    string `json:"thumbnailUrl"`
+	}
+	if err := json.Unmarshal(raw, &shape); err == nil &&
+		(shape.ViewCount != nil || shape.ChannelUsername != "" || shape.ThumbnailURL != "") {
+		return parseYouTubeStreamersItem(raw, window)
+	}
 	var src youTubeVideo
 	if err := json.Unmarshal(raw, &src); err != nil {
 		return nil, err

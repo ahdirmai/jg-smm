@@ -43,7 +43,78 @@ type JobService struct {
 	// does not see the verdict.
 	metrics *obs.Metrics
 	logger  *slog.Logger
+
+	// --- stateless pool (WORKER_POOL_MODE=stateless) ---
+	// poolMode gates the one call that is actively harmful on a shared fleet:
+	// stopOTPWorker pauses a whole container, and in the pool that container is
+	// nine other accounts' next worker.
+	poolMode string
+	// sessions writes a rotated cookie back after a successful action.
+	sessions port.BrowserSessionStore
+	// sealer reseals that cookie before it is stored.
+	sealer port.Sealer
+	// blobs uploads the worker's screenshot evidence. Uploading HERE is what
+	// keeps MinIO off the public internet: the workers post a JPEG in the
+	// callback instead of needing their own bucket credentials.
+	//
+	// It must be a store bound to the SCREENSHOTS bucket. The raw-scrape store
+	// is a different bucket (MINIO_BUCKET, e.g. smm-raw) whose readers never
+	// look for evidence, so writing there produced rows pointing at objects
+	// nothing serves.
+	blobs port.RawStorage
+	// onJobDone releases the pool leases (account lock + worker slot) a pushed
+	// job held. Optional: nil in legacy mode.
+	onJobDone func(jobID string)
+	// pool is the stateless dispatcher, used by RecordAuthOutcome to release an
+	// interactive session's leases when the login settles. Optional.
+	pool *PoolDispatch
+	// loginKeepaliveEvery/Max bound the ping loop that keeps a boxd microVM
+	// awake while an operator answers a CAPTCHA. Defaults 120s / 10m.
+	loginKeepaliveEvery time.Duration
+	loginKeepaliveMax   time.Duration
 }
+
+// PoolJobDeps wires the stateless-pool half of the callback path.
+type PoolJobDeps struct {
+	Mode     string
+	Sessions port.BrowserSessionStore
+	Sealer   port.Sealer
+	// Blobs is optional: without it a screenshot stays a bare file name.
+	Blobs port.RawStorage
+	// OnJobDone runs when an attempt is terminal (never for RUNNING).
+	OnJobDone func(jobID string)
+	// Pool is the dispatcher, so a finished login can hand its worker back
+	// (SQL lease + Redis slot) and clear the browser it left behind.
+	Pool *PoolDispatch
+}
+
+// SetJobDoneHook installs the lease-release hook once the scheduler exists.
+// Separate from WithPool because the callback path must be wired even when no
+// scheduler runs in this process.
+func (s *JobService) SetJobDoneHook(fn func(jobID string)) *JobService {
+	s.onJobDone = fn
+	return s
+}
+
+// WithPool turns on the stateless-pool behaviour of the callback path.
+func (s *JobService) WithPool(d PoolJobDeps) *JobService {
+	s.poolMode = d.Mode
+	s.sessions = d.Sessions
+	s.sealer = d.Sealer
+	s.blobs = d.Blobs
+	s.onJobDone = d.OnJobDone
+	s.pool = d.Pool
+	if s.loginKeepaliveEvery == 0 {
+		s.loginKeepaliveEvery = 120 * time.Second
+	}
+	if s.loginKeepaliveMax == 0 {
+		s.loginKeepaliveMax = 10 * time.Minute
+	}
+	return s
+}
+
+// isPool reports whether the stateless fleet is active.
+func (s *JobService) isPool() bool { return s.poolMode == "stateless" }
 
 // WithWorkerDriver enables immediate shutdown after a skipped OTP login.
 // A nil driver leaves the persisted pause intent for the reconciler.
@@ -118,6 +189,14 @@ type AttemptRecord struct {
 	ResponseExcerpt *string
 	// DurationMs is the measured run time of the attempt.
 	DurationMs int64
+	// UpdatedSession is the storageState a successful action left behind. The
+	// platform rotates its tokens during a normal action, so this is strictly
+	// newer than what the dispatch sent.
+	UpdatedSession json.RawMessage
+	// ScreenshotBytes is the JPEG evidence the worker captured. It arrives in
+	// the callback (not as a shared volume) because a boxd worker has no bucket
+	// credentials and its disk is thrown away when the VM sleeps.
+	ScreenshotBytes []byte
 }
 
 // ClassifyAttempt returns the error class for one attempt verdict (P3-12). A
@@ -178,7 +257,7 @@ func (s *JobService) RecordAttempt(ctx context.Context, r AttemptRecord) error {
 		RenderedText:    derefStrPtr(r.RenderedText),
 		ResponseExcerpt: derefStrPtr(r.ResponseExcerpt),
 		ErrorClass:      string(r.ErrorClass),
-		ScreenshotURL:   r.Screenshot,
+		ScreenshotURL:   s.storeEvidence(ctx, r),
 		DurationMs:      r.DurationMs,
 	}
 	if _, err := s.actions.UpsertActionLog(ctx, log); err != nil {
@@ -197,7 +276,83 @@ func (s *JobService) RecordAttempt(ctx context.Context, r AttemptRecord) error {
 	// health. Best-effort and last, so a health write failure never turns an
 	// already-recorded callback into a 500 the worker re-sends.
 	s.applyHealth(ctx, jobID, r)
+	// A rotated cookie is only worth storing for a proved-good attempt, and only
+	// after the verdict is durable: a crash in between leaves the old cookie,
+	// which is stale-but-valid rather than lost.
+	if r.Status == domain.AttemptSuccess && len(r.UpdatedSession) > 0 {
+		s.persistSession(ctx, jobID, r)
+	}
+	// Release the pool leases once the job can make no further progress. A
+	// RUNNING report is not terminal: the worker is still working, and freeing
+	// the slot would let a second job land on the same display.
+	if r.Status != domain.AttemptRunning && s.onJobDone != nil {
+		s.onJobDone(jobID)
+	}
 	return nil
+}
+
+// storeEvidence uploads the worker's JPEG and returns the key the log stores.
+//
+// The worker posts bytes rather than writing to a shared volume: on boxd it runs
+// on a microVM with no bucket credentials and a disk that is discarded when the
+// VM sleeps. Uploading here means MinIO never has to be reachable from a worker.
+// A failed upload degrades to the bare file name — evidence is an aid, not the
+// verdict.
+func (s *JobService) storeEvidence(ctx context.Context, r AttemptRecord) string {
+	if len(r.ScreenshotBytes) == 0 || s.blobs == nil || r.Screenshot == "" {
+		return r.Screenshot
+	}
+	// Key inside the screenshots bucket: the bucket is the namespace, so
+	// repeating it here would bury the object one level deeper than readers
+	// (and the console) expect.
+	key := r.Screenshot
+	if _, err := s.blobs.Put(ctx, key, r.ScreenshotBytes); err != nil {
+		s.logger.Warn("action: screenshot upload failed; storing the file name only",
+			"attempt", r.AttemptID, "err", err)
+		return r.Screenshot
+	}
+	return key
+}
+
+// persistSession reseals and stores the cookie a successful action rotated.
+//
+// The job id is NOT used as the account id: the attempt id ("<job>:<attempt>")
+// only names the job, so the owning account is looked up from the job row. A
+// failure here is logged, never returned — the verdict already landed, and a
+// 500 would make the worker resend a callback that cannot succeed twice.
+func (s *JobService) persistSession(ctx context.Context, jobID string, r AttemptRecord) {
+	if s.sessions == nil || s.sealer == nil {
+		return
+	}
+	accountID, err := s.accountForJob(ctx, jobID)
+	if err != nil {
+		s.logger.Warn("action: cannot resolve account for session write-back", "job", jobID, "err", err)
+		return
+	}
+	sealed, err := s.sealer.Seal(r.UpdatedSession)
+	if err != nil {
+		s.logger.Warn("action: seal updated session failed", "job", jobID, "err", err)
+		return
+	}
+	// nil expiry: the action observed a rotation, not the cookie's date, so the
+	// stored schedule (used by the refresh loop) must survive untouched.
+	if err := s.sessions.RefreshState(ctx, accountID, sealed, nil, r.WorkerID); err != nil {
+		s.logger.Warn("action: session write-back failed", "job", jobID, "err", err)
+		return
+	}
+	s.logger.Info("action: session write-back stored", "job", jobID, "accountId", accountID)
+}
+
+// accountForJob resolves the account that owns an action job.
+func (s *JobService) accountForJob(ctx context.Context, jobID string) (string, error) {
+	if s.actions == nil {
+		return "", errors.New("action store unavailable")
+	}
+	job, err := s.actions.GetActionJob(ctx, jobID)
+	if err != nil {
+		return "", err
+	}
+	return job.AccountID, nil
 }
 
 // publishAction fans an action verdict to dashboards. A nil publisher is the
@@ -314,14 +469,55 @@ func (s *JobService) RecordAuthOutcome(ctx context.Context, o AuthOutcome) error
 	s.logger.Info("account callback recorded",
 		"accountId", o.AccountID,
 		"authStatus", o.AuthStatus,
-		"handle", deref(o.Handle),
 	)
+	// The worker's `handle` is a cookie VALUE on every platform whose proof is
+	// a cookie (it is what probeSession resolves), so it is a credential and is
+	// deliberately not logged. The row already stores it for the UI.
 	// Fan the new auth state out so a watching dashboard settles the row and
 	// its open detail panel without a manual refresh (ADR 0010: the worker's
 	// callback is the authority; the UI must not outlive it by one tick).
 	s.publishAccountView(ctx, acc)
-	if o.AuthStatus == domain.AuthFailed && isOTPRequired(o.Error) && acc.WorkerID != nil {
-		return s.stopOTPWorker(ctx, *acc.WorkerID, o.Error)
+	// Every settled pool login ends its interactive session here, whatever the
+	// outcome. Without this the account keeps its SQL lease and the worker keeps
+	// its Redis slot until the TTL expires, so the machine looks busy and the
+	// account looks unparked — for eleven minutes per login.
+	//
+	//   AUTHENTICATED / FAILED — and a failed OTP skip — are terminal: hand back
+	//   the worker AND close the browser the login left parked. A worker that
+	//   kept that context alive would be holding an account's cookies in a
+	//   session nobody will ever read.
+	//
+	//   NEEDS_INPUT is parked, not settled: the lease is KEPT (the operator is
+	//   mid-challenge and the context must survive) and a keepalive goroutine
+	//   pings the VM so a boxd idle timer does not put the screen to sleep
+	//   under them.
+	leaseWorkerID := acc.WorkerID
+	if s.isPool() && leaseWorkerID != nil {
+		settled := o.AuthStatus == domain.AuthAuthenticated || o.AuthStatus == domain.AuthFailed
+		if s.pool != nil {
+			w := domain.Worker{ID: *leaseWorkerID}
+			if s.workers != nil {
+				if found, err := s.workers.GetByID(ctx, *leaseWorkerID); err == nil {
+					w = found
+				}
+			}
+			if settled {
+				s.pool.ReleaseSession(ctx, o.AccountID, w, true)
+			} else if o.AuthStatus == domain.AuthNeedsInput {
+				s.pool.KeepLoginAlive(ctx, o.AccountID, w, s.loginKeepaliveEvery, s.loginKeepaliveMax)
+			}
+		}
+	}
+	// The legacy container keeps its explicit pause on an OTP skip, so capacity
+	// is handed back the way that fleet expects.
+	if o.AuthStatus == domain.AuthFailed && isOTPRequired(o.Error) {
+		// In the pool the worker is shared: pausing it would take out whichever
+		// account lands there next, and ReleaseSession above already freed the
+		// only thing this account held.
+		if s.isPool() || leaseWorkerID == nil {
+			return nil
+		}
+		return s.stopOTPWorker(ctx, *leaseWorkerID, o.Error)
 	}
 	return nil
 }
@@ -346,6 +542,15 @@ func (s *JobService) stopOTPWorker(ctx context.Context, workerID string, reason 
 	}
 	if w.DesiredState == domain.DesiredStopped {
 		return nil // preserve a deliberate teardown
+	}
+	// The login machine is never paused. Its whole job is to be available the
+	// instant an operator opens a challenge — a pause there means a boot wait
+	// on top of the 2FA wait. OTP now parks the login on this machine instead
+	// of failing it, but a legacy callback can still land here and must not
+	// take the fleet's only interactive box out of service.
+	if s.pool != nil && s.pool.LoginWorkerName != "" && w.Name == s.pool.LoginWorkerName {
+		s.logger.Info("OTP skip on the login worker: keeping it running", "workerId", w.ID, "worker", w.Name)
+		return nil
 	}
 	w.DesiredState = domain.DesiredPaused
 	w.Status = domain.WorkerIdle

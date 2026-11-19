@@ -3,7 +3,7 @@ package service
 import (
 	"context"
 	"errors"
-	"math/rand"
+	"math/rand/v2"
 	"testing"
 
 	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
@@ -69,7 +69,7 @@ func TestTemplateWeightedPick(t *testing.T) {
 			{ID: "light", Text: "light {topic}", Vars: []string{"topic"}, Weight: 1},
 		},
 	}
-	svc := newTestTemplateService(store, rand.New(rand.NewSource(42)))
+	svc := newTestTemplateService(store, rand.New(rand.NewPCG(uint64(42), uint64(42)^0x9e3779b97f4a7c15)))
 
 	counts := map[string]int{}
 	values := map[string]string{"topic": "launch"}
@@ -98,7 +98,7 @@ func TestTemplatePickSingleCandidate(t *testing.T) {
 			{ID: "only", Text: "nice {topic} and {product}", Vars: []string{"topic", "product"}, Weight: 1},
 		},
 	}
-	svc := newTestTemplateService(store, rand.New(rand.NewSource(1)))
+	svc := newTestTemplateService(store, rand.New(rand.NewPCG(uint64(1), uint64(1)^0x9e3779b97f4a7c15)))
 
 	got, err := svc.Pick(context.Background(), domain.PlatformInstagram, "target-y", map[string]string{
 		"topic":   "launch",
@@ -121,7 +121,7 @@ func TestTemplatePickUnresolvedPlaceholder(t *testing.T) {
 			{ID: "t1", Text: "love the {topic}", Vars: []string{"topic"}, Weight: 1},
 		},
 	}
-	svc := newTestTemplateService(store, rand.New(rand.NewSource(1)))
+	svc := newTestTemplateService(store, rand.New(rand.NewPCG(uint64(1), uint64(1)^0x9e3779b97f4a7c15)))
 
 	if _, err := svc.Pick(context.Background(), domain.PlatformInstagram, "target-z", map[string]string{}); !errors.Is(err, domain.ErrValidation) {
 		t.Fatalf("expected ErrValidation for an unresolved placeholder, got %v", err)
@@ -133,7 +133,7 @@ func TestTemplatePickUnresolvedPlaceholder(t *testing.T) {
 // repeat one.
 func TestTemplatePickEmptyPool(t *testing.T) {
 	store := &fakeTemplateStore{candidates: nil}
-	svc := newTestTemplateService(store, rand.New(rand.NewSource(1)))
+	svc := newTestTemplateService(store, rand.New(rand.NewPCG(uint64(1), uint64(1)^0x9e3779b97f4a7c15)))
 
 	if _, err := svc.Pick(context.Background(), domain.PlatformInstagram, "target-w", nil); !errors.Is(err, domain.ErrTemplatePoolEmpty) {
 		t.Fatalf("expected ErrTemplatePoolEmpty, got %v", err)
@@ -153,7 +153,7 @@ func TestTemplateListAllPlatforms(t *testing.T) {
 
 	t.Run("empty platform lists all", func(t *testing.T) {
 		store := &fakeTemplateStore{listed: mixed}
-		svc := newTestTemplateService(store, rand.New(rand.NewSource(1)))
+		svc := newTestTemplateService(store, rand.New(rand.NewPCG(uint64(1), uint64(1)^0x9e3779b97f4a7c15)))
 
 		out, err := svc.List(context.Background(), "", false)
 		if err != nil {
@@ -176,7 +176,7 @@ func TestTemplateListAllPlatforms(t *testing.T) {
 
 	t.Run("concrete platform stays scoped", func(t *testing.T) {
 		store := &fakeTemplateStore{listed: mixed}
-		svc := newTestTemplateService(store, rand.New(rand.NewSource(1)))
+		svc := newTestTemplateService(store, rand.New(rand.NewPCG(uint64(1), uint64(1)^0x9e3779b97f4a7c15)))
 
 		if _, err := svc.List(context.Background(), domain.PlatformThreads, false); err != nil {
 			t.Fatalf("list threads: %v", err)
@@ -270,7 +270,7 @@ func TestPickBannedScreen(t *testing.T) {
 					{ID: "t1", Platform: domain.PlatformInstagram, Text: tc.text, Vars: nil, Weight: 1, BannedWords: tc.banned},
 				},
 			}
-			svc := newTestTemplateService(store, rand.New(rand.NewSource(1)))
+			svc := newTestTemplateService(store, rand.New(rand.NewPCG(uint64(1), uint64(1)^0x9e3779b97f4a7c15)))
 
 			out, err := svc.Pick(context.Background(), domain.PlatformInstagram, "target-1", nil)
 

@@ -172,6 +172,14 @@ func (s *ActionService) Enqueue(ctx context.Context, items []ActionItem) ([]doma
 		if !acc.IsPackable() {
 			return nil, fmt.Errorf("item %d: %w: account %s is %s", i, domain.ErrValidation, acc.ID, acc.Status)
 		}
+		// An action runs a real browser as this account, so a session that
+		// never completed a login cannot act: the worker would open Instagram
+		// logged out and the job would fail after a paid dispatch. Refuse at
+		// enqueue with the reason the operator can fix on the Accounts page.
+		if acc.AuthStatus != domain.AuthAuthenticated {
+			return nil, fmt.Errorf("item %d: %w: @%s is %s — log in on the Accounts page before acting as it",
+				i, domain.ErrValidation, acc.Username, acc.AuthStatus)
+		}
 		platforms[item.AccountID] = acc.Platform
 
 		u, err := safeTargetURL(item.TargetURL, acc.Platform)
@@ -419,7 +427,7 @@ func (s *ActionService) Retry(ctx context.Context, jobID string) (domain.ActionJ
 	// Now, not now+backoff: the operator pressed the button because they want
 	// it to run, and the per-account velocity gate in the scheduler is the
 	// thing that should decide whether it is safe yet.
-	rescheduled, err := s.actions.RescheduleActionJob(ctx, jobID, s.clock.Now())
+	rescheduled, err := s.actions.RequeueFailedActionJob(ctx, jobID, s.clock.Now())
 	if err != nil {
 		return domain.ActionJob{}, err
 	}

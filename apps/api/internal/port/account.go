@@ -54,6 +54,15 @@ type WorkerStore interface {
 	// RecordHeartbeat appends a telemetry sample and refreshes the worker's
 	// denormalised last_heartbeat / browser_status / queue_depth / current_job_id.
 	RecordHeartbeat(ctx context.Context, hb domain.Heartbeat, snapshot WorkerSnapshot) error
+	// ListPoolWorkers returns the workers a slot may be handed to: RUNNING,
+	// configured (source MANUAL) and reachable (endpoint_url set). Unpaginated
+	// on purpose — a candidate silently dropped past a page would strand the
+	// accounts that hash to it.
+	ListPoolWorkers(ctx context.Context) ([]domain.Worker, error)
+	// UpsertPoolWorker seeds one pool worker by NAME (the stable smm-worker-NN
+	// identity), re-pointing endpoint_url/novnc_service and forcing RUNNING.
+	// Idempotent, so every boot of the API reasserts the configured fleet.
+	UpsertPoolWorker(ctx context.Context, w domain.Worker) (domain.Worker, error)
 }
 
 // WorkerSnapshot carries the denormalised worker fields updated on each heartbeat.
@@ -98,6 +107,23 @@ type AccountStore interface {
 	// blob, used once per auth-login dispatch so the worker can fill the login
 	// form. No list/read model ever selects the column.
 	GetPasswordEnc(ctx context.Context, id string) ([]byte, error)
+
+	// --- stateless pool (000024) ---
+
+	// AcquireLease pins an account to a pool worker for an interactive session.
+	// It is the DB-level truth behind the Redis slot cache: an account is pinned
+	// at most once, and a worker hosts at most one account. domain.ErrConflict
+	// when either is already taken.
+	AcquireLease(ctx context.Context, accountID, workerID string) (domain.Account, error)
+	// ReleaseLease returns the account to the schedulable pool. Guarded on
+	// workerID so a late release from an old session cannot free a new lease.
+	ReleaseLease(ctx context.Context, accountID, workerID string) error
+	// ListUnlocated returns accounts still missing a city/GPS identity, for the
+	// startup backfill. Lim = 0 means no explicit bound.
+	ListUnlocated(ctx context.Context, limit int) ([]domain.Account, error)
+	// ListAll returns every account unpaginated: region grouping must not
+	// silently truncate a 486-account fleet at one page.
+	ListAll(ctx context.Context) ([]domain.Account, error)
 }
 
 // ProxyGroupStore persists proxy pools.

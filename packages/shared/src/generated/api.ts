@@ -243,6 +243,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/accounts/{accountId}/live-view": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The account ID. */
+                accountId: components["parameters"]["AccountId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Open a ticketed live view of the account's browser
+         * @description Leases a pool worker for the account (when none is leased), opens the
+         *     account profile there, and returns a short-lived signed URL to the
+         *     worker's noVNC screen.
+         *
+         *     The ticket matters because a boxd worker publishes noVNC on a PUBLIC
+         *     hostname: without it anyone who guesses the host opens a browser that is
+         *     logged into an operator account. The ticket is an HMAC over
+         *     (expiry, worker name) and is checked by the worker's nginx before the
+         *     WebSocket is allowed.
+         *
+         */
+        post: operations["openAccountLiveView"];
+        /**
+         * Close the account's live view and release its worker
+         * @description Ends the interactive session: the worker closes the browser context, the
+         *     account's lease is freed and the worker slot is returned to the pool.
+         *
+         *     Idempotent — closing a session that is already gone answers 204.
+         *
+         */
+        delete: operations["closeAccountLiveView"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/actions": {
         parameters: {
             query?: never;
@@ -1135,11 +1175,20 @@ export interface components {
             /** @description Pack into this specific container instead of letting the packer choose. The container must exist and not already host the platform. */
             workerId?: string | null;
             proxyGroupId?: string | null;
+            /** @description City from the reference list (Jakarta, Bandung, Makassar, ...). The API fills the GPS point and the matching timezone. Omitted means the account is placed deterministically by its id, which spreads a large import across cities instead of pinning it to one. */
+            location?: string | null;
             tags?: string[];
         };
         ImportAccountsRequest: {
             /** @description One row per account; the cap is the import batch. */
             rows: components["schemas"]["CreateAccountRequest"][];
+        };
+        LiveView: {
+            /** @description Full noVNC URL including the signed `ticket` query parameter. */
+            liveViewUrl: string;
+            workerId: string;
+            /** Format: date-time */
+            expiresAt: string;
         };
         /** @description The import verdict. `queued` counts created rows; `invalid` lists the
          *     rows rejected by validation or a duplicate; `rateLimited` is true when
@@ -1166,9 +1215,16 @@ export interface components {
             authStatus: "PENDING" | "AUTHENTICATING" | "NEEDS_INPUT" | "AUTHENTICATED" | "FAILED" | "QUARANTINED";
             /** @enum {string} */
             status: "ACTIVE" | "PAUSED" | "ARCHIVED" | "DEAD";
+            /** @description The pool worker currently leased for an interactive session (login, CAPTCHA, live view). Null means idle and schedulable — an account is not bound to a machine. */
             workerId?: string | null;
             tags?: string[];
             lastError?: string | null;
+            /** @description The Indonesian city this account reports as its position. Owned by the account, not the worker: a pool machine is shared and disposable. */
+            location?: string | null;
+            latitude?: number | null;
+            longitude?: number | null;
+            /** @description IANA zone injected into the browser context (Asia/Jakarta for WIB, Asia/Makassar for Makassar/Denpasar/Balikpapan). Without it a worker in a Frankfurt datacentre would leak UTC beside an Indonesian GPS. */
+            timezone?: string;
         };
         AccountList: {
             accounts: components["schemas"]["Account"][];
@@ -1475,6 +1531,10 @@ export interface components {
              * @description Measured run time of the attempt.
              */
             durationMs?: number;
+            /** @description The storageState a successful action left behind. A platform rotates its session tokens during a normal action, so this is newer than what the dispatch sent; the API reseals and stores it. Never logged. */
+            updated_session?: Record<string, never>;
+            /** @description Base64 JPEG evidence from the worker. Uploaded to object storage by the API so a pool worker needs no bucket credentials and no durable disk. Decoded size is capped at 1 MiB. */
+            screenshot_jpeg_b64?: string;
         };
         /** @enum {string} */
         AttemptStatus: "SUCCESS" | "FAILED" | "RETRY" | "CANCELLED";
@@ -1954,6 +2014,57 @@ export interface operations {
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
             409: components["responses"]["Error"];
+        };
+    };
+    openAccountLiveView: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The account ID. */
+                accountId: components["parameters"]["AccountId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Live view ready. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LiveView"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+        };
+    };
+    closeAccountLiveView: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The account ID. */
+                accountId: components["parameters"]["AccountId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Session closed (or nothing was open). */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
         };
     };
     listActions: {

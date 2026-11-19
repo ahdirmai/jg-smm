@@ -90,3 +90,24 @@ func (r *SessionRepo) DueBefore(ctx context.Context, cutoff time.Time, limit int
 	}
 	return out, nil
 }
+
+// RefreshState writes back the session a successful action left behind. Unlike
+// Save it is not a "fresh login wins" replace: the cookie was rotated by the
+// platform mid-action, so it is strictly newer, and a nil expiry defers to the
+// stored one (the query's COALESCE) so a re-seal cannot erase a refresh
+// schedule the fleet still relies on.
+func (r *SessionRepo) RefreshState(ctx context.Context, accountID string, sealed []byte, expiresAt *time.Time, workerID *string) error {
+	var exp pgtype.Timestamptz
+	if expiresAt != nil {
+		exp = pgtype.Timestamptz{Time: *expiresAt, Valid: true}
+	}
+	if err := r.q.RefreshAccountSessionState(ctx, sqlcgen.RefreshAccountSessionStateParams{
+		AccountID:    uuidValue(accountID),
+		StorageState: sealed,
+		ExpiresAt:    exp,
+		CapturedOn:   uuidValuePtr(workerID),
+	}); err != nil {
+		return fmt.Errorf("repository.session.RefreshState: %w", err)
+	}
+	return nil
+}

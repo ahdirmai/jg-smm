@@ -24,6 +24,10 @@ type ActionStore interface {
 	// so this is a post-claim write rather than an INSERT field.
 	SetActionJobTemplate(ctx context.Context, id, templateID string) error
 	RescheduleActionJob(ctx context.Context, id string, scheduledAt time.Time) (domain.ActionJob, error)
+	// RequeueFailedActionJob is the operator's manual retry: FAILED -> PENDING
+	// with a fresh attempt budget. Separate from RescheduleActionJob, whose
+	// terminal guard must keep a replayed callback from re-posting.
+	RequeueFailedActionJob(ctx context.Context, id string, scheduledAt time.Time) (domain.ActionJob, error)
 	// SetPendingActionJobsScheduledAt pulls every PENDING job forward to one
 	// instant in a single statement and reports how many rows moved. It is the
 	// whole of "run pending now": paging a set while rewriting its sort key is

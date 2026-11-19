@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
@@ -56,6 +57,12 @@ type ElasticPool struct {
 	// action before it is paused. Long enough that a burst of actions on one
 	// account does not flap the container stop/start between jobs.
 	idleAfter time.Duration
+	// loginWorkerName is the machine every interactive session is pinned to.
+	// The pool NEVER pauses it: a login holds no queue entry, so the idle
+	// rule would stop the one machine an operator needs the moment they open
+	// a live view or a CAPTCHA — and every wait for a boot is a wait for a
+	// human staring at a dead screen. Empty disables the exemption.
+	loginWorkerName string
 }
 
 // NewElasticPool wires the pool. A maxActive of 0 or less disables it, and a
@@ -88,6 +95,16 @@ func NewElasticPoolWithStream(workers port.WorkerStore, driver port.K8sClient, c
 // Enabled reports whether the pool will do anything. Callers use it to skip
 // wiring the loop entirely.
 func (p *ElasticPool) Enabled() bool { return p != nil && p.maxActive > 0 && p.driver != nil }
+
+// WithLoginWorker names the machine the pool must keep RUNNING. Set from
+// LOGIN_WORKER_NAME, the same source the dispatcher pins interactive sessions
+// to, so the two cannot disagree about which box is special.
+func (p *ElasticPool) WithLoginWorker(name string) *ElasticPool {
+	if p != nil {
+		p.loginWorkerName = strings.TrimSpace(name)
+	}
+	return p
+}
 
 // poolDecision is what the pool wants done with one worker this tick.
 type poolDecision struct {
@@ -126,6 +143,14 @@ func (p *ElasticPool) Decide(w []domain.Worker) []poolDecision {
 	var managed []poolCandidate
 	for _, wk := range w {
 		if !p.owns(wk) {
+			continue
+		}
+		// The login machine is always on. It carries no queue depth (a login,
+		// CAPTCHA or live view is a direct RPC, not a job), so the idle rule
+		// below would pause it on the very first tick — and every operator
+		// would wait for a boot to see a challenge. Decide nothing for it: the
+		// reconciler keeps whatever desired_state it already has.
+		if p.loginWorkerName != "" && wk.Name == p.loginWorkerName {
 			continue
 		}
 		lastSeen := workerLastSeen(wk)

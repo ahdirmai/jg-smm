@@ -47,7 +47,7 @@ const workerCols = `id, name, container_id, control_channel, action_queue, sessi
 	novnc_service, desired_state, source, region, status, generation, observed_gen,
 	provision_err, browser_status, current_job_id, last_heartbeat, last_action_at,
 	last_error, queue_depth, restart_count, image_version, created_at, location,
-	latitude, longitude`
+	latitude, longitude, endpoint_url`
 
 // claimSelectOwned finds the row this container already owns (idempotent
 // re-claim across restarts).
@@ -272,6 +272,7 @@ func (r *WorkerRepo) Create(ctx context.Context, w domain.Worker) (domain.Worker
 		Location:       w.Location,
 		Latitude:       w.Latitude,
 		Longitude:      w.Longitude,
+		EndpointUrl:    w.EndpointURL,
 	})
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -299,6 +300,7 @@ func (r *WorkerRepo) Update(ctx context.Context, w domain.Worker) (domain.Worker
 		LastError:     w.LastError,
 		QueueDepth:    int32(w.QueueDepth),
 		RestartCount:  int32(w.RestartCount),
+		EndpointUrl:   w.EndpointURL,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.Worker{}, domain.ErrNotFound
@@ -379,6 +381,7 @@ func toWorker(r sqlcgen.Worker) domain.Worker {
 		RestartCount:   int(r.RestartCount),
 		ImageVersion:   r.ImageVersion,
 		CreatedAt:      tsTimeOrZero(r.CreatedAt),
+		EndpointURL:    r.EndpointUrl,
 	}
 }
 
@@ -413,13 +416,14 @@ func scanWorkerRow(ctx context.Context, row pgx.Row) (domain.Worker, error) {
 		location       *string
 		latitude       *float64
 		longitude      *float64
+		endpointURL    *string
 	)
 	err := row.Scan(
 		&id, &name, &containerID, &controlChannel, &actionQueue, &sessionPVC,
 		&novncService, &desiredState, &source, &region, &status, &generation, &observedGen,
 		&provisionErr, &browserStatus, &currentJobID, &lastHeartbeat, &lastActionAt,
 		&lastError, &queueDepth, &restartCount, &imageVersion, &createdAt, &location,
-		&latitude, &longitude,
+		&latitude, &longitude, &endpointURL,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.Worker{}, domain.ErrNotFound
@@ -454,6 +458,7 @@ func scanWorkerRow(ctx context.Context, row pgx.Row) (domain.Worker, error) {
 		RestartCount:   int(restartCount),
 		ImageVersion:   imageVersion,
 		CreatedAt:      tsTimeOrZero(createdAt),
+		EndpointURL:    endpointURL,
 	}, nil
 }
 
@@ -472,4 +477,37 @@ func nilIfEmpty(s *string) *string {
 func isUUID(s string) bool {
 	_, err := uuid.Parse(s)
 	return err == nil
+}
+
+// ListPoolWorkers returns the slot candidates. See the query: legacy container
+// rows (PAUSED, no endpoint) are excluded at the SQL level so they can never be
+// hashed into.
+func (r *WorkerRepo) ListPoolWorkers(ctx context.Context) ([]domain.Worker, error) {
+	rows, err := r.q.ListPoolWorkers(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("repository.worker.ListPoolWorkers: %w", err)
+	}
+	out := make([]domain.Worker, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, toWorker(row))
+	}
+	return out, nil
+}
+
+// UpsertPoolWorker seeds one pool worker from configuration, keyed on its stable
+// name so every API boot reasserts the same ten rows instead of creating new
+// ones. It forces desired_state RUNNING: the row exists to describe a configured
+// pool member, and a member the operator stopped by hand is restarted by the
+// same intent that names it.
+func (r *WorkerRepo) UpsertPoolWorker(ctx context.Context, w domain.Worker) (domain.Worker, error) {
+	row, err := r.q.UpsertPoolWorkerByName(ctx, sqlcgen.UpsertPoolWorkerByNameParams{
+		Name:         w.Name,
+		Region:       w.Region,
+		EndpointUrl:  w.EndpointURL,
+		NovncService: w.NoVNCService,
+	})
+	if err != nil {
+		return domain.Worker{}, fmt.Errorf("repository.worker.UpsertPoolWorker: %w", err)
+	}
+	return toWorker(row), nil
 }

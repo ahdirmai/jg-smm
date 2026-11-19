@@ -2,7 +2,7 @@ package domain
 
 import (
 	"math"
-	"math/rand"
+	"math/rand/v2"
 	"strings"
 )
 
@@ -69,3 +69,38 @@ func (c City) RandomPoint(rnd *rand.Rand) (lat, lng float64) {
 func roundCoord(v float64) float64 {
 	return math.Round(v*1e5) / 1e5
 }
+
+// witaCities are the cities that observe Central Indonesia Time (UTC+8). Every
+// other city in Cities is WIB (UTC+7); the list is deliberately explicit so a
+// new WITA city is one line here rather than a silent timezone mismatch.
+var witaCities = map[string]struct{}{
+	"Makassar":   {},
+	"Denpasar":   {},
+	"Balikpapan": {},
+}
+
+// DefaultTimezone is WIB — the zone most of the operator's fleet reports.
+const DefaultTimezone = "Asia/Jakarta"
+
+// TimezoneForCity maps a city name to the IANA zone a browser context must set.
+// A boxd worker runs in a Frankfurt datacentre (UTC/CET), so without this the
+// page's clock and Intl formatting contradict the GPS position the same context
+// reports — exactly the anomaly a platform uses to flag a spoofed session.
+// An unknown or empty city falls back to WIB rather than to the host zone.
+func TimezoneForCity(name string) string {
+	for _, c := range Cities {
+		if strings.EqualFold(c.Name, name) {
+			if _, wita := witaCities[c.Name]; wita {
+				return "Asia/Makassar"
+			}
+			return DefaultTimezone
+		}
+	}
+	return DefaultTimezone
+}
+
+// DefaultDesktopUserAgent is the fingerprint every account presents when the
+// operator did not pin one. Chrome 131 on macOS matches what the worker's
+// Playwright build reports, so the UA the context sends and the one the browser
+// advertises cannot disagree.
+const DefaultDesktopUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"

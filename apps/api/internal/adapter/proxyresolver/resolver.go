@@ -33,10 +33,20 @@ type PoolKeyStore interface {
 	GetPoolKeyForWorker(ctx context.Context, workerID string) ([]byte, error)
 }
 
-// Resolver implements dockerprovisioner.Config.ProxyFor.
+// Resolver implements dockerprovisioner.Config.ProxyFor and the pool's
+// per-account egress resolution.
 type Resolver struct {
 	store  PoolKeyStore
 	sealer port.Sealer
+	// groupStore is the per-ACCOUNT path (pool mode). Set with WithGroups; a
+	// resolver built only for the container path leaves it nil.
+	groupStore AccountPoolKeyStore
+}
+
+// WithGroups enables ForAccount by supplying the proxy-group store.
+func (r *Resolver) WithGroups(store AccountPoolKeyStore) *Resolver {
+	r.groupStore = store
+	return r
 }
 
 // New builds the resolver. A nil sealer disables resolution: a stack with no

@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -17,10 +18,20 @@ import (
 	"github.com/ahdirmai/jg-smm/apps/api/internal/service"
 )
 
-// MaxCallbackBytes caps worker callback bodies. Workers post small JSON verdicts
-// plus an optional short error string; anything bigger is a bug or an abuse
-// attempt. See P1-13.
-const MaxCallbackBytes = 64 << 10 // 64 KiB
+// MaxCallbackBytes caps worker callback bodies.
+//
+// 64 KiB was enough when a callback carried only a verdict. It is not now: a
+// stateless worker has nowhere else to put its evidence, so the same request
+// carries the rotated storageState (Instagram's is routinely 20-50 KiB of
+// cookies and local-storage origins) plus a JPEG screenshot. At 64 KiB the write
+// back failed with a 413 the worker could not diagnose, which silently stranded
+// every session at its old cookie. 2 MiB leaves room for both with margin.
+const MaxCallbackBytes = 2 << 20 // 2 MiB
+
+// maxScreenshotBytes bounds the decoded JPEG evidence. A screenshot is an
+// operator aid; anything larger is a mis-encoded image or an attempt to use the
+// callback as storage.
+const maxScreenshotBytes = 1 << 20 // 1 MiB
 
 // internalSecretHeader carries the machine credential on every /internal call.
 const internalSecretHeader = "X-Internal-Secret"
@@ -175,6 +186,11 @@ func (h *InternalHandler) actionCallback(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "job service unavailable")
 	}
 
+	shot, err := decodeScreenshot(req.ScreenshotJpegB64)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+
 	err = h.jobs.RecordAttempt(c.Request().Context(), service.AttemptRecord{
 		AttemptID:       req.AttemptId,
 		Status:          status,
@@ -187,6 +203,8 @@ func (h *InternalHandler) actionCallback(c echo.Context) error {
 		TemplateID:      req.TemplateId,
 		ResponseExcerpt: truncatePtr(req.ResponseExcerpt, maxExcerptRunes),
 		DurationMs:      derefInt64(req.DurationMs),
+		UpdatedSession:  rawSession(req.UpdatedSession),
+		ScreenshotBytes: shot,
 	})
 	return h.translate(c, err)
 }
@@ -424,4 +442,40 @@ func ptrFloat64(p *float64) float64 {
 		return 0
 	}
 	return *p
+}
+
+// decodeScreenshot decodes the base64 JPEG evidence a stateless worker posted.
+//
+// Absent is normal (a failed attempt has nothing to show). Present-but-invalid
+// is a 400 rather than a silent drop: the worker would otherwise believe its
+// evidence was stored. The decode is bounded so a hostile body cannot make the
+// API allocate gigabytes from a 2 MiB request.
+func decodeScreenshot(b64 *string) ([]byte, error) {
+	if b64 == nil || *b64 == "" {
+		return nil, nil
+	}
+	raw, err := base64.StdEncoding.DecodeString(*b64)
+	if err != nil {
+		return nil, errors.New("screenshot_jpeg_b64 is not valid base64")
+	}
+	if len(raw) > maxScreenshotBytes {
+		return nil, errors.New("screenshot_jpeg_b64 exceeds 1 MiB")
+	}
+	return raw, nil
+}
+
+// rawSession re-encodes the decoded storageState so the service can seal exactly
+// what it received. The generated type is a map (the spec says "object"); the
+// service wants bytes, and re-marshalling the map is the honest conversion —
+// the field order changes, the content does not, and Playwright's storageState
+// reader is order-insensitive.
+func rawSession(m *map[string]interface{}) json.RawMessage {
+	if m == nil || len(*m) == 0 {
+		return nil
+	}
+	raw, err := json.Marshal(*m)
+	if err != nil {
+		return nil
+	}
+	return raw
 }

@@ -49,6 +49,7 @@ func TestLoad_ActionRateLimits(t *testing.T) {
 	t.Setenv("PROVISIONER_MODE", "")
 	t.Setenv("ACTION_RATE_LIMIT_INSTAGRAM", "")
 	t.Setenv("ACTION_RATE_LIMIT_THREADS", "")
+	t.Setenv("ACTION_RATE_LIMIT_YOUTUBE", "")
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -58,6 +59,9 @@ func TestLoad_ActionRateLimits(t *testing.T) {
 	}
 	if cfg.ActionRateLimits["threads"] != 15 {
 		t.Errorf("threads limit = %d, want 15", cfg.ActionRateLimits["threads"])
+	}
+	if cfg.ActionRateLimits["youtube"] != 10 {
+		t.Errorf("youtube limit = %d, want 10", cfg.ActionRateLimits["youtube"])
 	}
 	if cfg.ActionCooldownSeconds != 60 {
 		t.Errorf("cooldown = %d, want 60", cfg.ActionCooldownSeconds)
@@ -251,5 +255,48 @@ func TestLoad_ScrapeRateLimitRejectsGarbage(t *testing.T) {
 	t.Setenv("SCRAPE_RATE_LIMIT_WINDOW_SECONDS", "0")
 	if _, err := Load(); err == nil {
 		t.Fatal("want error for SCRAPE_RATE_LIMIT_WINDOW_SECONDS < 1")
+	}
+}
+
+// Stateless pool mode binds to the secret that authenticates every push: asking
+// for it without one is a configuration error, and the default follows the
+// secret rather than claiming a pool the API cannot secure.
+func TestWorkerPoolModeFollowsSecret(t *testing.T) {
+	if got := resolvedPoolMode("", ""); got != PoolModeLegacy {
+		t.Fatalf("default without a secret = %q, want %q", got, PoolModeLegacy)
+	}
+	if got := resolvedPoolMode("", "s3cret"); got != PoolModeStateless {
+		t.Fatalf("default with a secret = %q, want %q", got, PoolModeStateless)
+	}
+	if got := resolvedPoolMode(PoolModeLegacy, "s3cret"); got != PoolModeLegacy {
+		t.Fatalf("explicit legacy must win, got %q", got)
+	}
+	if got := resolvedPoolMode(PoolModeStateless, ""); got != PoolModeStateless {
+		t.Fatalf("explicit stateless must be reported truthfully, got %q", got)
+	}
+
+	cfg := Config{
+		HTTPAddress:                  ":0",
+		ProvisionerMode:              "static",
+		NovncPortMin:                 1000,
+		NovncPortMax:                 2000,
+		ActionBatchParallelism:       1,
+		MaxAccountsPerContainer:      1,
+		WorkerPoolMode:               PoolModeStateless,
+		WorkerPoolSize:               10,
+		NoVNCTicketTTLSeconds:        300,
+		AccountLockTTLSeconds:        300,
+		WorkerLeaseTTLSeconds:        660,
+		InternalAPISecret:            "s3cret",
+		ScrapeMaxAttempts:            1,
+		ScrapeRateLimitWindowSeconds: 60,
+		SessionRefreshLeadHours:      168,
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("a stateless config with a secret must validate: %v", err)
+	}
+	cfg.WorkerPoolMode = "bogus"
+	if err := cfg.Validate(); err == nil {
+		t.Fatalf("an unknown pool mode must be rejected")
 	}
 }

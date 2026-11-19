@@ -855,3 +855,33 @@ func readyFixture(w domain.Worker) domain.Worker {
 	w.LastHeartbeat = &now
 	return w
 }
+
+func (s *fakeWorkerStore) UpsertPoolWorker(_ context.Context, w domain.Worker) (domain.Worker, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, existing := range s.workers {
+		if existing.Name == w.Name {
+			w.ID = id
+			w.DesiredState = domain.DesiredRunning
+			s.workers[id] = w
+			return w, nil
+		}
+	}
+	if w.ID == "" {
+		w.ID = "w-" + w.Name
+	}
+	s.workers[w.ID] = w
+	return w, nil
+}
+
+// ListPoolWorkers mirrors the SQL candidate rule: RUNNING + MANUAL + endpoint.
+func (s *fakeWorkerStore) ListPoolWorkers(ctx context.Context) ([]domain.Worker, error) {
+	out := []domain.Worker{}
+	for _, w := range s.workers {
+		if w.DesiredState != domain.DesiredRunning || w.Source != domain.SourceManual || w.EndpointURL == nil {
+			continue
+		}
+		out = append(out, w)
+	}
+	return out, nil
+}

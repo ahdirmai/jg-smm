@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/labstack/echo/v4"
 	"github.com/oapi-codegen/nullable"
@@ -151,7 +152,10 @@ func (h *ActionHandler) list(c echo.Context) error {
 	}
 	var status *domain.JobStatus
 	if raw := c.QueryParam("status"); raw != "" {
-		st := domain.JobStatus(raw)
+		// OpenAPI enum is upper-case (PENDING/FAILED/...), the DB enum is
+		// lower-case. Passing the wire spelling through made every status
+		// filter return an empty list.
+		st := domain.JobStatus(strings.ToLower(raw))
 		status = &st
 	}
 
@@ -215,11 +219,14 @@ func (h *ActionHandler) getBatch(c echo.Context) error {
 // until the dispatch path fills them.
 func jobToDTO(j domain.ActionJob) oapigen.ActionJob {
 	row := oapigen.ActionJob{
-		Id:          j.ID,
-		ActionType:  oapigen.ActionJobActionType(j.Type),
-		AccountId:   j.AccountID,
-		TargetId:    j.TargetID,
-		Status:      oapigen.JobStatus(j.Status),
+		Id:         j.ID,
+		ActionType: oapigen.ActionJobActionType(j.Type),
+		AccountId:  j.AccountID,
+		TargetId:   j.TargetID,
+		// The domain/DB enum is lower-case; the OpenAPI/UI contract is
+		// upper-case. Without this mapping the dashboard tallied every job as
+		// unknown and hid the Retry control (status === 'FAILED' never matched).
+		Status:      oapigen.JobStatus(strings.ToUpper(string(j.Status))),
 		Attempts:    j.Attempts,
 		ScheduledAt: j.ScheduledAt,
 	}

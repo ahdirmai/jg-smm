@@ -790,6 +790,11 @@ type Account struct {
 	LastError       *string            `json:"last_error"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	RefreshFailures int32              `json:"refresh_failures"`
+	Location        *string            `json:"location"`
+	Latitude        *float64           `json:"latitude"`
+	Longitude       *float64           `json:"longitude"`
+	Timezone        string             `json:"timezone"`
+	UserAgent       *string            `json:"user_agent"`
 }
 
 type AccountSession struct {
@@ -1137,4 +1142,5 @@ type Worker struct {
 	Location       *string            `json:"location"`
 	Latitude       *float64           `json:"latitude"`
 	Longitude      *float64           `json:"longitude"`
+	EndpointUrl    *string            `json:"endpoint_url"`
 }

@@ -315,6 +315,63 @@ paths:
         '409':
           $ref: '#/components/responses/Error'
 
+  /api/accounts/{accountId}/live-view:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    post:
+      tags: [accounts]
+      summary: Open a ticketed live view of the account's browser
+      description: |
+        Leases a pool worker for the account (when none is leased), opens the
+        account profile there, and returns a short-lived signed URL to the
+        worker's noVNC screen.
+
+        The ticket matters because a boxd worker publishes noVNC on a PUBLIC
+        hostname: without it anyone who guesses the host opens a browser that is
+        logged into an operator account. The ticket is an HMAC over
+        (expiry, worker name) and is checked by the worker's nginx before the
+        WebSocket is allowed.
+      operationId: openAccountLiveView
+      security:
+        - accessCookie: []
+      responses:
+        '200':
+          description: Live view ready.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LiveView'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+
+    delete:
+      tags: [accounts]
+      summary: Close the account's live view and release its worker
+      description: |
+        Ends the interactive session: the worker closes the browser context, the
+        account's lease is freed and the worker slot is returned to the pool.
+
+        Idempotent — closing a session that is already gone answers 204.
+      operationId: closeAccountLiveView
+      security:
+        - accessCookie: []
+      responses:
+        '204':
+          description: Session closed (or nothing was open).
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+
+  /api/accounts/{accountId}/session/export:
   /api/actions:
     post:
       tags: [actions]
@@ -1875,6 +1932,14 @@ components:
         proxyGroupId:
           type: string
           nullable: true
+        location:
+          type: string
+          nullable: true
+          description: >-
+            City from the reference list (Jakarta, Bandung, Makassar, ...). The
+            API fills the GPS point and the matching timezone. Omitted means the
+            account is placed deterministically by its id, which spreads a large
+            import across cities instead of pinning it to one.
         tags:
           type: array
           items:
@@ -1890,6 +1955,19 @@ components:
           description: One row per account; the cap is the import batch.
           items:
             $ref: '#/components/schemas/CreateAccountRequest'
+
+    LiveView:
+      type: object
+      required: [liveViewUrl, workerId, expiresAt]
+      properties:
+        liveViewUrl:
+          type: string
+          description: Full noVNC URL including the signed `ticket` query parameter.
+        workerId:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
 
     ImportResult:
       type: object
@@ -1940,6 +2018,10 @@ components:
         workerId:
           type: string
           nullable: true
+          description: >-
+            The pool worker currently leased for an interactive session (login,
+            CAPTCHA, live view). Null means idle and schedulable — an account is
+            not bound to a machine.
         tags:
           type: array
           items:
@@ -1947,6 +2029,24 @@ components:
         lastError:
           type: string
           nullable: true
+        location:
+          type: string
+          nullable: true
+          description: >-
+            The Indonesian city this account reports as its position. Owned by
+            the account, not the worker: a pool machine is shared and disposable.
+        latitude:
+          type: number
+          nullable: true
+        longitude:
+          type: number
+          nullable: true
+        timezone:
+          type: string
+          description: >-
+            IANA zone injected into the browser context (Asia/Jakarta for WIB,
+            Asia/Makassar for Makassar/Denpasar/Balikpapan). Without it a worker
+            in a Frankfurt datacentre would leak UTC beside an Indonesian GPS.
 
     AccountList:
       type: object
@@ -2536,6 +2636,18 @@ components:
           format: int64
           minimum: 0
           description: Measured run time of the attempt.
+        updated_session:
+          type: object
+          description: >-
+            The storageState a successful action left behind. A platform rotates
+            its session tokens during a normal action, so this is newer than what
+            the dispatch sent; the API reseals and stores it. Never logged.
+        screenshot_jpeg_b64:
+          type: string
+          description: >-
+            Base64 JPEG evidence from the worker. Uploaded to object storage by
+            the API so a pool worker needs no bucket credentials and no durable
+            disk. Decoded size is capped at 1 MiB.
 
     AttemptStatus:
       type: string

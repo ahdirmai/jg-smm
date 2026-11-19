@@ -40,6 +40,12 @@ func (h *AccountHandler) Register(g *echo.Group) {
 	// worker's noVNC view, so it never crosses this API.
 	g.POST("/accounts/:accountId/login", h.startLogin, RequirePermission(domain.PermAct))
 	g.POST("/accounts/:accountId/input", h.submitInput, RequirePermission(domain.PermAct))
+	// Live view: leases a worker, opens the account profile there and returns a
+	// TICKETED URL. The ticket is the only lock on a public noVNC hostname.
+	g.POST("/accounts/:accountId/live-view", h.openLiveView, RequirePermission(domain.PermAct))
+	// Closing is what frees the worker + the account's lease. A live view that
+	// is never closed leaves the account permanently unviewable.
+	g.DELETE("/accounts/:accountId/live-view", h.closeLiveView, RequirePermission(domain.PermAct))
 	// Session (cookie) export/import (P-C). Cookies are CREDENTIALS, so these are
 	// owner/admin-only (stricter than the `act` gate the rest of the mutating
 	// routes use) and their bodies are never logged.
@@ -122,10 +128,19 @@ func (h *AccountHandler) create(c echo.Context) error {
 		workerID = &w
 	}
 
+	var location *string
+	if req.Location.IsSpecified() && !req.Location.IsNull() {
+		l := req.Location.MustGet()
+		if l != "" {
+			location = &l
+		}
+	}
+
 	account, _, err := h.accounts.Create(c.Request().Context(), service.AccountInput{
 		Platform:     domain.Platform(req.Platform),
 		Username:     req.Username,
 		Password:     req.Password,
+		Location:     location,
 		ProxyGroupID: proxyID,
 		WorkerID:     workerID,
 		Tags:         tags,
@@ -364,7 +379,62 @@ func toAccountResponse(v service.AccountSummary) oapigen.Account {
 	if v.LastError != nil {
 		out.LastError = nullable.NewNullableWithValue[string](*v.LastError)
 	}
+	if v.Location != nil {
+		out.Location = nullable.NewNullableWithValue[string](*v.Location)
+	}
+	if v.Latitude != nil {
+		out.Latitude = nullable.NewNullableWithValue[float32](float32(*v.Latitude))
+	}
+	if v.Longitude != nil {
+		out.Longitude = nullable.NewNullableWithValue[float32](float32(*v.Longitude))
+	}
+	if v.Timezone != "" {
+		tz := v.Timezone
+		out.Timezone = &tz
+	}
 	tags := v.Tags
 	out.Tags = &tags
 	return out
+}
+
+// openLiveView leases a worker for the account and returns a signed, short-lived
+// URL to that worker's screen.
+func (h *AccountHandler) openLiveView(c echo.Context) error {
+	if h.accounts == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "account service unavailable")
+	}
+	id := c.Param("accountId")
+	if id == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "accountId is required")
+	}
+	view, err := h.accounts.OpenLiveView(c.Request().Context(), id)
+	if err != nil {
+		// A 500 here used to leave NO trace: the generic error handler only logs
+		// the status. Without the message an operator sees "Internal Server
+		// Error" for what is always a concrete cause (no endpoint, worker
+		// unreachable, ticket secret missing).
+		c.Logger().Errorf("live view %s: %v", id, err)
+		return translateAccountError(err)
+	}
+	return c.JSON(http.StatusOK, oapigen.LiveView{
+		LiveViewUrl: view.URL,
+		WorkerId:    view.WorkerID,
+		ExpiresAt:   view.ExpiresAt,
+	})
+}
+
+// closeLiveView ends the account's interactive session and releases its leases.
+func (h *AccountHandler) closeLiveView(c echo.Context) error {
+	if h.accounts == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "account service unavailable")
+	}
+	id := c.Param("accountId")
+	if id == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "accountId is required")
+	}
+	if err := h.accounts.CloseLiveView(c.Request().Context(), id); err != nil {
+		c.Logger().Errorf("close live view %s: %v", id, err)
+		return translateAccountError(err)
+	}
+	return c.NoContent(http.StatusNoContent)
 }

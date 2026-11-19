@@ -33,6 +33,10 @@ func (h *ContainerHandler) Register(g *echo.Group) {
 	g.GET("/containers/:containerId", h.listLogs)
 	g.DELETE("/containers/:containerId", h.delete, RequirePermission(domain.PermAct))
 	g.POST("/containers/:containerId/browser", h.openBrowser, RequirePermission(domain.PermAct))
+	// Closes every browser the pool is holding. Must be registered before the
+	// :containerId routes' semantics can shadow it — Echo matches the literal
+	// segment first, but keeping it adjacent makes the intent obvious.
+	g.POST("/containers/clear-sessions", h.clearSessions, RequirePermission(domain.PermAct))
 	// The city dropdown sits on the same page as the create form.
 	g.GET("/locations", h.listLocations)
 }
@@ -159,6 +163,16 @@ func (h *ContainerHandler) openBrowser(c echo.Context) error {
 		return translateContainerError(err)
 	}
 	return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// clearSessions closes every browser context the pool is holding, on every
+// reachable worker. Used when a display is stuck "busy" with an account no
+// lease names — no per-account call can reach that tab, only the machine can.
+func (h *ContainerHandler) clearSessions(c echo.Context) error {
+	if h.containers == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "container service unavailable")
+	}
+	return c.JSON(http.StatusOK, h.containers.ClearSessions(c.Request().Context()))
 }
 
 // translateContainerError maps domain errors to HTTP statuses.

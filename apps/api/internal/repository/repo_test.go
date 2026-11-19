@@ -156,9 +156,13 @@ func TestWorkerRoundTrip(t *testing.T) {
 	}
 }
 
-// TestAccountAssignProvesUniqueConstraint is the core invariant: two same-platform
-// accounts cannot share one container.
-func TestAccountAssignProvesUniqueConstraint(t *testing.T) {
+// TestAccountLeaseProvesExclusivity is the core pool invariant. Placement
+// became a lease in 000024: an account is idle (worker_id NULL) unless an
+// interactive session holds a worker, and a worker hosts at most one account.
+// Two Instagram accounts may therefore BOTH sit idle — the old
+// UNIQUE(worker_id, platform) would have capped the fleet at 14 of them — but
+// they may never hold the same worker at once.
+func TestAccountLeaseProvesExclusivity(t *testing.T) {
 	workers, accounts, _ := newTestRepos(t)
 	ctx := context.Background()
 
@@ -205,14 +209,29 @@ func TestAccountAssignProvesUniqueConstraint(t *testing.T) {
 	ig2.ID = created2.ID
 	t.Cleanup(func() { _ = accounts.Delete(ctx, ig2.ID) })
 
-	// First IG account packs fine.
-	if _, err := accounts.Assign(ctx, ig1.ID, w.ID); err != nil {
-		t.Fatalf("assign ig1: %v", err)
+	// Both accounts are idle and schedulable; neither holds a worker.
+	if created1.WorkerID != nil || created2.WorkerID != nil {
+		t.Fatalf("a fresh account must hold no lease: %v / %v", created1.WorkerID, created2.WorkerID)
 	}
 
-	// A SECOND instagram in the SAME container must be rejected (the invariant).
-	if _, err := accounts.Assign(ctx, ig2.ID, w.ID); err != domain.ErrConflict {
-		t.Fatalf("expected ErrConflict for same-platform second account, got %v", err)
+	leased, err := accounts.AcquireLease(ctx, ig1.ID, w.ID)
+	if err != nil {
+		t.Fatalf("acquire ig1: %v", err)
+	}
+	if leased.WorkerID == nil || *leased.WorkerID != w.ID {
+		t.Fatalf("lease not persisted: %v", leased.WorkerID)
+	}
+
+	// Idempotent re-dispatch of the same account on the same worker.
+	if _, err := accounts.AcquireLease(ctx, ig1.ID, w.ID); err != nil {
+		t.Fatalf("re-acquire same pair should be a no-op, got %v", err)
+	}
+
+	// THE INVARIANT: one Xvfb display, one account. A second account on the
+	// same worker conflicts even though the old platform rule would allow it
+	// to wait for a different platform slot.
+	if _, err := accounts.AcquireLease(ctx, ig2.ID, w.ID); err != domain.ErrConflict {
+		t.Fatalf("expected ErrConflict for a second account on one worker, got %v", err)
 	}
 
 	// password_enc must never be readable: GetByID returns no ciphertext.
@@ -227,7 +246,6 @@ func TestAccountAssignProvesUniqueConstraint(t *testing.T) {
 		t.Fatalf("password ciphertext leaked through GetByID")
 	}
 
-	// CountByWorker + ListByWorker reflect the packed account.
 	if n, err := accounts.CountByWorker(ctx, w.ID); err != nil || n != 1 {
 		t.Fatalf("count by worker = %d, err %v", n, err)
 	}
@@ -236,27 +254,111 @@ func TestAccountAssignProvesUniqueConstraint(t *testing.T) {
 		t.Fatalf("list by worker wrong: %d rows", len(hosted))
 	}
 
-	// Unassigned-only filter sees ig2.
-	unassigned, err := accounts.List(ctx, port.AccountFilter{UnassignedOnly: true, Limit: 100})
+	// Release, then the same worker is free for the next account.
+	if err := accounts.ReleaseLease(ctx, ig1.ID, w.ID); err != nil {
+		t.Fatalf("release ig1: %v", err)
+	}
+	freed, err := accounts.GetByID(ctx, ig1.ID)
 	if err != nil {
-		t.Fatalf("list unassigned: %v", err)
+		t.Fatalf("get after release: %v", err)
 	}
-	found := false
-	for _, a := range unassigned {
-		if a.ID == ig2.ID {
-			found = true
-		}
+	if freed.WorkerID != nil {
+		t.Fatalf("worker_id still set after release: %v", freed.WorkerID)
 	}
-	if !found {
-		t.Fatalf("ig2 not returned by unassigned-only filter")
+	if _, err := accounts.AcquireLease(ctx, ig2.ID, w.ID); err != nil {
+		t.Fatalf("worker should be free for ig2 after release: %v", err)
 	}
 
-	// Unassign then remove.
-	if _, err := accounts.Unassign(ctx, ig1.ID); err != nil {
+	// A stale release (wrong worker) must not free a current lease.
+	if err := accounts.ReleaseLease(ctx, ig2.ID, "00000000-0000-0000-0000-0000000000ff"); err != nil {
+		t.Fatalf("stale release must be a no-op, not an error: %v", err)
+	}
+	still, err := accounts.GetByID(ctx, ig2.ID)
+	if err != nil {
+		t.Fatalf("get ig2: %v", err)
+	}
+	if still.WorkerID == nil || *still.WorkerID != w.ID {
+		t.Fatalf("a release from another worker freed the lease: %v", still.WorkerID)
+	}
+
+	if _, err := accounts.Unassign(ctx, ig2.ID); err != nil {
 		t.Fatalf("unassign: %v", err)
 	}
 	if hosted, _ := accounts.ListByWorker(ctx, w.ID); len(hosted) != 0 {
 		t.Fatalf("expected 0 hosted after unassign, got %d", len(hosted))
+	}
+}
+
+// TestWorkerEndpointURLRoundTrip proves endpoint_url survives Create, the manual
+// claim scan (workerCols/scanWorkerRow) and the by-name pool upsert — the column
+// the whole push dispatcher dials.
+func TestWorkerEndpointURLRoundTrip(t *testing.T) {
+	workers, _, _ := newTestRepos(t)
+	ctx := context.Background()
+	name := "repo-test-worker-endpoint-" + p2Suffix(t)
+	endpoint := "https://rpc." + name + ".boxd.sh"
+	novnc := "https://" + name + ".boxd.sh/novnc"
+
+	created, err := workers.Create(ctx, domain.Worker{
+		Name:         name,
+		DesiredState: domain.DesiredRunning,
+		Source:       domain.SourceManual,
+		Region:       "ID",
+		Status:       domain.WorkerIdle,
+		Generation:   1,
+		EndpointURL:  &endpoint,
+		NoVNCService: &novnc,
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = workers.Delete(ctx, created.ID) })
+	if created.EndpointURL == nil || *created.EndpointURL != endpoint {
+		t.Fatalf("endpoint_url not persisted on create: %v", created.EndpointURL)
+	}
+
+	// Create path binds container_id, which is what GetByContainerID dials
+	// through scanWorkerRow.
+	container := "worker-" + name
+	created.ContainerID = &container
+	if _, err := workers.Update(ctx, created); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	scanned, err := workers.GetByContainerID(ctx, container)
+	if err != nil {
+		t.Fatalf("get by container id: %v", err)
+	}
+	if scanned.EndpointURL == nil || *scanned.EndpointURL != endpoint {
+		t.Fatalf("scanWorkerRow dropped endpoint_url: %v", scanned.EndpointURL)
+	}
+
+	// The by-name upsert re-points the row and forces RUNNING, without minting a
+	// second row.
+	created.DesiredState = domain.DesiredPaused
+	if _, err := workers.Update(ctx, created); err != nil {
+		t.Fatalf("pause: %v", err)
+	}
+	moved := "https://rpc.moved." + name + ".boxd.sh"
+	upserted, err := workers.UpsertPoolWorker(ctx, domain.Worker{
+		Name:        name,
+		Region:      "ID",
+		EndpointURL: &moved,
+	})
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if upserted.ID != created.ID {
+		t.Fatalf("upsert created a new row: %s != %s", upserted.ID, created.ID)
+	}
+	if upserted.DesiredState != domain.DesiredRunning {
+		t.Fatalf("upsert must assert RUNNING, got %v", upserted.DesiredState)
+	}
+	if upserted.EndpointURL == nil || *upserted.EndpointURL != moved {
+		t.Fatalf("upsert did not re-point endpoint_url: %v", upserted.EndpointURL)
+	}
+	// A nil novnc on the upsert keeps the stored one rather than blanking it.
+	if upserted.NoVNCService == nil || *upserted.NoVNCService != novnc {
+		t.Fatalf("upsert must keep a stored novnc_service, got %v", upserted.NoVNCService)
 	}
 }
 

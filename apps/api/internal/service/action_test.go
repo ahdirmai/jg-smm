@@ -184,7 +184,7 @@ func baseItem() ActionItem {
 
 func TestActionEnqueueCreatesPendingJobs(t *testing.T) {
 	store := newActionStore()
-	accs := &actionAccounts{acc: domain.Account{Platform: domain.PlatformInstagram, Status: domain.AccountActive}}
+	accs := &actionAccounts{acc: domain.Account{Platform: domain.PlatformInstagram, Status: domain.AccountActive, AuthStatus: domain.AuthAuthenticated}}
 	svc := newActionService(store, accs, &actionTargets{ups: targetUpsert{id: "tgt-1"}})
 
 	jobs, err := svc.Enqueue(t.Context(), []ActionItem{
@@ -232,7 +232,7 @@ func TestActionEnqueueRejectsForeignAndInternalHosts(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := newActionStore()
-			accs := &actionAccounts{acc: domain.Account{Platform: domain.PlatformInstagram, Status: domain.AccountActive}}
+			accs := &actionAccounts{acc: domain.Account{Platform: domain.PlatformInstagram, Status: domain.AccountActive, AuthStatus: domain.AuthAuthenticated}}
 			svc := newActionService(store, accs, &actionTargets{ups: targetUpsert{id: "tgt-1"}})
 			if _, err := svc.Enqueue(t.Context(), []ActionItem{
 				{AccountID: "acc-1", TargetURL: tc.url, Type: domain.JobTypeActionLike},
@@ -248,7 +248,7 @@ func TestActionEnqueueRejectsForeignAndInternalHosts(t *testing.T) {
 // Reply button on the page.
 func TestActionEnqueueRejectsReplyWithoutCommentID(t *testing.T) {
 	store := newActionStore()
-	accs := &actionAccounts{acc: domain.Account{Platform: domain.PlatformInstagram, Status: domain.AccountActive}}
+	accs := &actionAccounts{acc: domain.Account{Platform: domain.PlatformInstagram, Status: domain.AccountActive, AuthStatus: domain.AuthAuthenticated}}
 	svc := newActionService(store, accs, &actionTargets{ups: targetUpsert{id: "tgt-1"}})
 	if _, err := svc.Enqueue(t.Context(), []ActionItem{
 		{AccountID: "acc-1", TargetURL: "https://www.instagram.com/p/abc/", Type: domain.JobTypeActionReplyComment},
@@ -273,7 +273,7 @@ func TestActionEnqueueLinksReplyTargetToComment(t *testing.T) {
 	}
 	svc := NewActionService(
 		newActionStore(),
-		&actionAccounts{acc: domain.Account{Platform: domain.PlatformInstagram, Status: domain.AccountActive}},
+		&actionAccounts{acc: domain.Account{Platform: domain.PlatformInstagram, Status: domain.AccountActive, AuthStatus: domain.AuthAuthenticated}},
 		targets,
 		fixedClock{}, nil, nil, nil, nil,
 	)
@@ -298,7 +298,7 @@ func TestActionEnqueueReplyWithoutScrapedCommentStillQueues(t *testing.T) {
 	targets := &actionTargets{ups: targetUpsert{id: "tgt-1"}} // comment nil → not found
 	svc := NewActionService(
 		newActionStore(),
-		&actionAccounts{acc: domain.Account{Platform: domain.PlatformInstagram, Status: domain.AccountActive}},
+		&actionAccounts{acc: domain.Account{Platform: domain.PlatformInstagram, Status: domain.AccountActive, AuthStatus: domain.AuthAuthenticated}},
 		targets,
 		fixedClock{}, nil, nil, nil, nil,
 	)
@@ -326,7 +326,7 @@ func TestActionEnqueueDoesNotLinkNonReplyTargets(t *testing.T) {
 	}
 	svc := NewActionService(
 		newActionStore(),
-		&actionAccounts{acc: domain.Account{Platform: domain.PlatformInstagram, Status: domain.AccountActive}},
+		&actionAccounts{acc: domain.Account{Platform: domain.PlatformInstagram, Status: domain.AccountActive, AuthStatus: domain.AuthAuthenticated}},
 		targets,
 		fixedClock{}, nil, nil, nil, nil,
 	)
@@ -352,7 +352,7 @@ func TestActionEnqueuePublishesPerJobFrame(t *testing.T) {
 	stream := &recordingStream{}
 	svc := NewActionService(
 		newActionStore(),
-		&actionAccounts{acc: domain.Account{Platform: domain.PlatformInstagram, Status: domain.AccountActive}},
+		&actionAccounts{acc: domain.Account{Platform: domain.PlatformInstagram, Status: domain.AccountActive, AuthStatus: domain.AuthAuthenticated}},
 		&actionTargets{ups: targetUpsert{id: "tgt-1"}},
 		fixedClock{}, nil, nil, nil, stream,
 	)
@@ -385,7 +385,7 @@ func TestActionEnqueuePublishesPerJobFrame(t *testing.T) {
 func TestActionEnqueueToleratesNilStream(t *testing.T) {
 	svc := newActionService(
 		newActionStore(),
-		&actionAccounts{acc: domain.Account{Platform: domain.PlatformInstagram, Status: domain.AccountActive}},
+		&actionAccounts{acc: domain.Account{Platform: domain.PlatformInstagram, Status: domain.AccountActive, AuthStatus: domain.AuthAuthenticated}},
 		&actionTargets{ups: targetUpsert{id: "tgt-1"}},
 	)
 	if _, err := svc.Enqueue(t.Context(), []ActionItem{
@@ -477,7 +477,7 @@ func TestActionEnqueueWrapsLookupFailures(t *testing.T) {
 
 func TestActionListPairsLatestVerdict(t *testing.T) {
 	store := newActionStore()
-	accs := &actionAccounts{acc: domain.Account{Platform: domain.PlatformInstagram, Status: domain.AccountActive}}
+	accs := &actionAccounts{acc: domain.Account{Platform: domain.PlatformInstagram, Status: domain.AccountActive, AuthStatus: domain.AuthAuthenticated}}
 	svc := newActionService(store, accs, &actionTargets{ups: targetUpsert{id: "tgt-1"}})
 
 	jobs, err := svc.Enqueue(t.Context(), []ActionItem{
@@ -509,7 +509,7 @@ func TestActionListPairsLatestVerdict(t *testing.T) {
 
 func TestActionListFilterByStatus(t *testing.T) {
 	store := newActionStore()
-	accs := &actionAccounts{acc: domain.Account{Platform: domain.PlatformInstagram, Status: domain.AccountActive}}
+	accs := &actionAccounts{acc: domain.Account{Platform: domain.PlatformInstagram, Status: domain.AccountActive, AuthStatus: domain.AuthAuthenticated}}
 	svc := newActionService(store, accs, &actionTargets{ups: targetUpsert{id: "tgt-1"}})
 
 	if _, err := svc.Enqueue(t.Context(), []ActionItem{
@@ -542,5 +542,28 @@ func TestActionListEmpty(t *testing.T) {
 	}
 	if views != nil {
 		t.Errorf("want nil views for empty queue, got %d", len(views))
+	}
+}
+
+// An account that never finished a login cannot act: the job would open the
+// platform logged out and fail after a paid dispatch, so the refusal belongs at
+// enqueue where the operator can read it and fix it.
+func TestActionEnqueueRejectsUnauthenticatedAccount(t *testing.T) {
+	for _, status := range []domain.AuthStatus{domain.AuthFailed, domain.AuthPending, domain.AuthNeedsInput, domain.AuthAuthenticating} {
+		store := newActionStore()
+		accs := &actionAccounts{acc: domain.Account{
+			ID: "acc-1", Platform: domain.PlatformInstagram, Username: "someone",
+			Status: domain.AccountActive, AuthStatus: status,
+		}}
+		svc := NewActionService(store, accs, &actionTargets{ups: targetUpsert{id: "tgt-1"}}, fixedClock{}, nil, nil, nil, nil)
+
+		_, err := svc.Enqueue(context.Background(), []ActionItem{{
+			AccountID: "acc-1",
+			Type:      domain.JobTypeActionLike,
+			TargetURL: "https://www.instagram.com/p/abc/",
+		}})
+		if !errors.Is(err, domain.ErrValidation) {
+			t.Fatalf("%s: err = %v, want ErrValidation", status, err)
+		}
 	}
 }

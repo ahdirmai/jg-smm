@@ -79,3 +79,34 @@ func (m *memLogStore) Append(ctx context.Context, l domain.ProvisionLog) error {
 func (m *memLogStore) ListByWorker(ctx context.Context, workerID string, limit int) ([]domain.ProvisionLog, error) {
 	return nil, nil
 }
+
+// UpsertPoolWorker seeds a worker by name, matching the SQL upsert's contact.
+func (m *memWorkerStore) UpsertPoolWorker(_ context.Context, w domain.Worker) (domain.Worker, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for id, existing := range m.workers {
+		if existing.Name == w.Name {
+			w.ID = id
+			w.DesiredState = domain.DesiredRunning
+			m.workers[id] = w
+			return w, nil
+		}
+	}
+	if w.ID == "" {
+		w.ID = "w-" + w.Name
+	}
+	m.workers[w.ID] = w
+	return w, nil
+}
+
+// ListPoolWorkers mirrors the SQL candidate rule: RUNNING + MANUAL + endpoint.
+func (m *memWorkerStore) ListPoolWorkers(ctx context.Context) ([]domain.Worker, error) {
+	out := []domain.Worker{}
+	for _, w := range m.workers {
+		if w.DesiredState != domain.DesiredRunning || w.Source != domain.SourceManual || w.EndpointURL == nil {
+			continue
+		}
+		out = append(out, w)
+	}
+	return out, nil
+}

@@ -674,3 +674,46 @@ func TestParseItemsDispatchesYouTube(t *testing.T) {
 		t.Fatalf("item = %+v, want the youtube video %s", items[0], ytID)
 	}
 }
+
+// The on-demand streamers/youtube-scraper row has a different shape: flat
+// viewCount/commentsCount, channelUsername without '@', one thumbnailUrl, and
+// no status. It must map to the same post and metrics as the apidojo row; a
+// Shorts row (status absent, type shorts) is a valid video too.
+func TestParseYouTubeStreamersOnDemandRow(t *testing.T) {
+	raw := []byte(`{
+		"id":"RyNumF4OEUk",
+		"title":"Bagian 2 dari 3 — Santet Segoro Pitu.",
+		"thumbnailUrl":"https://i.ytimg.com/vi/RyNumF4OEUk/frame0.jpg",
+		"viewCount":348,
+		"date":"2026-11-17T02:02:06.000Z",
+		"likes":2,
+		"channelName":"Folk Story ID",
+		"channelUsername":"folk-story-j6k",
+		"channelId":"UCRy9fNHfcpaw98Ju2jWzEBQ",
+		"commentsCount":0,
+		"type":"shorts"
+	}`)
+	items, err := parseYouTubeItems(raw, port.KeywordTimeWindow{})
+	if err != nil {
+		t.Fatalf("parseYouTubeItems: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("items = %d, want 1", len(items))
+	}
+	got := items[0]
+	if got.ExternalID != "RyNumF4OEUk" || got.Text != "Bagian 2 dari 3 — Santet Segoro Pitu." {
+		t.Errorf("identity/text = %q/%q", got.ExternalID, got.Text)
+	}
+	if got.AuthorHandle != "@folk-story-j6k" {
+		t.Errorf("handle = %q, want @-prefixed channelUsername", got.AuthorHandle)
+	}
+	if got.Metrics["views"] != int64(348) || got.Metrics["likes"] != int64(2) || got.Metrics["comments"] != int64(0) {
+		t.Errorf("metrics = %#v", got.Metrics)
+	}
+	if len(got.MediaURLs) != 1 || got.MediaURLs[0] != "https://i.ytimg.com/vi/RyNumF4OEUk/frame0.jpg" {
+		t.Errorf("media = %#v", got.MediaURLs)
+	}
+	if got.PublishedAt == nil || got.PublishedAt.Format(time.RFC3339) != "2026-11-17T02:02:06Z" {
+		t.Errorf("publishedAt = %v", got.PublishedAt)
+	}
+}

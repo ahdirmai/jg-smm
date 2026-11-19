@@ -441,3 +441,84 @@ func TestEnumParity(t *testing.T) {
 		t.Fatal("AuthStatus AUTHENTICATED mismatch")
 	}
 }
+
+func (s *fakeWorkerStore) UpsertPoolWorker(_ context.Context, w domain.Worker) (domain.Worker, error) {
+	for id, existing := range s.workers {
+		if existing.Name == w.Name {
+			w.ID = id
+			s.workers[id] = w
+			return w, nil
+		}
+	}
+	if w.ID == "" {
+		w.ID = "w-" + w.Name
+	}
+	s.workers[w.ID] = w
+	return w, nil
+}
+
+// --- stateless pool (000024) ---
+
+func (s *fakeAccountStore) AcquireLease(_ context.Context, accountID, workerID string) (domain.Account, error) {
+	a, ok := s.accounts[accountID]
+	if !ok {
+		return domain.Account{}, domain.ErrNotFound
+	}
+	if a.WorkerID != nil && *a.WorkerID != workerID {
+		return domain.Account{}, domain.ErrConflict
+	}
+	for id, other := range s.accounts {
+		if id != accountID && other.WorkerID != nil && *other.WorkerID == workerID {
+			return domain.Account{}, domain.ErrConflict
+		}
+	}
+	w := workerID
+	a.WorkerID = &w
+	s.accounts[accountID] = a
+	return a, nil
+}
+
+func (s *fakeAccountStore) ReleaseLease(_ context.Context, accountID, workerID string) error {
+	a, ok := s.accounts[accountID]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	if a.WorkerID != nil && *a.WorkerID == workerID {
+		a.WorkerID = nil
+		s.accounts[accountID] = a
+	}
+	return nil
+}
+
+func (s *fakeAccountStore) ListUnlocated(_ context.Context, limit int) ([]domain.Account, error) {
+	out := []domain.Account{}
+	for _, a := range s.accounts {
+		if a.Location == nil {
+			out = append(out, a)
+		}
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+func (s *fakeAccountStore) ListAll(_ context.Context) ([]domain.Account, error) {
+	out := make([]domain.Account, 0, len(s.accounts))
+	for _, a := range s.accounts {
+		out = append(out, a)
+	}
+	return out, nil
+}
+
+// ListPoolWorkers mirrors the SQL candidate rule: RUNNING + MANUAL + endpoint.
+func (s *fakeWorkerStore) ListPoolWorkers(ctx context.Context) ([]domain.Worker, error) {
+	out := []domain.Worker{}
+	for _, w := range s.workers {
+		if w.DesiredState != domain.DesiredRunning || w.Source != domain.SourceManual || w.EndpointURL == nil {
+			continue
+		}
+		out = append(out, w)
+	}
+	return out, nil
+}

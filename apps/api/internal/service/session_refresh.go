@@ -42,9 +42,11 @@ type SessionRefresher struct {
 	// message goes out. Optional: nil keeps a scheduler that only publishes,
 	// which is right for a static driver where nothing can be started.
 	waker *Waker
+	// pool routes a refresh to a leased worker (stateless mode). Optional.
+	pool *PoolDispatch
 	// lastDispatch is the wall-clock time of the previous dispatch, for
 	// Spacing. Guarded by dispatchMu so two ticks cannot interleave.
-	dispatchMu  sync.Mutex
+	dispatchMu   sync.Mutex
 	lastDispatch time.Time
 }
 
@@ -131,6 +133,10 @@ type SessionRefreshConfig struct {
 	// dropped silently while the account sits in AUTHENTICATING until the
 	// 30-minute stale sweep gives up on it.
 	Waker *Waker
+	// Pool switches the refresh to the stateless fleet: the login is pushed to a
+	// leased worker instead of published on a control channel nobody may be
+	// subscribed to. Optional: nil keeps the channel path.
+	Pool *PoolDispatch
 }
 
 func (c SessionRefreshConfig) withDefaults() SessionRefreshConfig {
@@ -170,6 +176,7 @@ func NewSessionRefresher(
 		log:       cfg.Logger,
 		sealer:    cfg.Sealer,
 		waker:     cfg.Waker,
+		pool:      cfg.Pool,
 	}
 }
 
@@ -256,7 +263,10 @@ func (s *SessionRefresher) Tick(ctx context.Context) error {
 		// An account with no container has nowhere to log in; the due query
 		// filters these, but the pointer is still dereferenced defensively
 		// rather than trusted, since a claim could have unassigned it since.
-		if acc.WorkerID == nil || *acc.WorkerID == "" {
+		// In the pool an idle account has no worker — that is the normal state,
+		// and exactly the accounts a refresh is FOR. Only the legacy path needs a
+		// pre-bound container.
+		if s.pool == nil && (acc.WorkerID == nil || *acc.WorkerID == "") {
 			continue
 		}
 		// Pace the fleet: MaxConcurrentLogins caps how many run at once, not how
@@ -269,7 +279,7 @@ func (s *SessionRefresher) Tick(ctx context.Context) error {
 			// Per-account failure, not a tick failure: log and continue so one
 			// bad account cannot starve the rest of the fleet.
 			s.log.Warn("session refresh dispatch failed",
-				"accountId", acc.ID, "workerId", *acc.WorkerID, "err", err)
+				"accountId", acc.ID, "workerId", acc.WorkerID, "err", err)
 			continue
 		}
 		dispatched++
@@ -352,6 +362,9 @@ func (s *SessionRefresher) reclaimStaleLogins(ctx context.Context) error {
 // for an account still marked AUTHENTICATED would be re-dispatched on the next
 // tick, and the second login would close the first context mid-flight.
 func (s *SessionRefresher) dispatch(ctx context.Context, acc domain.Account) error {
+	if s.pool != nil {
+		return s.dispatchPooled(ctx, acc)
+	}
 	// Bring the container up BEFORE marking the row in flight. A published
 	// control message has no delivery guarantee: a PAUSED worker has no
 	// subscriber, so the login would be dropped while the row said work was
@@ -385,6 +398,78 @@ func (s *SessionRefresher) dispatch(ctx context.Context, acc domain.Account) err
 	s.log.Info("session refresh dispatched",
 		"accountId", acc.ID,
 		"workerId", *acc.WorkerID,
+		"expiresAt", acc.CookieExpiryAt,
+		"failures", acc.RefreshFailures,
+	)
+	return nil
+}
+
+// dispatchPooled pushes one re-login to a leased pool worker.
+//
+// The worker lease IS the routing: with the container-per-account model gone,
+// "where does this login run" has no stored answer, so the refresher leases a
+// machine and the outcome callback releases it.
+func (s *SessionRefresher) dispatchPooled(ctx context.Context, acc domain.Account) error {
+	// Mark in flight FIRST. The lease write inside Acquire only touches
+	// worker_id; this is what excludes the row from the next tick's due list.
+	if err := s.accounts.BeginRefresh(ctx, acc.ID); err != nil {
+		return fmt.Errorf("mark refresh in flight: %w", err)
+	}
+	enc, err := s.accounts.GetPasswordEnc(ctx, acc.ID)
+	if err != nil {
+		return fmt.Errorf("get credential: %w", err)
+	}
+	if s.sealer == nil {
+		return fmt.Errorf("refresh: credential sealer not configured")
+	}
+	plain, err := s.sealer.Open(enc)
+	if err != nil {
+		return fmt.Errorf("unseal credential: %w", err)
+	}
+
+	// A re-login is an interactive session: it belongs on the login machine.
+	candidates, err := s.pool.LoginCandidates(ctx)
+	if err != nil {
+		return fmt.Errorf("list pool workers: %w", err)
+	}
+	if len(candidates) == 0 {
+		candidates, err = s.pool.Workers(ctx)
+		if err != nil {
+			return fmt.Errorf("list pool workers: %w", err)
+		}
+	}
+	worker, err := s.pool.Slots.AcquireWorkerSlot(ctx, acc.ID, candidates, port.SlotAuthLease, true, s.pool.SlotTTL)
+	if err != nil {
+		// All ten busy: the account stays due, and the next tick retries. That is
+		// the correct backpressure — a refresh is never urgent enough to queue.
+		return fmt.Errorf("lease worker: %w", err)
+	}
+	// The SQL lease is the authority the outcome callback releases; the Redis
+	// slot is the fast pre-check in front of it. Both are freed on any failure
+	// below, or the account would look busy until the TTL expired.
+	release := func() {
+		if err := s.pool.Unlease(context.WithoutCancel(ctx), acc.ID, worker.ID); err != nil {
+			s.log.Warn("refresh: release lease failed", "accountId", acc.ID, "err", err)
+		}
+		_ = s.pool.Slots.ReleaseWorkerSlot(context.WithoutCancel(ctx), worker.ID, acc.ID)
+	}
+	if _, err := s.pool.Lease(ctx, acc.ID, worker.ID); err != nil {
+		_ = s.pool.Slots.ReleaseWorkerSlot(ctx, worker.ID, acc.ID)
+		return fmt.Errorf("pin lease: %w", err)
+	}
+	spec, err := s.pool.RuntimeSpec(ctx, acc)
+	if err != nil {
+		release()
+		return err
+	}
+	spec.Credentials = &port.LoginCreds{Username: acc.Username, Password: string(plain)}
+	if err := s.pool.StartLogin(ctx, worker, spec); err != nil {
+		release()
+		return err
+	}
+	s.log.Info("session refresh dispatched to pool",
+		"accountId", acc.ID,
+		"workerId", worker.ID,
 		"expiresAt", acc.CookieExpiryAt,
 		"failures", acc.RefreshFailures,
 	)

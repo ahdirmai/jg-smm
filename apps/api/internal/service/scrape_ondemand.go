@@ -147,6 +147,43 @@ type PostDetail struct {
 // permalinkShape names the routes postExternalIDFromURL accepts, so the
 // validation error tells the operator what to paste instead of which helper
 // returned empty.
+// canonicalScrapeURL normalises a YouTube target before the actor sees it.
+//
+// The on-demand actor (apidojo/youtube-scraper) accepts a clean watch/shorts
+// URL, but a share link carrying `?feature=share` or `?si=...` is parsed as a
+// search-ish URL and returns ten junk rows instead of the video (verified live:
+// the same Short returns one row without the query and ten null rows with it).
+// The canonical form also forces www.youtube.com, which is what the actor
+// expects, and drops tracking parameters that carry no meaning for a scrape.
+func canonicalScrapeURL(platform domain.Platform, u *url.URL) *url.URL {
+	if platform != domain.PlatformYouTube {
+		return u
+	}
+	host := strings.ToLower(u.Hostname())
+	canonical := func(path, rawQuery string) *url.URL {
+		return &url.URL{Scheme: "https", Host: "www.youtube.com", Path: path, RawQuery: rawQuery}
+	}
+	segs := strings.Split(strings.Trim(u.Path, "/"), "/")
+
+	switch host {
+	case "youtu.be", "www.youtu.be":
+		if len(segs) == 1 && segs[0] != "" {
+			return canonical("/watch", url.Values{"v": {segs[0]}}.Encode())
+		}
+	case "youtube.com", "www.youtube.com", "m.youtube.com":
+		if len(segs) >= 2 && segs[0] == "shorts" && segs[1] != "" {
+			return canonical("/shorts/"+segs[1], "")
+		}
+		if v := u.Query().Get("v"); v != "" {
+			return canonical("/watch", url.Values{"v": {v}}.Encode())
+		}
+		// Other supported shapes (/live/<id>, /embed/<id>) keep their path but
+		// lose tracking query; force the canonical host.
+		return canonical(u.Path, "")
+	}
+	return u
+}
+
 func permalinkShape(p domain.Platform) string {
 	switch p {
 	case domain.PlatformInstagram:
@@ -241,6 +278,12 @@ func (s *ScrapeService) scrapeTarget(ctx context.Context, platform domain.Platfo
 	if err != nil {
 		return PostDetail{}, err
 	}
+	// The YouTube actor accepts one video URL in `startUrls`, but it returns no
+	// row for the youtu.be share domain. Canonicalise before the paid run (and
+	// before the target/payload are stored), so an operator can paste the link
+	// the Share button gives them. The short domain is also blocked by some
+	// egress filters at TLS, which would fail the run before the actor starts.
+	u = canonicalScrapeURL(platform, u)
 	// The actor's `username` input also accepts profile and post URLs, so a
 	// profile link would silently buy a paid 100-post scrape that ingests 100
 	// unrelated rows before readBack fails. A target must address one post.

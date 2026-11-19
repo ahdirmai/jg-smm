@@ -308,6 +308,11 @@ func (h *ScrapeHandler) generateComment(c echo.Context) error {
 		Length:           service.CommentLength(req.Length),
 	})
 	if err != nil {
+		// scrapeError deliberately hides upstream detail on the wire (it can
+		// carry credentials for the scrape actors). Generation failures have no
+		// such token in their message — the model/provider reason is the only
+		// actionable clue, so keep it in the server log.
+		c.Logger().Errorf("comment generate: %v", err)
 		return scrapeError(err)
 	}
 	return c.JSON(http.StatusOK, map[string]any{"comments": texts})

@@ -254,19 +254,23 @@ func fullWindow() port.KeywordTimeWindow {
 	}
 }
 
-func TestSearchInputYouTubePinsKeywordsMaxItemsAndUploadDate(t *testing.T) {
+func TestSearchInputYouTubePinsSearchQueriesMaxResultsAndDateFilter(t *testing.T) {
 	got := searchInputFor(domain.PlatformYouTube, []string{"batulicin"}, fullWindow(), 10)
-	if q, ok := got["keywords"].([]string); !ok || len(q) != 1 || q[0] != "batulicin" {
-		t.Errorf("keywords = %v, want the terms unchanged", got["keywords"])
+	if q, ok := got["searchQueries"].([]string); !ok || len(q) != 1 || q[0] != "batulicin" {
+		t.Errorf("searchQueries = %v, want the terms unchanged", got["searchQueries"])
 	}
-	if got["maxItems"] != 10 {
-		t.Errorf("maxItems = %v, want 10", got["maxItems"])
+	if got["maxResults"] != 10 {
+		t.Errorf("maxResults = %v, want 10", got["maxResults"])
 	}
-	// uploadDate is an ENUM of durations, not a date. Sending the window's
-	// start as a date string is rejected outright (400 invalid-input), and
-	// sending a real date would be worse than useless if it were accepted.
-	if got["uploadDate"] != "m" {
-		t.Errorf("uploadDate = %v, want \"m\" — a 28-day-old lower bound maps to the month bucket", got["uploadDate"])
+	// streamers' enum is {hour,today,week,month,year}; a 28-day lower bound
+	// maps to month. The apidojo keys are ignored by this actor.
+	if got["dateFilter"] != "month" {
+		t.Errorf("dateFilter = %v, want \"month\" — a 28-day-old lower bound", got["dateFilter"])
+	}
+	for _, k := range []string{"keywords", "maxItems", "uploadDate"} {
+		if v, ok := got[k]; ok {
+			t.Errorf("%q = %v, but streamers' search mode does not read it", k, v)
+		}
 	}
 }
 
@@ -313,22 +317,22 @@ func TestSearchInputXSendsNoCapTheActorDoesNotHave(t *testing.T) {
 // whole run with a 400, so a bucket that "looks close enough" costs the entire
 // batch. "h" was written first and would have 400'd every window under two
 // hours — the sub-daily bucket is "l".
-func TestYouTubeUploadDateBucketStaysInsideTheAllowedEnum(t *testing.T) {
-	allowed := map[string]bool{"all": true, "l": true, "t": true, "w": true, "m": true, "y": true}
+func TestYouTubeDateFilterStaysInsideTheAllowedEnum(t *testing.T) {
+	allowed := map[string]bool{"hour": true, "today": true, "week": true, "month": true, "year": true}
 	now := time.Now()
 	for _, age := range []time.Duration{
 		0, time.Minute, 90 * time.Minute, 2 * time.Hour, 36 * time.Hour,
 		3 * 24 * time.Hour, 7 * 24 * time.Hour, 20 * 24 * time.Hour,
 		29 * 24 * time.Hour, 200 * 24 * time.Hour, 900 * 24 * time.Hour,
 	} {
-		got := youTubeUploadDateBucket(port.KeywordTimeWindow{From: now.Add(-age)})
+		got := youTubeDateFilter(port.KeywordTimeWindow{From: now.Add(-age)})
 		if !allowed[got] {
-			t.Errorf("window %s old -> uploadDate %q, which the actor rejects (allowed: all, l, t, w, m, y)", age, got)
+			t.Errorf("window %s old -> dateFilter %q, which the actor rejects (allowed: hour/today/week/month/year)", age, got)
 		}
 	}
-	// And an unbounded window must ask for everything, not a bucket.
-	if got := youTubeUploadDateBucket(port.KeywordTimeWindow{}); got != "all" {
-		t.Errorf("open window -> uploadDate %q, want all", got)
+	// An unbounded window omits the filter entirely.
+	if got := youTubeDateFilter(port.KeywordTimeWindow{}); got != "" {
+		t.Errorf("open window -> dateFilter %q, want empty (omitted)", got)
 	}
 }
 
@@ -452,8 +456,18 @@ func TestRunInputPerPlatform(t *testing.T) {
 		if !ok || len(start) != 1 || start[0]["url"] != url {
 			t.Errorf("%s: expected startUrls:[{url:%q}], got %#v", p, url, in)
 		}
-		if in["maxItems"] != 3 {
-			t.Errorf("%s: maxItems = %v, want 3 (both actors honour it as a real cap)", p, in["maxItems"])
-		}
+	}
+	// YouTube's post actor spells the cap `maxResults`, one target = one video.
+	yt := runInput(domain.PlatformYouTube, url, 3)
+	if yt["maxResults"] != 1 {
+		t.Errorf("youtube maxResults = %v, want 1", yt["maxResults"])
+	}
+	if _, ok := yt["maxItems"]; ok {
+		t.Errorf("youtube: maxItems is the apidojo field; streamers takes maxResults: %#v", yt)
+	}
+	// X still honours the caller's cap.
+	x := runInput(domain.PlatformX, url, 3)
+	if x["maxItems"] != 3 {
+		t.Errorf("x maxItems = %v, want 3", x["maxItems"])
 	}
 }

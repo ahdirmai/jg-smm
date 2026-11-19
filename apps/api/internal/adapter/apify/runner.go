@@ -170,56 +170,44 @@ func threadsSearchInput(in port.ApifySearchInput, maxItems int) map[string]any {
 	return payload
 }
 
-// youTubeSearchInput builds the payload for apidojo/youtube-scraper-api.
-//
-// uploadDate is a real server-side filter, but it takes ENUM values
-// (any/l/t/w/m/y), not a date — verified 2026-09-29, where sending "month"
-// is rejected outright with "must be equal to one of the allowed values".
-// So the window is mapped down to the coarsest bucket that still contains the
-// whole requested range, and the ingestor narrows to the exact days. Sending a
-// real date string is not an option and sending nothing would bill the actor
-// for the actor's own default window.
+// youTubeSearchInput builds the payload for streamers/youtube-scraper in
+// search mode. The actor spells the terms `searchQueries`, the cap
+// `maxResults`, and its date filter `dateFilter` (hour/today/week/month/year);
+// `keywords`/`maxItems`/`uploadDate` belong to the retired apidojo actors and
+// are ignored silently here.
 func youTubeSearchInput(in port.ApifySearchInput, maxItems int) map[string]any {
-	return map[string]any{
-		"keywords":   in.Keywords,
-		"maxItems":   maxItems,
-		"uploadDate": youTubeUploadDateBucket(in.Window),
+	payload := map[string]any{
+		"searchQueries": in.Keywords,
+		"maxResults":    maxItems,
 	}
+	// Omit the key for an open window: the filter is nullable and omitting it
+	// means no date restriction (the ingestor still applies the exact window).
+	if bucket := youTubeDateFilter(in.Window); bucket != "" {
+		payload["dateFilter"] = bucket
+	}
+	return payload
 }
 
-// youTubeUploadDateBucket picks the smallest uploadDate bucket that fully
-// covers the requested window. A bucket that is too narrow silently drops
-// posts the user asked for; too wide only costs money, because the ingestor
-// still applies the exact window. So err towards wide.
-func youTubeUploadDateBucket(w port.KeywordTimeWindow) string {
-	if w.From.IsZero() && w.To.IsZero() {
-		return "all"
-	}
-	// Only the lower bound can be expressed, and only as a duration, so size
-	// it from From and ignore To: the actor's filter is "newer than", never
-	// "older than", and the ingestor applies the upper bound.
+// youTubeDateFilter maps the requested lower bound to streamers' enum. The
+// filter is coarse and relative; the ingestor narrows to the exact days, so err
+// towards a WIDER bucket — too narrow silently drops posts the operator asked
+// for. Allowed set is exactly {hour, today, week, month, year}.
+func youTubeDateFilter(w port.KeywordTimeWindow) string {
 	if w.From.IsZero() {
-		return "all"
+		return ""
 	}
 	switch d := time.Since(w.From); {
-	// The actor's allowed set is exactly {all, l, t, w, m, y} — verified
-	// 2026-09-29, where "month" was rejected outright with
-	//   invalid-input: Field input.uploadDate must be equal to one of the
-	//   allowed values: "all", "l", "t", "w", "m", "y"
-	// There is no "h": the sub-daily bucket is "l" (last hour). Returning "h"
-	// here 400s the whole run.
 	case d <= 2*time.Hour:
-		return "l"
-	case d <= 48*time.Hour:
-		return "t"
+		return "hour"
+	case d <= 24*time.Hour:
+		return "today"
 	case d <= 8*24*time.Hour:
-		return "w"
+		return "week"
 	case d <= 32*24*time.Hour:
-		return "m"
-	case d <= 400*24*time.Hour:
-		return "y"
+		return "month"
+	default:
+		return "year"
 	}
-	return "all"
 }
 
 // linkedInSearchInput builds the payload for harvestapi/linkedin-post-search.
@@ -539,7 +527,7 @@ func (r *Runner) Run(ctx context.Context, in port.ApifyInput) (port.ApifyOutput,
 //   - instagram-post-scraper: `username` accepts usernames, profile URLs AND
 //     post URLs; a post URL yields exactly that post. (The old
 //     startUrls/directUrls fields are gone from the current build.)
-//   - youtube-scraper-api / twitter-scraper-lite: `startUrls[]` — the SAME
+//   - youtube-scraper / twitter-scraper-lite: `startUrls[]` — the SAME
 //     actors their keyword search uses, which accept one video/tweet URL and
 //     return that one row. Verified by running each with a single URL.
 //   - tiktok-realtime-post-details-scraper: its field is `url` (singular) as an
@@ -556,7 +544,14 @@ func runInput(p domain.Platform, targetURL string, maxItems int) map[string]any 
 		return map[string]any{
 			"url": []string{targetURL},
 		}
-	case domain.PlatformYouTube, domain.PlatformX:
+	case domain.PlatformYouTube:
+		// streamers/youtube-scraper: `startUrls` objects + `maxResults`. One
+		// target URL is one video; maxResults:1 keeps a single row.
+		return map[string]any{
+			"startUrls":  []map[string]string{{"url": targetURL}},
+			"maxResults": 1,
+		}
+	case domain.PlatformX:
 		return map[string]any{
 			"startUrls": []map[string]string{{"url": targetURL}},
 			"maxItems":  maxItems,

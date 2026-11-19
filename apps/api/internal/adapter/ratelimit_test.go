@@ -63,6 +63,30 @@ func TestRateLimiterAllowsUpToLimit(t *testing.T) {
 	}
 }
 
+// A refused call must not take a unit. The scheduler polls pending jobs; if a
+// refusal incremented the counter, a batch larger than the budget would keep
+// raising its own barrier and stay PENDING for the whole window.
+func TestRateLimiterRefusalsDoNotConsumeBudget(t *testing.T) {
+	lim := newTestLimiter(t)
+	ctx := context.Background()
+
+	if ok, _, err := lim.Allow(ctx, "instagram", 1, time.Hour); err != nil || !ok {
+		t.Fatalf("first unit: ok=%v err=%v", ok, err)
+	}
+	for i := 0; i < 5; i++ {
+		if ok, _, err := lim.Allow(ctx, "instagram", 1, time.Hour); err != nil || ok {
+			t.Fatalf("refusal %d: ok=%v err=%v", i, ok, err)
+		}
+	}
+	n, err := lim.client.Get(ctx, lim.key("instagram", time.Hour)).Int()
+	if err != nil {
+		t.Fatalf("read counter: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("counter = %d after five refusals, want 1 (refusals must not consume budget)", n)
+	}
+}
+
 func TestRateLimiterPlatformsIndependent(t *testing.T) {
 	lim := newTestLimiter(t)
 	ctx := context.Background()

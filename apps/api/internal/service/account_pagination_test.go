@@ -42,3 +42,9 @@ func TestAccountListIncludesOlderLoginResults(t *testing.T) {
 		t.Fatal("older verified account missing")
 	}
 }
+
+// --- stateless pool (000024): embedded fake covers the base store; ListAll is
+// overridden so a pagination test can hand in a whole fleet unpaginated.
+func (s *pagedAccountStore) ListAll(_ context.Context) ([]domain.Account, error) {
+	return s.rows, nil
+}

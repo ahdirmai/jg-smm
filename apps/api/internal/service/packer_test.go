@@ -686,3 +686,65 @@ func TestPackScaleFiftyContainers(t *testing.T) {
 		})
 	}
 }
+
+// --- stateless pool (000024) ---
+
+func (s *fakeAccountStore) AcquireLease(_ context.Context, accountID, workerID string) (domain.Account, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a, ok := s.accounts[accountID]
+	if !ok {
+		return domain.Account{}, domain.ErrNotFound
+	}
+	if a.WorkerID != nil && *a.WorkerID != workerID {
+		return domain.Account{}, domain.ErrConflict
+	}
+	for id, other := range s.accounts {
+		if id != accountID && other.WorkerID != nil && *other.WorkerID == workerID {
+			return domain.Account{}, domain.ErrConflict
+		}
+	}
+	w := workerID
+	a.WorkerID = &w
+	s.accounts[accountID] = a
+	return a, nil
+}
+
+func (s *fakeAccountStore) ReleaseLease(_ context.Context, accountID, workerID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a, ok := s.accounts[accountID]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	if a.WorkerID != nil && *a.WorkerID == workerID {
+		a.WorkerID = nil
+		s.accounts[accountID] = a
+	}
+	return nil
+}
+
+func (s *fakeAccountStore) ListUnlocated(_ context.Context, limit int) ([]domain.Account, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := []domain.Account{}
+	for _, a := range s.accounts {
+		if a.Location == nil {
+			out = append(out, a)
+			if limit > 0 && len(out) >= limit {
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
+func (s *fakeAccountStore) ListAll(_ context.Context) ([]domain.Account, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]domain.Account, 0, len(s.accounts))
+	for _, a := range s.accounts {
+		out = append(out, a)
+	}
+	return out, nil
+}

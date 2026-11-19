@@ -314,6 +314,9 @@ type fakeSessionStore struct {
 	mu      sync.Mutex
 	states  map[string][]byte
 	touched []string
+	// expires records expiry dates seen by RefreshState, so the "a nil expiry
+	// must not erase a stored one" rule is observable.
+	expires map[string]time.Time
 }
 
 func newFakeSessionStore() *fakeSessionStore {
@@ -349,6 +352,26 @@ func (f *fakeSessionStore) Delete(_ context.Context, id string) error {
 
 func (f *fakeSessionStore) DueBefore(context.Context, time.Time, int) ([]string, error) {
 	return nil, nil
+}
+
+// RefreshState mirrors the SQL upsert: the seal wins, a nil expiry defers to
+// the stored one.
+func (f *fakeSessionStore) RefreshState(_ context.Context, id string, sealed []byte, expiresAt *time.Time, _ *string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.states[id] = append([]byte(nil), sealed...)
+	if expiresAt != nil {
+		f.expires = withExpiry(f.expires, id, *expiresAt)
+	}
+	return nil
+}
+
+func withExpiry(m map[string]time.Time, id string, t time.Time) map[string]time.Time {
+	if m == nil {
+		m = map[string]time.Time{}
+	}
+	m[id] = t
+	return m
 }
 
 // A session captured by one container must be handed back to the next one, so a
@@ -454,4 +477,45 @@ func mustSeal(t *testing.T, s string) []byte {
 		t.Fatalf("seal: %v", err)
 	}
 	return b
+}
+
+// F6: in pool mode an idle account (worker_id nil) is the NORMAL state, so the
+// session endpoints must serve it from the database instead of demanding a
+// container that will never hold it.
+func TestPoolSessionExportImportWithoutWorker(t *testing.T) {
+	accounts := newFakeAccountStore()
+	sealer := &plainSealer{}
+	sessions := newFakeSessionStore()
+	svc := NewAccountService(accounts, nil, nil, AccountConfig{
+		Sealer: sealer, Sessions: sessions, PoolMode: "stateless",
+	})
+	acc := accountFixture("acc-idle", domain.PlatformInstagram)
+	accounts.seed(acc) // WorkerID stays nil: the pool's normal state
+
+	// Nothing stored yet -> 404, not a 409 about a missing container.
+	if _, err := svc.ExportSession(context.Background(), acc.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("export with no session: err = %v, want ErrNotFound", err)
+	}
+
+	state := json.RawMessage(`{"cookies":[{"name":"sessionid","value":"v1"}],"origins":[]}`)
+	if err := svc.ImportSession(context.Background(), acc.ID, state); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+
+	out, err := svc.ExportSession(context.Background(), acc.ID)
+	if err != nil {
+		t.Fatalf("export after import: %v", err)
+	}
+	var a, b map[string]any
+	if json.Unmarshal(out, &a) != nil || json.Unmarshal(state, &b) != nil {
+		t.Fatalf("export is not JSON")
+	}
+	if len(a["cookies"].([]any)) != 1 {
+		t.Fatalf("export lost the cookie: %s", out)
+	}
+
+	// A non-object payload is refused before anything is sealed.
+	if err := svc.ImportSession(context.Background(), acc.ID, json.RawMessage(`[]`)); !errors.Is(err, domain.ErrValidation) {
+		t.Fatalf("array payload: err = %v, want ErrValidation", err)
+	}
 }

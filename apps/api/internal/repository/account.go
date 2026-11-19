@@ -83,6 +83,11 @@ func (r *AccountRepo) Create(ctx context.Context, a domain.Account) (domain.Acco
 		Status:       sqlcgen.AccountStatus(a.Status),
 		Tags:         nonNilTags(a.Tags),
 		WorkerID:     uuidValuePtr(a.WorkerID),
+		Location:     a.Location,
+		Latitude:     a.Latitude,
+		Longitude:    a.Longitude,
+		Timezone:     timezoneOrDefault(a.Timezone),
+		UserAgent:    a.UserAgent,
 	})
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -110,6 +115,11 @@ func (r *AccountRepo) Update(ctx context.Context, a domain.Account) (domain.Acco
 		LastError:       a.LastError,
 		CookieExpiryAt:  tsPtr(a.CookieExpiryAt),
 		RefreshFailures: int32(a.RefreshFailures),
+		Location:        a.Location,
+		Latitude:        a.Latitude,
+		Longitude:       a.Longitude,
+		Timezone:        timezoneOrDefault(a.Timezone),
+		UserAgent:       a.UserAgent,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.Account{}, domain.ErrNotFound
@@ -224,6 +234,11 @@ type accountFields struct {
 	CookieExpiryAt  pgtype.Timestamptz
 	RefreshFailures int32
 	CreatedAt       pgtype.Timestamptz
+	Location        *string
+	Latitude        *float64
+	Longitude       *float64
+	Timezone        string
+	UserAgent       *string
 }
 
 // toAccount maps an account row to the domain entity. It never reads a
@@ -247,7 +262,21 @@ func toAccount(f accountFields) domain.Account {
 		CookieExpiryAt:  tsTime(f.CookieExpiryAt),
 		RefreshFailures: int(f.RefreshFailures),
 		CreatedAt:       tsTimeOrZero(f.CreatedAt),
+		Location:        f.Location,
+		Latitude:        f.Latitude,
+		Longitude:       f.Longitude,
+		Timezone:        f.Timezone,
+		UserAgent:       f.UserAgent,
 	}
+}
+
+// timezoneOrDefault keeps the NOT NULL column satisfied when a caller built a
+// domain.Account by hand (tests, imports) without naming a zone.
+func timezoneOrDefault(tz string) string {
+	if tz == "" {
+		return domain.DefaultTimezone
+	}
+	return tz
 }
 
 // ListDueForRefresh returns accounts whose session cookie expires before
@@ -334,4 +363,66 @@ func (r *AccountRepo) ReclaimStaleLoginAttempt(
 		return false, err
 	}
 	return acc.AuthStatus == domain.AuthFailed, nil
+}
+
+// --- stateless pool (000024) ----------------------------------------------
+
+// AcquireLease pins an account to a worker for an interactive session. The
+// single-row UPDATE is the authority (see AcquireAccountWorkerLease): a second
+// account on the same worker finds the NOT EXISTS clause false and the update
+// matches no row, which is exactly the conflict callers must retry against.
+func (r *AccountRepo) AcquireLease(ctx context.Context, accountID, workerID string) (domain.Account, error) {
+	row, err := r.q.AcquireAccountWorkerLease(ctx, sqlcgen.AcquireAccountWorkerLeaseParams{
+		ID:       uuidValue(accountID),
+		WorkerID: uuidValue(workerID),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Account{}, domain.ErrConflict
+	}
+	if err != nil {
+		return domain.Account{}, fmt.Errorf("repository.account.AcquireLease: %w", err)
+	}
+	return toAccount(accountFields(row)), nil
+}
+
+// ReleaseLease frees the account's worker lease. Already released is not an
+// error: the release paths run on both the success and the failure branch of a
+// callback, and a double release must not surface as a 500 to the worker.
+func (r *AccountRepo) ReleaseLease(ctx context.Context, accountID, workerID string) error {
+	if err := r.q.ReleaseAccountWorkerLease(ctx, sqlcgen.ReleaseAccountWorkerLeaseParams{
+		ID:       uuidValue(accountID),
+		WorkerID: uuidValue(workerID),
+	}); err != nil {
+		return fmt.Errorf("repository.account.ReleaseLease: %w", err)
+	}
+	return nil
+}
+
+// ListUnlocated returns accounts with no city/GPS identity yet.
+func (r *AccountRepo) ListUnlocated(ctx context.Context, limit int) ([]domain.Account, error) {
+	l, _ := pageBounds(limit, 0)
+	rows, err := r.q.ListUnlocatedAccounts(ctx, l)
+	if err != nil {
+		return nil, fmt.Errorf("repository.account.ListUnlocated: %w", err)
+	}
+	out := make([]domain.Account, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, toAccount(accountFields(row)))
+	}
+	return out, nil
+}
+
+// ListAll returns every account. Region grouping is a full-fleet rollup: a
+// paginated read would silently drop accounts past the page boundary, which is
+// what the old by-region endpoint did at 200.
+func (r *AccountRepo) ListAll(ctx context.Context) ([]domain.Account, error) {
+	rows, err := r.q.ListAllAccounts(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("repository.account.ListAll: %w", err)
+	}
+	out := make([]domain.Account, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, toAccount(accountFields(row)))
+	}
+	return out, nil
 }

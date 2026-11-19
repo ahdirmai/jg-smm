@@ -80,6 +80,12 @@ WHERE id = (
     WHERE aj.account_id = $1
       AND aj.status     = 'PENDING'
       AND aj.scheduled_at <= now()
+      -- A job enqueued before the auth rule existed must not run as a
+      -- logged-out account: the claim is the last gate before dispatch.
+      AND EXISTS (
+          SELECT 1 FROM account a
+          WHERE a.id = aj.account_id AND a.auth_status = 'AUTHENTICATED'
+      )
     ORDER BY aj.scheduled_at
     FOR UPDATE SKIP LOCKED
     LIMIT 1
@@ -723,6 +729,45 @@ func (q *Queries) UpsertActionLog(ctx context.Context, arg UpsertActionLogParams
 		&i.ScreenshotUrl,
 		&i.DurationMs,
 		&i.Ts,
+		&i.TemplateID,
+	)
+	return i, err
+}
+
+const requeueFailedActionJob = `-- name: RequeueFailedActionJob :one
+UPDATE action_job
+SET status       = 'PENDING',
+    scheduled_at = $2,
+    started_at   = NULL,
+    finished_at  = NULL,
+    worker_id    = NULL,
+    error        = NULL
+WHERE id = $1
+  AND status = 'FAILED'
+RETURNING id, type, target_id, account_id, worker_id, status, scheduled_at, started_at, finished_at, attempts, error, created_at, template_id
+`
+
+type RequeueFailedActionJobParams struct {
+	ID          pgtype.UUID        `json:"id"`
+	ScheduledAt pgtype.Timestamptz `json:"scheduled_at"`
+}
+
+func (q *Queries) RequeueFailedActionJob(ctx context.Context, arg RequeueFailedActionJobParams) (ActionJob, error) {
+	row := q.db.QueryRow(ctx, requeueFailedActionJob, arg.ID, arg.ScheduledAt)
+	var i ActionJob
+	err := row.Scan(
+		&i.ID,
+		&i.Type,
+		&i.TargetID,
+		&i.AccountID,
+		&i.WorkerID,
+		&i.Status,
+		&i.ScheduledAt,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.Attempts,
+		&i.Error,
+		&i.CreatedAt,
 		&i.TemplateID,
 	)
 	return i, err

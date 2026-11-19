@@ -11,6 +11,17 @@ import (
 )
 
 type Querier interface {
+	// --- stateless pool: worker lease & location bootstrap (000024) ------------
+	// Pin one account to one free pool worker for an interactive session (login,
+	// CAPTCHA, live view). Two conditions, both in the WHERE so the check and the
+	// write cannot race another request:
+	//   * the account is unleased or already leased to this same worker
+	//     (idempotent re-dispatch),
+	//   * no OTHER account holds this worker — the Xvfb display shows one browser,
+	//     and the slot coordinator's Redis key is a cache in front of this rule,
+	//     not the authority for it.
+	// Returns no row (-> domain.ErrConflict) when either holds.
+	AcquireAccountWorkerLease(ctx context.Context, arg AcquireAccountWorkerLeaseParams) (AcquireAccountWorkerLeaseRow, error)
 	// Report builder (P4-04 / P4-05). The dashboard's report view is a pivot over
 	// existing tables, not a new write path: everything here is a read that sums
 	// the action or analytics history the platform already stores.
@@ -259,7 +270,7 @@ type Querier interface {
 	// last_checked_at (stamped at dispatch) instead of re-firing on every tick.
 	//
 	// These gates MUST stay in sync with the partial predicate of
-	// `account_refresh_due_idx` (000023, which replaced the 000015 one): Postgres
+	// `account_refresh_due_idx` (000024, which replaced the 000023 one): Postgres
 	// only uses a partial index whose predicate the query provably implies, so
 	// widening one here without the other silently degrades this query to a seq
 	// scan.
@@ -272,6 +283,10 @@ type Querier interface {
 	// Every attempt of a job, newest first: the dashboard drawer that debugs one
 	// action (P4-02) reads this.
 	ListActionLogsByJob(ctx context.Context, actionJobID pgtype.UUID) ([]ActionLog, error)
+	// Every account, ordered deterministically, for grouping that cannot be done in
+	// SQL (region rollup). Replaces paginated reads that silently truncated a
+	// 486-account fleet at 200.
+	ListAllAccounts(ctx context.Context) ([]ListAllAccountsRow, error)
 	// The pool view across EVERY platform. The composer's pick is platform-scoped
 	// (see PickForTarget), but the dashboard listing needs to show all variants
 	// when no platform filter is applied — otherwise non-Instagram variants are
@@ -309,6 +324,13 @@ type Querier interface {
 	// every ACTIVE account for a provider, walked by the ingestor cron tick.
 	ListOfficialAccountsForIngest(ctx context.Context, arg ListOfficialAccountsForIngestParams) ([]OfficialAccount, error)
 	ListPendingScrapeJobsByAccount(ctx context.Context, arg ListPendingScrapeJobsByAccountParams) ([]ScrapeJob, error)
+	// The workers a slot may be handed to: configured, running, and actually
+	// reachable (endpoint_url set). Deliberately NOT a filtered ListWorkers: that
+	// one pages in SQL and filters in Go, so a fleet with hundreds of legacy rows
+	// would lose real candidates past the page. A stale PAUSED container row with
+	// no endpoint must never be a candidate — the affinity hash would land an
+	// account on a machine that cannot answer.
+	ListPoolWorkers(ctx context.Context) ([]Worker, error)
 	ListPosts(ctx context.Context, arg ListPostsParams) ([]Post, error)
 	ListProvisionLogsByWorker(ctx context.Context, arg ListProvisionLogsByWorkerParams) ([]ProvisionLog, error)
 	ListProxyGroups(ctx context.Context) ([]ProxyGroup, error)
@@ -345,6 +367,9 @@ type Querier interface {
 	// the dashboard's "top posts" table. metric_key must be a jsonb text field;
 	// `->>` keeps the bind a plain text parameter (no jsonb literal assembly).
 	ListTopPostsByPlatform(ctx context.Context, arg ListTopPostsByPlatformParams) ([]Post, error)
+	// Accounts still missing a city/GPS identity, for the startup backfill. Bounded
+	// so one tick cannot pin the whole table in memory.
+	ListUnlocatedAccounts(ctx context.Context, limit int32) ([]ListUnlocatedAccountsRow, error)
 	ListUsers(ctx context.Context, arg ListUsersParams) ([]ListUsersRow, error)
 	ListWorkers(ctx context.Context, arg ListWorkersParams) ([]Worker, error)
 	// A permalink scrape always fetches the comment bodies, so the post row may be
@@ -372,6 +397,20 @@ type Querier interface {
 	// between the list and this write, the row is no longer AUTHENTICATING and the
 	// update is a no-op rather than a stomp over a real outcome.
 	ReclaimStaleLoginAttempt(ctx context.Context, arg ReclaimStaleLoginAttemptParams) error
+	// Write back the cookie a successful action left behind. An action rotates the
+	// platform's session token, so the stored one would otherwise go stale while
+	// still looking valid. COALESCE keeps an existing expiry when the new capture
+	// dated nothing: erasing a known schedule would drop the account out of the
+	// refresh sweep.
+	RefreshAccountSessionState(ctx context.Context, arg RefreshAccountSessionStateParams) error
+	// Return an account to the schedulable pool. Guarded on the worker id so a
+	// late release from a previous session cannot free a lease a newer one holds.
+	//
+	// last_checked_at is cleared with the lease. Acquiring stamps it, and the due
+	// query treats it as "last dispatch, respect the retry backoff" — so leaving
+	// it behind would hide the account for RetryAfter (6h) after every interactive
+	// login, which is the opposite of what releasing means.
+	ReleaseAccountWorkerLease(ctx context.Context, arg ReleaseAccountWorkerLeaseParams) error
 	// Backoff/jitter path (P3-11): the attempt failed with a retryable class, so
 	// the job goes back to PENDING at a future scheduled_at for the next tick.
 	// Also serves "run pending now", where the row is already PENDING.
@@ -379,6 +418,7 @@ type Querier interface {
 	// Same guard as CompleteActionJob: a SUCCESS/FAILED/CANCELLED job is terminal
 	// and must never be pushed back into the queue.
 	RescheduleActionJob(ctx context.Context, arg RescheduleActionJobParams) (ActionJob, error)
+	RequeueFailedActionJob(ctx context.Context, arg RequeueFailedActionJobParams) (ActionJob, error)
 	// Moves a job back into the queue at a later time. Used by the scheduler's
 	// backoff/jitter path: the job is set PENDING and its scheduled_at pushed out,
 	// so the next eligible tick claims it again.
@@ -475,6 +515,11 @@ type Querier interface {
 	// blank out a value a previous run did. A provider that omits `replies` today
 	// should not erase yesterday's reply count.
 	UpsertContentMetric(ctx context.Context, arg UpsertContentMetricParams) (AnalyticsContentMetric, error)
+	// Idempotent seed of one pool worker from configuration. Keyed on name (the
+	// stable identity smm-worker-01..10), so a restart re-points the row at the
+	// current endpoint without duplicating it, and a worker the operator stopped by
+	// hand is brought back only by this explicit RUNNING intent.
+	UpsertPoolWorkerByName(ctx context.Context, arg UpsertPoolWorkerByNameParams) (Worker, error)
 	UpsertPost(ctx context.Context, arg UpsertPostParams) (Post, error)
 	UpsertTarget(ctx context.Context, arg UpsertTargetParams) (Target, error)
 	UpsertTeamConfig(ctx context.Context, name string) (TeamConfig, error)

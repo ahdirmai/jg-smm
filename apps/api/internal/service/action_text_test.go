@@ -30,7 +30,7 @@ func (f *fakeActionText) Get(_ context.Context, jobID string) (string, bool, err
 // reads it at dispatch instead of composing from a template.
 func TestActionEnqueueStoresPerAccountText(t *testing.T) {
 	store := newActionStore()
-	accs := &actionAccounts{acc: domain.Account{Platform: domain.PlatformInstagram, Status: domain.AccountActive}}
+	accs := &actionAccounts{acc: domain.Account{Platform: domain.PlatformInstagram, Status: domain.AccountActive, AuthStatus: domain.AuthAuthenticated}}
 	texts := newFakeActionText()
 	svc := NewActionService(store, accs, &actionTargets{ups: targetUpsert{id: "tgt-1"}}, fixedClock{}, nil, texts, nil, nil)
 
@@ -104,7 +104,7 @@ func TestActionEnqueueRejectsNewlineInText(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			store := newActionStore()
 			texts := newFakeActionText()
-			svc := NewActionService(store, &actionAccounts{acc: domain.Account{Platform: domain.PlatformInstagram, Status: domain.AccountActive}}, &actionTargets{ups: targetUpsert{id: "tgt-1"}}, fixedClock{}, nil, texts, nil, nil)
+			svc := NewActionService(store, &actionAccounts{acc: domain.Account{Platform: domain.PlatformInstagram, Status: domain.AccountActive, AuthStatus: domain.AuthAuthenticated}}, &actionTargets{ups: targetUpsert{id: "tgt-1"}}, fixedClock{}, nil, texts, nil, nil)
 
 			_, err := svc.Enqueue(context.Background(), []ActionItem{
 				{AccountID: "acct-1", TargetURL: "https://instagram.com/p/abc", Type: domain.JobTypeActionComment, Text: body},
@@ -125,7 +125,7 @@ func TestActionEnqueueRejectsNewlineInText(t *testing.T) {
 func TestActionEnqueueAcceptsSingleLineText(t *testing.T) {
 	store := newActionStore()
 	texts := newFakeActionText()
-	svc := NewActionService(store, &actionAccounts{acc: domain.Account{Platform: domain.PlatformInstagram, Status: domain.AccountActive}}, &actionTargets{ups: targetUpsert{id: "tgt-1"}}, fixedClock{}, nil, texts, nil, nil)
+	svc := NewActionService(store, &actionAccounts{acc: domain.Account{Platform: domain.PlatformInstagram, Status: domain.AccountActive, AuthStatus: domain.AuthAuthenticated}}, &actionTargets{ups: targetUpsert{id: "tgt-1"}}, fixedClock{}, nil, texts, nil, nil)
 
 	jobs, err := svc.Enqueue(context.Background(), []ActionItem{
 		{AccountID: "acct-1", TargetURL: "https://instagram.com/p/abc", Type: domain.JobTypeActionComment, Text: "Great shot! DM me at foo@bar"},

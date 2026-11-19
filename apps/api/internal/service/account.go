@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -36,6 +37,17 @@ type AccountService struct {
 	// waker resumes a PAUSED container before a login is dispatched. Optional:
 	// nil means containers are assumed to be running (the pre-pause behaviour).
 	waker *Waker
+	// poolMode selects placement: "stateless" leaves accounts unassigned (a
+	// worker is leased per job), anything else keeps the container packer.
+	poolMode string
+	// pool is the stateless fleet, used by StartLogin/LiveView to lease a worker
+	// and push the context. Optional: nil keeps the control-channel path.
+	pool *PoolDispatch
+	// novncTicketTTL is how long a live-view URL stays usable.
+	novncTicketTTL time.Duration
+	// novncSecret signs the live-view ticket. Empty disables live view rather
+	// than minting URLs nobody can verify.
+	novncSecret string
 
 	// exports correlates an in-flight session export with the worker callback
 	// that fulfils it. In-memory and short-lived: a plaintext session is never
@@ -60,6 +72,13 @@ type AccountConfig struct {
 	// is already running.
 	Waker  *Waker
 	Logger *slog.Logger
+	// PoolMode is config.WorkerPoolMode. "stateless" disables packing.
+	PoolMode string
+	// Pool is the stateless fleet for logins and live view. Optional.
+	Pool *PoolDispatch
+	// NoVNCSecret signs live-view tickets; NoVNCTicketTTL bounds their life.
+	NoVNCSecret    string
+	NoVNCTicketTTL time.Duration
 }
 
 // NewAccountService wires the service. packer may be nil; accounts are then
@@ -72,18 +91,22 @@ func NewAccountService(accounts port.AccountStore, workers port.WorkerStore, pac
 		cfg.Logger = slog.Default()
 	}
 	return &AccountService{
-		accounts: accounts,
-		workers:  workers,
-		packer:   packer,
-		sealer:   cfg.Sealer,
-		clock:    cfg.Clock,
-		stream:   cfg.Stream,
-		control:  cfg.Control,
-		imports:  newImportLimiter(time.Minute, ImportRateLimit),
-		sessions: cfg.Sessions,
-		waker:    cfg.Waker,
-		logger:   cfg.Logger,
-		exports:  map[string]chan json.RawMessage{},
+		accounts:       accounts,
+		workers:        workers,
+		packer:         packer,
+		sealer:         cfg.Sealer,
+		clock:          cfg.Clock,
+		stream:         cfg.Stream,
+		control:        cfg.Control,
+		imports:        newImportLimiter(time.Minute, ImportRateLimit),
+		sessions:       cfg.Sessions,
+		waker:          cfg.Waker,
+		logger:         cfg.Logger,
+		poolMode:       cfg.PoolMode,
+		pool:           cfg.Pool,
+		novncSecret:    cfg.NoVNCSecret,
+		novncTicketTTL: cfg.NoVNCTicketTTL,
+		exports:        map[string]chan json.RawMessage{},
 	}
 }
 
@@ -103,6 +126,12 @@ func (s *AccountService) Create(ctx context.Context, in AccountInput) (AccountSu
 		return AccountSummary{}, nil, fmt.Errorf("account service: seal credential: %w", err)
 	}
 
+	// The device identity is decided BEFORE the insert so a new account is
+	// never briefly unlocated (the column triple is all-or-nothing).
+	loc, err := resolveLocation(in.Location, in.Username+string(in.Platform))
+	if err != nil {
+		return AccountSummary{}, nil, err
+	}
 	account, err := s.accounts.Create(ctx, domain.Account{
 		Platform:     in.Platform,
 		Username:     in.Username,
@@ -111,6 +140,11 @@ func (s *AccountService) Create(ctx context.Context, in AccountInput) (AccountSu
 		ProxyGroupID: in.ProxyGroupID,
 		Status:       domain.AccountActive,
 		Tags:         in.Tags,
+		Location:     loc.location,
+		Latitude:     loc.latitude,
+		Longitude:    loc.longitude,
+		Timezone:     loc.timezone,
+		UserAgent:    new(domain.DefaultDesktopUserAgent),
 	})
 	if err != nil {
 		if isDomainConflict(err) {
@@ -120,6 +154,12 @@ func (s *AccountService) Create(ctx context.Context, in AccountInput) (AccountSu
 	}
 	s.logger.Info("account created", "accountId", account.ID, "platform", account.Platform)
 
+	// Pool mode has no per-account container to pack into: the account is
+	// schedulable the moment the row exists, and a worker is leased per job.
+	if s.poolMode == "stateless" {
+		s.publishAccount(ctx, toAccountView(account))
+		return toAccountView(account), nil, nil
+	}
 	// No packer (DB-only wiring) or nothing to pack into: leave it unassigned.
 	if s.packer == nil {
 		if in.WorkerID != nil {
@@ -186,40 +226,23 @@ type RegionGroup struct {
 // worker at all. It sorts last so a real region is never hidden behind it.
 const UnassignedRegion = "unassigned"
 
-// AccountsByRegion groups every account by the LOCATION (city) of the worker
-// it runs on (account.worker_id -> worker.location, falling back to
-// worker.region when the city is unset). An account with no worker, or a
-// worker with neither a location nor a region, lands in UnassignedRegion.
-// Composed from the existing account + worker lists (no new query): the fleet
-// is small, so a per-worker map is cheap and keeps this off the sqlc path.
+// AccountsByRegion groups every account by its OWN city (account.location).
+//
+// It used to join through worker.location, which no longer means anything: a
+// pool worker is shared and disposable, so the machine says nothing about where
+// an account is. It also read a single 200-row page, which silently truncated a
+// 486-account fleet; ListAll is the honest read.
 func (s *AccountService) AccountsByRegion(ctx context.Context) ([]RegionGroup, error) {
-	accounts, err := s.accounts.List(ctx, port.AccountFilter{Limit: 200})
+	accounts, err := s.accounts.ListAll(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("account service: by-region: list accounts: %w", err)
-	}
-	regionByWorker := map[string]string{}
-	if s.workers != nil {
-		workers, err := s.workers.List(ctx, port.WorkerFilter{Limit: 500})
-		if err != nil {
-			return nil, fmt.Errorf("account service: by-region: list workers: %w", err)
-		}
-		for _, w := range workers {
-			// City first (the operator's grouping unit); region as fallback.
-			key := strings.TrimSpace(w.Region)
-			if w.Location != nil && strings.TrimSpace(*w.Location) != "" {
-				key = strings.TrimSpace(*w.Location)
-			}
-			regionByWorker[w.ID] = key
-		}
 	}
 
 	byRegion := map[string][]AccountSummary{}
 	for _, a := range accounts {
 		region := UnassignedRegion
-		if a.WorkerID != nil {
-			if r, ok := regionByWorker[*a.WorkerID]; ok && r != "" {
-				region = r
-			}
+		if a.Location != nil && strings.TrimSpace(*a.Location) != "" {
+			region = strings.TrimSpace(*a.Location)
 		}
 		byRegion[region] = append(byRegion[region], toAccountView(a))
 	}
@@ -316,6 +339,13 @@ func (s *AccountService) Resume(ctx context.Context, accountID string) (AccountS
 // immediately — the card shows the live view while the login is in flight —
 // and the worker reports the real outcome over /internal/account-callback.
 func (s *AccountService) Login(ctx context.Context, accountID string) (AccountSummary, error) {
+	// Dispatch on the MODE, not on the pointer: poolMode is what the operator
+	// configured, and a pool without a dispatcher must fail loudly inside the
+	// pool path rather than silently falling back to the container channel (and
+	// skipping the lease guards that path does not have).
+	if s.poolMode == "stateless" && s.pool != nil {
+		return s.loginPooled(ctx, accountID)
+	}
 	if s.control == nil {
 		return AccountSummary{}, fmt.Errorf("%w: auth control channel is not configured", domain.ErrUnavailable)
 	}
@@ -448,6 +478,9 @@ func (s *AccountService) pushStoredSession(ctx context.Context, a domain.Account
 // NEEDS_INPUT — the state the UI shows the "Submit code" button on. A login
 // that already settled (AUTHENTICATED / FAILED) is a conflict, not a crash.
 func (s *AccountService) SubmitInput(ctx context.Context, accountID, value string) (AccountSummary, error) {
+	if s.pool != nil {
+		return s.submitInputPooled(ctx, accountID, value)
+	}
 	if s.control == nil {
 		return AccountSummary{}, fmt.Errorf("%w: auth control channel is not configured", domain.ErrUnavailable)
 	}
@@ -528,6 +561,12 @@ const sessionExportTimeout = 20 * time.Second
 // a credential — it is never persisted server-side, only relayed in-memory to
 // the caller, and never logged. Owner/admin-only is enforced at the route.
 func (s *AccountService) ExportSession(ctx context.Context, accountID string) (json.RawMessage, error) {
+	// Pool mode: the session IS the database row. An idle account has no worker
+	// to ask (worker_id nil is its normal state), and there is nothing on any
+	// machine that the stored cookie does not already hold.
+	if s.poolMode == "stateless" {
+		return s.exportStoredSession(ctx, accountID)
+	}
 	if s.control == nil {
 		return nil, fmt.Errorf("%w: auth control channel is not configured", domain.ErrUnavailable)
 	}
@@ -591,6 +630,11 @@ func (s *AccountService) ExportSession(ctx context.Context, accountID string) (j
 // container adopts it without a new login. The session is validated as a JSON
 // object and relayed; it is never persisted or logged here.
 func (s *AccountService) ImportSession(ctx context.Context, accountID string, session json.RawMessage) error {
+	// Pool mode stores the cookie directly: the next dispatch ships it to
+	// whichever worker runs the account, so there is no container to hand it to.
+	if s.poolMode == "stateless" {
+		return s.importStoredSession(ctx, accountID, session)
+	}
 	if s.control == nil {
 		return fmt.Errorf("%w: auth control channel is not configured", domain.ErrUnavailable)
 	}
@@ -722,9 +766,12 @@ func (s *AccountService) Remove(ctx context.Context, accountID string) error {
 
 // AccountInput is the create payload. Password is plaintext in memory only.
 type AccountInput struct {
-	Platform     domain.Platform
-	Username     string
-	Password     string
+	Platform domain.Platform
+	Username string
+	Password string
+	// Location is a city name from domain.Cities. Empty lets the id pick one,
+	// which spreads a 100-row import across cities instead of one.
+	Location     *string
 	ProxyGroupID *string
 	// WorkerID pins the container to pack into instead of letting the packer
 	// walk the fleet. Nil keeps the auto-pack behaviour.
@@ -762,6 +809,10 @@ type AccountSummary struct {
 	WorkerID    *string              `json:"workerId"`
 	Tags        []string             `json:"tags"`
 	LastError   *string              `json:"lastError"`
+	Location    *string              `json:"location"`
+	Latitude    *float64             `json:"latitude"`
+	Longitude   *float64             `json:"longitude"`
+	Timezone    string               `json:"timezone"`
 	CreatedAt   string               `json:"createdAt"`
 }
 
@@ -777,6 +828,10 @@ func toAccountView(a domain.Account) AccountSummary {
 		WorkerID:    a.WorkerID,
 		Tags:        a.Tags,
 		LastError:   a.LastError,
+		Location:    a.Location,
+		Latitude:    a.Latitude,
+		Longitude:   a.Longitude,
+		Timezone:    a.Timezone,
 		CreatedAt:   a.CreatedAt.Format(timeRFC3339),
 	}
 }
@@ -891,3 +946,261 @@ func (s *AccountService) Import(ctx context.Context, caller string, rows []Accou
 }
 
 const timeRFC3339 = "2006-01-02T15:04:05Z07:00"
+
+// loginPooled starts a login on a leased pool worker.
+//
+// Same contract as Login (the account becomes AUTHENTICATING, the callback is the
+// authority), different transport: there is no per-account container and no
+// control channel a sleeping VM would miss, so the worker is leased and the
+// login pushed over HTTPS. The lease is held until the outcome callback releases
+// it — the page must stay open for the operator's 2FA.
+func (s *AccountService) loginPooled(ctx context.Context, accountID string) (AccountSummary, error) {
+	acc, err := s.accounts.GetByID(ctx, accountID)
+	if err != nil {
+		return AccountSummary{}, fmt.Errorf("account service: get: %w", err)
+	}
+	// A parked login is protected ONLY while it actually holds a worker. The
+	// status alone is not evidence: a restart, an OTP skip, or a worker that
+	// went to sleep leave the row NEEDS_INPUT with no lease, and nothing is
+	// holding the operator's prompt any more. Refusing then stranded 26
+	// accounts behind an error that told them to submit a code to a browser
+	// that no longer exists.
+	// A parked login blocks a new one ONLY while its browser is still alive.
+	// The status plus a lease is not proof: the worker may have slept, been
+	// rebuilt, or lost the context. Verify instead of guessing, and release the
+	// stale session so the operator can simply press Login again — the old
+	// message ("submit the code instead") pointed at a browser that might not
+	// exist, and there was no other way out.
+	// A lease is only evidence of a LIVE session while its browser is still
+	// there. A row that says AUTHENTICATED or FAILED while still holding
+	// worker_id is the leftover of a settled login whose release never landed
+	// (a callback that timed out, an API restart between the write and the
+	// release): the display is free, nothing is showing, and trying to lease
+	// any machine fails because this account already occupies its own row.
+	// Clear it and let the login proceed instead of refusing forever.
+	if acc.WorkerID != nil && acc.AuthStatus != domain.AuthNeedsInput {
+		live := s.parkedLoginIsLive(ctx, acc)
+		if !live {
+			s.logger.Info("stale lease cleared before login",
+				"accountId", accountID, "workerId", *acc.WorkerID, "authStatus", acc.AuthStatus)
+			if err := s.CloseLiveView(ctx, accountID); err != nil {
+				return AccountSummary{}, fmt.Errorf("account service: clear stale lease: %w", err)
+			}
+			refreshed, err := s.accounts.GetByID(ctx, accountID)
+			if err != nil {
+				return AccountSummary{}, fmt.Errorf("account service: get: %w", err)
+			}
+			acc = refreshed
+		}
+	}
+	if acc.AuthStatus == domain.AuthNeedsInput && acc.WorkerID != nil {
+		if !s.parkedLoginIsLive(ctx, acc) {
+			s.logger.Info("stale parked login cleared before retry", "accountId", accountID, "workerId", *acc.WorkerID)
+			if err := s.CloseLiveView(ctx, accountID); err != nil {
+				return AccountSummary{}, fmt.Errorf("account service: clear stale login: %w", err)
+			}
+			refreshed, err := s.accounts.GetByID(ctx, accountID)
+			if err != nil {
+				return AccountSummary{}, fmt.Errorf("account service: get: %w", err)
+			}
+			acc = refreshed
+		} else {
+			return AccountSummary{}, fmt.Errorf("%w: this login is waiting for operator input; submit the code instead", domain.ErrConflict)
+		}
+	}
+	enc, err := s.accounts.GetPasswordEnc(ctx, accountID)
+	if err != nil {
+		return AccountSummary{}, fmt.Errorf("account service: get credential: %w", err)
+	}
+	password, err := s.openPassword(enc)
+	if err != nil {
+		return AccountSummary{}, err
+	}
+
+	worker, _, err := s.leaseWorker(ctx, acc)
+	if err != nil {
+		// A bare "conflict" tells the operator nothing and gives them nothing
+		// to act on. Name the account that holds the machine and the action
+		// that frees it: on a serial login machine there is exactly one.
+		if errors.Is(err, domain.ErrConflict) {
+			return AccountSummary{}, fmt.Errorf(
+				"%w: %s", domain.ErrConflict, s.describeLeaseConflict(ctx, acc))
+		}
+		return AccountSummary{}, fmt.Errorf("account service: lease worker for login: %w", err)
+	}
+	spec, err := s.pool.RuntimeSpec(ctx, acc)
+	if err != nil {
+		return AccountSummary{}, err
+	}
+	spec.Credentials = &port.LoginCreds{Username: acc.Username, Password: password}
+	if err := s.pool.StartLogin(ctx, worker, spec); err != nil {
+		// The lease is released by the outcome path in normal operation; a
+		// dispatch that never landed must not strand it.
+		if rerr := s.accounts.ReleaseLease(ctx, acc.ID, worker.ID); rerr != nil {
+			s.logger.Warn("account service: release lease after failed login", "accountId", acc.ID, "err", rerr)
+		}
+		if rerr := s.pool.Slots.ReleaseWorkerSlot(ctx, worker.ID, acc.ID); rerr != nil {
+			s.logger.Warn("account service: release slot after failed login", "workerId", worker.ID, "err", rerr)
+		}
+		if errors.Is(err, domain.ErrConflict) {
+			// "worker busy" is the transport's words. The operator needs the
+			// reason: this account's own live view is still open on that machine,
+			// and closing it is the fix.
+			return AccountSummary{}, fmt.Errorf(
+				"%w: this account's live view is open on %s; close it (or press Release session) before starting a login",
+				domain.ErrConflict, worker.Name)
+		}
+		return AccountSummary{}, err
+	}
+
+	a := acc
+	a.AuthStatus = domain.AuthAuthenticating
+	dispatchedAt := s.clock.Now()
+	a.LastChecked = &dispatchedAt
+	if _, err := s.accounts.Update(ctx, a); err != nil {
+		return AccountSummary{}, fmt.Errorf("account service: mark pending auth: %w", err)
+	}
+	s.logger.Info("auth-login dispatched to pool", "accountId", accountID, "workerId", worker.ID)
+	view := toAccountView(a)
+	s.publishAccount(ctx, view)
+	return view, nil
+}
+
+// describeLeaseConflict explains a refused lease in the operator's terms.
+//
+// The DB rule (AcquireAccountWorkerLease) refuses when another account already
+// owns the worker, so the useful facts are WHO that is and what frees it. Falls
+// back to the generic wording when nothing can be named.
+func (s *AccountService) describeLeaseConflict(ctx context.Context, acc domain.Account) string {
+	if s.pool != nil {
+		candidates, err := s.pool.LoginCandidates(ctx)
+		if err == nil && len(candidates) > 0 && s.pool.RPC != nil && candidates[0].EndpointURL != nil {
+			probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			held, herr := s.pool.RPC.BusyAccount(probeCtx, *candidates[0].EndpointURL)
+			cancel()
+			if herr == nil && held != "" && held != acc.ID {
+				if other, gerr := s.accounts.GetByID(ctx, held); gerr == nil {
+					return fmt.Sprintf(
+						"the login machine %s is showing @%s; press Login on that account's row to take it over, or clear it from Workers",
+						candidates[0].Name, other.Username)
+				}
+			}
+		}
+	}
+	return "another session holds the login machine; retry once it settles"
+}
+
+// openPassword unseals the credential blob for one dispatch.
+func (s *AccountService) openPassword(enc []byte) (string, error) {
+	if s.sealer == nil {
+		return "", fmt.Errorf("%w: credential sealer not configured", domain.ErrUnavailable)
+	}
+	plain, err := s.sealer.Open(enc)
+	if err != nil {
+		return "", fmt.Errorf("account service: unseal credential: %w", err)
+	}
+	return string(plain), nil
+}
+
+// submitInputPooled delivers a 2FA / checkpoint code to the worker holding the
+// parked login. The worker is resolved from the account's live lease: the lease
+// IS the routing table in a stateless fleet.
+func (s *AccountService) submitInputPooled(ctx context.Context, accountID, value string) (AccountSummary, error) {
+	a, err := s.accounts.GetByID(ctx, accountID)
+	if err != nil {
+		return AccountSummary{}, fmt.Errorf("account service: get: %w", err)
+	}
+	if a.AuthStatus != domain.AuthAuthenticating && a.AuthStatus != domain.AuthNeedsInput {
+		return AccountSummary{}, fmt.Errorf("%w: account login is not awaiting input", domain.ErrConflict)
+	}
+	if a.WorkerID == nil {
+		return AccountSummary{}, fmt.Errorf("%w: no worker is holding this login any more", domain.ErrConflict)
+	}
+	w, err := s.workers.GetByID(ctx, *a.WorkerID)
+	if err != nil {
+		return AccountSummary{}, fmt.Errorf("account service: worker: %w", err)
+	}
+	if err := s.pool.SubmitAuthInput(ctx, w, a.ID, a.Platform, value); err != nil {
+		return AccountSummary{}, err
+	}
+	s.logger.Info("auth-input dispatched to pool", "accountId", accountID, "workerId", w.ID)
+	return toAccountView(a), nil
+}
+
+// exportStoredSession unseals the account's persisted cookie for the operator.
+//
+// SECURITY: the plaintext leaves once, to an owner/admin caller. It is never
+// logged, and the sealed bytes never left the database before this call.
+func (s *AccountService) exportStoredSession(ctx context.Context, accountID string) (json.RawMessage, error) {
+	if s.sessions == nil || s.sealer == nil {
+		return nil, fmt.Errorf("%w: session store is not configured", domain.ErrUnavailable)
+	}
+	sealed, err := s.sessions.GetState(ctx, accountID)
+	if err != nil {
+		return nil, fmt.Errorf("account service: read session: %w", err)
+	}
+	if len(sealed) == 0 {
+		return nil, fmt.Errorf("%w: no session is persisted for this account", domain.ErrNotFound)
+	}
+	plain, err := s.sealer.Open(sealed)
+	if err != nil {
+		return nil, fmt.Errorf("account service: unseal session: %w", err)
+	}
+	s.logger.Info("session exported from store", "accountId", accountID)
+	return json.RawMessage(plain), nil
+}
+
+// importStoredSession seals an operator-supplied cookie into account_session.
+//
+// It replaces whatever was stored: the operator is pasting this because the
+// previous session is dead, so keeping the old one would let a revoked cookie
+// shadow a live one. The expiry is left untouched — the payload does not date
+// it, and the refresh schedule must survive.
+func (s *AccountService) importStoredSession(ctx context.Context, accountID string, session json.RawMessage) error {
+	if s.sessions == nil || s.sealer == nil {
+		return fmt.Errorf("%w: session store is not configured", domain.ErrUnavailable)
+	}
+	var probe map[string]json.RawMessage
+	if len(session) == 0 || json.Unmarshal(session, &probe) != nil {
+		return fmt.Errorf("%w: session must be a JSON object", domain.ErrValidation)
+	}
+	if _, err := s.accounts.GetByID(ctx, accountID); err != nil {
+		return fmt.Errorf("account service: get: %w", err)
+	}
+	sealed, err := s.sealer.Seal(session)
+	if err != nil {
+		return fmt.Errorf("account service: seal session: %w", err)
+	}
+	// RefreshState, not Save: the operator's paste carries no cookie date, and
+	// Save would overwrite the stored expiry with NULL — dropping the account
+	// out of the refresh sweep until its next login.
+	if err := s.sessions.RefreshState(ctx, accountID, sealed, nil, nil); err != nil {
+		return fmt.Errorf("account service: store session: %w", err)
+	}
+	s.logger.Info("session imported into store", "accountId", accountID)
+	return nil
+}
+
+// parkedLoginIsLive reports whether the worker holding a parked login still has
+// a browser for it. Unreachable or idle workers count as dead: the operator's
+// prompt cannot exist on a machine that is not showing anything.
+func (s *AccountService) parkedLoginIsLive(ctx context.Context, acc domain.Account) bool {
+	if acc.WorkerID == nil || s.pool == nil || s.pool.RPC == nil || s.workers == nil {
+		return false
+	}
+	w, err := s.workers.GetByID(ctx, *acc.WorkerID)
+	if err != nil || w.EndpointURL == nil || *w.EndpointURL == "" {
+		return false
+	}
+	// Ask WHO holds the display, not merely whether the machine is up. A worker
+	// that is healthy but is holding no context (or a different account) cannot
+	// be showing this operator's prompt, and treating liveness as proof kept a
+	// dead parked login alive forever.
+	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	held, err := s.pool.RPC.BusyAccount(probeCtx, *w.EndpointURL)
+	if err != nil {
+		return false
+	}
+	return held == acc.ID
+}

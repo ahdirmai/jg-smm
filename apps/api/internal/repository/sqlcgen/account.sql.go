@@ -11,6 +11,95 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const acquireAccountWorkerLease = `-- name: AcquireAccountWorkerLease :one
+
+UPDATE account AS target SET
+    worker_id       = $2,
+    last_checked_at = now()
+WHERE target.id = $1
+  AND (target.worker_id IS NULL OR target.worker_id = $2)
+  AND NOT EXISTS (
+      SELECT 1 FROM account other
+      WHERE other.id <> target.id AND other.worker_id = $2
+  )
+RETURNING
+    id, platform, username, auth_status, handle, last_verified_at,
+    proxy_group_id, health_score, status, tags, worker_id, last_used_at,
+    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at,
+    location, latitude, longitude, timezone, user_agent
+`
+
+type AcquireAccountWorkerLeaseParams struct {
+	ID       pgtype.UUID `json:"id"`
+	WorkerID pgtype.UUID `json:"worker_id"`
+}
+
+type AcquireAccountWorkerLeaseRow struct {
+	ID              pgtype.UUID        `json:"id"`
+	Platform        Platform           `json:"platform"`
+	Username        string             `json:"username"`
+	AuthStatus      AuthStatus         `json:"auth_status"`
+	Handle          *string            `json:"handle"`
+	LastVerifiedAt  pgtype.Timestamptz `json:"last_verified_at"`
+	ProxyGroupID    pgtype.UUID        `json:"proxy_group_id"`
+	HealthScore     int32              `json:"health_score"`
+	Status          AccountStatus      `json:"status"`
+	Tags            []string           `json:"tags"`
+	WorkerID        pgtype.UUID        `json:"worker_id"`
+	LastUsedAt      pgtype.Timestamptz `json:"last_used_at"`
+	LastCheckedAt   pgtype.Timestamptz `json:"last_checked_at"`
+	LastError       *string            `json:"last_error"`
+	CookieExpiryAt  pgtype.Timestamptz `json:"cookie_expiry_at"`
+	RefreshFailures int32              `json:"refresh_failures"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	Location        *string            `json:"location"`
+	Latitude        *float64           `json:"latitude"`
+	Longitude       *float64           `json:"longitude"`
+	Timezone        string             `json:"timezone"`
+	UserAgent       *string            `json:"user_agent"`
+}
+
+// --- stateless pool: worker lease & location bootstrap (000024) ------------
+// Pin one account to one free pool worker for an interactive session (login,
+// CAPTCHA, live view). Two conditions, both in the WHERE so the check and the
+// write cannot race another request:
+//   - the account is unleased or already leased to this same worker
+//     (idempotent re-dispatch),
+//   - no OTHER account holds this worker — the Xvfb display shows one browser,
+//     and the slot coordinator's Redis key is a cache in front of this rule,
+//     not the authority for it.
+//
+// Returns no row (-> domain.ErrConflict) when either holds.
+func (q *Queries) AcquireAccountWorkerLease(ctx context.Context, arg AcquireAccountWorkerLeaseParams) (AcquireAccountWorkerLeaseRow, error) {
+	row := q.db.QueryRow(ctx, acquireAccountWorkerLease, arg.ID, arg.WorkerID)
+	var i AcquireAccountWorkerLeaseRow
+	err := row.Scan(
+		&i.ID,
+		&i.Platform,
+		&i.Username,
+		&i.AuthStatus,
+		&i.Handle,
+		&i.LastVerifiedAt,
+		&i.ProxyGroupID,
+		&i.HealthScore,
+		&i.Status,
+		&i.Tags,
+		&i.WorkerID,
+		&i.LastUsedAt,
+		&i.LastCheckedAt,
+		&i.LastError,
+		&i.CookieExpiryAt,
+		&i.RefreshFailures,
+		&i.CreatedAt,
+		&i.Location,
+		&i.Latitude,
+		&i.Longitude,
+		&i.Timezone,
+		&i.UserAgent,
+	)
+	return i, err
+}
+
 const assignAccount = `-- name: AssignAccount :one
 UPDATE account SET
     worker_id   = $2,
@@ -19,7 +108,8 @@ WHERE id = $1
 RETURNING
     id, platform, username, auth_status, handle, last_verified_at,
     proxy_group_id, health_score, status, tags, worker_id, last_used_at,
-    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at
+    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at,
+    location, latitude, longitude, timezone, user_agent
 `
 
 type AssignAccountParams struct {
@@ -45,6 +135,11 @@ type AssignAccountRow struct {
 	CookieExpiryAt  pgtype.Timestamptz `json:"cookie_expiry_at"`
 	RefreshFailures int32              `json:"refresh_failures"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	Location        *string            `json:"location"`
+	Latitude        *float64           `json:"latitude"`
+	Longitude       *float64           `json:"longitude"`
+	Timezone        string             `json:"timezone"`
+	UserAgent       *string            `json:"user_agent"`
 }
 
 func (q *Queries) AssignAccount(ctx context.Context, arg AssignAccountParams) (AssignAccountRow, error) {
@@ -68,6 +163,11 @@ func (q *Queries) AssignAccount(ctx context.Context, arg AssignAccountParams) (A
 		&i.CookieExpiryAt,
 		&i.RefreshFailures,
 		&i.CreatedAt,
+		&i.Location,
+		&i.Latitude,
+		&i.Longitude,
+		&i.Timezone,
+		&i.UserAgent,
 	)
 	return i, err
 }
@@ -122,14 +222,16 @@ func (q *Queries) CountInFlightLogins(ctx context.Context) (int64, error) {
 const createAccount = `-- name: CreateAccount :one
 INSERT INTO account (
     platform, username, password_enc, auth_status, proxy_group_id,
-    status, tags, worker_id
+    status, tags, worker_id,
+    location, latitude, longitude, timezone, user_agent
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
 )
 RETURNING
     id, platform, username, auth_status, handle, last_verified_at,
     proxy_group_id, health_score, status, tags, worker_id, last_used_at,
-    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at
+    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at,
+    location, latitude, longitude, timezone, user_agent
 `
 
 type CreateAccountParams struct {
@@ -141,6 +243,11 @@ type CreateAccountParams struct {
 	Status       AccountStatus `json:"status"`
 	Tags         []string      `json:"tags"`
 	WorkerID     pgtype.UUID   `json:"worker_id"`
+	Location     *string       `json:"location"`
+	Latitude     *float64      `json:"latitude"`
+	Longitude    *float64      `json:"longitude"`
+	Timezone     string        `json:"timezone"`
+	UserAgent    *string       `json:"user_agent"`
 }
 
 type CreateAccountRow struct {
@@ -161,6 +268,11 @@ type CreateAccountRow struct {
 	CookieExpiryAt  pgtype.Timestamptz `json:"cookie_expiry_at"`
 	RefreshFailures int32              `json:"refresh_failures"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	Location        *string            `json:"location"`
+	Latitude        *float64           `json:"latitude"`
+	Longitude       *float64           `json:"longitude"`
+	Timezone        string             `json:"timezone"`
+	UserAgent       *string            `json:"user_agent"`
 }
 
 func (q *Queries) CreateAccount(ctx context.Context, arg CreateAccountParams) (CreateAccountRow, error) {
@@ -173,6 +285,11 @@ func (q *Queries) CreateAccount(ctx context.Context, arg CreateAccountParams) (C
 		arg.Status,
 		arg.Tags,
 		arg.WorkerID,
+		arg.Location,
+		arg.Latitude,
+		arg.Longitude,
+		arg.Timezone,
+		arg.UserAgent,
 	)
 	var i CreateAccountRow
 	err := row.Scan(
@@ -193,6 +310,11 @@ func (q *Queries) CreateAccount(ctx context.Context, arg CreateAccountParams) (C
 		&i.CookieExpiryAt,
 		&i.RefreshFailures,
 		&i.CreatedAt,
+		&i.Location,
+		&i.Latitude,
+		&i.Longitude,
+		&i.Timezone,
+		&i.UserAgent,
 	)
 	return i, err
 }
@@ -211,7 +333,8 @@ const getAccountByID = `-- name: GetAccountByID :one
 SELECT
     id, platform, username, auth_status, handle, last_verified_at,
     proxy_group_id, health_score, status, tags, worker_id, last_used_at,
-    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at
+    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at,
+    location, latitude, longitude, timezone, user_agent
 FROM account
 WHERE id = $1
 `
@@ -234,6 +357,11 @@ type GetAccountByIDRow struct {
 	CookieExpiryAt  pgtype.Timestamptz `json:"cookie_expiry_at"`
 	RefreshFailures int32              `json:"refresh_failures"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	Location        *string            `json:"location"`
+	Latitude        *float64           `json:"latitude"`
+	Longitude       *float64           `json:"longitude"`
+	Timezone        string             `json:"timezone"`
+	UserAgent       *string            `json:"user_agent"`
 }
 
 // Account (executor identity) queries. password_enc is WRITE-ONLY: it is
@@ -260,6 +388,11 @@ func (q *Queries) GetAccountByID(ctx context.Context, id pgtype.UUID) (GetAccoun
 		&i.CookieExpiryAt,
 		&i.RefreshFailures,
 		&i.CreatedAt,
+		&i.Location,
+		&i.Latitude,
+		&i.Longitude,
+		&i.Timezone,
+		&i.UserAgent,
 	)
 	return i, err
 }
@@ -284,7 +417,8 @@ const listAccounts = `-- name: ListAccounts :many
 SELECT
     id, platform, username, auth_status, handle, last_verified_at,
     proxy_group_id, health_score, status, tags, worker_id, last_used_at,
-    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at
+    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at,
+    location, latitude, longitude, timezone, user_agent
 FROM account
 ORDER BY created_at DESC
 LIMIT $1 OFFSET $2
@@ -313,6 +447,11 @@ type ListAccountsRow struct {
 	CookieExpiryAt  pgtype.Timestamptz `json:"cookie_expiry_at"`
 	RefreshFailures int32              `json:"refresh_failures"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	Location        *string            `json:"location"`
+	Latitude        *float64           `json:"latitude"`
+	Longitude       *float64           `json:"longitude"`
+	Timezone        string             `json:"timezone"`
+	UserAgent       *string            `json:"user_agent"`
 }
 
 func (q *Queries) ListAccounts(ctx context.Context, arg ListAccountsParams) ([]ListAccountsRow, error) {
@@ -342,6 +481,11 @@ func (q *Queries) ListAccounts(ctx context.Context, arg ListAccountsParams) ([]L
 			&i.CookieExpiryAt,
 			&i.RefreshFailures,
 			&i.CreatedAt,
+			&i.Location,
+			&i.Latitude,
+			&i.Longitude,
+			&i.Timezone,
+			&i.UserAgent,
 		); err != nil {
 			return nil, err
 		}
@@ -357,7 +501,8 @@ const listAccountsByWorker = `-- name: ListAccountsByWorker :many
 SELECT
     id, platform, username, auth_status, handle, last_verified_at,
     proxy_group_id, health_score, status, tags, worker_id, last_used_at,
-    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at
+    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at,
+    location, latitude, longitude, timezone, user_agent
 FROM account
 WHERE worker_id = $1
 ORDER BY platform
@@ -381,6 +526,11 @@ type ListAccountsByWorkerRow struct {
 	CookieExpiryAt  pgtype.Timestamptz `json:"cookie_expiry_at"`
 	RefreshFailures int32              `json:"refresh_failures"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	Location        *string            `json:"location"`
+	Latitude        *float64           `json:"latitude"`
+	Longitude       *float64           `json:"longitude"`
+	Timezone        string             `json:"timezone"`
+	UserAgent       *string            `json:"user_agent"`
 }
 
 func (q *Queries) ListAccountsByWorker(ctx context.Context, workerID pgtype.UUID) ([]ListAccountsByWorkerRow, error) {
@@ -410,6 +560,11 @@ func (q *Queries) ListAccountsByWorker(ctx context.Context, workerID pgtype.UUID
 			&i.CookieExpiryAt,
 			&i.RefreshFailures,
 			&i.CreatedAt,
+			&i.Location,
+			&i.Latitude,
+			&i.Longitude,
+			&i.Timezone,
+			&i.UserAgent,
 		); err != nil {
 			return nil, err
 		}
@@ -426,7 +581,8 @@ const listAccountsDueForRefresh = `-- name: ListAccountsDueForRefresh :many
 SELECT
     id, platform, username, auth_status, handle, last_verified_at,
     proxy_group_id, health_score, status, tags, worker_id, last_used_at,
-    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at
+    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at,
+    location, latitude, longitude, timezone, user_agent
 FROM account
 WHERE (
     -- A first login: never attempted, so there is no expiry to compare. PENDING
@@ -439,7 +595,9 @@ WHERE (
     )
   )
   AND status = 'ACTIVE'
-  AND worker_id IS NOT NULL
+  -- A leased account (worker_id set) is a login/CAPTCHA/live-view parked on a
+  -- worker; re-dispatching would close that context under the operator.
+  AND worker_id IS NULL
   AND (last_checked_at IS NULL OR last_checked_at <= $2)
 ORDER BY cookie_expiry_at
 LIMIT $3
@@ -469,6 +627,11 @@ type ListAccountsDueForRefreshRow struct {
 	CookieExpiryAt  pgtype.Timestamptz `json:"cookie_expiry_at"`
 	RefreshFailures int32              `json:"refresh_failures"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	Location        *string            `json:"location"`
+	Latitude        *float64           `json:"latitude"`
+	Longitude       *float64           `json:"longitude"`
+	Timezone        string             `json:"timezone"`
+	UserAgent       *string            `json:"user_agent"`
 }
 
 // --- P2-06 session refresh -------------------------------------------------
@@ -492,7 +655,7 @@ type ListAccountsDueForRefreshRow struct {
 // last_checked_at (stamped at dispatch) instead of re-firing on every tick.
 //
 // These gates MUST stay in sync with the partial predicate of
-// `account_refresh_due_idx` (000023, which replaced the 000015 one): Postgres
+// `account_refresh_due_idx` (000024, which replaced the 000023 one): Postgres
 // only uses a partial index whose predicate the query provably implies, so
 // widening one here without the other silently degrades this query to a seq
 // scan.
@@ -523,6 +686,92 @@ func (q *Queries) ListAccountsDueForRefresh(ctx context.Context, arg ListAccount
 			&i.CookieExpiryAt,
 			&i.RefreshFailures,
 			&i.CreatedAt,
+			&i.Location,
+			&i.Latitude,
+			&i.Longitude,
+			&i.Timezone,
+			&i.UserAgent,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAllAccounts = `-- name: ListAllAccounts :many
+SELECT
+    id, platform, username, auth_status, handle, last_verified_at,
+    proxy_group_id, health_score, status, tags, worker_id, last_used_at,
+    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at,
+    location, latitude, longitude, timezone, user_agent
+FROM account
+ORDER BY created_at DESC
+`
+
+type ListAllAccountsRow struct {
+	ID              pgtype.UUID        `json:"id"`
+	Platform        Platform           `json:"platform"`
+	Username        string             `json:"username"`
+	AuthStatus      AuthStatus         `json:"auth_status"`
+	Handle          *string            `json:"handle"`
+	LastVerifiedAt  pgtype.Timestamptz `json:"last_verified_at"`
+	ProxyGroupID    pgtype.UUID        `json:"proxy_group_id"`
+	HealthScore     int32              `json:"health_score"`
+	Status          AccountStatus      `json:"status"`
+	Tags            []string           `json:"tags"`
+	WorkerID        pgtype.UUID        `json:"worker_id"`
+	LastUsedAt      pgtype.Timestamptz `json:"last_used_at"`
+	LastCheckedAt   pgtype.Timestamptz `json:"last_checked_at"`
+	LastError       *string            `json:"last_error"`
+	CookieExpiryAt  pgtype.Timestamptz `json:"cookie_expiry_at"`
+	RefreshFailures int32              `json:"refresh_failures"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	Location        *string            `json:"location"`
+	Latitude        *float64           `json:"latitude"`
+	Longitude       *float64           `json:"longitude"`
+	Timezone        string             `json:"timezone"`
+	UserAgent       *string            `json:"user_agent"`
+}
+
+// Every account, ordered deterministically, for grouping that cannot be done in
+// SQL (region rollup). Replaces paginated reads that silently truncated a
+// 486-account fleet at 200.
+func (q *Queries) ListAllAccounts(ctx context.Context) ([]ListAllAccountsRow, error) {
+	rows, err := q.db.Query(ctx, listAllAccounts)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAllAccountsRow{}
+	for rows.Next() {
+		var i ListAllAccountsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Platform,
+			&i.Username,
+			&i.AuthStatus,
+			&i.Handle,
+			&i.LastVerifiedAt,
+			&i.ProxyGroupID,
+			&i.HealthScore,
+			&i.Status,
+			&i.Tags,
+			&i.WorkerID,
+			&i.LastUsedAt,
+			&i.LastCheckedAt,
+			&i.LastError,
+			&i.CookieExpiryAt,
+			&i.RefreshFailures,
+			&i.CreatedAt,
+			&i.Location,
+			&i.Latitude,
+			&i.Longitude,
+			&i.Timezone,
+			&i.UserAgent,
 		); err != nil {
 			return nil, err
 		}
@@ -538,7 +787,8 @@ const listStaleLoginAttempts = `-- name: ListStaleLoginAttempts :many
 SELECT
     id, platform, username, auth_status, handle, last_verified_at,
     proxy_group_id, health_score, status, tags, worker_id, last_used_at,
-    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at
+    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at,
+    location, latitude, longitude, timezone, user_agent
 FROM account
 WHERE auth_status = 'AUTHENTICATING'
   AND last_checked_at IS NOT NULL
@@ -570,6 +820,11 @@ type ListStaleLoginAttemptsRow struct {
 	CookieExpiryAt  pgtype.Timestamptz `json:"cookie_expiry_at"`
 	RefreshFailures int32              `json:"refresh_failures"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	Location        *string            `json:"location"`
+	Latitude        *float64           `json:"latitude"`
+	Longitude       *float64           `json:"longitude"`
+	Timezone        string             `json:"timezone"`
+	UserAgent       *string            `json:"user_agent"`
 }
 
 // Accounts stranded in AUTHENTICATING: a login was dispatched and no callback
@@ -614,6 +869,93 @@ func (q *Queries) ListStaleLoginAttempts(ctx context.Context, arg ListStaleLogin
 			&i.CookieExpiryAt,
 			&i.RefreshFailures,
 			&i.CreatedAt,
+			&i.Location,
+			&i.Latitude,
+			&i.Longitude,
+			&i.Timezone,
+			&i.UserAgent,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUnlocatedAccounts = `-- name: ListUnlocatedAccounts :many
+SELECT
+    id, platform, username, auth_status, handle, last_verified_at,
+    proxy_group_id, health_score, status, tags, worker_id, last_used_at,
+    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at,
+    location, latitude, longitude, timezone, user_agent
+FROM account
+WHERE location IS NULL
+ORDER BY created_at ASC
+LIMIT $1
+`
+
+type ListUnlocatedAccountsRow struct {
+	ID              pgtype.UUID        `json:"id"`
+	Platform        Platform           `json:"platform"`
+	Username        string             `json:"username"`
+	AuthStatus      AuthStatus         `json:"auth_status"`
+	Handle          *string            `json:"handle"`
+	LastVerifiedAt  pgtype.Timestamptz `json:"last_verified_at"`
+	ProxyGroupID    pgtype.UUID        `json:"proxy_group_id"`
+	HealthScore     int32              `json:"health_score"`
+	Status          AccountStatus      `json:"status"`
+	Tags            []string           `json:"tags"`
+	WorkerID        pgtype.UUID        `json:"worker_id"`
+	LastUsedAt      pgtype.Timestamptz `json:"last_used_at"`
+	LastCheckedAt   pgtype.Timestamptz `json:"last_checked_at"`
+	LastError       *string            `json:"last_error"`
+	CookieExpiryAt  pgtype.Timestamptz `json:"cookie_expiry_at"`
+	RefreshFailures int32              `json:"refresh_failures"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	Location        *string            `json:"location"`
+	Latitude        *float64           `json:"latitude"`
+	Longitude       *float64           `json:"longitude"`
+	Timezone        string             `json:"timezone"`
+	UserAgent       *string            `json:"user_agent"`
+}
+
+// Accounts still missing a city/GPS identity, for the startup backfill. Bounded
+// so one tick cannot pin the whole table in memory.
+func (q *Queries) ListUnlocatedAccounts(ctx context.Context, limit int32) ([]ListUnlocatedAccountsRow, error) {
+	rows, err := q.db.Query(ctx, listUnlocatedAccounts, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUnlocatedAccountsRow{}
+	for rows.Next() {
+		var i ListUnlocatedAccountsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Platform,
+			&i.Username,
+			&i.AuthStatus,
+			&i.Handle,
+			&i.LastVerifiedAt,
+			&i.ProxyGroupID,
+			&i.HealthScore,
+			&i.Status,
+			&i.Tags,
+			&i.WorkerID,
+			&i.LastUsedAt,
+			&i.LastCheckedAt,
+			&i.LastError,
+			&i.CookieExpiryAt,
+			&i.RefreshFailures,
+			&i.CreatedAt,
+			&i.Location,
+			&i.Latitude,
+			&i.Longitude,
+			&i.Timezone,
+			&i.UserAgent,
 		); err != nil {
 			return nil, err
 		}
@@ -630,7 +972,11 @@ UPDATE account SET
     auth_status      = 'FAILED',
     last_error       = 'login attempt abandoned: no callback from the worker',
     last_checked_at  = now(),
-    cookie_expiry_at = NULL
+    cookie_expiry_at = NULL,
+    -- A worker lease left by an abandoned login must not survive it: the row
+    -- would stay invisible to the due query and the worker would look busy to
+    -- the slot coordinator forever.
+    worker_id        = NULL
 WHERE id = $1
   AND auth_status = 'AUTHENTICATING'
   AND last_checked_at = $2
@@ -660,13 +1006,36 @@ func (q *Queries) ReclaimStaleLoginAttempt(ctx context.Context, arg ReclaimStale
 	return err
 }
 
+const releaseAccountWorkerLease = `-- name: ReleaseAccountWorkerLease :exec
+UPDATE account SET worker_id = NULL, last_checked_at = NULL
+WHERE id = $1 AND worker_id = $2
+`
+
+type ReleaseAccountWorkerLeaseParams struct {
+	ID       pgtype.UUID `json:"id"`
+	WorkerID pgtype.UUID `json:"worker_id"`
+}
+
+// Return an account to the schedulable pool. Guarded on the worker id so a
+// late release from a previous session cannot free a lease a newer one holds.
+//
+// last_checked_at is cleared with the lease. Acquiring stamps it, and the due
+// query treats it as "last dispatch, respect the retry backoff" — so leaving
+// it behind would hide the account for RetryAfter (6h) after every interactive
+// login, which is the opposite of what releasing means.
+func (q *Queries) ReleaseAccountWorkerLease(ctx context.Context, arg ReleaseAccountWorkerLeaseParams) error {
+	_, err := q.db.Exec(ctx, releaseAccountWorkerLease, arg.ID, arg.WorkerID)
+	return err
+}
+
 const unassignAccount = `-- name: UnassignAccount :one
 UPDATE account SET worker_id = NULL
 WHERE id = $1
 RETURNING
     id, platform, username, auth_status, handle, last_verified_at,
     proxy_group_id, health_score, status, tags, worker_id, last_used_at,
-    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at
+    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at,
+    location, latitude, longitude, timezone, user_agent
 `
 
 type UnassignAccountRow struct {
@@ -687,6 +1056,11 @@ type UnassignAccountRow struct {
 	CookieExpiryAt  pgtype.Timestamptz `json:"cookie_expiry_at"`
 	RefreshFailures int32              `json:"refresh_failures"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	Location        *string            `json:"location"`
+	Latitude        *float64           `json:"latitude"`
+	Longitude       *float64           `json:"longitude"`
+	Timezone        string             `json:"timezone"`
+	UserAgent       *string            `json:"user_agent"`
 }
 
 func (q *Queries) UnassignAccount(ctx context.Context, id pgtype.UUID) (UnassignAccountRow, error) {
@@ -710,6 +1084,11 @@ func (q *Queries) UnassignAccount(ctx context.Context, id pgtype.UUID) (Unassign
 		&i.CookieExpiryAt,
 		&i.RefreshFailures,
 		&i.CreatedAt,
+		&i.Location,
+		&i.Latitude,
+		&i.Longitude,
+		&i.Timezone,
+		&i.UserAgent,
 	)
 	return i, err
 }
@@ -728,12 +1107,20 @@ UPDATE account SET
     last_checked_at  = $11,
     last_error       = $12,
     cookie_expiry_at = $13,
-    refresh_failures = $14
+    refresh_failures = $14,
+    -- The device identity is operator input, not derived state: a boxd worker
+    -- can be any machine, so the account owns the city/GPS/timezone it reports.
+    location         = $15,
+    latitude         = $16,
+    longitude        = $17,
+    timezone         = $18,
+    user_agent       = $19
 WHERE id = $1
 RETURNING
     id, platform, username, auth_status, handle, last_verified_at,
     proxy_group_id, health_score, status, tags, worker_id, last_used_at,
-    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at
+    last_checked_at, last_error, cookie_expiry_at, refresh_failures, created_at,
+    location, latitude, longitude, timezone, user_agent
 `
 
 type UpdateAccountParams struct {
@@ -751,6 +1138,11 @@ type UpdateAccountParams struct {
 	LastError       *string            `json:"last_error"`
 	CookieExpiryAt  pgtype.Timestamptz `json:"cookie_expiry_at"`
 	RefreshFailures int32              `json:"refresh_failures"`
+	Location        *string            `json:"location"`
+	Latitude        *float64           `json:"latitude"`
+	Longitude       *float64           `json:"longitude"`
+	Timezone        string             `json:"timezone"`
+	UserAgent       *string            `json:"user_agent"`
 }
 
 type UpdateAccountRow struct {
@@ -771,6 +1163,11 @@ type UpdateAccountRow struct {
 	CookieExpiryAt  pgtype.Timestamptz `json:"cookie_expiry_at"`
 	RefreshFailures int32              `json:"refresh_failures"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	Location        *string            `json:"location"`
+	Latitude        *float64           `json:"latitude"`
+	Longitude       *float64           `json:"longitude"`
+	Timezone        string             `json:"timezone"`
+	UserAgent       *string            `json:"user_agent"`
 }
 
 func (q *Queries) UpdateAccount(ctx context.Context, arg UpdateAccountParams) (UpdateAccountRow, error) {
@@ -789,6 +1186,11 @@ func (q *Queries) UpdateAccount(ctx context.Context, arg UpdateAccountParams) (U
 		arg.LastError,
 		arg.CookieExpiryAt,
 		arg.RefreshFailures,
+		arg.Location,
+		arg.Latitude,
+		arg.Longitude,
+		arg.Timezone,
+		arg.UserAgent,
 	)
 	var i UpdateAccountRow
 	err := row.Scan(
@@ -809,6 +1211,11 @@ func (q *Queries) UpdateAccount(ctx context.Context, arg UpdateAccountParams) (U
 		&i.CookieExpiryAt,
 		&i.RefreshFailures,
 		&i.CreatedAt,
+		&i.Location,
+		&i.Latitude,
+		&i.Longitude,
+		&i.Timezone,
+		&i.UserAgent,
 	)
 	return i, err
 }

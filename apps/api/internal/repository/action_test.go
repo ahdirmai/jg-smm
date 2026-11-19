@@ -271,6 +271,62 @@ func TestActionJobReschedule(t *testing.T) {
 // without this guard a replayed or forged callback re-queues a finished action
 // (the worker then posts the same Instagram comment a second time) and a
 // forged verdict re-grades a job the operator already read.
+func TestRequeueFailedActionJobKeepsTheAttemptHistory(t *testing.T) {
+	repo := newP3TestRepo(t)
+	ctx := context.Background()
+	pool := testPool(t)
+
+	accountID := p2SeedAccount(t, pool, "act-requeue-"+p2Suffix(t))
+	targetID := p3SeedTarget(t, pool, "tgt-requeue-"+p2Suffix(t))
+	workerID := p3SeedWorker(t, pool, "wrk-requeue-"+p2Suffix(t))
+
+	job, err := repo.CreateActionJob(ctx, domain.ActionJob{
+		Type:        domain.JobTypeActionComment,
+		TargetID:    targetID,
+		AccountID:   accountID,
+		WorkerID:    workerID,
+		ScheduledAt: time.Now().UTC().Add(-time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := repo.ClaimNextActionJob(ctx, accountID, workerID); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if _, err := repo.CompleteActionJob(ctx, job.ID, domain.JobStatusFailed, nil); err != nil {
+		t.Fatalf("fail: %v", err)
+	}
+
+	at := time.Now().UTC()
+	requeued, err := repo.RequeueFailedActionJob(ctx, job.ID, at)
+	if err != nil {
+		t.Fatalf("requeue: %v", err)
+	}
+	// Attempts are preserved: the worker's retry guard uses attempt > 1 to
+	// check for an already-posted comment before submitting a duplicate.
+	if requeued.Status != domain.JobStatusPending || requeued.Attempts != 1 {
+		t.Fatalf("requeued = %s attempts=%d, want PENDING attempts=1", requeued.Status, requeued.Attempts)
+	}
+	if requeued.WorkerID != "" {
+		t.Fatalf("worker_id = %q, want cleared", requeued.WorkerID)
+	}
+	// The terminal guard on the normal reschedule remains: only the explicit
+	// manual path may resurrect FAILED.
+	failedAgain, err := repo.CreateActionJob(ctx, domain.ActionJob{
+		Type: domain.JobTypeActionComment, TargetID: targetID, AccountID: accountID,
+		ScheduledAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("create second: %v", err)
+	}
+	if _, err := repo.CompleteActionJob(ctx, failedAgain.ID, domain.JobStatusFailed, nil); err != nil {
+		t.Fatalf("fail second: %v", err)
+	}
+	if _, err := repo.RescheduleActionJob(ctx, failedAgain.ID, at); err == nil {
+		t.Fatal("RescheduleActionJob must still refuse a FAILED row")
+	}
+}
+
 func TestActionJobTerminalStatesAreImmutable(t *testing.T) {
 	repo := newP3TestRepo(t)
 	ctx := context.Background()

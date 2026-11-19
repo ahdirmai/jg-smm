@@ -110,6 +110,18 @@ func (f *fakeActionStore) RescheduleActionJob(_ context.Context, id string, at t
 	return domain.ActionJob{ID: id, ScheduledAt: at}, nil
 }
 
+// RequeueFailedActionJob mirrors the manual-retry SQL: only a FAILED row moves,
+// and it gets a fresh attempt budget.
+func (f *fakeActionStore) RequeueFailedActionJob(_ context.Context, id string, at time.Time) (domain.ActionJob, error) {
+	for i := range f.completed {
+		if f.completed[i].id == id && f.completed[i].status == domain.JobStatusFailed {
+			f.rescheduled = append(f.rescheduled, rescheduledJob{id: id, at: at})
+			return domain.ActionJob{ID: id, Status: domain.JobStatusPending, ScheduledAt: at}, nil
+		}
+	}
+	return domain.ActionJob{}, domain.ErrNotFound
+}
+
 // SetActionJobTemplate mirrors the SQL's post-claim write of the variant id.
 func (f *fakeActionStore) SetActionJobTemplate(_ context.Context, id, templateID string) error {
 	for i := range f.pending {
@@ -142,6 +154,7 @@ func (f *fakeActionStore) SetPendingActionJobsScheduledAt(_ context.Context, at 
 	}
 	return n, nil
 }
+
 // CancelActionJob mirrors the SQL guard: only PENDING/RUNNING rows move, and a
 // job the fake only knows as completed is terminal and cannot be cancelled.
 func (f *fakeActionStore) CancelActionJob(_ context.Context, id string) (domain.ActionJob, error) {
@@ -180,7 +193,7 @@ func (f *fakeActionStore) CancelPendingActionJobs(_ context.Context) (int64, err
 	return n, nil
 }
 
-func (f *fakeActionStore) SweepStaleRunningJobs(_ context.Context, _ time.Duration) (int64, error) {	// Mirror the real sweep: RUNNING jobs older than the bound go back to PENDING.
+func (f *fakeActionStore) SweepStaleRunningJobs(_ context.Context, _ time.Duration) (int64, error) { // Mirror the real sweep: RUNNING jobs older than the bound go back to PENDING.
 	var n int64
 	for i := range f.pending {
 		if f.pending[i].Status != domain.JobStatusRunning {

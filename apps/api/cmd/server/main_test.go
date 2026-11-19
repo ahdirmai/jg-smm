@@ -20,10 +20,10 @@ import (
 // resolver that answered TikTok correctly. Only THIS resolver is production.
 func TestSearchActorForPlatformCoversEveryScrapablePlatform(t *testing.T) {
 	cfg := config.Config{
-		ApifySearchActorInstagram: "crawlerbros/instagram-keyword-search-scraper",
+		ApifySearchActorInstagram: "sasky/instagram-keyword-posts-urls-scraper",
 		ApifySearchActorThreads:   "futurizerush/meta-threads-scraper",
 		ApifySearchActorTikTok:    "xmolodtsov/tiktok-search-scraper",
-		ApifySearchActorYouTube:   "apidojo/youtube-scraper-api",
+		ApifySearchActorYouTube:   "streamers/youtube-scraper",
 		ApifySearchActorLinkedIn:  "harvestapi/linkedin-post-search",
 		ApifySearchActorX:         "apidojo/twitter-scraper-lite",
 		ApifySearchActorFacebook:  "danek/facebook-search-ppr",
@@ -60,5 +60,21 @@ func keywordScrapablePlatforms() []domain.Platform {
 		domain.PlatformLinkedIn,
 		domain.PlatformX,
 		domain.PlatformFacebook,
+	}
+}
+
+// The YouTube on-demand actor is a different app from the keyword actor. A
+// shared switch once made both return the post actor, which would feed
+// `keywords` to an actor that only understands `searchQueries`.
+func TestYouTubePostActorDoesNotLeakIntoKeywordSearch(t *testing.T) {
+	cfg := config.Config{
+		ApifySearchActorYouTube: "apidojo/youtube-scraper",
+		ApifyPostActorYouTube:   "streamers/youtube-scraper",
+	}
+	if got := actorForPlatform(cfg)(domain.PlatformYouTube); got != "streamers/youtube-scraper" {
+		t.Errorf("on-demand actor = %q, want streamers/youtube-scraper", got)
+	}
+	if got := searchActorForPlatform(cfg)(domain.PlatformYouTube); got != "apidojo/youtube-scraper" {
+		t.Errorf("keyword actor = %q, want apidojo/youtube-scraper", got)
 	}
 }

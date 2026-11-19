@@ -295,3 +295,37 @@ func TestElasticPoolFreesSlotOnNextTick(t *testing.T) {
 		t.Errorf("b should have taken the freed slot")
 	}
 }
+
+// The login machine is never paused by the idle rule.
+//
+// A login, CAPTCHA or live view is a direct RPC — it puts nothing on the action
+// queue — so the login worker ALWAYS looks idle to this loop. Without the
+// exemption it was stopped on the first tick, and every operator waited out a
+// boot before they could even see the 2FA form.
+func TestElasticPoolNeverPausesTheLoginWorker(t *testing.T) {
+	store := newFakeWorkerStore()
+	login := poolWorker("login", domain.DesiredRunning, 0, 10*time.Hour)
+	login.Name = "smm-login-01"
+	store.seed(login)
+	// A genuine action worker beside it, idle, which MUST still be paused.
+	store.seed(poolWorker("act", domain.DesiredRunning, 0, 30*time.Minute))
+
+	p := NewElasticPool(store, newFakeDriver(), fixedClock{t: poolNow}, 5, 15*time.Minute, nil).
+		WithLoginWorker("smm-login-01")
+
+	got := decideMap(p.Decide(store.all()))
+	if d, ok := got["login"]; ok {
+		t.Fatalf("login worker was decided (%+v); it must never be paused", d)
+	}
+	if d, ok := got["act"]; !ok || d.run {
+		t.Fatalf("action worker should be paused as idle, got %+v (present=%v)", d, ok)
+	}
+
+	// And a full Reconcile leaves its desired_state untouched.
+	if _, err := p.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if w := store.get(login.ID); w.DesiredState != domain.DesiredRunning {
+		t.Fatalf("login worker desired_state = %s, want RUNNING", w.DesiredState)
+	}
+}
