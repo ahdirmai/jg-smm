@@ -20,7 +20,7 @@
 | --- | --- |
 | Control plane | `smm-hub` (`2 vCPU / 8 GiB`, `fra`, always-on, bot protection off) |
 | URL sementara | `https://smm-hub.boxd.sh` (proxy default port `8000`) |
-| Domain | `smm.ahdirmai.my.id` **pending** di boxd (DNS/verifikasi belum selesai) |
+| Domain | `smm.ahdirmai.my.id` **active**; `smm-hub.boxd.sh` tetap tersedia |
 | Login worker | `smm-login-01` (always-on; semua login/CAPTCHA/live view dipin di sini) |
 | Action worker | `smm-worker-01` … `smm-worker-10` (idle sleep 5 menit, hibernate 1 jam) |
 | Golden | `smm-worker-golden` (stopped), snapshot `smm-golden-v1` |
@@ -28,9 +28,8 @@
 | Akun | 15 akun + 14 `account_session` + 1 `app_user` diimpor dari lokal |
 | Worker pool | `WORKER_POOL_MODE=stateless`, endpoint `https://rpc.<vm>.boxd.sh` |
 
-Kalau domain custom sudah aktif, ganti `smm-hub.boxd.sh` di `.env` **sebelum
-build web** (`NEXT_PUBLIC_*` di-inline saat build) lalu `docker compose ...
-up -d --build web api`.
+Custom domain dan hostname default sama-sama menggunakan origin halaman itu
+sendiri karena API/SSE relatif. Tidak perlu rebuild saat berpindah hostname.
 
 ---
 
@@ -86,9 +85,10 @@ Pindahkan `.env` lama ke samping, lalu isi `.env` baru (mode `600`) dari
 template lokal. Nilai wajib:
 
 ```dotenv
-# Public URLs — dipakai build web dan worker; ganti domain sebelum build.
-NEXT_PUBLIC_API_URL=https://smm-hub.boxd.sh
-NEXT_PUBLIC_SSE_URL=https://smm-hub.boxd.sh/api/stream
+# Same-origin web: leave the API base empty and make SSE relative. Both the
+# custom domain and the boxd hostname then work without CORS or a rebuild.
+NEXT_PUBLIC_API_URL=
+NEXT_PUBLIC_SSE_URL=/api/stream
 API_PORT=8080
 SECURE_COOKIES=true
 

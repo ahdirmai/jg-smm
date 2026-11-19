@@ -41,8 +41,9 @@ Production (K8s) install order, manifests and the tier's known gaps:
 The active boxd deployment (hub + login worker + 10 workers) and its session
 import procedure are in
 [`docs/stateless-worker-pool/06-BOXD-INFRA-DEPLOYMENT-RUNBOOK.md`](docs/stateless-worker-pool/06-BOXD-INFRA-DEPLOYMENT-RUNBOOK.md).
-Current demo entry point: `https://smm-hub.boxd.sh` (the custom domain is still
-pending).
+Current entry points: `https://smm.ahdirmai.my.id` (canonical) and
+`https://smm-hub.boxd.sh` (boxd default hostname). The web build uses relative
+API/SSE URLs, so both hostnames work without CORS.
 
 ## Bootstrap
 

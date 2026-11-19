@@ -55,6 +55,11 @@
   account, so it stayed `NEEDS_INPUT` with no browser to submit a code into.
   The idempotent second click now marks the login `FAILED` with an explanation;
   the Accounts UI clears the panel and shows a success notice.
+- **Boxd hub now serves the same-origin build on both hostnames.** The deployed
+  web uses an empty `NEXT_PUBLIC_API_URL` and `/api/stream`, so
+  `https://smm.ahdirmai.my.id` and `https://smm-hub.boxd.sh` both call the API
+  on their own origin. The stale `smm-hub-01` worker row without an RPC endpoint
+  was removed, leaving the health gate at 11/11 awake workers.
 ### Fixed
 - **Audit remediation: recovery, reports, and error boundaries.** `restore.sh`
   now accepts the absolute backup path that `drill.sh` passes (no doubled
