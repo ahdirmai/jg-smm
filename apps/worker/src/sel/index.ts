@@ -119,7 +119,7 @@ const SELECTORS: Partial<Record<Platform, SelectorSet>> = {
     // The affordance that reveals/focuses the composer when it is not already
     // mounted. The button ancestor of the svg is what actually takes the click.
     commentButton:
-      'svg[aria-label="Comment"], svg[aria-label="Reply"], button:has(svg[aria-label="Comment"]), [aria-label="Comment"]',
+      'svg[aria-label="Comment"], svg[aria-label="Komentari"], svg[aria-label="Reply"], button:has(svg[aria-label="Comment"]), button:has(svg[aria-label="Komentari"]), [aria-label="Comment"], [aria-label="Komentari"]',
     // Per-comment Reply affordance. On a /c/<id>/ permalink the target comment
     // is first, so the first "Reply" match threads to it. IG ships this as a
     // bare `<button class="_a9ze"><span>Reply</span></button>` — NO role
@@ -141,7 +141,7 @@ const SELECTORS: Partial<Record<Platform, SelectorSet>> = {
     // `:text-is("Reply")` on the element's OWN text excludes ancestors (their
     // text is the whole comment, not "Reply"), so every entry below is a leaf.
     replyButton:
-      'button:text-is("Reply"), [role="button"]:text-is("Reply"), span:text-is("Reply")',
+      'button:text-is("Reply"), button:text-is("Balas"), [role="button"]:text-is("Reply"), [role="button"]:text-is("Balas"), span:text-is("Reply"), span:text-is("Balas")',
     // IG pre-fills "@username" when a comment's reply box opens; that mention is
     // what threads the reply, so the flow requires and preserves it.
     replyPrefillsMention: true,
@@ -152,12 +152,17 @@ const SELECTORS: Partial<Record<Platform, SelectorSet>> = {
     // was the P-A comment bug: it timed out on any rollout that shipped a
     // textarea instead.
     composerInputs: [
+      // The worker pins locale id-ID, so Instagram labels the box
+      // "Tambahkan komentar…"; the English-only list is why every comment on a
+      // post failed with "composer not found" while the box was plainly visible.
+      'textarea[aria-label*="komentar" i]',
+      'textarea[placeholder*="komentar" i]',
       'textarea[aria-label*="comment" i]',
       'div[contenteditable="true"][role="textbox"]',
       'textarea[placeholder*="comment" i]',
     ],
     submitButton:
-      'button[type="button"] > div:has-text("Post"), div[role="button"]:has-text("Post")',
+      'button[type="button"] > div:has-text("Post"), button[type="button"] > div:has-text("Posting"), div[role="button"]:has-text("Post"), div[role="button"]:has-text("Posting")',
   },
   threads: {
     // The permalink post view keeps the whole home feed mounted behind it, so

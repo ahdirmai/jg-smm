@@ -1,383 +1,545 @@
 /**
- * Composition root. Wires config, logger, heartbeat, transport and the action
- * controller, then owns the process lifecycle (graceful shutdown).
+ * Composition root.
  *
- * The BLPOP loop is strictly sequential per container (concurrency=1 lives
- * here, not in the controller): the next job is popped only after the previous
- * one plus its jitter finishes. Nothing here throws on boot — a missing BE
- * endpoint must not crash the container.
+ * Two shapes of worker live here, chosen by WORKER_POOL_MODE:
+ *
+ *  - `stateless` (boxd fleet): the worker LISTENS. Actions, logins and live-view
+ *    navigations arrive as authenticated HTTPS requests and the microVM sleeps
+ *    the moment the work is done. No heartbeat, no Redis claim, no polling —
+ *    anything that holds a socket open also holds the VM awake and billing.
+ *  - `legacy` (containers): the worker PULLS. It claims a row, subscribes to its
+ *    control channel and BLPOPs its queue.
+ *
+ * Both paths end in the same controller and auth core; only the transport and
+ * the source of account identity differ.
  */
+import type { BrowserContext } from 'playwright';
+
 import { loadConfig } from './core/config.js';
-import type { BrowserContext, Page } from 'playwright';
 import { createLogger } from './core/logger.js';
-import { createHeartbeat, type HeartbeatPayload } from './core/heartbeat.js';
 import { claimRow } from './core/claim.js';
 import { createController } from './core/controller.js';
-import { clearAuthContext, runLogin, submitAuthInput } from './core/auth.js';
-import { launchBrowser, newAccountContext, type BrowserHandle } from './core/browser.js';
+import { authContexts, clearAuthContext, runLogin, submitAuthInput } from './core/auth.js';
+import { launchBrowser, newAccountContext, type AccountContextInit, type BrowserHandle } from './core/browser.js';
 import { createGeolocation } from './core/geolocation.js';
-import { readSession, writeSession } from './core/session.js';
+import { readSession } from './core/session.js';
 import { createCallback } from './transport/callback.js';
 import { createAuthCallback } from './transport/auth-callback.js';
 import { createSessionCallback } from './transport/session-callback.js';
 import { createQueueConsumer } from './transport/queue.js';
 import { createControlSubscriber, isControlMessage } from './transport/control.js';
+import { createHeartbeat, type HeartbeatPayload } from './core/heartbeat.js';
+import { writeSession } from './core/session.js';
+import { createRpcServer, verifyLiveViewTicket } from './transport/rpc-server.js';
 import { configureAdapters } from './platforms/deps.js';
 import { supportedPlatforms } from './platforms/registry.js';
+import type { AccountRuntimeSpec, ActionJob } from './types.js';
 
 const config = loadConfig();
 const logger = createLogger({ workerId: config.workerId, containerId: process.env.HOSTNAME });
 
 logger.info('worker starting', {
   apiUrl: config.apiUrl,
-  redisUrl: config.redisUrl,
+  poolMode: config.poolMode,
+  rpc: `${config.rpcHost}:${config.rpcPort}`,
   platforms: config.platforms,
   adapters: supportedPlatforms(),
   dryRun: config.dryRun,
   display: config.display,
 });
 
-// --- claim ---------------------------------------------------------------
-// A scaled container knows only its hostname. Claim binds it to the oldest
-// free dashboard-created row and returns that row's real id — which is what
-// the queue key, the control channel and every heartbeat must address. Until
-// this resolves the worker is unassigned; it stays alive on its boot id and
-// retries on the next cycle rather than crashing (see claim.ts).
-const bootId = config.workerId;
-const claimed = await claimRow(
-  {
-    containerId: bootId,
-    controlChannel: process.env.CONTROL_CHANNEL,
-    actionQueue: process.env.ACTION_QUEUE,
-    sessionPvc: process.env.SESSION_PVC,
-    novncUrl: config.novncUrl,
-  },
-  { apiUrl: config.apiUrl, logger, internalSecret: config.internalSecret },
-);
-// The resolved id is what the rest of the process addresses; the boot id is
-// kept only for the log line above and the fallback in claim.ts.
-const workerId = claimed.workerId;
-// A claimed row may carry its own frozen GPS point; expose it to the
-// geolocation reader so the spoof matches the row, not the boot id.
-const claimedLocation =
-  typeof claimed.latitude === 'number' && typeof claimed.longitude === 'number'
-    ? { latitude: claimed.latitude, longitude: claimed.longitude, location: claimed.location }
-    : null;
-
-// --- composition ---------------------------------------------------------
-// Adapter boot deps are set once, before any job can run, so the screenshot
-// name is deterministic from the first action (§7.3).
-configureAdapters({
-  workerId,
-  screenshotDir: process.env.SCREENSHOT_DIR ?? '/data/screenshots',
-});
-
 const callback = createCallback(config, logger);
-const queue = createQueueConsumer(config.redisUrl, workerId, logger);
-const control = createControlSubscriber(config.redisUrl, workerId, logger);
+const screenshotDir = process.env.SCREENSHOT_DIR;
 
-// The worker's frozen GPS point, read once from the API. A claimed row may
-// already carry it; the API lookup is still tried so a row whose point was set
-// after the claim is honoured. Best-effort: a worker with no assigned location
-// keeps the real device position (see geolocation.ts).
-const geolocation = createGeolocation({
-  apiUrl: config.apiUrl,
-  internalSecret: config.internalSecret,
-  workerId,
-  logger,
-  initial: claimedLocation ?? undefined,
-});
-
-// One headful browser per container, launched lazily: in dry-run (the compose
+// One headful browser per machine, launched lazily: in dry-run (the compose
 // default) no page is ever opened, so a dev box without Xvfb still boots clean.
 let browserHandle: BrowserHandle | undefined;
 async function browser() {
   if (!browserHandle) {
     browserHandle = await launchBrowser({
       display: config.display,
-      // Null `proxyUrl` is the direct-dial default (a local stack has none).
-      // When set it is the container's assigned residential pool: the fix for
-      // a fleet of workers all presenting one datacentre IP to Instagram.
-      proxy: config.proxyUrl
-        ? {
-            server: config.proxyUrl,
-            ...(config.proxyAuth ? { username: config.proxyAuth.username } : {}),
-            ...(config.proxyAuth ? { password: config.proxyAuth.password } : {}),
-          }
-        : null,
+      // Null `proxyUrl` is the direct-dial default. In pool mode the egress is
+      // decided per CONTEXT from the account's own proxy group, so the browser
+      // itself must not pin one.
+      proxy:
+        config.poolMode === 'legacy' && config.proxyUrl
+          ? {
+              server: config.proxyUrl,
+              ...(config.proxyAuth ? { username: config.proxyAuth.username } : {}),
+              ...(config.proxyAuth ? { password: config.proxyAuth.password } : {}),
+            }
+          : null,
     });
   }
   return browserHandle.browser;
 }
-// The live-view context, kept open across "open profile" calls so repeated
-// clicks navigate one window instead of stacking new Chrome windows.
-let manualContext: BrowserContext | undefined;
 
-const controller = createController({
-  logger,
-  jitterRangeMs: [30_000, 90_000],
-  contextFor: async (job) =>
-    // A fresh context per job is the isolation boundary (P3-07); the session
-    // persisted by login is hydrated from the PVC so a restart needs no
-    // re-login (§7.1). The context is pinned to the worker's frozen GPS point
-    // so every page in the session reports the same position.
-    newAccountContext(
-      await browser(),
-      job.platform,
-      await readSession(job.platform),
-      await geolocation.get(),
-    ),
-});
-
-// --- heartbeat -----------------------------------------------------------
-const state = { lastActionAt: null as string | null, queueDepth: 0 };
-const heartbeat = createHeartbeat(
-  { ...config, workerId },
-  logger,
-  (): HeartbeatPayload => ({
-    workerId,
-    browserStatus: 'idle',
-    queueDepth: state.queueDepth,
-    lastActionAt: state.lastActionAt,
-    ...(config.novncUrl ? { novncUrl: config.novncUrl } : {}),
-  }),
-);
-heartbeat.start();
-
-// Refresh the backlog lazily so the heartbeat reports truth, not a stale 0.
-setInterval(async () => {
-  state.queueDepth = await queue.depth().catch(() => 0);
-}, 5_000).unref();
-
-// --- control channel (P1-11) --------------------------------------------
-// Shared by auth-login and auth-input: one browser, one screenshot dir.
-const authDeps = {
-  browser,
-  geolocation: () => geolocation.get(),
-  log: (msg: string, data?: Record<string, unknown>) => logger.warn(msg, data),
-  workerId: config.workerId,
-  ...(process.env.SCREENSHOT_DIR ? { screenshotDir: process.env.SCREENSHOT_DIR } : {}),
-  // A verified login reports its session so it outlives this container. The
-  // well-known requestId marks it as a store, not an operator export.
-  onSession: async (accountId: string, platform: string, state: unknown) => {
-    await sessionCallback.post({
-      accountId,
+// Per-account action context. In pool mode the identity comes from the job; in
+// legacy mode from the on-disk session and the worker's frozen GPS point.
+function accountInit(
+  platform: AccountJobPlatform,
+  runtime: AccountRuntimeSpec | undefined,
+  legacy: { storageState?: unknown; geolocation?: { latitude: number; longitude: number } | null },
+): AccountContextInit {
+  if (runtime) {
+    return {
       platform,
-      requestId: 'login-success',
-      session: state,
-    });
-  },
-};
+      storageState: runtime.storageState,
+      geolocation: runtime.geolocation ?? null,
+      timezoneId: runtime.timezone,
+      ...(runtime.userAgent ? { userAgent: runtime.userAgent } : {}),
+      proxy: runtime.proxy ?? null,
+    };
+  }
+  return {
+    platform,
+    storageState: legacy.storageState,
+    geolocation: legacy.geolocation ?? null,
+  };
+}
 
-// The login outcome is reported back so the dashboard's auth badge moves on
-// its own; without this the row sits on AUTHENTICATING forever.
-const authCallback = createAuthCallback({ ...config, workerId }, logger);
+type AccountJobPlatform = ActionJob['platform'];
 
-// Session export/import (P-C): the operator can rescue an account's session
-// (cookies) off a container before deleting it. The session never appears in a
-// log line — only the accountId does.
-const sessionCallback = createSessionCallback({ ...config, workerId }, logger);
+// The live-view context, kept open across "open profile" calls so repeated
+// clicks navigate one window instead of stacking Chrome windows on the display.
+let manualContext: BrowserContext | undefined;
+let manualAccountId: string | undefined;
+
+const authCallback = createAuthCallback(config, logger);
+const sessionCallback = createSessionCallback(config, logger);
 // A new login or auth-clear invalidates callbacks from an earlier attempt.
 const authAttempts = new Map<string, symbol>();
 
-void control
-  .start(async (message) => {
-    if (!isControlMessage(message)) {
-      logger.warn('dropped malformed control message');
-      return;
-    }
-    logger.info('control message', { type: message.type, accountId: message.accountId });
-    switch (message.type) {
-      case 'auth-login': {
-        // The API delivers the operator's credentials (unsealed at dispatch)
-        // so the form can be filled; absent, the operator types in the noVNC
-        // view as before. The payload is never logged (line above logs type +
-        // accountId only).
-        const username =
-          typeof message.payload?.username === 'string' ? message.payload.username : '';
-        const password =
-          typeof message.payload?.password === 'string' ? message.payload.password : '';
-        const credentials = username && password ? { username, password } : undefined;
-        const attempt = Symbol();
-        authAttempts.set(message.accountId, attempt);
-        try {
-          const result = await runLogin(
-            message.accountId,
-            message.platform,
-            {
-              ...authDeps,
-              onNeedsInput: async (accountId, input) => {
-                if (authAttempts.get(accountId) === attempt)
-                  await authCallback.post(accountId, input);
-              },
-            },
-            credentials,
-          );
-          if (authAttempts.get(message.accountId) === attempt) {
-            await authCallback.post(message.accountId, result);
-          }
-        } finally {
-          if (authAttempts.get(message.accountId) === attempt)
-            authAttempts.delete(message.accountId);
-        }
-        break;
-      }
-      case 'auth-input': {
-        const code = typeof message.payload?.value === 'string' ? message.payload.value : '';
-        if (!code) {
-          logger.warn('auth-input without a value', { accountId: message.accountId });
-          break;
-        }
-        const attempt = authAttempts.get(message.accountId);
-        const result = await submitAuthInput(message.accountId, code, message.platform, authDeps);
-        // The active login owns the final callback when code submission joins
-        // its poll. A legacy parked context still needs its own callback.
-        if (!attempt && !authAttempts.has(message.accountId)) {
-          await authCallback.post(message.accountId, result);
-        }
-        break;
-      }
-      case 'auth-clear':
-        authAttempts.delete(message.accountId);
-        clearAuthContext(message.accountId);
-        break;
-      case 'auth-export': {
-        // Dump the account's persisted session (cookies) back to the API so an
-        // operator can re-import it into a fresh container. requestId correlates
-        // the dump with the waiting export request.
-        const requestId =
-          typeof message.payload?.requestId === 'string' ? message.payload.requestId : '';
-        if (!requestId) {
-          logger.warn('auth-export without a requestId', { accountId: message.accountId });
-          break;
-        }
-        const session = await readSession(message.platform).catch(() => undefined);
-        await sessionCallback.post({
-          accountId: message.accountId,
-          platform: message.platform,
-          requestId,
-          // null tells the API there is no session on this container to rescue.
-          session: session ?? null,
-        });
-        break;
-      }
-      case 'auth-import': {
-        // Adopt a session handed over from another container. Validate
-        // defensively: a non-object payload is dropped, never written or thrown.
-        const session = message.payload?.session;
-        if (session === null || typeof session !== 'object' || Array.isArray(session)) {
-          logger.warn('auth-import without a valid session payload', {
-            accountId: message.accountId,
-          });
-          break;
-        }
-        await writeSession(message.platform, session);
-        // Log the fact, never the value.
-        logger.info('session imported', {
-          accountId: message.accountId,
-          platform: message.platform,
-        });
-        break;
-      }
-      case 'browser-open': {
-        // Open the target in the account's LIVE, session-hydrated browser on
-        // the Xvfb display, so the noVNC live view shows the profile already
-        // logged in. The context is kept across calls: a second "open
-        // profile" navigates the same window instead of stacking a second
-        // Chrome window on the display.
-        const url = typeof message.payload?.url === 'string' ? message.payload.url : '';
-        const target = url || 'about:blank';
-        try {
-          const b = await browser();
-          if (!manualContext) {
-            // Hydrate the persisted session when the message names a platform
-            // this worker serves — the operator then sees the logged-in
-            // profile, not a login wall. A bare "Live view" (no platform)
-            // keeps the old behaviour: a fresh, session-less context.
-            // newAccountContext pins the context to the worker's frozen GPS
-            // point — the same position the actions report.
-            if (config.platforms.includes(message.platform)) {
-              manualContext = await newAccountContext(
-                b,
-                message.platform,
-                await readSession(message.platform).catch(() => undefined),
-                await geolocation.get(),
-              );
-            } else {
-              manualContext = await b.newContext({ viewport: { width: 1280, height: 800 } });
-            }
-          }
-          const page: Page = manualContext.pages()[0] ?? (await manualContext.newPage());
-          await page.goto(target, { waitUntil: 'domcontentloaded' }).catch(() => undefined);
-          logger.info('browser-open: opened in live view', {
-            url: target,
-            platform: message.platform,
-          });
-        } catch (err) {
-          logger.warn('browser-open failed', { error: (err as Error).message, url: target });
-        }
-        break;
-      }
-      default:
-        logger.warn('unknown control type', { type: message.type });
-    }
-  })
-  .catch((err) => logger.warn('control subscriber unavailable', { error: (err as Error).message }));
+/**
+ * Identity for the legacy action path. Pool mode never reads it: there the job
+ * carries its own runtime.
+ */
+const legacyIdentity: {
+  storageState?: unknown;
+  geolocation?: { latitude: number; longitude: number } | null;
+} = {};
 
-// --- action loop (P1-09): BLPOP one job, run it, callback, repeat --------
-// Strictly sequential per container: the next job is only popped after the
-// previous one (plus its jitter) finishes.
-let loopRunning = false;
-async function runActionLoop(): Promise<void> {
-  if (loopRunning) return;
-  loopRunning = true;
-  logger.info('action loop started (sequential, batch)', {
-    queue: `queue:action:${config.workerId}`,
-  });
+const controller = createController({
+  logger,
+  // Pool mode: pacing belongs to the control plane's scheduler. Sleeping here
+  // only keeps the microVM awake after the work is already finished.
+  jitterRangeMs: config.poolMode === 'stateless' ? [0, 0] : [30_000, 90_000],
+  ...(screenshotDir ? { screenshotDir } : {}),
+  contextFor: async (job) => {
+    const runtime = (job as ActionJob & { runtime?: AccountRuntimeSpec }).runtime;
+    return newAccountContext(await browser(), accountInit(job.platform, runtime, legacyIdentity));
+  },
+});
 
-  for (;;) {
-    const job = await queue.next();
-    if (!job) {
-      // Only null when stopping.
-      break;
-    }
-    logger.info('job received', { jobId: job.id, action: job.action, platform: job.platform });
-
-    if (config.dryRun) {
-      logger.info('dry-run: skipping action', { jobId: job.id, action: job.action });
-      await callback.post({
-        jobId: job.id,
-        accountId: job.accountId,
-        attempt: job.attempt,
-        status: 'success',
-        durationMs: 0,
-      });
-      continue;
-    }
-
-    const result = await controller.run(job);
-    state.lastActionAt = new Date().toISOString();
-    await callback.post(result);
+async function runAction(job: ActionJob): Promise<void> {
+  logger.info('job received', { jobId: job.id, action: job.action, platform: job.platform });
+  if (config.dryRun) {
+    logger.info('dry-run: skipping action', { jobId: job.id, action: job.action });
+    await callback.post({
+      jobId: job.id,
+      accountId: job.accountId,
+      attempt: job.attempt,
+      status: 'success',
+      durationMs: 0,
+    });
+    return;
   }
-  loopRunning = false;
+  const result = await controller.run(job);
+  await callback.post(result);
 }
 
-void runActionLoop().catch((err) =>
-  logger.error('action loop crashed', { error: (err as Error).message }),
-);
+/**
+ * Run one login and report every outcome. Shared by the RPC server and the
+ * control channel so the two transports cannot drift on what counts as success.
+ */
+async function startLogin(accountId: string, runtime: AccountRuntimeSpec | undefined, legacyPlatform: AccountJobPlatform): Promise<void> {
+  const platform = (runtime?.platform ?? legacyPlatform) as AccountJobPlatform;
+  const credentials = runtime?.credentials;
+  const attempt = Symbol();
+  authAttempts.set(accountId, attempt);
+  try {
+    const result = await runLogin(
+      accountId,
+      platform,
+      {
+        browser,
+        ...(runtime ? { runtime } : {}),
+        geolocation: async () => (runtime ? (runtime.geolocation ?? null) : manualGeolocation()),
+        log: (msg: string, data?: Record<string, unknown>) => logger.warn(msg, data),
+        workerId: config.workerId,
+        ...(screenshotDir ? { screenshotDir } : {}),
+        onSession: async (id: string, p: string, state: unknown) => {
+          await sessionCallback.post({ accountId: id, platform: p, requestId: 'login-success', session: state });
+        },
+        onNeedsInput: async (id: string, input) => {
+          if (authAttempts.get(id) === attempt) await authCallback.post(id, input);
+        },
+      },
+      credentials,
+    );
+    if (authAttempts.get(accountId) === attempt) {
+      await authCallback.post(accountId, result);
+    }
+  } finally {
+    if (authAttempts.get(accountId) === attempt) authAttempts.delete(accountId);
+  }
+}
 
-// --- lifecycle -----------------------------------------------------------
-let shuttingDown = false;
 async function shutdown(signal: string): Promise<void> {
-  if (shuttingDown) return;
-  shuttingDown = true;
   logger.info('worker shutting down', { signal });
-  heartbeat.stop();
-  queue.stop();
-  await control.stop().catch(() => undefined);
   await browserHandle?.close().catch(() => undefined);
   process.exit(0);
 }
 
 process.on('SIGINT', () => void shutdown('SIGINT'));
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
+
+if (config.poolMode === 'stateless') {
+  await startStateless();
+} else {
+  await startLegacy();
+}
+
+// --- legacy: claim + control channel + BLPOP loop --------------------------
+
+async function startLegacy(): Promise<void> {
+  const claimed = await claimRow(
+    {
+      containerId: config.workerId,
+      controlChannel: process.env.CONTROL_CHANNEL,
+      actionQueue: process.env.ACTION_QUEUE,
+      sessionPvc: process.env.SESSION_PVC,
+      novncUrl: config.novncUrl,
+    },
+    { apiUrl: config.apiUrl, logger, internalSecret: config.internalSecret },
+  );
+  const workerId = claimed.workerId;
+  const claimedLocation =
+    typeof claimed.latitude === 'number' && typeof claimed.longitude === 'number'
+      ? { latitude: claimed.latitude, longitude: claimed.longitude, location: claimed.location }
+      : null;
+
+  configureAdapters({ workerId, screenshotDir: screenshotDir ?? '/data/screenshots' });
+
+  const geolocation = createGeolocation({
+    apiUrl: config.apiUrl,
+    internalSecret: config.internalSecret,
+    workerId,
+    logger,
+    initial: claimedLocation ?? undefined,
+  });
+  manualGeolocation = async () => geolocation.get();
+
+  const queue = createQueueConsumer(config.redisUrl, workerId, logger);
+  const control = createControlSubscriber(config.redisUrl, workerId, logger);
+
+  const state = { lastActionAt: null as string | null, queueDepth: 0 };
+  const heartbeat = createHeartbeat(
+    { ...config, workerId },
+    logger,
+    (): HeartbeatPayload => ({
+      workerId,
+      browserStatus: 'idle',
+      queueDepth: state.queueDepth,
+      lastActionAt: state.lastActionAt,
+      ...(config.novncUrl ? { novncUrl: config.novncUrl } : {}),
+    }),
+  );
+  heartbeat.start();
+  setInterval(async () => {
+    state.queueDepth = await queue.depth().catch(() => 0);
+  }, 5_000).unref();
+
+  void control
+    .start(async (message) => {
+      if (!isControlMessage(message)) {
+        logger.warn('dropped malformed control message');
+        return;
+      }
+      logger.info('control message', { type: message.type, accountId: message.accountId });
+      switch (message.type) {
+        case 'auth-login': {
+          const username =
+            typeof message.payload?.username === 'string' ? message.payload.username : '';
+          const password =
+            typeof message.payload?.password === 'string' ? message.payload.password : '';
+          const credentials = username && password ? { username, password } : undefined;
+          const attempt = Symbol();
+          authAttempts.set(message.accountId, attempt);
+          try {
+            const result = await runLogin(
+              message.accountId,
+              message.platform,
+              {
+                browser,
+                geolocation: () => geolocation.get(),
+                log: (msg: string, data?: Record<string, unknown>) => logger.warn(msg, data),
+                workerId: config.workerId,
+                ...(screenshotDir ? { screenshotDir } : {}),
+                onSession: async (id: string, p: string, session: unknown) => {
+                  await sessionCallback.post({ accountId: id, platform: p, requestId: 'login-success', session });
+                },
+                onNeedsInput: async (accountId, input) => {
+                  if (authAttempts.get(accountId) === attempt) await authCallback.post(accountId, input);
+                },
+              },
+              credentials,
+            );
+            if (authAttempts.get(message.accountId) === attempt) {
+              await authCallback.post(message.accountId, result);
+            }
+          } finally {
+            if (authAttempts.get(message.accountId) === attempt) authAttempts.delete(message.accountId);
+          }
+          break;
+        }
+        case 'auth-input': {
+          const code = typeof message.payload?.value === 'string' ? message.payload.value : '';
+          if (!code) {
+            logger.warn('auth-input without a value', { accountId: message.accountId });
+            break;
+          }
+          const attempt = authAttempts.get(message.accountId);
+          const result = await submitAuthInput(message.accountId, code, message.platform, {
+            browser,
+            geolocation: () => geolocation.get(),
+            log: (msg: string, data?: Record<string, unknown>) => logger.warn(msg, data),
+            workerId: config.workerId,
+          });
+          if (!attempt && !authAttempts.has(message.accountId)) {
+            await authCallback.post(message.accountId, result);
+          }
+          break;
+        }
+        case 'auth-clear':
+          authAttempts.delete(message.accountId);
+          clearAuthContext(message.accountId);
+          break;
+        case 'auth-export': {
+          const requestId =
+            typeof message.payload?.requestId === 'string' ? message.payload.requestId : '';
+          const session = await readSession(message.platform).catch(() => undefined);
+          await sessionCallback.post({
+            accountId: message.accountId,
+            platform: message.platform,
+            requestId,
+            session: session ?? null,
+          });
+          break;
+        }
+        case 'auth-import': {
+          const session = message.payload?.session;
+          if (session === null || typeof session !== 'object' || Array.isArray(session)) {
+            logger.warn('auth-import without a valid session payload', { accountId: message.accountId });
+            break;
+          }
+          await writeSession(message.platform, session);
+          logger.info('session imported', { accountId: message.accountId, platform: message.platform });
+          break;
+        }
+        case 'browser-open': {
+          const url = typeof message.payload?.url === 'string' ? message.payload.url : '';
+          const ctx = await openLiveView(
+            { accountId: message.accountId, platform: message.platform, timezone: 'Asia/Jakarta' },
+            url,
+            async () => ({
+              storageState: await readSession(message.platform).catch(() => undefined),
+              geolocation: (await geolocation.get().catch(() => null)) ?? null,
+            }),
+          );
+          manualContext = ctx;
+          break;
+        }
+        default:
+          logger.warn('unknown control type', { type: message.type });
+      }
+    })
+    .catch((err) => logger.warn('control subscriber unavailable', { error: (err as Error).message }));
+
+  for (;;) {
+    const job = await queue.next();
+    if (!job) break;
+    await runAction(job);
+    state.lastActionAt = new Date().toISOString();
+  }
+}
+
+// --- stateless: HTTP RPC, nothing holds the machine awake -------------------
+
+async function startStateless(): Promise<void> {
+  // A pool worker is addressed by its configured name (smm-worker-03), because
+  // that name is what the hub's worker row and the ticket signature bind to.
+  const workerId = config.workerId;
+  configureAdapters({ workerId, screenshotDir: screenshotDir ?? '/tmp/smm-screenshots' });
+
+  // One Xvfb display is the whole resource. Anything that draws on it — a job,
+  // a parked login, or an operator's live view — must own it exclusively.
+  let busy = false;
+  let authAccountId: string | undefined;
+
+  /**
+   * Close the operator's live-view context before another account can use the
+   * display.
+   *
+   * This is the isolation boundary, not a tidy-up: `manualContext` carries one
+   * account's cookies, proxy, GPS and timezone. Reusing it for a second account
+   * would show account A's logged-in session to an operator who opened account
+   * B — the exact cross-account leak the per-context runtime exists to prevent.
+   */
+  const closeManualContext = async (): Promise<void> => {
+    const ctx = manualContext;
+    manualContext = undefined;
+    manualAccountId = undefined;
+    await ctx?.close().catch(() => undefined);
+  };
+
+  const rpc = createRpcServer({
+    logger,
+    internalSecret: config.internalSecret,
+    workerId,
+    // A live view holds the display too: a job that ran while an operator was
+    // watching would interleave two accounts on one screen.
+    isBusy: () => busy || authAccountId !== undefined || manualContext !== undefined,
+    // The hub probes this to decide whether a parked login is still real.
+    busyAccountId: () => authAccountId ?? manualAccountId ?? undefined,
+    verifyTicket: (ticket) =>
+      verifyLiveViewTicket(config.internalSecret, ticket, workerId, Math.floor(Date.now() / 1000)),
+
+    runAction: async (job) => {
+      busy = true;
+      try {
+        await runAction({
+          id: job.jobId,
+          accountId: job.runtime.accountId,
+          platform: job.runtime.platform,
+          action: job.action,
+          targetUrl: job.targetUrl,
+          attempt: job.attempt,
+          ...(job.text ? { text: job.text } : {}),
+          ...(job.templateId ? { templateId: job.templateId } : {}),
+          ...(job.expectedMention ? { expectedMention: job.expectedMention } : {}),
+          // Carried through the type, which the controller reads for contextFor.
+          ...({ runtime: job.runtime } as { runtime: AccountRuntimeSpec }),
+        });
+      } finally {
+        busy = false;
+      }
+      return undefined;
+    },
+
+    startLogin: async (runtime) => {
+      // One display, one account. A parked login for a DIFFERENT account keeps
+      // its context (its poll owns it); every manual live view is released,
+      // this account's included, so the login builds the screen it will park.
+      const parked = authContexts.get(runtime.accountId);
+      if (manualAccountId === runtime.accountId) {
+        const ctx = manualContext;
+        manualContext = undefined;
+        manualAccountId = undefined;
+        if (ctx !== parked) await ctx?.close().catch(() => undefined);
+      } else {
+        await closeManualContext();
+      }
+      authAccountId = runtime.accountId;
+      try {
+        await startLogin(runtime.accountId, runtime, runtime.platform);
+      } finally {
+        authAccountId = undefined;
+        // A login is SERIAL on this machine, so a context left behind blocks
+        // every later login — including accounts that never had a lease to
+        // release, which is how one abandoned attempt stranded the whole fleet.
+        // Whatever the attempt parked (a CAPTCHA nobody answered, a form it
+        // abandoned) is closed here.
+        clearAuthContext(runtime.accountId);
+      }
+    },
+
+    submitAuthInput: async (accountId, platform, value) => {
+      const result = await submitAuthInput(accountId, value, platform, {
+        browser,
+        log: (msg: string, data?: Record<string, unknown>) => logger.warn(msg, data),
+        workerId: config.workerId,
+      });
+      // The parked attempt owns the final callback; report only when nobody is
+      // polling this context any more.
+      if (!authAttempts.has(accountId)) await authCallback.post(accountId, result);
+    },
+
+    clearAuth: async (accountId) => {
+      if (!accountId) {
+        // Recovery sweep: drop the live view and every parked login. Safe
+        // because this machine runs one account at a time, and the caller is
+        // the hub with no lease left to name.
+        authAttempts.clear();
+        for (const id of authContexts.keys()) clearAuthContext(id);
+        await closeManualContext();
+        logger.info('cleared all auth and live-view contexts (recovery)');
+        return;
+      }
+      authAttempts.delete(accountId);
+      clearAuthContext(accountId);
+      if (manualAccountId === accountId) await closeManualContext();
+    },
+
+    openBrowser: async (runtime, targetUrl) => {
+      // A parked login owns the display: show ITS context untouched. Setting
+      // `manualAccountId` here would let a later `closeManualContext()` (or the
+      // account's own `clearAuth`) close the login's challenge out from under
+      // the running poll.
+      if (authContexts.has(runtime.accountId)) return;
+      // Reuse the window only for the SAME account (a second click navigates
+      // it). A different account gets a fresh context, always.
+      const reusable = manualAccountId === runtime.accountId ? manualContext : undefined;
+      if (!reusable) await closeManualContext();
+      manualContext = await openLiveView(runtime, targetUrl, async () => ({}), reusable);
+      manualAccountId = runtime.accountId;
+    },
+  });
+
+  await rpc.listen(config.rpcHost, config.rpcPort);
+  logger.info('worker rpc listening', { host: config.rpcHost, port: rpc.port() });
+
+  process.on('SIGTERM', () => void rpc.close().finally(() => shutdown('SIGTERM')));
+}
+
+// --- shared helpers --------------------------------------------------------
+
+let manualGeolocation: () => Promise<{ latitude: number; longitude: number } | null> = async () => null;
+
+/**
+ * Open (or reuse) the live-view context. The context is shared across calls on
+ * purpose: a second click navigates the same window instead of stacking Chrome
+ * windows on the display.
+ *
+ * Callers must have checked `authContexts` first: a parked login's context is
+ * the live view, and opening the profile in it (or beside it) replaces the
+ * OTP/CAPTCHA form the operator came for.
+ */
+async function openLiveView(
+  runtime: AccountRuntimeSpec,
+  targetUrl: string,
+  legacy: () => Promise<{ storageState?: unknown; geolocation?: { latitude: number; longitude: number } | null }>,
+  existing?: BrowserContext,
+): Promise<BrowserContext> {
+  let ctx = existing;
+  if (!ctx) {
+    const b = await browser();
+    if (config.poolMode === 'stateless') {
+      ctx = await newAccountContext(b, accountInit(runtime.platform, runtime, {}));
+    } else {
+      const identity = await legacy();
+      ctx = await newAccountContext(b, accountInit(runtime.platform, undefined, identity));
+    }
+  }
+  const page = ctx.pages()[0] ?? (await ctx.newPage());
+  const target = targetUrl || defaultProfileURL(runtime.platform);
+  await page.goto(target, { waitUntil: 'domcontentloaded' }).catch(() => undefined);
+  logger.info('live view opened', { url: target, platform: runtime.platform });
+  return ctx;
+}
+
+function defaultProfileURL(platform: string): string {
+  if (platform === 'instagram') return 'https://www.instagram.com/';
+  if (platform === 'threads') return 'https://www.threads.net/';
+  return 'about:blank';
+}

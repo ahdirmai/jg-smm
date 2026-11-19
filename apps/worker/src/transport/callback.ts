@@ -28,17 +28,21 @@ export function createCallback(
   const url = `${config.apiUrl}/internal/action-callback`;
 
   async function post(result: ActionResult): Promise<void> {
-    // The API's idempotency key is the (job, attempt) pair as
-    // "<jobId>:<attempt>" — one attempt is exactly one row, so a replayed
-    // callback updates the verdict instead of duplicating it.
+    // The API reads snake_case for the two evidence fields (they are additions
+    // to the callback contract, not part of the in-process shape), so they are
+    // mapped explicitly. The values themselves are never logged: a session is a
+    // bearer credential and the JPEG is account content.
+    const { updatedSession, screenshotJpegB64, ...rest } = result;
     const body = JSON.stringify({
-      ...result,
+      ...rest,
       // The wire enum is UPPERCASE (AttemptStatus in openapi.yaml); the
       // in-process status is lowercase. Translate here so the controller and
       // the DOM layers never see the wire spelling.
       status: result.status.toUpperCase(),
       attemptId: `${result.jobId}:${result.attempt}`,
       workerId: config.workerId,
+      ...(updatedSession !== undefined ? { updated_session: updatedSession } : {}),
+      ...(screenshotJpegB64 !== undefined ? { screenshot_jpeg_b64: screenshotJpegB64 } : {}),
     });
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {

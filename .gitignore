@@ -20,7 +20,9 @@
 node_modules/
 .pnpm-store/
 dist/
+dist-test/
 .next/
+.next-dev/
 next-env.d.ts
 out/
 *.tsbuildinfo

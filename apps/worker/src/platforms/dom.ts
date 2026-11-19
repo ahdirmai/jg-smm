@@ -151,8 +151,8 @@ export async function dismissMetaAccountModal(page: Page): Promise<boolean> {
  * resolves to the standalone post view. IG lands on the permalink directly, so
  * the URL already carries the shortcode and this is a no-op there.
  */
-export async function openPost(page: Page, url: string): Promise<void> {
-  await page.goto(url, { waitUntil: 'domcontentloaded' });
+export async function openPost(page: Page, url: string, timeoutMs = 30_000): Promise<void> {
+  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
 
   const short = postShortcode(url);
   if (!short) return;
@@ -513,6 +513,15 @@ export async function commentOnPost(d: DomDeps, text: string): Promise<AdapterRe
   // composer is already mounted. (ref: jg/automation worker.)
   await scrollToLoadComposer(page);
 
+  // Idempotent RETRY: a previous attempt may have posted the comment after the
+  // verify window closed. Posting the same text again would duplicate a public
+  // comment, so an already-rendered body is success. Only on a retry — on the
+  // first attempt the body may legitimately contain the phrase in the caption.
+  if (d.job.attempt > 1) {
+    const already = await waitForCommentText(d, text, 0);
+    if (already) return { ok: true, renderedText: already };
+  }
+
   // 1. The composer is usually already mounted on a permalink.
   let box = await findComposer(d, candidates, COMPOSER_PROBE_MS);
   // 2. If not, click the comment affordance to reveal/focus it, then re-hunt.
@@ -561,6 +570,15 @@ async function fillAndSubmit(d: DomDeps, box: Locator, text: string): Promise<Ad
   // slow render is not misreported as a failure (which would trigger a retry
   // and a duplicate comment).
   if (!rendered && !(await composerStillHas(box, text))) {
+    rendered = await waitForCommentText(d, text);
+  }
+  // IG can accept the comment while the current feed stays stale. A single
+  // reload still missed comments that propagated a little later, which marked
+  // a live comment FAILED (and invited a duplicate retry). Bounded reloads:
+  // the composer has cleared, so none of these re-submits.
+  for (let i = 0; !rendered && i < 3; i++) {
+    await sleep(5_000);
+    await openPost(page, d.job.targetUrl).catch(() => undefined);
     rendered = await waitForCommentText(d, text);
   }
   if (!rendered) return failShot(d, 'comment not visible in feed (verification failed)');
@@ -891,16 +909,25 @@ export function missingText(): AdapterResult {
  * a failure means, and an orchestration bug must not masquerade as a platform
  * failure.
  */
+export interface RunActionOptions {
+  /**
+   * Navigation bound. Default 30s; a cold browser under a loaded fleet can
+   * exceed that on YouTube's player bundle even though the form later mounts.
+   */
+  openTimeoutMs?: number;
+}
+
 export async function runAction(
   ctx: BrowserContext,
   platform: Platform,
   job: ActionJob,
   fn: (d: DomDeps) => Promise<AdapterResult>,
+  opts: RunActionOptions = {},
 ): Promise<AdapterResult> {
   const page = await ctx.newPage();
   const d: DomDeps = { page, sel: selectorsFor(platform), job };
   try {
-    await openPost(page, job.targetUrl);
+    await openPost(page, job.targetUrl, opts.openTimeoutMs);
     if (await needsLogin(page)) {
       // "login required" + "session expired" are the AUTH needles (P3-12), so
       // this lands as non-retryable no matter which the classifier hits first.
@@ -1021,15 +1048,86 @@ export async function fillMetaCredentials(
   credentials: LoginCredentials,
 ): Promise<void> {
   const username = await firstPresent(page, USERNAME_FIELD_SELECTORS);
-  await username.fill(credentials.username);
+  await typeInto(username, credentials.username);
   const password = await firstPresent(page, PASSWORD_FIELD_SELECTORS);
-  await password.fill(credentials.password);
-  const submit = page.getByRole('button', { name: /^log in$/i }).first();
-  if ((await submit.count()) > 0) {
-    await submit.click({ timeout: 10_000, noWaitAfter: true });
-  } else {
-    await password.press('Enter');
+  await typeInto(password, credentials.password);
+  await submitLoginForm(page, password);
+}
+
+/**
+ * Put text into a React-controlled field the way a person does.
+ *
+ * `fill()` sets `value` and fires one synthetic `input`. Meta's form tracks
+ * keystrokes through its own handlers, so a filled field looks empty to it:
+ * measured live, clicking Login after `fill()` issued NO request at all, while
+ * typing produced the login call and a real rejection message. That silent
+ * no-op is why credentials "were not submitted" with a visibly filled form.
+ *
+ * Falls back to `fill()` when typing is not possible (no focus, a disabled
+ * field), so a field that only accepts assignment still gets its value.
+ */
+async function typeInto(field: Locator, value: string): Promise<void> {
+  try {
+    await field.click({ timeout: 5_000 });
+    await field.fill(''); // start clean; typing appends
+    await field.pressSequentially(value, { delay: 25 });
+  } catch {
+    await field.fill(value);
   }
+}
+
+/**
+ * Press the login control, whatever markup the platform served.
+ *
+ * Meta's form has shipped BOTH `<button>Log in</button>` and
+ * `<input type="submit" value="Log in">`; the role query only matches the first
+ * form, so on the second the autonow fell through to `Enter`, which that page
+ * ignores — the operator saw a filled form that never submitted. Try every
+ * control in turn, and only give up after all of them.
+ */
+export async function submitLoginForm(page: Page, passwordField: Locator): Promise<void> {
+  // Ordered by what Instagram actually serves today, which is neither a
+  // <button> nor a usable <input type="submit">: the form's submit input is
+  // rendered 0x0 (invisible, unclickable), and the control an operator clicks
+  // is a <div>Login</div> inside a role="button" wrapper. The old code queried
+  // only getByRole('button'), found nothing, fell back to Enter — which Meta's
+  // React handler ignores — so the form filled and never submitted.
+  const candidates: Array<[string, Locator]> = [
+    [
+      'div role=button "Login"',
+      page
+        .locator('div[role="button"]')
+        .filter({ hasText: /^Login$/i })
+        .first(),
+    ],
+    [
+      'div "Login" (not Facebook)',
+      page
+        .locator('div')
+        .filter({ hasText: /^Login$/i })
+        .first(),
+    ],
+    ['button by role', page.getByRole('button', { name: /^log in$|^login$/i }).first()],
+    ['button text', page.locator('button:has-text("Login")').first()],
+    ['visible submit button', page.locator('button[type="submit"]:visible').first()],
+    // Last of the clicks: this one is normally 0x0, so only try it if nothing
+    // else existed.
+    ['submit input', page.locator('input[type="submit"]').first()],
+  ];
+  for (const [label, locator] of candidates) {
+    if ((await locator.count().catch(() => 0)) === 0) continue;
+    // A control with no size cannot be clicked, and waiting 10s on it is the
+    // difference between a login that starts and one that times out.
+    const box = await locator.boundingBox().catch(() => null);
+    if (box && (box.width === 0 || box.height === 0)) continue;
+    try {
+      await locator.click({ timeout: 10_000, noWaitAfter: true });
+      if (label) return;
+    } catch {
+      // Covered, detached or disabled between the check and the click: next.
+    }
+  }
+  await passwordField.press('Enter').catch(() => undefined);
 }
 
 // --- internals ------------------------------------------------------------

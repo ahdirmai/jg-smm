@@ -15,6 +15,7 @@ import {
   isFullyAutomated,
   supportedPlatforms,
 } from '../platforms/registry.js';
+import { canonicalYouTubeUrl } from '../platforms/youtube.js';
 
 test('parsePlatforms filters unknown values and falls back on empty', () => {
   assert.deepEqual(parsePlatforms('instagram,threads', []), ['instagram', 'threads']);
@@ -190,4 +191,25 @@ test('the five stub adapters report an honest not-implemented failure', async ()
     assert.equal(like.ok, false);
     assert.match(String(like.error), /not_implemented/, `${platform} like is labelled not_implemented`);
   }
+});
+
+test('canonicalYouTubeUrl rewrites youtu.be links and leaves both surfaces alone', () => {
+  assert.equal(
+    canonicalYouTubeUrl('https://youtu.be/CWh1yOIeL_I'),
+    'https://www.youtube.com/watch?v=CWh1yOIeL_I',
+  );
+  // Extra params survive; `v` is set explicitly.
+  assert.equal(
+    canonicalYouTubeUrl('https://youtu.be/CWh1yOIeL_I?t=30'),
+    'https://www.youtube.com/watch?t=30&v=CWh1yOIeL_I',
+  );
+  assert.equal(
+    canonicalYouTubeUrl('https://youtube.com/shorts/RyNumF4OEUk?feature=share'),
+    'https://youtube.com/shorts/RyNumF4OEUk?feature=share',
+  );
+  assert.equal(
+    canonicalYouTubeUrl('https://www.youtube.com/watch?v=CWh1yOIeL_I'),
+    'https://www.youtube.com/watch?v=CWh1yOIeL_I',
+  );
+  assert.equal(canonicalYouTubeUrl('not a url'), 'not a url');
 });

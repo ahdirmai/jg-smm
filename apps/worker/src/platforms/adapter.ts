@@ -73,6 +73,15 @@ export interface PlatformAdapter {
    */
   autofill?(page: Page, credentials: LoginCredentials): Promise<void>;
   /**
+   * Login-only ground truth, stricter than `sessionCookies`. Called by
+   * `core/auth` once the proof cookies are present; `verified` is reported only
+   * when this returns true. Platforms whose auth lives on a different origin
+   * than the product (Google → YouTube) use it to prove the session resolves on
+   * the product itself before anything is persisted. Never used by the action
+   * path: hydrating a stored session must stay a cookie check.
+   */
+  verifyLogin?(ctx: BrowserContext): Promise<boolean>;
+  /**
    * Fill and submit the operator-supplied code into the platform's field. The
    * default fills a single input and presses Enter; a multi-box SMS challenge
    * supplies its own implementation.

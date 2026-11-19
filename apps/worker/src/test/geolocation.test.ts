@@ -133,9 +133,9 @@ test('newAccountContext pins the action context too', async () => {
   const browser = {
     newContext: async () => ctx,
   } as unknown as Browser;
-  await newAccountContext(browser, 'instagram', undefined, {
-    latitude: -6.2,
-    longitude: 106.8,
+  await newAccountContext(browser, {
+    platform: 'instagram',
+    geolocation: { latitude: -6.2, longitude: 106.8 },
   });
   assert.deepEqual(calls, [{ lat: -6.2, lng: 106.8 }]);
 });

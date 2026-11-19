@@ -30,6 +30,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
     platforms: parsePlatforms(env.PLATFORMS, MVP_PLATFORMS),
     dryRun: (env.ACTION_DRY_RUN ?? 'true') !== 'false',
     display: env.DISPLAY?.trim() || ':99',
+    poolMode: env.WORKER_POOL_MODE?.trim() === 'legacy' ? 'legacy' : 'stateless',
+    rpcHost: env.WORKER_RPC_HOST?.trim() || '0.0.0.0',
+    rpcPort: parsePositiveInt(env.WORKER_RPC_PORT, 8090),
     heartbeatIntervalSec: parsePositiveInt(
       env.HEARTBEAT_INTERVAL_SEC,
       DEFAULT_HEARTBEAT_INTERVAL_SEC,

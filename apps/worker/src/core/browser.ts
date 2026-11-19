@@ -18,7 +18,7 @@ export interface BrowserHandle {
   close(): Promise<void>;
 }
 
-export const FIXED_LOCALE = 'en-US';
+export const FIXED_LOCALE = 'id-ID';
 export const FIXED_VIEWPORT = { width: 1280, height: 800 } as const;
 
 export interface LaunchOptions {
@@ -96,37 +96,61 @@ export async function pinGeolocation(
 }
 
 /**
- * Create an isolated context for one account, hydrating a stored session. A
- * fresh context per account is the isolation boundary: cookies never cross
- * accounts inside one container.
+ * Everything that makes one account look like one device. Passed per context,
+ * never cached on the worker: in the stateless pool the machine is shared and
+ * the account identity travels with the request.
+ */
+export interface AccountContextInit {
+  platform: Platform;
+  storageState?: unknown;
+  geolocation?: Geolocation | null;
+  /** IANA zone matching the account's city. Defaults to WIB. */
+  timezoneId?: string;
+  proxy?: { server: string; username?: string; password?: string } | null;
+  userAgent?: string;
+}
+
+/**
+ * Create an isolated context for one account. A fresh context per job is the
+ * isolation boundary: cookies never cross accounts on a shared worker.
+ *
+ * The timezone is the part that is easy to get wrong and expensive to miss: a
+ * boxd VM runs in Frankfurt, so without `timezoneId` every page's clock and
+ * Intl formatting report CET beside a GPS point in Jakarta — a contradiction
+ * no real device produces.
  */
 export async function newAccountContext(
   browser: Browser,
-  platform: Platform,
-  storageState?: unknown,
-  geo?: Geolocation | null,
+  init: AccountContextInit,
 ): Promise<BrowserContext> {
+  // YouTube keeps the browser's own UA even when the account row carries the
+  // default pinned one: Google compares UA against client hints/build, and the
+  // stored "Chrome 131" never matches the Chromium that runs it — the exact
+  // inconsistency that gets sign-in refused as "not secure".
+  const userAgent = init.platform === 'youtube' ? undefined : (init.userAgent ?? FIXED_USER_AGENT);
   const ctx = await browser.newContext({
     locale: FIXED_LOCALE,
+    timezoneId: init.timezoneId || 'Asia/Jakarta',
     viewport: FIXED_VIEWPORT,
     // Acceptable fingerprints per platform; pinned, not randomised.
-    userAgent: agentFor(platform),
-    ...(storageState ? { storageState: storageState as never } : {}),
+    ...(userAgent ? { userAgent } : {}),
+    ...(init.storageState ? { storageState: init.storageState as never } : {}),
+    ...(init.proxy
+      ? {
+          proxy: {
+            server: init.proxy.server,
+            ...(init.proxy.username ? { username: init.proxy.username } : {}),
+            ...(init.proxy.password ? { password: init.proxy.password } : {}),
+          },
+        }
+      : {}),
   });
-  await pinGeolocation(ctx, geo);
+  await pinGeolocation(ctx, init.geolocation);
   return ctx;
 }
 
-function agentFor(platform: Platform): string {
-  switch (platform) {
-    case 'instagram':
-    case 'threads':
-      // Meta platforms expect a recent Chrome UA on a desktop profile.
-      return 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
-    default:
-      return 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
-  }
-}
+const FIXED_USER_AGENT =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
 async function defaultLaunch(opts: Record<string, unknown>): Promise<Browser> {
   // Imported lazily so unit tests never pull in the driver or need a display.

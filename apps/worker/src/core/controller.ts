@@ -6,6 +6,9 @@
  * The controller is platform-agnostic: it resolves an adapter from the registry
  * and dispatches on `job.action` (OCP/DIP). Skeleton: dispatch wiring only.
  */
+import { readFile, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+
 import type { BrowserContext } from 'playwright';
 
 import { getAdapter } from '../platforms/registry.js';
@@ -16,8 +19,18 @@ export interface ControllerDeps {
   logger: Logger;
   /** Resolve a live context for the job's account (hydrates the session). */
   contextFor: (job: ActionJob) => Promise<BrowserContext>;
-  /** Min/max jitter in ms between sequential jobs. Defaults 30s–90s. */
+  /**
+   * Min/max jitter in ms between sequential jobs. Defaults 30s–90s, which is
+   * right for a long-lived container. A stateless worker passes [0, 0]: pacing
+   * is the control plane's job, and sleeping here only keeps a microVM billing.
+   */
   jitterRangeMs?: readonly [number, number];
+  /**
+   * Directory holding screenshot evidence, so the controller can read it back
+   * and delete it. Absent means the adapter wrote no file (the BE stores the
+   * bare name) — nothing to collect.
+   */
+  screenshotDir?: string;
   /** Injectable RNG for deterministic tests. */
   random?: () => number;
 }
@@ -55,11 +68,21 @@ export function createController(deps: ControllerDeps) {
     try {
       ctx = await deps.contextFor(job);
       const result = await dispatch(adapter, ctx, job);
+      // Read the evidence off disk BEFORE the context closes: the screenshot is
+      // the only record that the action reached the page, and a boxd worker's
+      // disk disappears with the VM.
+      const evidence = await collectEvidence(result.screenshot, deps.screenshotDir);
+      // A successful action usually rotates the platform's session token, so
+      // this state is newer than the one the dispatch carried.
+      const updatedSession =
+        result.ok && ctx ? await ctx.storageState().catch(() => undefined) : undefined;
       return {
         jobId: job.id,
         accountId: job.accountId,
         attempt: job.attempt,
         status: result.ok ? 'success' : 'failed',
+        ...(updatedSession !== undefined ? { updatedSession } : {}),
+        ...(evidence !== undefined ? { screenshotJpegB64: evidence } : {}),
         ...(result.renderedText !== undefined ? { renderedText: result.renderedText } : {}),
         // Echo the variant the BE composed from, so the BE can record it on the
         // attempt. The worker never decides this; it is a pure passthrough of
@@ -112,4 +135,25 @@ async function dispatch(
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Read the JPEG an adapter wrote and delete it. Base64 for the callback; the
+ * local copy is removed so a microVM never accumulates evidence files.
+ * Best-effort: a missing file means "no evidence", not a failed action.
+ */
+async function collectEvidence(
+  basename: string | undefined,
+  dir: string | undefined,
+): Promise<string | undefined> {
+  if (!basename || !dir) return undefined;
+  const path = join(dir, basename);
+  try {
+    const bytes = await readFile(path);
+    return bytes.toString('base64');
+  } catch {
+    return undefined;
+  } finally {
+    await rm(path, { force: true }).catch(() => undefined);
+  }
 }

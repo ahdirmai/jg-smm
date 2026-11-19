@@ -42,6 +42,27 @@ export interface ControlMessage {
   payload?: Record<string, unknown>;
 }
 
+/**
+ * Per-call account identity. A stateless worker (boxd microVM) remembers nothing
+ * between requests: everything a BrowserContext needs arrives here, and anything
+ * absent simply does not exist on the machine.
+ */
+export interface AccountRuntimeSpec {
+  accountId: string;
+  platform: Platform;
+  /** Playwright storageState: the account's cookies. Never logged. */
+  storageState?: unknown;
+  /** Present only for a login dispatch. Never logged. */
+  credentials?: { username: string; password: string };
+  /** The account's city coordinate; the VM itself sits in a datacentre. */
+  geolocation?: { latitude: number; longitude: number } | null;
+  /** IANA zone matching that city (`Asia/Jakarta`, `Asia/Makassar`). */
+  timezone: string;
+  userAgent?: string;
+  /** Per-context egress. Chromium accepts auth only for http/https. */
+  proxy?: { server: string; username?: string; password?: string } | null;
+}
+
 /** Verdict posted back to the BE via `/internal/action-callback`. */
 export interface ActionResult {
   jobId: string;
@@ -58,6 +79,14 @@ export interface ActionResult {
   /** Human-readable failure reason (truncated by the BE). */
   error?: string;
   durationMs?: number;
+  /**
+   * The storageState this action left behind. The platform rotates its session
+   * tokens during a normal action, so this is strictly newer than what the
+   * dispatch sent; the BE reseals and stores it.
+   */
+  updatedSession?: unknown;
+  /** Base64 JPEG evidence. The BE uploads it; the worker keeps no disk. */
+  screenshotJpegB64?: string;
 }
 
 /** Runtime configuration, parsed once at boot from the environment. */
@@ -68,6 +97,15 @@ export interface WorkerConfig {
   platforms: readonly Platform[];
   dryRun: boolean;
   display: string;
+  /**
+   * `stateless` is the boxd fleet: the worker listens for pushed RPC calls and
+   * never polls, so the microVM can sleep when idle. `legacy` keeps the Redis
+   * pull loop and the on-disk session files.
+   */
+  poolMode: 'stateless' | 'legacy';
+  /** Interface the RPC server binds (0.0.0.0: essential behind nginx on boxd). */
+  rpcHost: string;
+  rpcPort: number;
   /** Seconds between heartbeats. */
   heartbeatIntervalSec: number;
   /**

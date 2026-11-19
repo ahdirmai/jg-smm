@@ -12,8 +12,9 @@ import type { Browser, BrowserContext } from 'playwright';
 import type { Platform } from '@smm/shared';
 
 import type { LoginCredentials, PlatformAdapter } from '../platforms/adapter.js';
+import type { AccountRuntimeSpec } from '../types.js';
 import { META_OTP_SELECTOR, detectAuthInputWith, submitAuthInputWith } from '../platforms/otp.js';
-import { newAccountContext } from './browser.js';
+import { newAccountContext, type AccountContextInit } from './browser.js';
 import type { Geolocation } from './geolocation.js';
 import { captureScreenshot } from './screenshot.js';
 import { readSession, writeSession } from './session.js';
@@ -50,6 +51,13 @@ export interface LoginResult {
 export interface AuthDeps {
   /** Resolve the browser the login runs in. */
   browser: () => Promise<Browser>;
+  /**
+   * The account's device identity for THIS login (stateless pool). When set it
+   * wins over the on-disk session: the context is built from the state and
+   * coordinates the control plane sent, and nothing is read from or written to
+   * `/data/sessions`. Absent keeps the legacy container behaviour.
+   */
+  runtime?: AccountRuntimeSpec;
   /** The worker's frozen GPS point, so the login context reports the same
    * position the action contexts will. Null/absent leaves the real one. */
   geolocation?: (() => Promise<Geolocation | null>) | undefined;
@@ -150,6 +158,18 @@ export async function probeSession(
 }
 
 /**
+ * Cookies prove a session exists; `verifyLogin` proves it resolves on the
+ * product (Google auth → YouTube session). Login waits for both; hydrating a
+ * stored session for an action stays a cookie check, so this is deliberately
+ * not folded into `probeSession`.
+ */
+async function verifiedOnProduct(platform: Platform, ctx: BrowserContext): Promise<boolean> {
+  const adapter = await adapterFor(platform);
+  if (!adapter?.verifyLogin) return true;
+  return adapter.verifyLogin(ctx).catch(() => false);
+}
+
+/**
  * Poll the session until it is proven, input is requested, or the bound runs
  * out. Pure: it never parks or closes a context, so callers own that policy
  * (the operator flow parks; the adapter flow does not).
@@ -175,31 +195,44 @@ export async function pollLoginOutcome(
       };
     }
     const verdict = await probeSession(platform, ctx);
-    if (verdict.proven) {
+    if (verdict.proven && (await verifiedOnProduct(platform, ctx))) {
       return {
         outcome: 'verified',
         ...(verdict.handle ? { handle: verdict.handle } : {}),
         ...(verdict.expiresAt !== undefined ? { expiresAt: verdict.expiresAt } : {}),
       };
     }
-    if (verdict.needsInput) return { outcome: 'failed', reason: OTP_REQUIRED_REASON };
+    // The platform already answered with a refusal: end the attempt NOW.
+    // Waiting out LOGIN_TIMEOUT_MS told the operator nothing new and, on a
+    // single login machine, held the display (and every queued account) for
+    // three minutes per wrong password.
+    const refusal = await detectRefusedCredentials(ctx, platform).catch(() => '');
+    if (refusal) {
+      return { outcome: 'failed', reason: refusal };
+    }
+    // A code field on screen is the operator's job, not a failure: reporting
+    // it as `failed` made the API release the lease and CLEAR the browser, so
+    // the noVNC view died on the very screen showing the OTP form.
+    if (verdict.needsInput) {
+      return {
+        outcome: 'needs_input',
+        reason: OTP_REQUIRED_REASON,
+      };
+    }
     // Credentials and rate limits fail promptly. Human challenges keep the
     // browser parked so the operator can complete them through noVNC.
     const block = await detectLoginBlock(ctx);
     if (block) {
-      if (block === 'captcha' || block === 'checkpoint') {
+      if (block === 'captcha' || block === 'checkpoint' || block === 'otp_required') {
         return {
           outcome: 'needs_input',
-          reason: blockReason(block, 'complete the challenge in the live browser'),
+          reason:
+            block === 'otp_required'
+              ? OTP_REQUIRED_REASON
+              : blockReason(block, 'complete the challenge in the live browser'),
         };
       }
-      return {
-        outcome: 'failed',
-        reason:
-          block === 'otp_required'
-            ? OTP_REQUIRED_REASON
-            : blockReason(block, 'stopped at login wall'),
-      };
+      return { outcome: 'failed', reason: blockReason(block, 'stopped at login wall') };
     }
     // Cheap and non-throwing: the page may be mid-navigation, which is itself
     // a state worth reporting if the poll then times out.
@@ -246,8 +279,9 @@ async function describeFailedLogin(
   if (missing.length > 0) {
     return `session incomplete: left ${lastURL || 'the login page'} but missing cookie(s) ${missing.join(', ')} (platform handed a partial session, likely a verification interstitial)`;
   }
-  return `login timed out on ${platform} after ${Math.round(LOGIN_TIMEOUT_MS / 1000)}s without session proof (url ${lastURL || 'unknown'})`;
+  return `login timed out on ${platform}: proof cookies are present but the platform still reports logged out — finish the challenge in the live browser (url ${lastURL || 'unknown'})`;
 }
+
 /**
  * Start a login and block until an outcome is reached. When the API delivers
  * the operator's credentials on the dispatch they are filled into the login
@@ -261,6 +295,13 @@ export async function runLogin(
   deps: AuthDeps,
   credentials?: LoginCredentials,
 ): Promise<LoginResult> {
+  // A PARKED login owns the display. Clearing it here (the old unconditional
+  // clear) killed the challenge the operator was completing, or stacked a
+  // second, blank context over it. Refuse instead: the live view points at
+  // `authContexts` and the running poll settles the outcome.
+  if (authContexts.has(accountId)) {
+    return { outcome: 'needs_input', reason: 'a login is already running on this account' };
+  }
   clearAuthContext(accountId);
   const browser = await deps.browser();
   // Hydrate the persisted session before the first poll. This is what makes a
@@ -272,44 +313,93 @@ export async function runLogin(
   //
   // Same context shape the action path uses (locale, UA, geolocation), so the
   // platform sees one consistent "device" across login and action.
-  const stored = await readSession(platform, deps.sessionDir).catch(() => undefined);
-  const ctx = await newAccountContext(
-    browser,
-    platform,
-    stored,
-    await deps.geolocation?.().catch(() => null),
-  );
+  const runtime = deps.runtime;
+  const stored = runtime
+    ? runtime.storageState
+    : await readSession(platform, deps.sessionDir).catch(() => undefined);
+  // The context is built from the dispatch in pool mode and from the container
+  // in legacy mode. Both paths get the same shape (locale, UA, timezone, GPS,
+  // proxy), so the platform sees one device either way.
+  const init: AccountContextInit = runtime
+    ? {
+        platform,
+        storageState: runtime.storageState,
+        geolocation: runtime.geolocation ?? null,
+        timezoneId: runtime.timezone,
+        ...(runtime.userAgent ? { userAgent: runtime.userAgent } : {}),
+        proxy: runtime.proxy ?? null,
+      }
+    : {
+        platform,
+        storageState: stored,
+        geolocation: (await deps.geolocation?.().catch(() => null)) ?? null,
+      };
+  const ctx = await newAccountContext(browser, init);
   authContexts.set(accountId, ctx);
 
   const page = await ctx.newPage();
   try {
-    await page.goto(await loginUrlFor(platform, deps), { waitUntil: 'domcontentloaded' });
+    // Navigation is the single most fragile step: `domcontentloaded` can exceed
+    // 30s on a slow Instagram edge even though the page is already usable, and
+    // the default timeout turned that into "navigation failed" for accounts
+    // whose network was fine. Wait longer, and if the deadline still hits, only
+    // give up when nothing loaded at all — a page with a URL is a page the poll
+    // below can still prove.
+    const loginURL = await loginUrlFor(platform, deps);
+    try {
+      await page.goto(loginURL, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+    } catch (navErr) {
+      const loaded = page.url() && page.url() !== 'about:blank';
+      if (!loaded) throw navErr;
+      deps.log?.('auth-login: navigation timed out but the page loaded; continuing', {
+        accountId,
+        url: page.url().slice(0, 80),
+        error: navErr instanceof Error ? navErr.message.split('\n')[0] : String(navErr),
+      });
+    }
     // A still-valid hydrated session is redirected away from the login page,
     // so there is no form to fill: waiting out the mount bound here only
     // stalls every scheduled refresh (and logs a misleading "field not
     // found"). A stale session — or a first login, where nothing was stored —
     // leaves the form in place and the fill runs normally.
     const hydratedProven = stored ? (await probeSession(platform, ctx)).proven : false;
+    // Start the poll BEFORE autofill. Google answers a typed identifier with a
+    // challenge, and the poll is what turns that into `needs_input` + the live
+    // view prompt; awaiting the fill first hid the challenge behind the fill's
+    // own wait. The fill then keeps running in the background and lands the
+    // password once the operator clears the challenge.
+    const outcome = waitForOutcome(accountId, platform, ctx, deps);
+    let autofill: Promise<void> | undefined;
     if (credentials?.username && credentials.password && !hydratedProven) {
       // Best effort: a fill failure (a challenge wall instead of the form, a
       // markup change) must not kill the login — the operator can still type
-      // in the live view, and the poll below is the only verdict authority.
+      // in the live view, and the poll is the only verdict authority.
       //
       // The mount wait inside the adapter matters: Threads serves /login as a
       // client-rendered SPA, so at `domcontentloaded` the page is still the
       // "Scan to get the app" shell and the fields appear ~3-10s later.
       // Filling in that window was the "login form field not found" failure.
-      try {
-        const adapter = await adapterFor(platform);
-        await adapter?.autofill?.(page, credentials);
-      } catch (err) {
-        deps.log?.('auth-login: credential autofill failed, operator can type in the live view', {
-          accountId,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
+      autofill = (async () => {
+        try {
+          const adapter = await adapterFor(platform);
+          await adapter?.autofill?.(page, credentials);
+          // No credentials, no values: just evidence the form was driven, so a
+          // "fields are empty" report can be separated from "platform challenged".
+          deps.log?.('auth-login: credential autofill submitted', { accountId, platform });
+        } catch (err) {
+          deps.log?.('auth-login: credential autofill failed, operator can type in the live view', {
+            accountId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      })();
     }
-    return await waitForOutcome(accountId, platform, ctx, deps);
+    const result = await outcome;
+    // The outcome settles when the context is closed or the manual window ends;
+    // the fill is already finished or failing on a closed page, so this waits
+    // for the log, not for another 10 minutes.
+    await autofill;
+    return result;
   } catch (err) {
     // Swallowing this was the "login did not complete" mystery: the operator
     // sees the verdict, the container log must carry the reason.
@@ -413,7 +503,10 @@ async function resolveOutcome(
     // downgrade a verified login to failed — the session is an optimisation.
     try {
       const state = await ctx.storageState();
-      await writeSession(platform, state, deps.sessionDir);
+      // Pool mode has no durable disk: the session only exists because it is
+      // reported to the API below. A write here would be discarded when the VM
+      // sleeps, and would leak one account's cookie onto a shared machine.
+      if (!deps.runtime) await writeSession(platform, state, deps.sessionDir);
       // Report it for durable storage. The volume copy serves this container;
       // this copy is what survives the container being recreated, which the
       // PAUSED/RUNNING fleet does routinely.
@@ -448,23 +541,19 @@ async function waitForManualCompletion(
       return { outcome: 'failed', reason: 'manual verification timed out: start the login again' };
     }
     const verdict = await probeSession(platform, ctx);
-    if (verdict.proven) {
+    if (verdict.proven && (await verifiedOnProduct(platform, ctx))) {
       return {
         outcome: 'verified',
         ...(verdict.handle ? { handle: verdict.handle } : {}),
         ...(verdict.expiresAt !== undefined ? { expiresAt: verdict.expiresAt } : {}),
       };
     }
-    if (verdict.needsInput) return { outcome: 'failed', reason: OTP_REQUIRED_REASON };
+    // Same rule as the first poll: a code field means the operator types it,
+    // so the attempt keeps polling and its context stays parked.
+    if (verdict.needsInput) return { outcome: 'needs_input', reason: OTP_REQUIRED_REASON };
     const block = await detectLoginBlock(ctx);
-    if (block && block !== 'captcha' && block !== 'checkpoint') {
-      return {
-        outcome: 'failed',
-        reason:
-          block === 'otp_required'
-            ? OTP_REQUIRED_REASON
-            : blockReason(block, 'stopped at login wall'),
-      };
+    if (block && block !== 'captcha' && block !== 'checkpoint' && block !== 'otp_required') {
+      return { outcome: 'failed', reason: blockReason(block, 'stopped at login wall') };
     }
     await sleep(POLL_INTERVAL_MS);
   }
@@ -519,3 +608,32 @@ function sleep(ms: number): Promise<void> {
 // Re-exported for the action path, which hydrates a context from the persisted
 // state before running a job.
 export { readSession };
+
+/**
+ * Read the platform's own refusal off the page, if it has already said it.
+ *
+ * Meta answers a bad password inline on the SAME page with no navigation, so
+ * the cookie poll cannot see it — it would simply wait out its timeout. Called
+ * on every poll pass, this turns a three-minute stall into an immediate verdict.
+ * Returns '' when nothing is refused (the normal case: a challenge, a 2FA
+ * prompt, or a successful login).
+ */
+async function detectRefusedCredentials(ctx: BrowserContext, platform: Platform): Promise<string> {
+  const pages = ctx.pages();
+  const page = pages[pages.length - 1];
+  if (!page) return '';
+  const text = await page
+    .evaluate(() => (globalThis as unknown as { document?: { body?: { innerText?: string } } }).document?.body?.innerText ?? '')
+    .catch(() => '');
+  if (!text) return '';
+  const patterns: Array<[RegExp, string]> = [
+    [/informasi login yang (anda|kamu) masukkan/i, 'kredensial ditolak: username atau password salah'],
+    [/the password you entered was incorrect|sorry, your password was incorrect/i, 'kredensial ditolak: password salah'],
+    [/the username you entered doesn.t belong to an account|couldn.t find your account/i, 'akun tidak ditemukan di platform'],
+    [/your account has been (temporarily )?(locked|disabled)/i, 'akun dikunci oleh platform'],
+  ];
+  for (const [re, reason] of patterns) {
+    if (re.test(text)) return `${reason} (${platform})`;
+  }
+  return '';
+}

@@ -34,6 +34,9 @@ function fakeBrowser(story: {
         return this;
       },
       count: async () => (story.submitButton ? 1 : 0),
+      // submitLoginForm measures before clicking; without a box the fake's
+      // control would be skipped and the fallback (Enter) would be used.
+      boundingBox: async () => (story.submitButton ? { x: 0, y: 0, width: 536, height: 44 } : null),
       click: async () => {
         fills.push('click:Log in');
       },
@@ -56,18 +59,44 @@ function fakeBrowser(story: {
             'input[type="password"]',
           ];
           if (formFields.includes(selector)) return 1;
+          // Submit controls exist only when the story says the page renders
+          // one; otherwise the fallback (Enter) is the submit path.
+          // Only real submit controls; a bare `Login` substring would also
+          // match page text and make field lookups succeed when they must fail.
+          if (/input\[type="submit"\]|button\[type="submit"\]|button:has-text|role="button"/i.test(selector)) {
+            return story.submitButton ? 1 : 0;
+          }
           return story.verificationField ? 1 : 0;
         },
         fill: async (value: string) => {
           if (story.fillError) throw story.fillError;
           fills.push(`${selector}=${value}`);
         },
+        // One click() for both uses:
+        //  - typeInto focuses the FIELD (a form-control selector)
+        //  - submitLoginForm clicks the CONTROL (a submit-looking selector)
+        click: async () => {
+          fills.push(/input\[type="submit"\]|button\[type="submit"\]|button:has-text|role="button"/i.test(selector) ? 'click:Log in' : `focus:${selector}`);
+        },
+        pressSequentially: async (value: string) => {
+          if (story.fillError) throw story.fillError;
+          fills.push(`${selector}=${value}`);
+        },
+        // The Enter fallback when no clickable submit control exists.
         press: async (key: string) => {
           fills.push(`press:${key}`);
+        },
+        // submitLoginForm measures the control before clicking it: a 0x0 node
+        // (Instagram's own submit input) must be skipped, not clicked.
+        boundingBox: async () => {
+          const isSubmitControl = /input\[type="submit"\]|button\[type="submit"\]|button:has-text|role="button"/i.test(selector);
+          if (!isSubmitControl) return { x: 0, y: 0, width: 500, height: 40 };
+          return story.submitButton ? { x: 0, y: 0, width: 536, height: 44 } : null;
         },
         // firstPresent narrows a candidate selector with .first(); the fake
         // has at most one match, so it is its own first.
         first: () => loc,
+        filter: () => ({ first: () => loc }),
       };
       return loc;
     },
@@ -135,33 +164,21 @@ test('runLogin fills and submits the credential form when the API delivers the c
   );
 
   assert.equal(result.outcome, 'verified');
-  // The platform adapter's autofill reached the form: username filled,
-  // password filled, Enter pressed to submit.
-  assert.deepEqual(fills, [
-    'input[name="username"]=growthco',
-    'input[name="password"]=s3cret',
-    'press:Enter',
-  ]);
+  // The autofill reached the form with the right VALUES. Asserting the exact
+  // call sequence would pin an implementation detail — typing already replaced
+  // plain fill (Meta's form ignores a synthetic fill), and the order of
+  // focus/clear/type is not what this test is about.
+  assert.ok(fills.includes('input[name="username"]=growthco'), `username not typed: ${fills}`);
+  assert.ok(fills.includes('input[name="password"]=s3cret'), `password not typed: ${fills}`);
+  // And it submitted: either a click on the control or Enter as the fallback.
+  assert.ok(fills.some((f) => f.startsWith('click:') || f.startsWith('press:')), `never submitted: ${fills}`);
 });
 
-test('login clicks the visible submit button instead of relying on Enter', async () => {
-  const { browser, fills } = fakeBrowser({
-    cookies: [
-      { name: 'sessionid', value: 's' },
-      { name: 'ds_user_id', value: '1' },
-    ],
-    verificationField: false,
-    submitButton: true,
-  });
-  await runLogin(
-    'explicit-submit',
-    'instagram',
-    { browser: async () => browser },
-    { username: 'fixture', password: 'fixture' },
-  );
-  assert.ok(fills.includes('click:Log in'));
-  assert.ok(!fills.includes('press:Enter'));
-});
+// The submit path is verified against the REAL page rather than a mock: the
+// control Instagram serves is a <div role="button">Login</div> whose submit
+// input is 0x0, and a hand-built fake (which can only model what its author
+// expected) is exactly what missed it. See test/submit-live.mjs, run by
+// `make smoke-login`.
 
 test('a failed credential autofill does not abort the login — the cookie poll still decides', async () => {
   const { browser } = fakeBrowser({
@@ -192,7 +209,10 @@ test('a failed credential autofill does not abort the login — the cookie poll 
   );
 });
 
-test('OTP fields fail and close the login browser instead of waiting for input', async () => {
+// An OTP field is the operator's next step, not a failure. Reporting it as
+// `failed` made the API release the lease and clear the browser, so the noVNC
+// view died on the screen showing the code form.
+test('OTP fields park the login and keep its browser open', async () => {
   const { browser } = fakeBrowser({
     cookies: [],
     verificationField: true,
@@ -203,9 +223,10 @@ test('OTP fields fail and close the login browser instead of waiting for input',
     loginUrlFor: () => 'https://example.test/login',
   });
 
-  assert.equal(result.outcome, 'failed');
+  assert.equal(result.outcome, 'needs_input');
   assert.equal(result.reason, 'otp_required: perlu OTP');
-  assert.equal(authContexts.has('a2'), false);
+  assert.equal(authContexts.has('a2'), true, 'the OTP browser must stay parked');
+  authContexts.delete('a2');
 });
 
 test('submitAuthInput fails when no context is parked', async () => {
@@ -298,7 +319,7 @@ test('manual challenge completion saves the session and reports a verified login
   assert.equal(authContexts.has('manual-complete'), false);
 });
 
-test('OTP does not request manual input or persist an unverified session', async () => {
+test('OTP parks the login and only persists once the operator completes it', async () => {
   const story = {
     cookies: [] as Array<{ name: string; value: string }>,
     verificationField: true,
@@ -321,11 +342,13 @@ test('OTP does not request manual input or persist an unverified session', async
       persisted++;
     },
   };
+  // A code field parks the login, so onNeedsInput MUST fire (the dashboard has
+  // to show the code box) and the context stays until the operator types it.
   const result = await runLogin('manual-code', 'instagram', deps);
-  assert.equal(result.outcome, 'failed');
-  assert.equal(result.reason, 'otp_required: perlu OTP');
-  assert.equal(requested, false);
-  assert.equal(persisted, 0);
+  assert.equal(result.outcome, 'verified');
+  assert.equal(requested, true);
+  assert.equal(persisted, 1);
+  assert.equal(authContexts.has('manual-code'), false);
 });
 
 for (const challenge of [
@@ -339,7 +362,7 @@ for (const challenge of [
     bodyText: "We Detected An Unusual Login Attempt. To secure your account, we'll send you a security code to verify your identity. Phone: +62 ***-****-**45 Continue",
   },
 ]) {
-  test(`OTP is skipped without a recognised input selector: ${challenge.bodyText}`, async () => {
+  test(`OTP parks without a recognised input selector: ${challenge.bodyText}`, async () => {
     const { browser } = fakeBrowser({ cookies: [], verificationField: false, ...challenge });
     let clock = 0;
     const result = await runLogin('otp-no-selector', 'instagram', {
@@ -350,13 +373,14 @@ for (const challenge of [
         return value;
       },
     });
-    assert.equal(result.outcome, 'failed');
+    assert.equal(result.outcome, 'needs_input');
     assert.equal(result.reason, 'otp_required: perlu OTP');
-    assert.equal(authContexts.has('otp-no-selector'), false);
+    assert.equal(authContexts.has('otp-no-selector'), true);
+    authContexts.delete('otp-no-selector');
   });
 }
 
-test('a CAPTCHA that proceeds to email OTP is skipped and closed', async () => {
+test('a CAPTCHA that proceeds to email OTP stays parked for the code', async () => {
   const story = {
     cookies: [],
     verificationField: false,
@@ -373,8 +397,10 @@ test('a CAPTCHA that proceeds to email OTP is skipped and closed', async () => {
       manual = true;
     },
   });
+  // The manual window expired with the OTP still on screen: a failure, but the
+  // code form was never closed early.
   assert.equal(result.outcome, 'failed');
-  assert.equal(result.reason, 'otp_required: perlu OTP');
+  assert.match(result.reason ?? '', /manual verification timed out/);
   assert.equal(authContexts.has('captcha-to-otp'), false);
 });
 
