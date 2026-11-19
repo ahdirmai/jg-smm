@@ -102,7 +102,12 @@ RECONCILE_INTERVAL_SECONDS=0
 WORKER_POOL_MODE=stateless
 WORKER_POOL_SIZE=10
 LOGIN_WORKER_NAME=smm-login-01
-WORKER_POOL_ENDPOINTS=smm-login-01=https://rpc.smm-login-01.boxd.sh|https://smm-login-01.boxd.sh/novnc,smm-worker-01=https://rpc.smm-worker-01.boxd.sh|https://smm-worker-01.boxd.sh/novnc,...,smm-worker-10=https://rpc.smm-worker-10.boxd.sh|https://smm-worker-10.boxd.sh/novnc
+# 11 entri, satu baris. Generate agar tidak ada ellipsis yang tidak valid:
+#   for n in smm-login-01 $(printf 'smm-worker-%02d\n' $(seq 1 10)); do
+#     printf '%s=https://rpc.%s.boxd.sh|https://%s.boxd.sh/novnc,' "$n" "$n" "$n"
+#   done
+# Tempel hasilnya (buang koma terakhir) ke WORKER_POOL_ENDPOINTS.
+WORKER_POOL_ENDPOINTS=smm-login-01=https://rpc.smm-login-01.boxd.sh|https://smm-login-01.boxd.sh/novnc,smm-worker-01=https://rpc.smm-worker-01.boxd.sh|https://smm-worker-01.boxd.sh/novnc,smm-worker-02=https://rpc.smm-worker-02.boxd.sh|https://smm-worker-02.boxd.sh/novnc,smm-worker-03=https://rpc.smm-worker-03.boxd.sh|https://smm-worker-03.boxd.sh/novnc,smm-worker-04=https://rpc.smm-worker-04.boxd.sh|https://smm-worker-04.boxd.sh/novnc,smm-worker-05=https://rpc.smm-worker-05.boxd.sh|https://smm-worker-05.boxd.sh/novnc,smm-worker-06=https://rpc.smm-worker-06.boxd.sh|https://smm-worker-06.boxd.sh/novnc,smm-worker-07=https://rpc.smm-worker-07.boxd.sh|https://smm-worker-07.boxd.sh/novnc,smm-worker-08=https://rpc.smm-worker-08.boxd.sh|https://smm-worker-08.boxd.sh/novnc,smm-worker-09=https://rpc.smm-worker-09.boxd.sh|https://smm-worker-09.boxd.sh/novnc,smm-worker-10=https://rpc.smm-worker-10.boxd.sh|https://smm-worker-10.boxd.sh/novnc
 
 # Harus sama di hub dan semua worker; kosong = stateless menolak boot.
 INTERNAL_API_SECRET=<openssl rand -hex 32>
