@@ -32,17 +32,11 @@ import { useAccounts } from '@/lib/hooks/use-accounts';
 // which meant `mentions` was missing from this report's picker while the
 // monitoring pages had it — two lists of one fact, silently disagreeing.
 import { ANALYTICS_METRICS } from '@/lib/platforms';
-import { useReports, type ReportResult, type ReportKind } from '@/lib/hooks/use-reports';
+import { useReports, type ReportKind, type TaggedReportResult } from '@/lib/hooks/use-reports';
 import { useSession } from '@/lib/auth/session-context';
 import { can } from '@/lib/auth/permissions';
 import { PLATFORM_LABEL, PLATFORMS } from '@/lib/platforms';
-import type {
-  ActionReport,
-  AnalyticsReport,
-  ReportQuery,
-  TargetReport,
-  TrendPoint,
-} from '@/lib/api';
+import type { ReportQuery, TrendPoint } from '@/lib/api';
 
 const KINDS: { value: ReportKind; label: string }[] = [
   { value: 'actions', label: 'Actions by day' },
@@ -204,14 +198,23 @@ export default function ReportsPage() {
         </CardContent>
       </Card>
 
-      {result ? <ReportBody kind={kind} result={result} /> : null}
+      {result?.kind === kind ? (
+        <ReportBody result={result} />
+      ) : loading ? (
+        <Card>
+          <CardContent className="flex items-center gap-2 p-5 text-sm text-muted-foreground">
+            <Loader2 className="size-4 animate-spin" />
+            Loading report…
+          </CardContent>
+        </Card>
+      ) : null}
     </div>
   );
 }
 
-function ReportBody({ kind, result }: { kind: ReportKind; result: ReportResult }) {
-  if (kind === 'actions') {
-    const report = result as ActionReport;
+function ReportBody({ result }: { result: TaggedReportResult }) {
+  if (result.kind === 'actions') {
+    const report = result.data;
     const series: TrendPoint[] = report.series ?? [];
     return (
       <div className="space-y-5">
@@ -257,9 +260,7 @@ function ReportBody({ kind, result }: { kind: ReportKind; result: ReportResult }
                         </TableCell>
                         <TableCell>{r.actionType === 'action_like' ? 'Like' : 'Comment'}</TableCell>
                         <TableCell className="text-right">{r.total}</TableCell>
-                        <TableCell className="text-right text-success">
-                          {r.succeeded}
-                        </TableCell>
+                        <TableCell className="text-right text-success">{r.succeeded}</TableCell>
                         <TableCell className="text-right text-destructive">{r.failed}</TableCell>
                       </TableRow>
                     ))}
@@ -275,8 +276,8 @@ function ReportBody({ kind, result }: { kind: ReportKind; result: ReportResult }
     );
   }
 
-  if (kind === 'targets') {
-    const report = result as TargetReport;
+  if (result.kind === 'targets') {
+    const report = result.data;
     return (
       <Card>
         <CardHeader>
@@ -308,9 +309,7 @@ function ReportBody({ kind, result }: { kind: ReportKind; result: ReportResult }
                         <Badge variant="outline">{PLATFORM_LABEL[r.platform] ?? r.platform}</Badge>
                       </TableCell>
                       <TableCell className="text-right">{r.total}</TableCell>
-                      <TableCell className="text-right text-success">
-                        {r.succeeded}
-                      </TableCell>
+                      <TableCell className="text-right text-success">{r.succeeded}</TableCell>
                       <TableCell className="text-right text-destructive">{r.failed}</TableCell>
                     </TableRow>
                   ))}
@@ -325,7 +324,7 @@ function ReportBody({ kind, result }: { kind: ReportKind; result: ReportResult }
     );
   }
 
-  const report = result as AnalyticsReport;
+  const report = result.data;
   return (
     <Card>
       <CardHeader>

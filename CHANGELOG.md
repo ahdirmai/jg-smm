@@ -55,6 +55,18 @@
   account, so it stayed `NEEDS_INPUT` with no browser to submit a code into.
   The idempotent second click now marks the login `FAILED` with an explanation;
   the Accounts UI clears the panel and shows a success notice.
+### Fixed
+- **Audit remediation: recovery, reports, and error boundaries.** `restore.sh`
+  now accepts the absolute backup path that `drill.sh` passes (no doubled
+  prefix), validates the dump/manifest before the drill wipes any volume, and
+  the embedded session-count command is parseable by `/bin/sh`. The reports
+  page binds each payload to the report kind that produced it, so a slow
+  analytics request cannot render a targets payload; the analytics report
+  looks the account up by id instead of the first 100-row page; nullable DTO
+  mapping, CSV row mapping, URL query building, and SSE type/URL definitions
+  each have one source; and an audit query failure no longer leaks its internal
+  500 message. The duplicate worker-config test now exercises empty-env
+  defaults.
 ### Removed
 - **Monitoring and Templates are gone from the dashboard.** Their routes, nav
   entries, page titles, client hooks, API-client template methods, and e2e specs

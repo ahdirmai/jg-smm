@@ -4,11 +4,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { subscribeStream, type ApiSchemas } from '@smm/shared';
 
-import { api, ApiError, type Container } from '../api';
+import { SSE_URL, api, ApiError, type Container } from '../api';
 
 export type Location = ApiSchemas['Location'];
-
-const SSE_URL = process.env.NEXT_PUBLIC_SSE_URL ?? 'http://localhost:24080/api/stream';
 
 // A flaky network (proxies, unstable wifi) can kill the POST mid-flight: the
 // browser aborts the fetch, the server logs `context canceled`, and the row

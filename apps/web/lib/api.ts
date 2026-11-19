@@ -6,7 +6,8 @@
 
 import type { ApiSchemas } from '@smm/shared';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:24080';
+export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:24080';
+export const SSE_URL = process.env.NEXT_PUBLIC_SSE_URL ?? 'http://localhost:24080/api/stream';
 
 export type Account = ApiSchemas['Account'];
 export type AccountList = ApiSchemas['AccountList'];
@@ -67,17 +68,7 @@ export type AuditQuery = {
   offset?: number;
 };
 
-function auditQuery(params: AuditQuery): string {
-  const search = new URLSearchParams();
-  for (const [key, value] of Object.entries(params)) {
-    if (value === undefined || value === '') continue;
-    search.set(key, String(value));
-  }
-  const qs = search.toString();
-  return qs ? `?${qs}` : '';
-}
-
-function reportQuery(params: ReportQuery): string {
+function toQueryString(params: AuditQuery | ReportQuery): string {
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
     if (value === undefined || value === '') continue;
@@ -503,24 +494,24 @@ export const api = {
   // a JSON fetch.
   reportActions: (params: ReportQuery, signal?: AbortSignal) =>
     request<ActionReport>(
-      `/api/reports/actions${reportQuery(params)}`,
+      `/api/reports/actions${toQueryString(params)}`,
       signal ? { signal } : undefined,
     ),
   reportTargets: (params: ReportQuery, signal?: AbortSignal) =>
     request<TargetReport>(
-      `/api/reports/targets${reportQuery(params)}`,
+      `/api/reports/targets${toQueryString(params)}`,
       signal ? { signal } : undefined,
     ),
   reportAnalytics: (params: ReportQuery, signal?: AbortSignal) =>
     request<AnalyticsReport>(
-      `/api/reports/analytics${reportQuery(params)}`,
+      `/api/reports/analytics${toQueryString(params)}`,
       signal ? { signal } : undefined,
     ),
-  reportExportURL: (params: ReportQuery) => `${API_URL}/api/reports/export${reportQuery(params)}`,
+  reportExportURL: (params: ReportQuery) => `${API_URL}/api/reports/export${toQueryString(params)}`,
 
   // Audit trail (P6-10). Who did what, when — read-only, filtered.
   listAudit: (params: AuditQuery, signal?: AbortSignal) =>
-    request<AuditLogList>(`/api/audit${auditQuery(params)}`, signal ? { signal } : undefined),
+    request<AuditLogList>(`/api/audit${toQueryString(params)}`, signal ? { signal } : undefined),
 
   // Team (P6-11). Single-team MVP roster; writes are OWNER-only.
   listUsers: (signal?: AbortSignal) =>

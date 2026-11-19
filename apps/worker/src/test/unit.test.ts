@@ -129,15 +129,11 @@ test('computeJitter stays within the range and is injectable', () => {
   );
 });
 
-test('loadConfig applies defaults and trims the API url', () => {
-  const cfg = loadConfig({
-    WORKER_ID: ' worker-1 ',
-    API_URL: 'http://api:8080/',
-    ACTION_DRY_RUN: 'false',
-  });
-  assert.equal(cfg.workerId, 'worker-1');
+test('loadConfig applies local defaults when environment is empty', () => {
+  const cfg = loadConfig({});
+  assert.equal(cfg.workerId, 'worker-local');
   assert.equal(cfg.apiUrl, 'http://api:8080');
-  assert.equal(cfg.dryRun, false);
+  assert.equal(cfg.dryRun, true);
   assert.equal(cfg.heartbeatIntervalSec, 30);
   assert.deepEqual(cfg.platforms, ['instagram', 'threads']);
 });
