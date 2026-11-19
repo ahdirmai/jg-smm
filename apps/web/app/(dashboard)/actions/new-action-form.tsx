@@ -28,6 +28,7 @@ import {
 import {
   AlertCircle,
   ChevronDown,
+  ExternalLink,
   Heart,
   Loader2,
   MessageSquare,
@@ -63,7 +64,6 @@ import { postPermalink } from '@/lib/permalink';
 import { CommentThread } from '@/components/comment-thread';
 import { platformIcon } from '@/components/platform-icon';
 import { AccountPicker, CommentComposer } from './account-picker';
-import { SentimentSummary } from '@/components/sentiment';
 
 const MAX_BATCH = 50;
 // Mirrors MaxCommentTextLen in apps/api/internal/service/action.go — the API
@@ -486,6 +486,10 @@ export const NewActionForm = forwardRef<
             ? 'Pick the comment to reply to, or paste its link.'
             : null;
   const TargetIcon = platformIcon(scrape?.post.platform ?? platform);
+  const postUrl = scrape ? postPermalink(scrape.post) : null;
+  const analysedComments = scrape
+    ? scrape.comments.filter((comment) => comment.sentiment).length
+    : 0;
 
   async function submit() {
     setError(null);
@@ -611,7 +615,16 @@ export const NewActionForm = forwardRef<
           <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)]">
             {/* Post and existing comments stay in view beside the composer on desktop. */}
             <section className="min-w-0 space-y-3 self-start rounded-2xl border border-border/60 bg-secondary/20 p-3">
-              <div className="flex items-center gap-2.5 border-b border-border/60 pb-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                  Post preview
+                </p>
+                <span className="text-[11px] text-muted-foreground">
+                  {scrape.cached ? 'Stored copy' : 'Fresh scrape'}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2.5 border-y border-border/60 py-2.5">
                 <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-secondary">
                   <TargetIcon className="size-4 text-muted-foreground" />
                 </span>
@@ -620,28 +633,43 @@ export const NewActionForm = forwardRef<
                   <p className="text-[11px] text-muted-foreground">
                     {platformLabel(scrape.post.platform) ?? scrape.post.platform} · scraped{' '}
                     {scrapedAgo(scrape.post.scrapedAt)}
-                    {scrape.cached ? ' · storage' : ''}
                   </p>
                 </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-7 shrink-0 px-2 text-xs"
-                  onClick={runScrapeForce}
-                  disabled={scraping || !canAct}
-                  title="Run a fresh paid scrape even if the post is already in storage"
-                >
-                  {scraping ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-                  Re-scrape
-                </Button>
+                <div className="flex shrink-0 items-center gap-1">
+                  {postUrl ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-xs"
+                      asChild
+                    >
+                      <a href={postUrl} target="_blank" rel="noreferrer noopener">
+                        <ExternalLink />
+                        Open
+                      </a>
+                    </Button>
+                  ) : null}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    onClick={runScrapeForce}
+                    disabled={scraping || !canAct}
+                    title="Run a fresh paid scrape even if the post is already in storage"
+                  >
+                    {scraping ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+                    Re-scrape
+                  </Button>
+                </div>
               </div>
 
               <div
                 className={cn(
                   'grid gap-3',
                   scrape.post.mediaUrls && scrape.post.mediaUrls.length > 0
-                    ? 'sm:grid-cols-[160px_minmax(0,1fr)]'
+                    ? 'sm:grid-cols-[180px_minmax(0,1fr)]'
                     : 'grid-cols-1',
                 )}
               >
@@ -674,8 +702,6 @@ export const NewActionForm = forwardRef<
                 </div>
               </div>
 
-              {scrape.comments.length > 0 ? <SentimentSummary breakdown={scrape.sentiment} /> : null}
-
               <div className="border-t border-border/60 pt-3">
                 <div className="flex items-start justify-between gap-3">
                   <div>
@@ -686,8 +712,16 @@ export const NewActionForm = forwardRef<
                         : 'Read the thread before writing yours.'}
                     </p>
                   </div>
-                  <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
+                  <span className="shrink-0 text-right text-[11px] leading-5 tabular-nums text-muted-foreground">
                     {scrape.comments.length} loaded
+                    {scrape.comments.length > 0 ? (
+                      <>
+                        <br />
+                        {analysedComments > 0
+                          ? `${analysedComments} analysed`
+                          : 'not analysed'}
+                      </>
+                    ) : null}
                   </span>
                 </div>
 
@@ -914,6 +948,12 @@ export const NewActionForm = forwardRef<
                     className="mt-2"
                     onClick={() => setAiOpen((open) => !open)}
                     aria-expanded={aiOpen}
+                    disabled={selectedAccounts.length === 0}
+                    title={
+                      selectedAccounts.length === 0
+                        ? 'Select at least one account before drafting.'
+                        : 'Generate drafts for the selected accounts'
+                    }
                   >
                     <PenLine />
                     Draft with AI

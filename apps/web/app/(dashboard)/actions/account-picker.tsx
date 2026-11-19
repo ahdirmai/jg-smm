@@ -13,7 +13,16 @@
  * can copy the current draft to the whole selection.
  */
 
-import { Button, Input, Textarea } from '@smm/ui';
+import {
+  Button,
+  Input,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  Textarea,
+} from '@smm/ui';
 import { Search } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
@@ -50,31 +59,61 @@ export function AccountPicker({
     [accounts, selected],
   );
 
+  // Cities come from the accounts that can actually act, so the menu never
+  // offers a city with zero selectable accounts. Selection is not dropped when
+  // the filter changes: filtering narrows the list, not the batch.
+  const cities = useMemo(
+    () =>
+      Array.from(
+        new Set(accounts.map((a) => a.location?.trim()).filter((v): v is string => !!v)),
+      ).sort((a, b) => a.localeCompare(b)),
+    [accounts],
+  );
+  const [city, setCity] = useState('all');
+  const activeCity = city === 'all' || cities.includes(city) ? city : 'all';
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return accounts;
-    return accounts.filter(
-      (a) =>
+    return accounts.filter((a) => {
+      if (activeCity !== 'all' && (a.location ?? '') !== activeCity) return false;
+      if (!q) return true;
+      return (
         a.username.toLowerCase().includes(q) ||
-        (a.location ?? '').toLowerCase().includes(q),
-    );
-  }, [accounts, query]);
+        (a.location ?? '').toLowerCase().includes(q)
+      );
+    });
+  }, [accounts, activeCity, query]);
 
   const { ref, slice, offset, total } = useAccountWindow(filtered.length);
   const overCap = selectedIds.length > maxBatch;
 
   return (
     <div className="space-y-2">
-      <div className="relative">
-        <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          value={query}
-          onChange={(e) => onQuery(e.target.value)}
-          placeholder="Search by username or city"
-          className="pl-9"
-          aria-label="Search accounts"
-          disabled={accounts.length === 0}
-        />
+      <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_170px]">
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={query}
+            onChange={(e) => onQuery(e.target.value)}
+            placeholder="Search by username or city"
+            className="pl-9"
+            aria-label="Search accounts"
+            disabled={accounts.length === 0}
+          />
+        </div>
+        <Select value={activeCity} onValueChange={setCity} disabled={accounts.length === 0}>
+          <SelectTrigger aria-label="Filter accounts by city">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All cities</SelectItem>
+            {cities.map((name) => (
+              <SelectItem key={name} value={name}>
+                {name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
@@ -114,7 +153,7 @@ export function AccountPicker({
         <p className="rounded-lg border border-border/60 p-3 text-sm text-muted-foreground">
           {accounts.length === 0
             ? 'No authenticated account on this platform. Finish a login on the Accounts page; only those can act.'
-            : 'No account matches that search. Try a username or city.'}
+            : 'No account matches those filters. Try another city or username.'}
         </p>
       ) : (
         <div

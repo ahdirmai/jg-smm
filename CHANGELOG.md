@@ -15,6 +15,10 @@
   custom/template draft counts, and the exact reason the queue button is
   disabled. Editing the target URL or platform now clears the stale preview and
   batch instead of queueing against a post the operator is no longer viewing.
+  The account list can be narrowed by city without dropping accounts already
+  selected, and the post preview gets an explicit label, an open-on-platform
+  link, a larger thumbnail, and a compact analysed/not-analysed comment count.
+  The stored-post dialog now renders the same threaded comments.
 - **Dashboard visual system replaced with a coastal-glass design.** The command
   centre now uses a floating, labelled navigation rail, a phone dock with the
   four primary destinations, a layered atmospheric canvas, and a quieter

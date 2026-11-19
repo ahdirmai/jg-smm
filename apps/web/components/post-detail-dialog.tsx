@@ -20,6 +20,7 @@ import { Badge, Button, Dialog, DialogContent, DialogHeader, DialogTitle } from 
 import { Clock, ExternalLink, Loader2, MessageSquare, RefreshCw } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
+import { CommentThread } from '@/components/comment-thread';
 import { CopyButton } from '@/components/copy-button';
 import { PostMedia } from '@/components/post-media';
 import { SentimentSummary } from '@/components/sentiment';
@@ -195,18 +196,8 @@ export function PostDetailDialog({
             ) : (
               <div className="space-y-3">
                 <SentimentSummary breakdown={sentiment} />
-                <div className="max-h-64 space-y-2 overflow-y-auto pr-1">
-                  {comments.map((c) => (
-                    <div key={c.id} className="rounded-lg border border-border/60 p-2.5">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-medium">@{c.authorHandle || 'unknown'}</span>
-                        <Badge variant="outline" className="font-normal">
-                          {c.sentiment ?? 'not analysed'}
-                        </Badge>
-                      </div>
-                      <p className="mt-1 text-xs text-muted-foreground">{c.text}</p>
-                    </div>
-                  ))}
+                <div className="max-h-72 overflow-y-auto rounded-xl border border-border/60 p-2">
+                  <CommentThread comments={comments} />
                 </div>
               </div>
             )}
