@@ -104,6 +104,8 @@ services:
       MINIO_USER: ${MINIO_ROOT_USER:-smm}
       MINIO_PASSWORD: ${MINIO_ROOT_PASSWORD:-smmsmmsmm}
       MINIO_BUCKET: ${MINIO_BUCKET:-smm-raw}
+      # Action evidence (worker JPEGs) has its own bucket, created by minio-init.
+      MINIO_SCREENSHOT_BUCKET: ${MINIO_SCREENSHOT_BUCKET:-screenshots}
       MINIO_USE_SSL: ${MINIO_USE_SSL:-false}
       ANALYTICS_PROVIDER: ${ANALYTICS_PROVIDER:-thirdparty_a}
       ANALYTICS_PROVIDER_BASE_URL: ${ANALYTICS_PROVIDER_BASE_URL:-https://provider.example.com/v1}
@@ -162,6 +164,17 @@ services:
       # published API port and "mark this job SUCCESS". Empty disables the
       # check, which is only safe while the API port is unreachable off-host.
       INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-}
+      # Stateless pool (see docs/stateless-worker-pool/). Legacy unless the
+      # operator opts in; the endpoints seed the worker rows the dispatcher
+      # leases. Parsed by the API, never by the worker.
+      WORKER_POOL_MODE: ${WORKER_POOL_MODE:-legacy}
+      WORKER_POOL_SIZE: ${WORKER_POOL_SIZE:-10}
+      WORKER_POOL_ENDPOINTS: ${WORKER_POOL_ENDPOINTS:-}
+      # The one machine every login/CAPTCHA/live-view uses (actions never do).
+      LOGIN_WORKER_NAME: ${LOGIN_WORKER_NAME:-smm-login-01}
+      NOVNC_TICKET_TTL_SECONDS: ${NOVNC_TICKET_TTL_SECONDS:-300}
+      ACCOUNT_LOCK_TTL_SECONDS: ${ACCOUNT_LOCK_TTL_SECONDS:-300}
+      WORKER_LEASE_TTL_SECONDS: ${WORKER_LEASE_TTL_SECONDS:-660}
       # P5-08 cost ceilings. 0 publishes no gauge and disables the budget alert;
       # set them in production so the 90% alert has a real number to divide.
       APIFY_BUDGET_USD: ${APIFY_BUDGET_USD:-0}
@@ -175,13 +188,17 @@ services:
       # search actor lives under a different Apify namespace. Pinned explicitly
       # so a config default change cannot silently swap the actor out from under
       # a running stack.
-      APIFY_SEARCH_ACTOR_INSTAGRAM: ${APIFY_SEARCH_ACTOR_INSTAGRAM:-crawlerbros/instagram-keyword-search-scraper}
+      APIFY_SEARCH_ACTOR_INSTAGRAM: ${APIFY_SEARCH_ACTOR_INSTAGRAM:-sasky/instagram-keyword-posts-urls-scraper}
       APIFY_SEARCH_ACTOR_THREADS: ${APIFY_SEARCH_ACTOR_THREADS:-futurizerush/meta-threads-scraper}
       APIFY_SEARCH_ACTOR_TIKTOK: ${APIFY_SEARCH_ACTOR_TIKTOK:-xmolodtsov/tiktok-search-scraper}
       # The four newer keyword platforms, same full-id rule as the three above.
       # YouTube and X charge a per-QUERY event on top of the per-result fee, so
       # a 5-keyword batch costs ~$0.08 in query fees alone before any results.
-      APIFY_SEARCH_ACTOR_YOUTUBE: ${APIFY_SEARCH_ACTOR_YOUTUBE:-apidojo/youtube-scraper-api}
+      APIFY_SEARCH_ACTOR_YOUTUBE: ${APIFY_SEARCH_ACTOR_YOUTUBE:-streamers/youtube-scraper}
+      # Single-video (watch/Shorts) on-demand actor. Separate from the keyword
+      # actor: apidojo's single-URL mode returned ten noResults rows here while
+      # streamers returns the one video reliably.
+      APIFY_POST_ACTOR_YOUTUBE: ${APIFY_POST_ACTOR_YOUTUBE:-streamers/youtube-scraper}
       APIFY_SEARCH_ACTOR_LINKEDIN: ${APIFY_SEARCH_ACTOR_LINKEDIN:-harvestapi/linkedin-post-search}
       APIFY_SEARCH_ACTOR_X: ${APIFY_SEARCH_ACTOR_X:-apidojo/twitter-scraper-lite}
       APIFY_SEARCH_ACTOR_FACEBOOK: ${APIFY_SEARCH_ACTOR_FACEBOOK:-danek/facebook-search-ppr}
@@ -264,6 +281,22 @@ services:
       NOVNC_URL: ${WORKER_NOVNC_URL:-}
       NOVNC_BASE_URL: ${WORKER_NOVNC_BASE_URL:-}
       NOVNC_PORT: ${WORKER_NOVNC_PORT:-6080}
+      # Pool mode. `legacy` keeps the Redis pull loop + on-disk sessions that
+      # this compose file is built around. `stateless` (the boxd fleet) makes the
+      # worker LISTEN for pushed RPC calls instead and keeps nothing on disk, so
+      # it must also drop the two volumes below and expose WORKER_RPC_PORT.
+      # INHERIT the API's mode rather than defaulting separately: a fleet whose
+      # workers pull from Redis while the hub pushes over HTTPS is not a
+      # degraded setup, it is two disjoint systems (the worker never sees a job
+      # and the hub's dispatch 409s against a machine running the old loop).
+      WORKER_POOL_MODE: ${WORKER_POOL_MODE:-legacy}
+      # In stateless mode the worker keeps NOTHING on disk (session state is
+      # sealed in Postgres and shipped per request), so these two volumes are
+      # inert. They stay mounted because the same image also serves the legacy
+      # pull mode, where they are the only session store.
+
+      WORKER_RPC_HOST: ${WORKER_RPC_HOST:-0.0.0.0}
+      WORKER_RPC_PORT: ${WORKER_RPC_PORT:-8090}
     volumes:
       - sessions:/data/sessions
       - screenshots:/data/screenshots
@@ -274,6 +307,9 @@ services:
       - '6080'
     ports:
       - '6080'
+      # RPC ingress. Published so `WORKER_POOL_ENDPOINTS=...|http://host:8090`
+      # also works for a pool running on the host instead of in this network.
+      - '8090'
     # Same ceilings the docker provisioner hard-codes on dashboard-created
     # containers (apps/api/internal/adapter/dockerprovisioner): a headful
     # Chromium stack idles ~85MiB and spikes to ~460MiB, so these absorb the

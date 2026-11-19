@@ -20,7 +20,7 @@ Actor id search **tidak** diturunkan dari `APIFY_ACTOR_PREFIX` — dua actor sea
 | instagram | `crawlerbros/instagram-keyword-search-scraper` | keyword → post, satu row flat per post; actor ini yang dipakai sejak v0.2 |
 | threads | `futurizerush/meta-threads-scraper` (`mode:search`) | `keywords[]` + `start_date`/`end_date` |
 | tiktok | `xmolodtsov/tiktok-search-scraper` | 83× lebih murah per post tersimpan dibanding actor sebelumnya |
-| youtube | `apidojo/youtube-scraper-api` | `uploadDate` enum; ⚠ +\~$0.015 **per query** di luar harga per hasil |
+| youtube | `streamers/youtube-scraper` | `searchQueries` + `dateFilter`; pay-per-result (~$0.005/video). On-demand post memakai actor yang sama (`maxResults:1`) |
 | linkedin | `harvestapi/linkedin-post-search` | satu-satunya yang bisa mendorong window ke payload lewat `postedLimitDate`; `maxPosts` wajib, dan harus `maxPosts` |
 | x | `apidojo/twitter-scraper-lite` | ⚠ **tanpa cap hasil dan tanpa filter tanggal sama sekali** —+\~$0.016 per query |
 | facebook | `danek/facebook-search-ppr` | `query` satu string; tidak ada input tanggal |

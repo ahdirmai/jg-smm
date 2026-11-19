@@ -59,19 +59,18 @@
 - **Output row:** satu row per post — `shortCode`, `caption`, `ownerUsername`, `ownerId`, `images[]`, `latestComments[]`, `likeCount`, `commentCount`.
 - **Normalisasi → DB:** `shortCode`→`Post.external_id`, `ownerUsername`→`author_handle`, `caption`→`text`, `images`→`media_urls`, `likeCount`/`commentCount`→`Post.metrics` + `MetricSnapshot`; `latestComments[]`→`Comment` rows keyed by shortcode parent.
 
-### 4.2 Keyword search scrape — `crawlerbros/instagram-keyword-search-scraper`
+### 4.2 Keyword search scrape — `sasky/instagram-keyword-posts-urls-scraper`
 
-- **Actor:** `crawlerbros/instagram-keyword-search-scraper` (env `APIFY_SEARCH_ACTOR_INSTAGRAM`). Id full, bukan turunan `APIFY_ACTOR_PREFIX`.
-- **Input yang benar-benar dikirim:** hanya `keywords` (array) + `maxPosts` (`runner.go:117-120`). Actor id `GdWCkxBtKWOsKjdch` **tidak menerima** batas tanggal maupun `search_filter` — field yang pernah dicoba diabaikan diam-diam.
+- **Actor:** `sasky/instagram-keyword-posts-urls-scraper` (env `APIFY_SEARCH_ACTOR_INSTAGRAM`). Id full, bukan turunan `APIFY_ACTOR_PREFIX`.
+- **Dua tahap:** actor search hanya mengembalikan **URL post**, tanpa caption/metrics. Setiap URL di-enrich lewat `apify/instagram-post-scraper` (§4.1), dedup per URL agar post yang muncul di dua keyword tidak dibayar dua kali. Post yang tidak bisa di-enrich (dihapus/private) dilewati, bukan disimpan kosong.
+- **Input yang benar-benar dikirim:** `keywords` (array) + `limit` sebagai **string** (`runner.go`), karena schema actor memakai string; integer diabaikan diam-diam dan run memakai default besar.
 - **Run mode:** sync (`run-sync-get-dataset-items`).
-- **⚠ Tidak ada batas tanggal di actor** → kedua batas window diterapkan di ingestor (`inWindow`).
-- **Output row:** satu row **flat snake_case per post** — `shortcode`, `username`, `caption`, `pub_date` (`"2026-08-03T07:06:51"` — **tanpa offset**, sehingga ditolak RFC3339; dibaca UTC via `parseActorTime`), `author_meta.id`, `like_count`, `comment_count`, `view_count`, `play_count`, `media_items[]`.
-- **Bentuk ini butuh parser sendiri** (`parseIGFlatPostItems`): Go unmarshal case-insensitive tidak menjembatani underscore (`like_count` ↛ `likesCount`), jadi membaca row ini lewat struct camelCase menghasilkan `likes: null, comments: null` dan handle `unknown`.
-- **Tidak mengembalikan comment bodies** — hanya `comment_count`. Untuk comment jalankan post-scrape (§4.1).
-- **Normalisasi → DB:** `shortcode`→`Post.external_id`, `username`→`author_handle`, `caption`→`text`, `media_items[].url`→`media_urls`, `like_count`/`comment_count`/`view_count`+`play_count`→`Post.metrics` + `MetricSnapshot`.
-- **`pub_date` → `Post.published_at` (migration `000016`).** Nilai ini dipakai `inWindow` untuk menyaring lalu dibuang; sekarang ikut tersimpan. `Post.scraped_at` tetap `now()` dan bukan pengganti — UI melabelinya `scrape …`.
+- **⚠ Tidak ada batas tanggal yang andal** — `date`/`from`/`to` gagal saat runtime ("Context: Parsing date..") di semua kombinasi yang dicoba, jadi window diterapkan di ingestor (`inWindow`), bukan di payload.
+- **Output row search:** URL post; **output row enrichment** mengikuti bentuk §4.1.
+- **Normalisasi → DB:** hasil enrichment: `shortCode`→`Post.external_id`, `ownerUsername`→`author_handle`, `caption`→`text`, `images`→`media_urls`, metrics→`Post.metrics` + `MetricSnapshot`.
+- **`published_at` → `Post.published_at` (migration `000016`).** Nilai ini dipakai `inWindow` untuk menyaring lalu ikut tersimpan. `Post.scraped_at` tetap `now()` dan bukan pengganti — UI melabelinya `scrape …`.
 >
-> **Yield.window.** Karena actor tidak bisa difilter, `max_posts` habis terpakai pada post yang ternyata di luar jendela. Terukur pada run `d3fc79a8` (3 keyword, `max_posts=50`, jendela 28 hari): 150 item di-fetch, 27 lolos — **yield 18%**, 82% compute terbuang. Persempit jendela menaikkan yield; menaikkan `max_posts` hanya membeli tiket lotre lebih banyak.
+> **Yield.window.** Sejak actor search hanya memberi URL, biaya search dan biaya enrichment terpisah. `limit` adalah batas URL per keyword; window tetap disaring di ingestor. Ukur hasil per run, jangan asumsikan angka yield actor lama.
 - **Dataset keys:** `apify/search-<runID>/<i>.json`.
 
 ## 5. Live Brief (bila ada)
@@ -96,3 +95,4 @@
 | v0.2 | 2026-09-23 | Fix Bad Gateway saat scrape post: (1) actor id ke Apify pakai `~` bukan `/` (`apify/instagram-post-scraper` → 404, `apify~instagram-post-scraper` → 200); (2) read-back post pertama kali via shortcode-dari-URL karena target di-key by URL sedangkan post di-key by shortCode dan LinkTargetPost belum jalan |
 | v0.3 | 2026-09-25 | §4.2 koreksi actor: `instagram-search-scraper` → `apify/instagram-scraper` (`searchType:hashtag`). Actor lama me-resolve keyword jadi place/hashtag dan mengembalikan top-post lama; field-nya `search` (koma), bukan `searchTerms[]`, sehingga keyword kita diabaikan tanpa error. Catat tidak ada batas atas → filter di ingestor. Actor id search sekarang env (`APIFY_SEARCH_ACTOR_*`), bukan turunan prefix |
 | v0.4 | 2026-09-29 | §4.2 actor search diganti lagi: `apify/instagram-scraper` → `crawlerbros/instagram-keyword-search-scraper`. Row flat **snake_case** (`shortcode`/`pub_date`/`like_count`), bukan camelCase, sehingga butuh parser sendiri (`parseIGFlatPostItems`) — struct camelCase menghasilkan metrics null + handle `unknown`. `pub_date` datang tanpa offset, dibaca UTC. Actor hanya mengembalikan `comment_count`, bukan bodies — comment butuh post-scrape (§4.1) |
+| v0.5 | 2026-11-19 | §4.2 actor search diganti ke `sasky/instagram-keyword-posts-urls-scraper`: publisher `crawlerbros` dihapus dari Store (semua batch 403). Actor baru hanya mengembalikan URL, lalu di-enrich `apify/instagram-post-scraper` dan dedup per URL. `limit` dikirim sebagai string; tanggal tetap disaring di ingestor karena input tanggal actor gagal runtime |

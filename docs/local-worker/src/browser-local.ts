@@ -12,20 +12,38 @@
  *
  * Override with DISPLAY_BROWSER=... to point at another build.
  */
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import { launchBrowser as workerLaunch } from '../../../apps/worker/src/core/browser.js';
 import type { BrowserHandle, LaunchOptions } from '../../../apps/worker/src/core/browser.js';
 
+const CACHE = join(homedir(), 'Library/Caches/ms-playwright');
+const BIN = 'Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing';
+
+/**
+ * Playwright builds present in the cache, newest first. The pinned driver is
+ * older than the cache (its own chromium-1140 does not spawn here), so any
+ * newer build is a better bet than none.
+ */
+function cachedBinaries(): string[] {
+  try {
+    return readdirSync(CACHE)
+      .filter((d) => d.startsWith('chromium-'))
+      .sort((a, b) => Number(b.split('-')[1]) - Number(a.split('-')[1]))
+      .map((d) => join(CACHE, d, 'chrome-mac-arm64', BIN))
+      .filter((p) => existsSync(p));
+  } catch {
+    return [];
+  }
+}
+
 /** Candidate browser binaries, in preference order. */
 const CANDIDATES = [
   process.env.DISPLAY_BROWSER,
-  join(
-    homedir(),
-    'Library/Caches/ms-playwright/chromium-1228/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing',
-  ),
+  ...cachedBinaries(),
+  join(CACHE, 'chromium-1228/chrome-mac-arm64', BIN),
 ].filter((p): p is string => Boolean(p));
 
 function resolveBinary(): string | undefined {

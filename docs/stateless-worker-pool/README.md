@@ -39,6 +39,7 @@ Catatan infrastruktur `boxd` mengonfirmasi kepingan puzzle terakhir yang membuat
 | **05** | [`05-EXECUTION-ROADMAP-TESTING-ROLLBACK.md`](./05-EXECUTION-ROADMAP-TESTING-ROLLBACK.md) | Urutan kerja terarah (**Fase 0 s/d Fase 6**), matriks pengujian otomatis & live di `boxd`, prosedur *cutover*, serta rencana *rollback* cepat. |
 | **06** | [`06-BOXD-INFRA-DEPLOYMENT-RUNBOOK.md`](./06-BOXD-INFRA-DEPLOYMENT-RUNBOOK.md) | Panduan teknis `boxd`: topologi VM, pembuatan Golden Snapshot, `nginx:8000` dispatch, aturan `pm2` + `.boxenv`, penanganan jebakan `boxd`, manajemen secret tanpa bocor ke log/chat, & estimasi kredit $150. |
 | **07** | [`boxd-recap-smm-migration.md`](./boxd-recap-smm-migration.md) | Catatan referensi infrastruktur `boxd` dari tim infra (pola mesin produksi eksisting, jebakan terverifikasi, aturan DNS Cloudflare, dan keamanan kredensial). |
+| **08** | [**08-MIGRATION-AUDIT-PLAN.md**](./08-MIGRATION-AUDIT-PLAN.md) | **Rencana Audit Hasil Implementasi & Migrasi (2-Gate Audit):** Daftar 7 *suspect hotspots* awal (`S1`–`S7`), matriks audit lokal Tahap A (`A1`–`A7`), matriks audit cloud `boxd` Tahap B (`B1`–`B6`), & kriteria *Go/No-Go*. |
 
 ---
 

@@ -8,7 +8,7 @@ Scope: the five Instagram workflow slices end to end.
 4. **Action Comment** — `POST /api/actions` → Redis → worker Playwright → `POST /internal/action-callback`
 5. **Action Reply Comment** — same chain, `action_reply_comment`
 
-Every finding below cites a `path:line` read during this audit. Nothing is carried over from `docs/omp_audit_report/AUDIT_REPORT_2026-09.md` unless re-verified here.
+Every finding below cites a `path:line` read during this audit. Nothing is carried over from `omp_audit_report/AUDIT_REPORT_2026-09.md` unless re-verified here.
 
 ---
 
@@ -340,7 +340,7 @@ The ingest-error branch returns without calling `s.fail`, and `s.fail` itself us
 | `openapi.yaml:2476` — "requires .png" | Worker writes `.jpg`, and never sent the field at all. **H-1.** | **CLOSED** — spec and code now both say `.jpg`. |
 | `DEVELOPMENT_RULE.md:229` — "Sweeper: `RUNNING > 10 min → PENDING`" | No such sweeper existed. **H-5.** | **CLOSED** — but at a 15-minute threshold, so the rule's number is now wrong. |
 
-**Prior audit (`docs/omp_audit_report/`, 2026-09-30).** F-01 was *misdiagnosed*: the `.jpg`/`.png` mismatch was real but dormant, masked by the H-1 field-name mismatch. F-02 (**H-5**), F-06 (**C-2**), F-07 (**H-4**) are now **CLOSED**. F-05 (**M-4**) and F-08 (`ACTION_DRY_RUN` defaults `true` at `config.go`) remain **OPEN**. `FIX_PLAN.md` still carries unchecked entries for the closed ones and should be struck.
+**Prior audit (`docs/omp_audit_report/`, 2026-09-30).** F-01 was *misdiagnosed*: the `.jpg`/`.png` mismatch was real but dormant, masked by the H-1 field-name mismatch. F-02 (**H-5**), F-06 (**C-2**), F-07 (**H-4**) are now **CLOSED**. F-05 (**M-4**) and F-08 (`ACTION_DRY_RUN` defaults `true` at `config.go`) remain **OPEN**. `omp_audit_report/FIX_PLAN.md` still carries unchecked entries for the closed ones and should be struck.
 
 
 ---
@@ -371,7 +371,7 @@ Each names the mutation that would break it — or, here, the mutation that **wo
   §6 for what was executed and what it proved.
 - **No lint was run**, and no live Instagram session or live Apify run was performed
   for any of the fixes.
-- **Live Apify actor schemas.** Findings about `username`/`resultsLimit`, the absence of a date input, `latestComments[]` shape, and comment-count inputs rest on `docs/platforms/instagram.md` and the runner's own comments — not on Apify's API.
+- **Live Apify actor schemas.** Findings about `username`/`resultsLimit`, the absence of a date input, `latestComments[]` shape, and comment-count inputs rest on `platforms/instagram.md` and the runner's own comments — not on Apify's API.
 - **Live Instagram DOM behaviour.** The nested-reply ordering claim in H-2 is `[INFERENCE]` from document order, not observed in a browser.
 - **Whether a worker container can actually reach cluster-internal IPs** — network topology was out of scope for the scrape slices; H-4 asserts the URL *reaches* `page.goto`, not that the fetch succeeds.
 - **Playwright's `\n` → Enter mapping** (M-3) is from documented `keyboard.type` semantics, not verified against the pinned version.
@@ -418,7 +418,7 @@ Verified by `git stash` against the pristine tree — all three fail identically
 
 ### Not yet done
 
-MEDIUM is fixed and logged in the sections below; LOW is fixed except L-3. `docs/omp_audit_report/FIX_PLAN.md` is superseded by a banner on its own first page — its Task 1/2/5/6 prescriptions are wrong (executing Task 1 as written would push the worker to `.png` and fix nothing).
+MEDIUM is fixed and logged in the sections below; LOW is fixed except L-3. `omp_audit_report/FIX_PLAN.md` is superseded by a banner on its own first page — its Task 1/2/5/6 prescriptions are wrong (executing Task 1 as written would push the worker to `.png` and fix nothing).
 
 ### Remediation log — MEDIUM, second pass (2026-09-30)
 

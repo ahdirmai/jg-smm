@@ -18,7 +18,7 @@
  * selector candidates and FILLS the composer but never submits, and it prints
  * which candidate matched. That is the signal for fixing the composer selector.
  */
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, chmod } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
@@ -39,6 +39,7 @@ import { selectorsFor, type SelectorSet } from '../../../apps/worker/src/sel/ind
 import { launchBrowser, newAccountContext } from './browser-local.js';
 import { instagramAdapter } from '../../../apps/worker/src/platforms/instagram.js';
 import { threadsAdapter } from '../../../apps/worker/src/platforms/threads.js';
+import { youtubeAdapter } from '../../../apps/worker/src/platforms/youtube.js';
 import type { PlatformAdapter } from '../../../apps/worker/src/platforms/adapter.js';
 import type { ActionJob } from '../../../apps/worker/src/types.js';
 
@@ -50,6 +51,7 @@ const DEFAULT_SESSION = 'infra/backup/sessions/session-instagram.json';
 const ADAPTERS: Record<string, PlatformAdapter> = {
   instagram: instagramAdapter,
   threads: threadsAdapter,
+  youtube: youtubeAdapter,
 };
 
 interface Args {
@@ -222,7 +224,7 @@ async function cmdLogin(args: Args): Promise<void> {
 
   const { browser, close } = await launchBrowser();
   // Fresh context (no storageState) for a clean operator login.
-  const ctx = await newAccountContext(browser, args.platform as ActionJob['platform']);
+  const ctx = await newAccountContext(browser, { platform: args.platform as ActionJob['platform'] });
   const page = await ctx.newPage();
   await page.goto(adapter.loginUrl, { waitUntil: 'domcontentloaded' });
   log(`[login] opened ${adapter.loginUrl}`);
@@ -236,16 +238,30 @@ async function cmdLogin(args: Args): Promise<void> {
   const cookiePoll = waitForProofCookies(ctx, adapter.sessionCookies, LOGIN_POLL_TIMEOUT_MS).then(
     (ok) => (ok ? 'cookies' : 'timeout'),
   );
-  const manual = stdin.isTTY
-    ? pressEnter('[login] ...or press ENTER here once logged in to save now. ').then(() => 'enter')
+  // Own the readline so the cookie path can close it: an open question keeps
+  // the event loop (and the whole harness process) alive after the session is
+  // saved, which reads as a hung job.
+  const rl = stdin.isTTY ? createInterface({ input: stdin, output: stdout }) : undefined;
+  const manual = rl
+    ? rl.question('[login] ...or press ENTER here once logged in to save now. ').then(() => 'enter')
     : new Promise<string>(() => {}); // never resolves off-TTY
   const trigger = await Promise.race([cookiePoll, manual]);
+  rl?.close();
 
   if (trigger === 'cookies') {
     log('[login] proof cookies detected — letting late cookies settle...');
     await sleep(LOGIN_SETTLE_MS);
   } else if (trigger === 'timeout') {
     log(`[login] WARNING proof-cookie timeout after ${Math.round(LOGIN_POLL_TIMEOUT_MS / 60_000)} min — saving whatever is present.`);
+  }
+
+  if (args.platform === 'youtube') {
+    const live = (await adapter.verifyLogin?.(ctx)) ?? true;
+    log(
+      live
+        ? '[login] youtube.com reports LOGGED_IN=true — session resolves there'
+        : '[login] WARNING youtube.com reports logged out — Google cookies alone are not a YouTube session',
+    );
   }
 
   const state = await ctx.storageState();
@@ -258,6 +274,9 @@ async function cmdLogin(args: Args): Promise<void> {
   }
   await mkdir(dirname(outPath), { recursive: true });
   await writeFile(outPath, JSON.stringify(state), 'utf8');
+  // A storageState is a credential: owner-only, even when overwriting a file
+  // that an earlier run created with the default umask.
+  await chmod(outPath, 0o600);
   log(`[login] saved session -> ${outPath}`);
   await close();
 }
@@ -270,7 +289,7 @@ async function cmdLike(args: Args): Promise<void> {
   reportSession(state, adapter, sessionPath(args.session));
 
   const { browser, close } = await launchBrowser();
-  const ctx = await newAccountContext(browser, args.platform as ActionJob['platform'], state);
+  const ctx = await newAccountContext(browser, { platform: args.platform as ActionJob['platform'], storageState: state });
   const page = await ctx.newPage();
   try {
     await openPost(page, args.url!);
@@ -335,7 +354,7 @@ async function cmdComment(args: Args): Promise<void> {
   reportSession(state, adapter, sessionPath(args.session));
 
   const { browser, close } = await launchBrowser();
-  const ctx = await newAccountContext(browser, args.platform as ActionJob['platform'], state);
+  const ctx = await newAccountContext(browser, { platform: args.platform as ActionJob['platform'], storageState: state });
   const page = await ctx.newPage();
   try {
     await openPost(page, args.url!);
@@ -371,7 +390,7 @@ async function cmdCommentReply(args: Args): Promise<void> {
   reportSession(state, adapter, sessionPath(args.session));
 
   const { browser, close } = await launchBrowser();
-  const ctx = await newAccountContext(browser, args.platform as ActionJob['platform'], state);
+  const ctx = await newAccountContext(browser, { platform: args.platform as ActionJob['platform'], storageState: state });
   const page = await ctx.newPage();
   try {
     // The URL is a comment permalink; opening it focuses the target comment.
@@ -465,6 +484,40 @@ async function commentDryRun(page: Page, sel: SelectorSet, text: string): Promis
   log('[comment] dry run complete (no comment posted).');
 }
 
+/**
+ * Load a saved session into a fresh context and ask YouTube whether it is
+ * still signed in. This is the "login bypassed" proof for anything that will
+ * run later: same storageState, same context options as the worker's action
+ * path, no credentials typed.
+ */
+async function cmdVerify(args: Args): Promise<void> {
+  if (args.platform !== 'youtube') fail('verify currently covers youtube only');
+  const adapter = adapterFor(args.platform);
+  const path = sessionPath(args.session);
+  const state = await loadStorageState(path);
+  reportSession(state, adapter, path);
+  if (!state) fail(`no session at ${path} — run: tsx src/run.ts login --platform youtube`);
+
+  const { browser, close } = await launchBrowser();
+  const ctx = await newAccountContext(browser, {
+    platform: args.platform as ActionJob['platform'],
+    storageState: state,
+  });
+  const page = await ctx.newPage();
+  try {
+    const live = (await adapter.verifyLogin?.(ctx)) ?? false;
+    log(`[verify] youtube.com -> ${page.url()}`);
+    log(
+      live
+        ? '[verify] RESULT: LIVE session — LOGGED_IN=true, login bypassed.'
+        : '[verify] RESULT: DEAD session — logged out; re-run login.',
+    );
+    if (!live) process.exitCode = 2;
+  } finally {
+    await close();
+  }
+}
+
 async function maybeKeepOpen(args: Args, _ctx: BrowserContext): Promise<void> {
   if (!args.keepOpen) return;
   if (!stdin.isTTY) {
@@ -495,6 +548,9 @@ async function main(): Promise<void> {
     case 'comment-reply':
       await cmdCommentReply(args);
       break;
+    case 'verify':
+      await cmdVerify(args);
+      break;
     default:
       log(
         [
@@ -502,14 +558,15 @@ async function main(): Promise<void> {
           'SMM local worker harness — headful Playwright against the REAL worker automation.',
           '',
           'Usage:',
-          '  tsx src/run.ts login         --platform instagram',
+          '  tsx src/run.ts login         --platform instagram|threads|youtube',
+          '  tsx src/run.ts verify        --platform youtube',
           '  tsx src/run.ts like          --url <postUrl> [--platform instagram] [--commit] [--keep-open]',
           '  tsx src/run.ts comment       --url <postUrl> --text "OKE" [--platform instagram] [--commit] [--keep-open]',
           '  tsx src/run.ts comment-reply --url <commentPermalink> --text "OKE" [--platform instagram] [--commit]',
           '                               (comment permalink e.g. .../p/<post>/c/<commentId>/)',
           '',
           'Flags:',
-          '  --platform  instagram (default) | threads',
+          '  --platform  instagram (default) | threads | youtube',
           '  --url       target post permalink',
           '  --text      comment text',
           '  --session   storageState JSON path (default infra/backup/sessions/session-<platform>.json)',

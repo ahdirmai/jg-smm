@@ -1,7 +1,8 @@
 # jg-smm — Social Media Management
 
-Scrape, monitor, and automate actions across social platforms (IG/Threads for
-MVP). The full spec set lives in [`docs/`](docs/) (`docs/PRD.md`, `docs/ERD.md`,
+Scrape, monitor, and automate actions across social platforms. The MVP covers
+Instagram and Threads end to end, plus YouTube top-level comments. The full
+spec set lives in [`docs/`](docs/) (`docs/PRD.md`, `docs/ERD.md`,
 `docs/SYSTEM_DESIGN.md`, ...).
 
 ## Layout
@@ -190,6 +191,20 @@ shortcode (`is_reply` rows, linked to the requested post).
 Manual, end-to-end run-through of the live stack (containers up, no mocks):
 `docs/MANUAL_TESTING.md`.
 
+### Actions queue
+
+The Actions page targets a post or a specific comment. For YouTube, only
+top-level comments are supported: the Apify actor returns the video row, not
+comment bodies, so the target is a Short/watch URL rather than a scraped
+comment row. Selecting a post that is already stored skips the re-scrape; the
+form still fetches comments when the target is a comment.
+
+`Retry failed` retries every FAILED action in the current page, not one row at
+a time. The generated text stays reusable for 24 hours: a retry reuses the
+original comment when it is still alive, otherwise the AI text, and only then
+regenerates. A retry that is refused by the per-platform rate limiter does not
+consume a token. The button reports how many actions were retried and skipped.
+
 ## Apify actors
 
 Actor ids are **full ids**, never derived from `APIFY_ACTOR_PREFIX`: each
@@ -202,9 +217,9 @@ Threads id 404s on every scrape. All are env-overridable and pinned in
 | Threads per-post | `themineworks/threads-scraper` | `APIFY_POST_ACTOR_THREADS` |
 | Threads keyword search | `futurizerush/meta-threads-scraper` | `APIFY_SEARCH_ACTOR_THREADS` |
 | Instagram per-post | `apify/instagram-post-scraper` | `APIFY_POST_ACTOR_INSTAGRAM` |
-| Instagram keyword search | `crawlerbros/instagram-keyword-search-scraper` | `APIFY_SEARCH_ACTOR_INSTAGRAM` |
+| Instagram keyword search | `sasky/instagram-keyword-posts-urls-scraper` | `APIFY_SEARCH_ACTOR_INSTAGRAM` |
 | TikTok keyword search | `xmolodtsov/tiktok-search-scraper` | `APIFY_SEARCH_ACTOR_TIKTOK` |
-| YouTube keyword search | `apidojo/youtube-scraper-api` | `APIFY_SEARCH_ACTOR_YOUTUBE` |
+| YouTube keyword search / post | `streamers/youtube-scraper` | `APIFY_SEARCH_ACTOR_YOUTUBE`, `APIFY_POST_ACTOR_YOUTUBE` |
 | LinkedIn keyword search | `harvestapi/linkedin-post-search` | `APIFY_SEARCH_ACTOR_LINKEDIN` |
 | X keyword search | `apidojo/twitter-scraper-lite` | `APIFY_SEARCH_ACTOR_X` |
 | Facebook keyword search | `danek/facebook-search-ppr` | `APIFY_SEARCH_ACTOR_FACEBOOK` |
@@ -212,11 +227,13 @@ Threads id 404s on every scrape. All are env-overridable and pinned in
 Per-platform scrape detail (input, output rows, normalization) is in
 `docs/platforms/`; batch keyword scraping in `docs/BATCH_SCRAPE.md`.
 
-⚠ **Per-query fees.** YouTube and X bill ~$0.015–0.016 per query on top of
-per-result pricing; the store page advertises only the per-result rate. X has
-no result cap and no date filter in its schema, so a keyword set is the unit of
-cost, not a row. `APIFY_BUDGET_USD` is parsed into config but not yet enforced
-anywhere — do not run these two at volume until it is.
+⚠ **Per-query fees.** X bills ~$0.015–0.016 per query on top of per-result
+pricing; the store page advertises only the per-result rate, and X has no
+result cap or date filter, so a keyword set is the unit of cost, not a row.
+The YouTube actor was replaced with `streamers/youtube-scraper`; its pricing
+has not been re-measured, so treat YouTube runs as unmeasured cost until the
+Apify run receipt is checked. `APIFY_BUDGET_USD` is parsed into config but not
+yet enforced anywhere — do not run at volume until it is.
 
 A wrong field name on an actor is **silent** — the actor falls back to its
 own default and the scrape quietly returns the wrong thing, not an error.

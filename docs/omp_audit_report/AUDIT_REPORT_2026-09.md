@@ -3,7 +3,7 @@
 > **Revision audited** `main` @ `cdb62cc` (14 commit terakhir).
 > **Auditor** senior SWE / FE / QA, read-only. Tidak ada file existing yang diubah.
 > **Live stack** `smm-api-1`, `smm-web-1`, `smm-postgres-1`, `smm-redis-1`, `smm-minio-1`, 7× `smm-worker-*` (dibangun 2026-09-29 02:43 UTC).
-> **Severity** mengikuti `docs/SEVERITY.md` (SEV1 outage/data-loss · SEV2 data plane at risk · SEV3 degraded ada workaround · SEV4 noise).
+> **Severity** mengikuti `../SEVERITY.md` (SEV1 outage/data-loss · SEV2 data plane at risk · SEV3 degraded ada workaround · SEV4 noise).
 > **Rahasia** tidak pernah dicetak. Kunci/kode/token disebut berdasarkan nama & lokasi.
 
 ---
@@ -266,8 +266,8 @@ post:  THREADS   52 posts / 0 comments
 | `DEVELOPMENT_RULE.md:249` — Redis `maxmemory 512mb` + `allkeys-lru` | `compose.yaml:25` = `['redis-server','--appendonly','yes']`. Tidak ada memory cap → queue tumbuh tanpa batas. | **Drift** |
 | `DEVELOPMENT_RULE.md:274` — `RECONCILE_INTERVAL_SECONDS` (lokal=5) | Default kode `0`; compose menyetel `:-5` (`compose.yaml:125`). Klaim separuh benar, default tidak. | **Drift** |
 | `DEVELOPMENT_RULE.md:5` (SSOT) — "`openapi/openapi.yaml` = SSOT kontrak HTTP" | **24 operasi yang di-router tidak ada di spec**; 5 ada di spec tapi tidak di-router; 11 method hilang. Tipe yang di-generate ke FE **berbohong** soal surface HTTP. | **Drift, parah** |
-| `ERD.md` | Mencakup **8 dari 26** tabel live. | **Drift** |
-| `docs/AUDIT_REPORT.md` (2026-09-18) | F-01…F-09, F-11, F-12 **FIXED**; F-10 **sebagian** (nilai `PROVISIONER_MODE` sudah sesuai, default `RECONCILE_INTERVAL_SECONDS` masih salah). Detail di §6. | — |
+| `../ERD.md` | Mencakup **8 dari 26** tabel live. | **Drift** |
+| `../AUDIT_REPORT.md` (2026-09-18) | F-01…F-09, F-11, F-12 **FIXED**; F-10 **sebagian** (nilai `PROVISIONER_MODE` sudah sesuai, default `RECONCILE_INTERVAL_SECONDS` masih salah). Detail di §6. | — |
 | `docs/AUDIT_REPORT.md:218` (`INFRA_ANALYST.md:204`) — "job hilang → perlu re-enqueue" | Benar sebagai STATEMENT, tapi tidak ada mekanisme: tidak ada sweeper (F-02) dan tidak ada tombol FE untuk job `PENDING` (F-13). | **Drift** |
 
 ---
@@ -337,7 +337,7 @@ Semua route `POST`/`PUT`/`PATCH`/`DELETE` di bawah `/api` **memang** membawa gat
 
 ---
 
-## 6. Status audit lama (`docs/AUDIT_REPORT.md`, 2026-09-18)
+## 6. Status audit lama (`../AUDIT_REPORT.md`, 2026-09-18)
 
 | # | Status | Bukti |
 |---|---|---|

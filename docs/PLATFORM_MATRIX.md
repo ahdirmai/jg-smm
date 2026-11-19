@@ -19,7 +19,7 @@
 | `FACEBOOK`  | Facebook    | deferred (slot siap) | `platforms/facebook.md`  |
 | `X`         | X (Twitter) | deferred (slot siap) | `platforms/x.md`         |
 | `LINKEDIN`  | LinkedIn    | deferred (slot siap) | `platforms/linkedin.md`  |
-| `YOUTUBE`   | YouTube     | deferred (slot siap) | `platforms/youtube.md`   |
+| `YOUTUBE`   | YouTube     | **AKTIF** (comment)  | `platforms/youtube.md`   |
 | `TIKTOK`    | TikTok      | **AKTIF** (keyword)   | `platforms/tiktok.md`    |
 
 Enum `Platform` di `ERD.md` sudah memuat ke-7 nilai ini — **tidak ada** migrasi enum saat menambah platform.
@@ -34,7 +34,7 @@ Legend: **✅** didukung/diimplementasi · **🟡** brief-tbd (desain konsep ada
 
 | Kapabilitas                 | IG  | Threads | FB  | X   | LinkedIn | YouTube | TikTok |
 | --------------------------- | --- | ------- | --- | --- | -------- | ------- | ------ |
-| Scrape post by URL          | ✅  | ✅      | ⬜  | ⬜  | ⬜       | ⬜      | ⬜     |
+| Scrape post by URL          | ✅  | ✅      | ⬜  | ⬜  | ⬜       | ✅      | ⬜     |
 | Scrape profile/handle       | ✅  | ✅      | ⬜  | ⬜  | ⬜       | ⬜      | ⬜     |
 | Scrape hashtag              | ✅  | 🟡      | ⬜  | ⬜  | ⬜       | 🟡      | ⬜     |
 | Scrape mention              | ✅  | ✅      | ⬜  | ⬜  | ⬜       | 🟡      | ⬜     |
@@ -50,7 +50,7 @@ fitur yang sama:
 
 | Platform | Actor | $/hasil | Filter tanggal server-side? | Batas hasil? |
 | --- | --- | --- | --- | --- |
-| YouTube | `apidojo/youtube-scraper-api` | $0.0005 **+ ~$0.015 per query** | Ya — `uploadDate` (enum bucket) | `maxItems` |
+| YouTube | `streamers/youtube-scraper` (keyword + post) | $0.005/video | Ya — `dateFilter` (hour/today/week/month/year) | keyword `maxResults` · post `maxResults:1` |
 | LinkedIn | `harvestapi/linkedin-post-search` | $0.002 | Ya — `postedLimitDate` (absolut) | `maxPosts` (wajib) |
 | X | `apidojo/twitter-scraper-lite` | $0.0004 **+ ~$0.016 per query** | **Tidak ada** | **Tidak ada** |
 | Facebook | `danek/facebook-search-ppr` | ~$0.00001 | Tidak ada | `max_posts` |
@@ -80,7 +80,7 @@ Action yang diminta: **Comment Posting, Reply Comment, Like, Comment, Share, Rep
 
 | Action               | IG  | Threads | FB  | X   | LinkedIn | YouTube | TikTok |
 | -------------------- | --- | ------- | --- | --- | -------- | ------- | ------ |
-| Comment on post      | ✅  | ✅      | 🟡  | 🟡  | 🟡       | 🟡      | 🟡     |
+| Comment on post      | ✅  | ✅      | 🟡  | 🟡  | 🟡       | ✅      | 🟡     |
 | Reply comment        | ✅  | ✅      | 🟡  | 🟡  | 🟡       | 🟡      | 🟡     |
 | Like post            | ✅  | ✅      | 🟡  | 🟡  | 🟡       | 🟡      | 🟡     |
 | Like comment         | ✅  | ✅      | 🟡  | 🟡  | 🟡       | 🟡      | 🟡     |

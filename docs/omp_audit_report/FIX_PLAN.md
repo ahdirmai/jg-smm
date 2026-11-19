@@ -8,9 +8,9 @@
 
 **Tech Stack** Go 1.26 (Echo v4, pgx v5, sqlc, golang-migrate), Node 22 (Playwright, `node --test`), Next.js 15, Redis 7, MinIO, docker compose.
 
-**Spec** `docs/omp_audit_report/AUDIT_REPORT_2026-09.md` — setiap tugas di bawah menunjuk nomor temuan (F-nn) di sana. **Baca audit report sebelum mulai; plan ini tidak mengulang buktinya.**
+**Spec** `AUDIT_REPORT_2026-09.md` — setiap tugas di bawah menunjuk nomor temuan (F-nn) di sana. **Baca audit report sebelum mulai; plan ini tidak mengulang buktinya.**
 
-**Companion plan** Tidak ada. Remediasi `docs/AUDIT_REPORT.md` (2026-09-18) sudah selesai — lihat §6 audit report. Plan ini tidak menyentuhnya.
+**Companion plan** Tidak ada. Remediasi `../AUDIT_REPORT.md` (2026-09-18) sudah selesai — lihat §6 audit report. Plan ini tidak menyentuhnya.
 
 ---
 
@@ -797,11 +797,11 @@ The env is now worker-local and defaults off."
 **Opsi B: akui batasnya di UI + dokumen.**
 - Hapus `commentsCount` dari kartu batch di `apps/web/app/(dashboard)/scrape/batches/`.
 - Tulis di `docs/platforms/threads.md §4.2`: "mode search tidak meminta reply; `comments_count` selalu 0 untuk batch. Reply hanya lewat §4.1."
-- Ubah `docs/BATCH_SCRAPE.md` supaya tidak menjanjikan komentar.
+- Ubah `../BATCH_SCRAPE.md` supaya tidak menjanjikan komentar.
 
 - [ ] **Step 1: Putuskan A atau B, tulis keputusannya di `docs/adr/`**
 
-Buat `docs/adr/00NN-keyword-batch-comments.md` dengan Status/Context/Decision/Consequence. Graham Potter dalam PR.
+Buat `docs/adr/` dengan Status/Context/Decision/Consequence. Graham Potter dalam PR.
 
 - [ ] **Step 2: (Opsi A) Test merah**
 
@@ -1350,7 +1350,7 @@ Baris di job `go`, setelah `go vet`:
     go install golang.org/x/vuln/cmd/govulncheck@latest
     /go/bin/govulncheck ./...
 ```
-`DEVELOPMENT_RULE §5` mewajibkannya "di CI per PR"; `SECURITY_REVIEW.md` memakainya sebagai bukti sign-off sementara job ini tidak pernah ada.
+`DEVELOPMENT_RULE §5` mewajibkannya "di CI per PR"; `../SECURITY_REVIEW.md` memakainya sebagai bukti sign-off sementara job ini tidak pernah ada.
 
 - [ ] **Step 2: Tambahkan `sqlc-check`**
 
@@ -1376,29 +1376,29 @@ Satu baris, dan sekarang F-04 punya gate.
 
 ## Task 21: Perbaiki semua drift di §3 audit report
 
-**Files:** `docs/DEVELOPMENT_RULE.md`, `docs/SECURITY_REVIEW.md`, `docs/ERD.md`, `docs/BATCH_SCRAPE.md`, `docs/platforms/*.md`, `docs/INFRA_ANALYST.md`, `openapi/openapi.yaml`, `CHANGELOG.md`
+**Files:** `../DEVELOPMENT_RULE.md`, `../SECURITY_REVIEW.md`, `../ERD.md`, `../BATCH_SCRAPE.md`, `docs/platforms/*.md`, `../INFRA_ANALYST.md`, `openapi/openapi.yaml`, `../../CHANGELOG.md`
 
 - [ ] **Step 1: `openapi/openapi.yaml` — 24 operasi hilang, 5 hantu, 11 method hilang**
 
 Jalankan perbandingan router↔spec, lalu tambahkan operasi yang hilang dan hapus yang hantu. Spec adalah SSOT (DRY §0), jadi selama 24 route tidak ada di sana, tipe yang di-generate ke FE **berbohong** — dan setiap orang yang baca FE akan menyimpulkan endpoint itu tidak ada.
 
-- [ ] **Step 2: `DEVELOPMENT_RULE.md`**
+- [ ] **Step 2: `../DEVELOPMENT_RULE.md`**
 
 Perbaiki: `:229` (sweeper — setelah Task 2 sudah ada, tambahkan catatan bahwa ia *tidak pernah* ada selama ini); `:117` (Idempotency-Key — sudah_selected_after Task 7; kalau tidak diimplementasikan, ubah jadi "dianjurkan" **atau** implementasikan; jangan biarkan klaim palsu); `:249` (`allkeys-lru` → `noeviction`, Task 4); `:248` (tag timescale); `:274` (`RECONCILE_INTERVAL_SECONDS` default 0 di kode, 5 di compose — tulis keduanya); `:291` (FE coverage: tulis angka yang **benar** hari ini, bukan 60%); `:5` (OpenAPI SSOT — catat bahwa sync-nya baru dijalankan di CI setelah Task 20).
 
-- [ ] **Step 3: `SECURITY_REVIEW.md`**
+- [ ] **Step 3: `../SECURITY_REVIEW.md`**
 
  Tambahkan revisi baru yang **menggantikan** sign-off P5-04, dengan tabel yang sama tapi, dengan menunjukkan: SSRF "strict allowlist" → allowlist skema + IP; credential "PASS" → key pernah ter-commit; RBAC → tetap FIXED tapi tambahkan matriks route sebagai bukti. Tulis tanggal dan commit yang diaudit. Jangan hapus revisi lama — tulis yang baru di atasnya, dengan label "superseded".
 
-- [ ] **Step 4: `ERD.md`**
+- [ ] **Step 4: `../ERD.md`**
 
 Lengkapi 18 tabel yang belum ada. Kalau tidak ada energi untuk itu sekarang, tulis **acknowledged gap** yang eksplisit di bagian atas — ERD yang mengklaim lengkap padahal mencakup 8 dari 26 lebih berbahaya daripada ERD yang jujur soal belum selesai.
 
-- [ ] **Step 5: `docs/platforms/*.md` + `BATCH_SCRAPE.md`**
+- [ ] **Step 5: `docs/platforms/*.md` + `../BATCH_SCRAPE.md`**
 
 Selaraskan dengan keputusan Task 9. Kalau Opsi A, perbarui `threads.md §4.2` dengan payload `includeReplies` yang baru. Kalau Opsi B, tulis batasan dengan jujur.
 
-- [ ] **Step 6: `CHANGELOG.md`**
+- [ ] **Step 6: `../../CHANGELOG.md`**
 
 Satu entri untuk setiap task di plan ini, Conventional Commits, plus satu entri eksplisit: "SECURITY: CREDENTIAL_KEY dan JWT_SECRET versi lama dianggap kompromis; rotasi dilakukan pada <tanggal>".
 

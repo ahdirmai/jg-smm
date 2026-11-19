@@ -4,11 +4,11 @@
 
 **Goal:** Promote TikTok from a deferred platform slot to a working **keyword**-scraping target on `clockworks/tiktok-scraper`, with server-side date filtering and the post's real publication date stored.
 
-**Scope:** keyword search only — `searchQueries[]`, the path the dashboard's keyword-batch feature drives today. The actor's `profiles[]`, `postURLs[]` and `hashtags[]` modes, the per-post scrape, and the follower add-on (`connectedTo`) are **not** in this plan; `PLATFORM_MATRIX.md` keeps their rows ⬜. Add them as a second plan if the per-post scrape is wanted — the parser built in Task 1 is reusable for `hashtags[]` unchanged.
+**Scope:** keyword search only — `searchQueries[]`, the path the dashboard's keyword-batch feature drives today. The actor's `profiles[]`, `postURLs[]` and `hashtags[]` modes, the per-post scrape, and the follower add-on (`connectedTo`) are **not** in this plan; `../../PLATFORM_MATRIX.md` keeps their rows ⬜. Add them as a second plan if the per-post scrape is wanted — the parser built in Task 1 is reusable for `hashtags[]` unchanged.
 
 **Tech Stack:** Go 1.24, sqlc, encoding/json, testify-style stdlib tests, `encoding/json` fixture rows, Next.js/React for the platform picker.
 
-**Spec:** Actor input/output schema pasted from the Apify store listing for `clockworks/tiktok-scraper` (store name `clockworks/tiktok-scraper`). Platform brief to be written as `docs/platforms/tiktok.md` per `docs/platforms/_TEMPLATE.md` §5.
+**Spec:** Actor input/output schema pasted from the Apify store listing for `clockworks/tiktok-scraper` (store name `clockworks/tiktok-scraper`). Platform brief to be written as `../../platforms/tiktok.md` per `../../platforms/_TEMPLATE.md` §5.
 
 ## Global Constraints
 
@@ -21,7 +21,7 @@
 - A wrong field name on this actor is **silent** — it falls back to its own default. Every field sent is pinned by a test in `runner_test.go`.
 - The window filter still applies downstream in the ingestor regardless of what the actor was asked for. A server-side bound reduces paid waste; it is not a replacement.
 - `PublishedAt` is `*time.Time` and must be **nil** when the actor gave no parseable date. Never substitute `scrapedAt`.
-- Docs are Indonesian for `docs/platforms/*.md` and English for `CHANGELOG.md` / `README.md`.
+- Docs are Indonesian for `docs/platforms/*.md` and English for `../../../CHANGELOG.md` / `../../../README.md`.
 - One commit per task. Run `make sqlc` only if a `.sql` query changes (it does not in this plan).
 
 ## Review Focus
@@ -262,8 +262,8 @@ git commit -m "feat(apify): send the TikTok actor a server-side date window"
 
 **Files:**
 - Modify: `compose.yaml` (add `APIFY_SEARCH_ACTOR_TIKTOK: "clockworks/tiktok-scraper"` to the `api` service env, beside the other three)
-- Create: `docs/platforms/tiktok.md` (from `docs/platforms/_TEMPLATE.md` §5)
-- Modify: `README.md` (add the TikTok row to the actor table at :147-152)
+- Create: `../../platforms/tiktok.md` (from `../../platforms/_TEMPLATE.md` §5)
+- Modify: `../../../README.md` (add the TikTok row to the actor table at :147-152)
 
 **Interfaces:**
 - Consumes: the actor schema in the spec.
@@ -273,14 +273,14 @@ git commit -m "feat(apify): send the TikTok actor a server-side date window"
 
 `compose.yaml`: one env line, and **nothing else** — no `shouldDownload*` toggles, because their absence is the control.
 
-`docs/platforms/tiktok.md`, Indonesian, mirroring the shape of `docs/platforms/instagram.md`, covering:
+`../../platforms/tiktok.md`, Indonesian, mirroring the shape of `../../platforms/instagram.md`, covering:
 - §4.1 keyword scrape: actor `clockworks/tiktok-scraper`, env `APIFY_SEARCH_ACTOR_TIKTOK`, **input yang benar-benar dikirim** (the exact payload from Task 2), run mode sync, the `profileSorting`-gates-the-date rule in bold, and the `resultsPerPage`-is-not-a-cap warning.
 - Output row: **nested** — `authorMeta.name` → `author_handle`, `authorMeta.id` → `author_id`, `mediaUrls[]` → `media_urls`, `diggCount`/`commentCount`/`shareCount`/`playCount`/`collectCount` → `Post.metrics` + `MetricSnapshot`, `createTimeISO`→`published_at` with `createTime` unix fallback, `webVideoUrl` → the permalink.
 - `errorCode` rows: list the codes the actor emits (`PROFILE_PRIVATE`, `SEARCH_QUERY_NOT_FOUND`, `INVALID_INPUT`, `FILTER_NO_PASS`, …) and state that the parser drops them by design so one bad row cannot fail a 500-result run.
 - **Tidak mengambil comment bodies.** The actor parks them in a second dataset behind `commentsDatasetURL`; this integration does not fetch it. `commentsPerPost: 0` keeps it unbilled. `ponytail:` comment naming the ceiling — keyword batches show posts, not comment threads, exactly as the Instagram keyword path behaves (`instagram.md:70`).
 - **Biaya:** $1.70/1000 results PPE; add-ons billed extra and left off. State the arithmetic for one operator run.
 
-`README.md`: add `| TikTok keyword search | clockworks/tiktok-scraper | APIFY_SEARCH_ACTOR_TIKTOK |`, and extend the "no date bound" note with its converse — this actor **does** take one, so not sending the window would be paying the Instagram mistake twice.
+`../../../README.md`: add `| TikTok keyword search | clockworks/tiktok-scraper | APIFY_SEARCH_ACTOR_TIKTOK |`, and extend the "no date bound" note with its converse — this actor **does** take one, so not sending the window would be paying the Instagram mistake twice.
 
 - [ ] **Step 2: Verify**
 Run: `docker compose config | grep -A 2 APIFY_SEARCH_ACTOR_TIKTOK`
@@ -301,7 +301,7 @@ git commit -m "docs(tiktok): platform brief, actor env, and the cost note"
 - Modify: `apps/api/internal/domain/platform.go:29` (`MVPPlatforms`)
 - Modify: `apps/api/internal/service/scrape_keyword_test.go:68-74` (`TestScrapeKeywordsValidates`)
 - Modify: `packages/shared/src/constants.ts:14` (verify `tiktok` is already in the list; change only if the FE filters on `MVP`)
-- Modify: `docs/PLATFORM_MATRIX.md` (§1 status `deferred` → `AKTIF` for TikTok, §2.1 scrape capability cells, §3 rollout)
+- Modify: `../../PLATFORM_MATRIX.md` (§1 status `deferred` → `AKTIF` for TikTok, §2.1 scrape capability cells, §3 rollout)
 
 **Interfaces:**
 - Consumes: `parseTikTokItems` (Task 1), the TikTok payload branch (Task 2).
@@ -337,7 +337,7 @@ Expected: FAIL — the TikTok assertion trips on the current gate.
 - `scrape_keyword.go:105`: accept `domain.PlatformTikTok` alongside Instagram and Threads; update the error string to name all three.
 - `platform.go:29`: add `PlatformTikTok` to `MVPPlatforms`.
 - `packages/shared/src/constants.ts`: add `'tiktok'` to the `MVP`/active list if it is separate from the all-platforms list.
-- `docs/PLATFORM_MATRIX.md`: §1 TikTok → `AKTIF`, slug `platforms/tiktok.md`; §2.1 flip the scrape rows this plan delivers (post-by-URL stays ⬜ — the keyword path does not implement it) and leave the rest; §3 note the third platform.
+- `../../PLATFORM_MATRIX.md`: §1 TikTok → `AKTIF`, slug `../../platforms/tiktok.md`; §2.1 flip the scrape rows this plan delivers (post-by-URL stays ⬜ — the keyword path does not implement it) and leave the rest; §3 note the third platform.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 Run: `go -C /Users/ahdirmai/MVP-1-SMM/apps/api test ./... -count=1 && pnpm -C /Users/ahdirmai/MVP-1-SMM/apps/web exec tsc --noEmit`

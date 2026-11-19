@@ -54,10 +54,10 @@ machine that build fails to spawn:
 browserType.launch: spawn Unknown system error -88
 ```
 
-even though its binary reports `arm64` and is unsigned. Chromium-1228 (already
-in the cache) launches fine. `src/browser-local.ts` therefore resolves a working
-binary and passes it as `executablePath` into the worker's own `launchBrowser`
-— so the worker's real options still apply and only the binary differs.
+`src/browser-local.ts` therefore scans `~/Library/Caches/ms-playwright` for
+`chromium-*` builds, newest first, and passes a launchable one as
+`executablePath` into the worker's own `launchBrowser` — so the worker's real
+options still apply and only the binary differs.
 
 Override with `DISPLAY_BROWSER=/path/to/Chrome tsx src/run.ts ...`.
 
@@ -79,6 +79,51 @@ npm run login -- --platform instagram
 Opens the platform login page in a visible browser and waits. Log in (and clear
 any OTP/checkpoint) **in the browser**, then press ENTER in the terminal. The
 `storageState` is saved back to the session path.
+
+#### YouTube (Google account)
+
+```bash
+tsx src/run.ts login  --platform youtube   # saves infra/backup/sessions/session-youtube.json
+tsx src/run.ts verify --platform youtube   # loads it, asks youtube.com if it is live
+```
+
+Three details make or break this, all verified against the real flow:
+
+1. **Google cookies are not YouTube cookies.** The login URL carries
+   `continue=https://www.youtube.com/`; Google sets its session on
+   `.google.com`, YouTube only mints its own cookie cluster (`LOGIN_INFO`,
+   `SAPISID`, `SID`, `HSID`, `SSID`) once the browser lands on
+   `.youtube.com`. Saving a state captured on `accounts.google.com` alone
+   produces a file that opens YouTube logged out.
+2. **Proof is `LOGIN_INFO` + `SAPISID`, not `__Secure-1PSID`.** The latter is
+   set by Google before any YouTube session exists. `verify` goes further and
+   reads `ytcfg.get('LOGGED_IN')` off youtube.com — the page's own verdict.
+3. **Do not automate the credentials.** Google refuses sign-in from an
+   automated browser ("This browser or app may not be secure"). The worker
+   already launches headful with `--disable-blink-features=AutomationControlled`
+   and a pinned desktop UA; the operator types email/password/2FA. The YouTube
+   adapter has no `autofill` — it is deliberate, not missing.
+
+After the session is saved, **close the browser** (the harness does). Cookies
+rotate while a signed-in tab stays open, and a rotated session fails on the
+next run. Google also invalidates sessions on unusual IP/fingerprint changes:
+reuse the same context options (UA, locale `id-ID`, timezone, proxy) the
+worker uses — `newAccountContext` already does.
+
+Handing it to `apps/worker`: the file is a standard Playwright `storageState`.
+Either import it into an existing account (durable path, works in both pool
+modes):
+
+```bash
+curl -b jar.txt -X POST localhost:24080/api/accounts/<accountId>/session/import \
+  -H 'Content-Type: application/json' \
+  --data-binary @infra/backup/sessions/session-youtube.json
+```
+
+or, for a legacy docker worker, place it at
+`/data/sessions/session-youtube.json` inside the worker's session volume. The
+worker loads it into `newAccountContext` per job; a live session means no login
+step at all. `verify` is the check that this worked.
 
 ### like
 
@@ -122,7 +167,7 @@ later check on the post will not show it without clicking that toggle.
 
 | flag | meaning |
 | --- | --- |
-| `--platform` | `instagram` (default) or `threads` |
+| `--platform` | `instagram` (default), `threads`, or `youtube` |
 | `--url` | target post permalink (required for like/comment) |
 | `--text` | comment text (required for comment) |
 | `--session` | storageState JSON path (default `infra/backup/sessions/session-<platform>.json`) |

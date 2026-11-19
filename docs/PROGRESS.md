@@ -4,6 +4,73 @@
 > Format: `Ticket · Status · Commit · Date · Notes`. Source of truth for
 > backlog remains `TICKETS.md`; this file records what is actually **done**.
 
+## Stateless worker pool — Tahap A (Fase 1–4) · 2026-11-05
+
+**Scope:** the repo half of [stateless-worker-pool](stateless-worker-pool/README.md).
+No `boxd` infrastructure was touched (Stage B is gated on approval).
+
+**Schema (`000024_stateless_worker_pool`)**
+- `account` gains `location`, `latitude`, `longitude`, `timezone`, `user_agent`
+  (the all-or-nothing triple is a CHECK constraint), inherited from the worker
+  the account used to live on where one existed.
+- `worker.endpoint_url` carries the push base (`https://rpc.smm-worker-NN.boxd.sh`
+  in the fleet, `http://smm-worker-NN:8090` locally).
+- `UNIQUE(worker_id, platform)` dropped: `worker_id` is now an interactive LEASE,
+  not a home. `ListAccountsDueForRefresh` and its partial index both gate on
+  `worker_id IS NULL`, so a parked login is never re-dispatched.
+
+**Go API**
+- `port.WorkerRPC` + `adapter/workerrpc` (HTTPS push, `X-Internal-Secret`,
+  409→conflict / 401→unauthorized / 5xx→retryable).
+- `adapter/poolmgr`: Redis account lock (`SET NX EX`, Lua compare-and-delete) and
+  worker slots with affinity (`fnv32a(accountId) % len(workers)`). A proxyless
+  account is PINNED to its affinity worker; only an account with its own
+  residential proxy may fall through to another machine.
+- `PoolDispatch` owns lease→push→release. `ActionScheduler`, `AccountService`
+  (login/live view), and `SessionRefresher` use it when `WORKER_POOL_MODE=stateless`;
+  every legacy path is untouched when it is not.
+- noVNC ticket (`<exp>.<worker>.<hmac>`) with the ticket inside the `path=`
+  parameter, so the WebSocket — not just the page — is authorised.
+- `stopOTPWorker` is skipped in pool mode: pausing a shared microVM to release one
+  account's OTP would take out the next account's worker.
+- `MaxCallbackBytes` 64 KiB → 2 MiB; the callback now carries the rotated
+  `storageState` plus a ≤1 MiB JPEG, uploaded to MinIO by the API (the worker has
+  no bucket credentials and no durable disk).
+- `AccountsByRegion` groups by `account.location` over the WHOLE fleet (the old
+  read stopped at 200 of 486).
+
+**Worker (TS)**
+- `transport/rpc-server.ts`: `/healthz`, `/internal/verify-ticket` (204/403),
+  and the secret-gated machine routes; 409 while busy; body cap 2 MiB; nothing
+  logged from a payload.
+- `newAccountContext` takes `{storageState, geolocation, timezoneId, proxy, userAgent}`;
+  locale is `id-ID`.
+- Controller returns `updatedSession` + `screenshotJpegB64` and deletes the local
+  JPEG; stateless jitter is `[0, 0]` (pacing is the hub's job).
+- `index.ts` splits: stateless LISTENS (no heartbeat, no claim, no BLPOP),
+  legacy keeps the pull loop.
+- Login builds its context from the dispatch and writes no `/data/sessions` file.
+
+**Web**
+- City on Account/CreateAccount/CSV import (4th field), `POST /api/accounts/{id}/live-view`,
+  ticketed live view (URL used verbatim so the signature survives), city column +
+  idle/lease column on Accounts, pool summary on Workers.
+
+**Verified**
+- `make ci` green (pnpm lint/typecheck/build/test, go vet/build/test, doc links).
+- `000024` up → down → up on a disposable Postgres.
+- Repository tests cover the lease invariants, `endpoint_url` through the manual
+  scan path, the by-name pool upsert, and the session write-back upsert.
+- Local end-to-end (real API in `stateless` + real worker RPC): worker row seeded
+  with its endpoint, 12-account import spread across 10 cities with correct
+  WIB/WITA zones, `by-region` returned all 13, live view returned 409 until the
+  worker had a noVNC URL, then leased the worker; `/internal/browser-open` and
+  `/internal/start-login` reached the worker and were refused only by the missing
+  Chromium binary on this Mac. Ticket accepted 204 by the worker, 403 for a
+  wrong-worker and for an expired one.
+- Not exercised locally: a real Playwright action and its callback (needs a
+  browser install), which is the E2E matrix of Stage B.
+
 ## Login status sync — 2026-11-04
 
 **DONE (reconciliation/display), login validation still open.** Reconciled 59
@@ -32,7 +99,7 @@ release sign-off.
   accounts loaded, one worker healthy with successful heartbeat. No Instagram
   login or five-worker runtime load test performed.
 - API runs as locally built Docker image; dashboard runs Next.js on host.
-  Reproduction notes: `docs/LOCAL_RUNTIME_2026-11-03.md`.
+  Reproduction notes: `LOCAL_RUNTIME_2026-11-03.md`.
 - Prior Go config/service/server and capacity tests passed. Worker build passed;
   worker suite still has failing credential-autofill tests. See audit for open
   idle/busy scheduling and readiness concerns.
@@ -100,7 +167,7 @@ release sign-off.
 | P3-07 | Sequential controller | DONE | `b496ce9` | 2026-09 | The controller already implemented the sequential contract; the missing piece was a test proving the two AC. AC "Concurrency=1": asserted as strict event alternation (`open:0, close:0, open:1, close:1`) — a second job's context cannot open before the first closed. AC "isolasi cookie antar task": every job gets a fresh context (one open per job, three distinct ids) and none leaks between jobs because close runs in `finally`. The `finally` is also proven against a throw (the instagram stub throws inside `comment()` after the context opened). Note the layering: concurrency=1 is owned by the BLPOP loop in `index.ts` (sequential `await` in `for(;;)`, guarded by `loopRunning`), the controller owns per-job isolation |
 | P3-03 | Ban-word detector | DONE | `13c7559` | 2026-09 | `domain.CompileBanned`/`MatchBanned` turn the per-template denylist into compiled regexes (a literal word is a valid regex, so the common case is free) with `(?i)` case-insensitivity applied to the _pattern_, not by lowercasing the text — lowercasing only the text breaks uppercase patterns. `CommentTemplate.Validate()` compile-checks every entry on write and returns `ErrValidation` inline (a 400, not a 500). `TemplateService.Pick` is now pick → render → screen and returns `ErrBannedPattern` when the rendered comment trips the denylist, so the only text a worker ever receives is already safe to post. The scheduler composes text before the gates so a banned pick never burns a cooldown or a rate-budget slot. |
 | P3-13 | Action UI (queue + pool) | DONE | `3b89217` | 2026-09 | BE: `ActionService.Enqueue` (batch cap 50, all-or-nothing validation, SSRF allowlist — http/https + host only, no blocklist to drift; account packability; target upserted from the pasted permalink; PENDING job) and `List` (newest-first, latest attempt verdict per job via one batched `LatestActionLogsByJobs` — a page is 2 queries, not N+1). `TemplateService` gained CRUD with denylist compile-check on write. Handlers registered under `/api`; `main.go` hoists one template instance shared by the scheduler composer and the CRUD handler, so a pool edit reaches dispatch without a restart. 12 enqueue/list tests green. FE: `/actions` (enqueue form — account + type + one URL per line, client-side batch cap; queue table with status filter, verdict = rendered text or `errorClass: error`, attempt count; polls while open — there is no action SSE frame yet) and `/templates` (variant CRUD: platform, body, `{topic}` vars, weight, banned words, active/paused). Comment text is never typed in the UI — by design (ERD has no text column on action_job; `rendered_text` lives on the attempt). |
-| P3-15    | Location grouping + comment intensity | DONE | `6b660f3` | 2026-10 | The New-Action account list is grouped by the worker's location (city, region fallback, unassigned last) via the existing `GET /api/accounts/by-region` — a fetch failure keeps the flat list, so grouping never blocks enqueueing. `POST /api/scrape/comments/generate` accepts `intensity` (soft/medium/bold; empty = medium, unknown = 400): the level only steers the LLM prompt, the denylist screen and length cap apply to every level, and medium is byte-identical to the pre-intensity prompt. 3 generator tests pin the prompt shaping + validation; FE segmented control next to the AI-mode select. Plan: `docs/superpowers/plans/2026-10-05-actions-location-grouping-intensity.md`                                                                                                        |
+| P3-15    | Location grouping + comment intensity | DONE | `6b660f3` | 2026-10 | The New-Action account list is grouped by the worker's location (city, region fallback, unassigned last) via the existing `GET /api/accounts/by-region` — a fetch failure keeps the flat list, so grouping never blocks enqueueing. `POST /api/scrape/comments/generate` accepts `intensity` (soft/medium/bold; empty = medium, unknown = 400): the level only steers the LLM prompt, the denylist screen and length cap apply to every level, and medium is byte-identical to the pre-intensity prompt. 3 generator tests pin the prompt shaping + validation; FE segmented control next to the AI-mode select. Plan: `superpowers/plans/2026-10-05-actions-location-grouping-intensity.md`                                                                                                        |
 | P3-16 | AI generate token budget scales with count | DONE | `cebea91` | 2026-10 | `POST /api/scrape/comments/generate` 502'd on any batch of ~3+ drafts: the LLM client sent a flat `max_tokens: 1500`, but the gateway fronts a REASONING model that spends its thinking before the answer, and the thinking grows with the requested variant count (measured ~300 for one, up to ~2000 for ten). For `count >= 3` the flat budget ran out inside the thinking, the completion came back `content: null` / `finish_reason: "length"`, and the request surfaced as a 502 "scrape failed" (or a 200 with a truncated comment when a sliver survived). The budget is now sized per request in the service — `500 + 300 × count`, clamped to 16000 — and passed through the `LLMCompleter` port; the adapter keeps a hard cap (16384, the gateway's largest accepted value) as a caller-bug guard only. A ceiling costs nothing for small counts (the model stops early). Verified live: the user's exact `count:10` request that 502'd now returns 10 distinct bold/counter drafts in ~30s. |
 | P3-17 | LLM model → Claude Haiku + SSE reassembly | DONE | `b51e449` | 2026-10 | `POST /api/scrape/comments/generate` took ~30s for 10 drafts because `nexa/glm-5.3-flash` still spends a reasoning pass before the answer. Switched to `nexa/claude-haiku-4.5` (Claude Code-style: answers directly, no thinking preamble) — measured 8.1s for the same 10-draft prompt vs 30s, equivalent output. The gateway streams this model as a real SSE event stream even for a non-streaming request, so the LLM client now detects the `data: ` shape and reassembles the delta content across events, stripping inline `<thinking>…</thinking>` blocks a reasoning model can leak into the answer. The single-JSON path (glm, SSE-trailing gateways) is unchanged. 3 new tests pin the SSE parse, the thinking strip, and the event-less-stream error. |
 | P3-18 | AI generate length picker + intensity slider + human-like drafts | DONE | `3d9ac54` | 2026-10 | `POST /api/scrape/comments/generate` now takes `intensity` as a 1-5 int (0 = default 3; out of range = 400) and `length` as short/medium/long (empty = medium; unknown = 400). The dashboard replaces the three soft/medium/bold buttons with a Short/Medium/Long select and a 1-5 slider (Gentle → Sharp) with a live value label. The prompt asks for human-like phrasing: varied openings so no two candidates start the same way, and everyday Indonesian abbreviations / light slang where they fit. `CommentIntensity` is now an int type; `CommentLength` is a new string type; both steer the prompt only (denylist + length cap unchanged). Tests pin the 1/2 vs 4/5 vs middle prompt shaping, the length instructions, the default shape, and both 400 paths. |

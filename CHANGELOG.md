@@ -6,6 +6,28 @@
 
 ## Unreleased
 ### Added
+- **YouTube comments now run end to end, on Shorts and watch pages.** The
+  worker opens the video, waits for the "View N comments" control (Shorts does
+  not render a comment box until it is clicked), scopes the composer to the
+  newly created comment row, and verifies the typed text before submitting.
+  A verification/challenge page reloads once instead of silently posting
+  nothing; the run fails with the observed URL when the composer never
+  appears. The API accepts YouTube as an action target and the Actions form
+  exposes the URL shape. Only **top-level comments** are supported: the Apify
+  actor returns video metadata, not comment bodies.
+- **Bulk `Retry failed` in the Actions page.** It retries every FAILED action
+  on the current page (not one row at a time), reusing the original text for
+  24h, then the AI-generated text, and regenerating only when both expired.
+  The button reports retried/skipped counts, and failed retries retain their
+  reason.
+- **Stored posts no longer trigger a paid re-scrape from the action picker.**
+  Selecting an already-scraped post fills the target from the stored row;
+  comments are still fetched when the target is a comment.
+- **YouTube scrape actor switched to `streamers/youtube-scraper`** for both
+  keyword search and on-demand post scrape. Its input uses
+  `searchQueries`/`maxResults`/`dateFilter`; the parser normalizes the video
+  row and keeps the exact window in the ingestor. The retired `apidojo`
+  fields are not sent.
 - **Elastic worker pool: the fleet is now sized for concurrency, not for the
   number of accounts.** A worker container holds a headful Chromium for as long
   as it runs (~85 MiB idle, up to ~460 MiB after a session, 4 GiB limit for the
@@ -67,6 +89,33 @@
   Actions card).
 
 ### Fixed
+- **YouTube comment actions failed on live Shorts and watch pages.** The
+  "View N comments" selector was wrong, the editor lost focus after the first
+  keystroke (leaving only a prefix), and the nav budget was shorter than the
+  real page load. The worker now clicks the comments control, types in the
+  focused contenteditable, asserts the full text, and allows 90s for
+  navigation + 45s for the composer. A checkpoint reload is retried once.
+- **Instagram comment/reply retries were not idempotent.** The Indonesian
+  composer selectors (`Kirim`, `Balas`) and verification page were not
+  matched, so a retry could navigate away from a comment that had already
+  posted. Selectors now cover the Indonesian UI, the verification reload
+  keeps the run on the same action, and a retry detects the existing comment
+  before typing again.
+- **Manual retry of a FAILED action 404'd.** The API wrote the human-readable
+  status while the retry filter compared the enum spelling, and the wire
+  values had drifted. Status casing is now normalized at the boundary
+  (`FAILED`, `RUNNING`, …) and the UI renders labels without changing the
+  contract; retry accepts the same FAILED rows the list shows.
+- **A refused action no longer consumes a rate-limit token.** The limiter
+  returned `allowed=false` but still recorded the hit, so repeated refusals
+  could exhaust the window; the token is now returned when the action is not
+  dispatched, and the retry path is covered by tests.
+- **The worker live-view modal could block for 120s.** Opening the modal
+  waited on a `/healthz` probe even after the iframe was ready; it now opens
+  immediately and falls back to the probe only when the noVNC URL is absent.
+- **AI model routing pointed at `nexa`, which is no longer available.** The
+  comment generator now routes to the configured `rvr` model, so generated
+  replies and the 503 path are exercised against a live model.
 - **The worker fleet can no longer outgrow its host: a paused row no longer
   boots a container, and creates are hard-capped.** Live incident: 77 worker
   containers ran on a 16 GiB box until the kernel OOM-killed `postgres` and

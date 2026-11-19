@@ -74,7 +74,7 @@
 ## Fase 1 — Migrasi Database (`000024`), Domain Model, & Layer `sqlc`
 *Referensi: [`02-DATABASE-AND-DATA-MIGRATION.md`](./02-DATABASE-AND-DATA-MIGRATION.md) §2–§5*
 
-- [ ] **T1.1 — Buat File Migrasi `000024_stateless_worker_pool.{up,down}.sql`**
+- [x] **T1.1 — Buat File Migrasi `000024_stateless_worker_pool.{up,down}.sql`**
   - **File Baru:**
     - `apps/api/db/migrations/000024_stateless_worker_pool.up.sql`
     - `apps/api/db/migrations/000024_stateless_worker_pool.down.sql`
@@ -90,7 +90,7 @@
     9. `DROP INDEX IF EXISTS account_refresh_due_idx;` lalu buat ulang tanpa syarat `AND worker_id IS NOT NULL` (tambahkan `AND worker_id IS NULL` agar sinkron penuh dengan query `ListAccountsDueForRefresh`).
   - **Spesifikasi `down.sql`:** Kebalikan bersih sesuai spesifikasi di [`02-DATABASE-AND-DATA-MIGRATION.md`](./02-DATABASE-AND-DATA-MIGRATION.md) §2.2.
 
-- [ ] **T1.2 — Perbarui Query SQL Akun (`apps/api/db/queries/account.sql`)**
+- [x] **T1.2 — Perbarui Query SQL Akun (`apps/api/db/queries/account.sql`)**
   - **File Modifikasi:** `apps/api/db/queries/account.sql`
   - **Spesifikasi:**
     1. Sertakan `location, latitude, longitude, timezone, user_agent` pada `GetAccountByID`, `ListAccounts`, `CreateAccount`, `UpdateAccount`, `AssignAccount`, `UnassignAccount`, `ListAccountsByWorker`, dan `ListStaleLoginAttempts`.
@@ -101,7 +101,7 @@
        - `ReleaseAccountWorkerLease :exec` (`UPDATE account SET worker_id = NULL WHERE id = $1 AND worker_id = $2`)
        - `ListUnlocatedAccounts :many` (`SELECT ... FROM account WHERE location IS NULL ORDER BY created_at ASC LIMIT $1`)
 
-- [ ] **T1.3 — Perbarui Query SQL Session & Worker (`account_session.sql` & `worker.sql`)**
+- [x] **T1.3 — Perbarui Query SQL Session & Worker (`account_session.sql` & `worker.sql`)**
   - **File Modifikasi:**
     - `apps/api/db/queries/account_session.sql`
     - `apps/api/db/queries/worker.sql`
@@ -109,11 +109,11 @@
     1. Di `account_session.sql`: tambahkan `RefreshAccountSessionState :exec` (upsert `storage_state` + `last_used_at = now()`, gunakan `COALESCE(EXCLUDED.expires_at, account_session.expires_at)` agar tidak menghapus jadwal expiry yang sudah ada).
     2. Di `worker.sql`: sertakan `endpoint_url` pada `CreateWorker` dan `UpdateWorker`; tambahkan `UpsertPoolWorkerByName :one` (`INSERT INTO worker (...) VALUES (...) ON CONFLICT (name) DO UPDATE SET endpoint_url = EXCLUDED.endpoint_url, novnc_service = EXCLUDED.novnc_service, desired_state = 'RUNNING', source = 'MANUAL' RETURNING *`).
 
-- [ ] **T1.4 — Regenerasi Kode `sqlc`**
+- [x] **T1.4 — Regenerasi Kode `sqlc`**
   - **Aksi:** Jalankan `make sqlc` dari root workspace.
   - **Kriteria Lulus:** `apps/api/internal/repository/sqlcgen/*` ter-update tanpa error kompilasi SQL.
 
-- [ ] **T1.5 — Perbarui Domain, Port Store, Repository Mappers, & Fake Stores**
+- [x] **T1.5 — Perbarui Domain, Port Store, Repository Mappers, & Fake Stores**
   - **File Modifikasi:**
     - `apps/api/internal/domain/location.go` -> tambah `TimezoneForCity(name string) string` dan konstanta `DefaultDesktopUserAgent`.
     - `apps/api/internal/domain/worker.go` *(catatan: struct `Account` dan `Worker` keduanya berada di `domain/worker.go`, sedangkan `domain/account.go` berisi enum status)* -> tambah `Location *string`, `Latitude *float64`, `Longitude *float64`, `Timezone string`, `UserAgent *string` pada `Account`, serta `EndpointURL *string` pada `Worker`.
@@ -128,7 +128,7 @@
       - `apps/api/internal/service/packer_test.go` (`fakeAccountStore`)
       - `apps/api/internal/service/account_session_test.go` (`fakeSessionStore`)
 
-- [ ] **T1.6 — Pengujian Integrasi Repository & Migrasi `000024`**
+- [x] **T1.6 — Pengujian Integrasi Repository & Migrasi `000024`**
   - **File Modifikasi:** `apps/api/internal/repository/repo_test.go`, `apps/api/internal/repository/account_pending_test.go`
   - **Catatan DB Uji:** `repo_test.go` mewajibkan `SMM_TEST_DB=1` dan `DATABASE_URL` yang menunjuk ke database disposable yang namanya mengandung `"test"` (mis. buat DB sementara `smm_test_pool` di container Postgres lokal, jalankan migrasi `000001..000024` ke sana, jangan pernah mengarahkan `SMM_TEST_DB=1` ke DB utama `smm`).
   - **Skenario Uji:**
@@ -142,7 +142,7 @@
 ## Fase 2 — Backend Go API: HTTPS Push RPC, Lock/Lease, Tiket noVNC, & Perbaikan Service
 *Referensi: [`03-BACKEND-API-AND-ORCHESTRATION.md`](./03-BACKEND-API-AND-ORCHESTRATION.md) §2–§6*
 
-- [ ] **T2.1 — Konfigurasi Environment Pool (`internal/config/config.go`)**
+- [x] **T2.1 — Konfigurasi Environment Pool (`internal/config/config.go`)**
   - **File Modifikasi:** `apps/api/internal/config/config.go`, `apps/api/internal/config/config_test.go`
   - **Spesifikasi:** Tambahkan pembacaan env:
     - `WORKER_POOL_MODE` (`"stateless"` | `"legacy"`, default `"stateless"`)
@@ -152,13 +152,13 @@
     - `ACCOUNT_LOCK_TTL_SECONDS` (`int`, default `300`)
     - `WORKER_LEASE_TTL_SECONDS` (`int`, default `660`)
 
-- [ ] **T2.2 — Buat Kontrak Port `WorkerRPCClient` & `PoolCoordinator` (`internal/port/`)**
+- [x] **T2.2 — Buat Kontrak Port `WorkerRPCClient` & `PoolCoordinator` (`internal/port/`)**
   - **File Baru:**
     - `apps/api/internal/port/worker_rpc.go` (`WorkerRPCClient`, `AccountRuntimeSpec`, `ExecuteActionRequest`, `GeoPoint`, `ProxySpec`, `LoginCreds`)
     - `apps/api/internal/port/pool.go` (`AccountExecutionLock`, `WorkerSlotCoordinator`, `SlotKind`: `SlotAction` | `SlotAuthLease`)
   - **Cek Layer:** Pastikan hanya mengimpor `context`, `encoding/json`, `time`, dan `internal/domain`.
 
-- [ ] **T2.3 — Implementasi Adapter Redis Lock & Affinity Slot Coordinator**
+- [x] **T2.3 — Implementasi Adapter Redis Lock & Affinity Slot Coordinator**
   - **File Baru:** `apps/api/internal/adapter/pool_lock.go`, `apps/api/internal/adapter/pool_lock_test.go`
   - **Spesifikasi:**
     1. `AcquireAccount(ctx, accountID, token, ttl)` memakai `SET smm:lock:account:<id> <token> NX EX <ttl>`. `ReleaseAccount` menghapus kunci secara aman (Lua compare-and-delete atau key delete).
@@ -168,7 +168,7 @@
        - Jika sibuk dan `allowFallback == true`, putar ke kandidat berikutnya hingga dapat yang bebas; jika semua penuh kembalikan `domain.ErrUnavailable`.
        - Worker yang sedang memegang `SlotAuthLease` (login/CAPTCHA operator di noVNC) **tidak akan pernah** diambil oleh `SlotAction`!
 
-- [ ] **T2.4 — Implementasi Adapter HTTPS Push `workerrpc`**
+- [x] **T2.4 — Implementasi Adapter HTTPS Push `workerrpc`**
   - **File Baru:** `apps/api/internal/adapter/workerrpc/client.go`, `apps/api/internal/adapter/workerrpc/client_test.go`
   - **Spesifikasi:**
     - Mengimplementasikan `port.WorkerRPCClient` via `net/http` (`DialContext` timeout `10s` untuk mengakomodasi cold-wake `±85 ms` `boxd`, total timeout `30s`).
@@ -176,26 +176,26 @@
     - Memetakan HTTP `409` dari worker menjadi `domain.ErrConflict` (worker busy), `401` menjadi `domain.ErrUnauthorized`, `5xx`/network menjadi retryable error.
     - **Dilarang me-log payload request.**
 
-- [ ] **T2.5 — Perluas `proxyresolver` untuk Per-Account Sticky Proxy**
+- [x] **T2.5 — Perluas `proxyresolver` untuk Per-Account Sticky Proxy**
   - **File Modifikasi:** `apps/api/internal/adapter/proxyresolver/resolver.go`, `apps/api/internal/adapter/proxyresolver/resolver_test.go`
   - **Spesifikasi:**
     1. Tambahkan metode `ForAccount(ctx context.Context, accountID string, proxyGroupID *string) (*port.ProxySpec, error)` (menggunakan `GetProxyGroupByID`).
     2. Substitusi otomatis placeholder `{account_id}` atau `{session}` di dalam `username` proxy menjadi 12 karakter alfanumerik dari `accountID` (tanpa `-`).
     3. Validasi keras: jika `scheme == "socks5"` **dan** memiliki `username != ""` atau `password != ""`, kembalikan error eksplisit (`"socks5 proxy with authentication is not supported by Chromium BrowserContext; use http:// or https://"`).
 
-- [ ] **T2.6 — Buat Generator & Validator Tiket HMAC noVNC**
+- [x] **T2.6 — Buat Generator & Validator Tiket HMAC noVNC**
   - **File Baru:** `apps/api/internal/service/novnc_ticket.go`, `apps/api/internal/service/novnc_ticket_test.go`
   - **Spesifikasi:**
     - `SignLiveViewTicket(secret, workerName string, expiresAt time.Time) (string, error)` -> menghasilkan `<expUnix>.<workerName>.<hex(HMAC_SHA256(secret, expUnix + ":" + workerName))>`.
     - `BuildProtectedNoVNCURL(baseNoVNCURL, ticket string) string` -> menghasilkan URL lengkap `vnc.html` dengan parameter `path=novnc/websockify?ticket=<ticket>`.
 
-- [ ] **T2.7 — Buat `PoolBootstrapper` Service (`internal/service/pool_bootstrapper.go`)**
+- [x] **T2.7 — Buat `PoolBootstrapper` Service (`internal/service/pool_bootstrapper.go`)**
   - **File Baru:** `apps/api/internal/service/pool_bootstrapper.go`, `apps/api/internal/service/pool_bootstrapper_test.go`
   - **Spesifikasi:**
     1. `BackfillAccounts(ctx)`: mencari semua baris `account` dengan `location IS NULL` (`ListUnlocated`), memilih kota dari `domain.Cities` secara deterministik (`fnv32a(account.ID) % len(domain.Cities)`), menghitung titik `RandomPoint` dengan seed deterministik dari UUID akun, mengisi `TimezoneForCity`, dan `DefaultDesktopUserAgent`.
     2. `EnsurePoolWorkers(ctx, endpoints []PoolWorkerDef)`: melakukan `UpsertPoolWorker` untuk ke-10 worker utama (`smm-worker-01..10`) dan menandai baris worker warisan `source = AUTO` yang lama sebagai `STOPPED` bila tidak terpakai.
 
-- [ ] **T2.8 — Refactor `ActionScheduler` untuk Mode Stateless Push**
+- [x] **T2.8 — Refactor `ActionScheduler` untuk Mode Stateless Push**
   - **File Modifikasi:** `apps/api/internal/service/action_scheduler.go`, `apps/api/internal/service/action_scheduler_test.go`
   - **Spesifikasi pada `WORKER_POOL_MODE == "stateless"`:**
     1. Hapus penolakan `acc.WorkerID == nil` (`action_scheduler.go:251`).
@@ -205,7 +205,7 @@
     5. Akuisisi `WorkerSlotCoordinator.AcquireWorkerSlot` -> jika 10 worker penuh, lepas `AccountExecutionLock` dan `reschedule` 5 detik ke depan.
     6. Unseal `account_session.storage_state` di RAM, panggil `sessions.Touch(ctx, acc.ID)`, lalu panggil `workerRPC.ExecuteAction` ke `worker.EndpointURL`! Jika gagal kirim, lepas slot + lock lalu `reschedule`.
 
-- [ ] **T2.9 — Refactor `JobService`: Session Write-Back, Inline Screenshot Upload, & Fix `stopOTPWorker`**
+- [x] **T2.9 — Refactor `JobService`: Session Write-Back, Inline Screenshot Upload, & Fix `stopOTPWorker`**
   - **File Modifikasi:** `apps/api/internal/service/job.go`, `apps/api/internal/service/job_otp_test.go`, `apps/api/internal/service/job_test.go`
   - **Spesifikasi:**
     1. Pada `AttemptRecord` & `RecordAttempt`:
@@ -218,7 +218,7 @@
        - Saat `o.AuthStatus` adalah `AuthAuthenticated` atau `AuthFailed`: panggil `accounts.ReleaseLease(ctx, acc.ID, workerID)`, `workerSlots.ReleaseWorkerSlot`, dan `workerRPC.ClearAuth(ctx, endpointURL, acc.ID)`.
        - Saat `o.AuthStatus` adalah `AuthNeedsInput`: jalankan keepalive goroutine ber-context yang memanggil `workerRPC.PingKeepalive` tiap `120 detik` selama akun masih `NEEDS_INPUT` di worker tersebut (maks 10 menit) agar VM `boxd` tidak tertidur saat operator mengambil OTP/menyelesaikan CAPTCHA.
 
-- [ ] **T2.10 — Refactor `AccountService`, `SessionRefresher`, & `InternalHandler` (`2 MiB` Limit)**
+- [x] **T2.10 — Refactor `AccountService`, `SessionRefresher`, & `InternalHandler` (`2 MiB` Limit)**
   - **File Modifikasi:**
     - `apps/api/internal/service/account.go` (+ `account_test.go`, `account_region_test.go`, `account_session_test.go`)
     - `apps/api/internal/service/session_refresh.go` (+ `session_refresh_test.go`)
@@ -229,7 +229,7 @@
     3. `AccountService.AccountsByRegion`: ganti pembacaan `Limit: 200` + join `worker.Location` menjadi pembacaan seluruh akun (`listAllAccounts`) yang dikelompokkan langsung berdasarkan `account.Location`!
     4. `InternalHandler` (`internal.go:23`): naikkan `MaxCallbackBytes` dari `64 << 10` menjadi **`2 << 20` (`2 MiB`)**, dan hubungkan field `updated_session` serta `screenshot_jpeg_b64` (dekode base64 dengan batas maks `1 MiB` untuk JPEG).
 
-- [ ] **T2.11 — Wiring Dependency Injection di `cmd/server/main.go`**
+- [x] **T2.11 — Wiring Dependency Injection di `cmd/server/main.go`**
   - **File Modifikasi:** `apps/api/cmd/server/main.go`
   - **Spesifikasi:** Rakit `workerrpc.NewClient`, `adapter.NewPoolLock`, `PoolBootstrapper` (dijalankan saat startup ketika `cfg.WorkerPoolMode == "stateless"`), tiket noVNC, dan teruskan ke `AccountService`, `ActionScheduler`, `SessionRefresher`, dan `JobService`. Pastikan saat `cfg.WorkerPoolMode == "stateless"`, `ElasticPool` pause loop tidak mematikan worker pool.
   - **Gate Fase 2:** `make fmt-check && cd apps/api && go test ./internal/arch/... && go vet ./... && go test ./...` -> `PASS 100%`.
@@ -239,20 +239,20 @@
 ## Fase 3 — Refactor Stateless TypeScript Worker (`apps/worker/`)
 *Referensi: [`04-WORKER-AND-FRONTEND-IMPLEMENTATION.md`](./04-WORKER-AND-FRONTEND-IMPLEMENTATION.md) §1*
 
-- [ ] **T3.1 — Perbarui Tipe & Konfigurasi Worker (`types.ts` & `core/config.ts`)**
+- [x] **T3.1 — Perbarui Tipe & Konfigurasi Worker (`types.ts` & `core/config.ts`)**
   - **File Modifikasi:** `apps/worker/src/types.ts`, `apps/worker/src/core/config.ts`
   - **Spesifikasi:**
     - Tambahkan tipe `AccountRuntimeSpec` (`accountId`, `platform`, `storageState?`, `credentials?`, `geolocation?`, `timezone`, `userAgent?`, `proxy?`).
     - Perluas `ActionResult` dengan `updatedSession?: unknown` dan `screenshotJpegB64?: string`.
     - Tambahkan konfigurasi `poolMode` (`WORKER_POOL_MODE`, default `'stateless'`), `rpcHost` (`WORKER_RPC_HOST`, default `'0.0.0.0'`), `rpcPort` (`WORKER_RPC_PORT`, default `8090`).
 
-- [ ] **T3.2 — Injeksi Per-Context Proxy, Timezone, GPS, & StorageState (`core/browser.ts`)**
+- [x] **T3.2 — Injeksi Per-Context Proxy, Timezone, GPS, & StorageState (`core/browser.ts`)**
   - **File Modifikasi:** `apps/worker/src/core/browser.ts`
   - **Spesifikasi:**
     - Perbarui `newAccountContext` agar menerima `AccountContextInit` (`platform`, `storageState`, `geolocation`, `timezoneId`, `proxy`, `userAgent`) sambil tetap mempertahankan overload/kompatibilitas bila dipanggil dari test lama.
     - Teruskan `timezoneId: init.timezoneId || 'Asia/Jakarta'`, `locale: 'id-ID'`, `userAgent`, `storageState`, dan `proxy` langsung ke `browser.newContext(...)`, diikuti `await pinGeolocation(ctx, init.geolocation)`.
 
-- [ ] **T3.3 — Session Write-Back, Base64 Evidence Cleanup, & Zero Jitter Sleep (`core/controller.ts` & `transport/callback.ts`)**
+- [x] **T3.3 — Session Write-Back, Base64 Evidence Cleanup, & Zero Jitter Sleep (`core/controller.ts` & `transport/callback.ts`)**
   - **File Modifikasi:** `apps/worker/src/core/controller.ts`, `apps/worker/src/transport/callback.ts`
   - **Spesifikasi:**
     1. Di `controller.ts`: setelah `dispatch(adapter, ctx, job)`, jika `result.ok === true`, ambil `updatedSession = await ctx.storageState().catch(() => undefined)`.
@@ -260,14 +260,14 @@
     3. Pada mode `stateless`, set `jitterRangeMs` ke `[0, 0]` (jeda antar-aksi sudah diatur scheduler `smm-hub`, sehingga microVM worker bebas langsung tidur setelah `ctx.close()`).
     4. Di `callback.ts`: kirim `updated_session` dan `screenshot_jpeg_b64` ke `/internal/action-callback` tanpa pernah mencetak isinya ke log.
 
-- [ ] **T3.4 — Refactor Login Stateless & Isolasi `manualSession` (`core/auth.ts`)**
+- [x] **T3.4 — Refactor Login Stateless & Isolasi `manualSession` (`core/auth.ts`)**
   - **File Modifikasi:** `apps/worker/src/core/auth.ts`
   - **Spesifikasi:**
     - `runLogin` menerima `runtime: AccountRuntimeSpec` langsung di memori (tidak membaca/menulis `/data/sessions/session-<platform>.json` pada mode `stateless`).
     - Jika `runtime.storageState` tersedia, hidrasi ke `newAccountContext` terlebih dahulu: bila `probeSession` langsung `proven`, segera laporkan `verified` tanpa mengetik ulang form login!
     - Saat login baru berhasil (`proven`), panggil `await ctx.storageState()` -> kirim melalui `onSession` ke `/internal/session-export` (`requestId = 'login-success'`) -> tutup context.
 
-- [ ] **T3.5 — Buat HTTP RPC Server & Verifikator Tiket noVNC (`transport/rpc-server.ts` & `index.ts`)**
+- [x] **T3.5 — Buat HTTP RPC Server & Verifikator Tiket noVNC (`transport/rpc-server.ts` & `index.ts`)**
   - **File Baru:** `apps/worker/src/transport/rpc-server.ts`
   - **File Modifikasi:** `apps/worker/src/index.ts`
   - **Spesifikasi `rpc-server.ts` (`node:http`):**
@@ -281,7 +281,7 @@
        - `POST /internal/browser-open`: tutup `manualSession` lama jika milik akun berbeda, buka `newAccountContext` dengan `runtime` akun baru, navigasi ke `targetUrl`, balas `200`.
     4. Di `index.ts`: ketika `config.poolMode === 'stateless'`, jalankan `rpcServer.listen(config.rpcPort, config.rpcHost)` dan **matikan** loop `heartbeat.start()`, `claimRow()`, serta `queue.next()` Redis agar worker 100% tenang saat tidak ada tugas (siap `auto-suspend` di `boxd`!).
 
-- [ ] **T3.6 — Unit & Context-Isolation Tests Worker**
+- [x] **T3.6 — Unit & Context-Isolation Tests Worker**
   - **File Baru:** `apps/worker/src/test/rpc-server.test.ts`
   - **File Modifikasi:** `apps/worker/src/test/auth.test.ts`
   - **Skenario Uji:**
@@ -295,7 +295,7 @@
 ## Fase 4 — Kontrak OpenAPI, `@smm/shared`, & Next.js Dashboard (`apps/web/`)
 *Referensi: [`04-WORKER-AND-FRONTEND-IMPLEMENTATION.md`](./04-WORKER-AND-FRONTEND-IMPLEMENTATION.md) §2–§3*
 
-- [ ] **T4.1 — Perbarui `openapi/openapi.yaml` & Jalankan Codegen**
+- [x] **T4.1 — Perbarui `openapi/openapi.yaml` & Jalankan Codegen**
   - **File Modifikasi:** `openapi/openapi.yaml`
   - **Spesifikasi:**
     1. Tambah `location` (`string`, nullable), `latitude` (`number`, nullable), `longitude` (`number`, nullable), dan `timezone` (`string`) pada schema `Account`.
@@ -304,11 +304,11 @@
     4. Tambah `updated_session` (`object`, opsional) dan `screenshot_jpeg_b64` (`string`, opsional) pada schema `ActionCallback`.
   - **Aksi Codegen:** Jalankan `make generate && pnpm --filter @smm/shared build`.
 
-- [ ] **T4.2 — Hubungkan Handler HTTP Go ke Tipe `oapigen` Baru**
+- [x] **T4.2 — Hubungkan Handler HTTP Go ke Tipe `oapigen` Baru**
   - **File Modifikasi:** `apps/api/internal/http/account.go`, `apps/api/internal/http/internal.go`, `apps/api/internal/http/router.go`
   - **Spesifikasi:** Petakan `Location`, `Latitude`, `Longitude`, `Timezone` di `toAccountResponse`, daftarkan handler `POST /api/accounts/:id/live-view`, dan uji lewat `apps/api/internal/http/*_test.go`.
 
-- [ ] **T4.3 — Perbarui Form Tambah & Import Akun di Dashboard**
+- [x] **T4.3 — Perbarui Form Tambah & Import Akun di Dashboard**
   - **File Modifikasi:**
     - `apps/web/lib/api.ts`
     - `apps/web/components/add-account-dialog.tsx`
@@ -318,7 +318,7 @@
     - Sediakan pilihan **Lokasi Kota** (`Auto (Distribusi Merata)` + daftar kota dari `/api/containers/locations` atau konstanta kota Indonesia) saat membuat/meng-import akun.
     - Hilangkan keharusan memilih container worker saat membuat akun baru.
 
-- [ ] **T4.4 — Perbarui Tabel Akun, Live View Ber-Tiket, & Monitor 10 Worker Utama**
+- [x] **T4.4 — Perbarui Tabel Akun, Live View Ber-Tiket, & Monitor 10 Worker Utama**
   - **File Modifikasi:**
     - `apps/web/app/(dashboard)/accounts/page.tsx`
     - `apps/web/components/account-detail-panel.tsx`
@@ -329,7 +329,7 @@
     2. Saat operator membuka Live View / saat status login `AUTHENTICATING` atau `NEEDS_INPUT`, panggil `api.openAccountLiveView(account.id)` untuk mendapatkan `liveViewUrl` lengkap dengan `?ticket=...` (mendukung `https://` -> `wss://` secara native di `live-view.tsx` tanpa memotong query string `ticket`!).
     3. Pada halaman `/workers`, tampilkan ke-10 worker pool secara bersih lengkap dengan status slot dan indikator mode Stateless Pool.
 
-- [ ] **T4.5 — Parity `compose.yaml` Lokal & Validasi Full CI Monorepo**
+- [x] **T4.5 — Parity `compose.yaml` Lokal & Validasi Full CI Monorepo**
   - **File Modifikasi:** `compose.yaml`, `infra/docker/.env.example`, `apps/web/package.json` (pastikan start standalone menghormati `HOSTNAME=0.0.0.0`).
   - **Gate Fase 4 (AKHIR TAHAP A — WAJIB STOP UNTUK REVIEW USER):** Jalankan **`make ci`** (`pnpm lint`, `pnpm typecheck`, `make fmt-check`, `pnpm build`, `pnpm test`, `go vet ./...`, `go build ./...`, `go test ./...`, dan validasi link docs) -> **WAJIB LULUS 100%**. Setelah hijau, **berhenti dan minta persetujuan eksplisit user** sebelum mengeksekusi **Fase 5–6 (`boxd`)**.
 
