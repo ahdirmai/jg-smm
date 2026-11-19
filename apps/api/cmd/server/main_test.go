@@ -5,6 +5,7 @@ import (
 
 	"github.com/ahdirmai/jg-smm/apps/api/internal/config"
 	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
+	"github.com/ahdirmai/jg-smm/apps/api/internal/service"
 )
 
 // This is the test whose absence let a dead feature ship.
@@ -18,6 +19,24 @@ import (
 //
 // The gap was structural: every test that touched actor resolution used a fake
 // resolver that answered TikTok correctly. Only THIS resolver is production.
+func TestLoginWorkerKeepsExplicitBoxdEndpoint(t *testing.T) {
+	defs := []service.PoolWorkerDef{{
+		Name:     "smm-login-01",
+		RPCURL:   "https://rpc.smm-login-01.boxd.sh",
+		NoVNCURL: "https://smm-login-01.boxd.sh/novnc",
+	}}
+	got := ensureLoginWorker(defs, "smm-login-01")
+	if len(got) != 1 || got[0].RPCURL != "https://rpc.smm-login-01.boxd.sh" {
+		t.Fatalf("explicit login endpoint was overwritten: %+v", got)
+	}
+	if got := ensureLoginWorker(nil, "smm-login-01"); len(got) != 1 || got[0].RPCURL != "http://smm-login-01:8090" {
+		t.Fatalf("missing login endpoint was not seeded: %+v", got)
+	}
+	if got := ensureLoginWorker(nil, ""); len(got) != 0 {
+		t.Fatalf("empty login name seeded a worker: %+v", got)
+	}
+}
+
 func TestSearchActorForPlatformCoversEveryScrapablePlatform(t *testing.T) {
 	cfg := config.Config{
 		ApifySearchActorInstagram: "sasky/instagram-keyword-posts-urls-scraper",

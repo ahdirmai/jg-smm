@@ -102,11 +102,19 @@ func BuildProtectedNoVNCURL(baseURL, ticket string) string {
 	if !strings.HasSuffix(base, "vnc.html") {
 		base += "/vnc.html"
 	}
-	// Paths are ROOT-relative because the worker runs
-	// `websockify --web=/usr/share/novnc <port>`, which serves vnc.html at "/"
-	// and the socket at "/websockify". A "/novnc" base would 404 the page and
-	// the socket alike.
-	wsPath := "/websockify?ticket=" + url.QueryEscape(ticket)
+	// noVNC builds the socket URL as "<scheme>://<host>/" + path, so the path
+	// MUST be relative. A leading slash produced "//websockify" (404 under the
+	// boxd worker's nginx, which gates exactly /novnc/websockify). Keep the
+	// client page's directory as the prefix: a worker mounted at /novnc needs
+	// "novnc/websockify", while a direct websockify root needs "websockify".
+	prefix := ""
+	if u, err := url.Parse(base); err == nil {
+		dir := strings.Trim(strings.TrimSuffix(u.Path, "/vnc.html"), "/")
+		if dir != "" {
+			prefix = dir + "/"
+		}
+	}
+	wsPath := prefix + "websockify?ticket=" + url.QueryEscape(ticket)
 	return base + "?" + noVNCQuery + "&path=" + url.QueryEscape(wsPath)
 }
 

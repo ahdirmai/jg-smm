@@ -244,9 +244,7 @@ func main() {
 			}
 			// The login machine is seeded separately, so it exists even when the
 			// operator listed only action workers.
-			if cfg.LoginWorkerName != "" {
-				defs = append(defs, service.DefaultLoginEndpoint(cfg.LoginWorkerName))
-			}
+			defs = ensureLoginWorker(defs, cfg.LoginWorkerName)
 			if err := bootstrapper.EnsurePoolWorkers(ctx, defs); err != nil {
 				logger.Error("pool bootstrap: workers", "err", err)
 			}
@@ -815,12 +813,12 @@ func actorForPlatform(cfg config.Config) func(domain.Platform) string {
 //
 // Actor picks (verified against the live input schemas, 2026-09):
 //   - Instagram: sasky/instagram-keyword-posts-urls-scraper, which takes
-//     `keywords[]` + `maxPosts` and returns one flat snake_case row per post.
-//     It replaced apify/instagram-scraper (`searchType:hashtag`), and before
-//     that apify/instagram-search-scraper, which resolves a keyword to a *place
-//     or hashtag page* and returns that entity's own top posts (2018-era posts
-//     for a live keyword) — it ignores the keyword unless the field is named
-//     `search`, and its posts are not date-filterable. The runner sends
+//     `keywords[]` + a STRING `limit` and returns post URLs only; each URL is
+//     enriched by the post actor. It replaced crawlerbros/…, whose publisher
+//     was removed from the store (every batch 403'd), and before that
+//     apify/instagram-search-scraper, which resolved a keyword to a *place or
+//     hashtag page* and returned that entity's own top posts (2018-era posts
+//     for a live keyword). The runner sends
 //     `keywords`/`maxPosts`, not the `searchType` spellings; runner_test.go
 //     pins that the old ones are absent.
 //   - Threads: futurizerush/meta-threads-scraper in `mode:search`, which takes
@@ -850,6 +848,24 @@ func actorForPlatform(cfg config.Config) func(domain.Platform) string {
 //     `max_posts`. NOT apify/facebook-posts-scraper, which is far more proven
 //     (115k users) but takes page URLs, not keywords, so it cannot serve a
 //     keyword batch at all.
+//
+// ensureLoginWorker adds the dedicated login machine only when the operator did
+// not already list it. Appending unconditionally overwrote an explicit boxd
+// endpoint with DefaultLoginEndpoint's http://<name>:8090, which does not
+// resolve outside a compose network: the login machine was seeded unreachable
+// and every live view/login dispatch failed after deploy.
+func ensureLoginWorker(defs []service.PoolWorkerDef, name string) []service.PoolWorkerDef {
+	if name == "" {
+		return defs
+	}
+	for _, d := range defs {
+		if d.Name == name {
+			return defs
+		}
+	}
+	return append(defs, service.DefaultLoginEndpoint(name))
+}
+
 func searchActorForPlatform(cfg config.Config) func(domain.Platform) string {
 	return func(p domain.Platform) string {
 		switch p {

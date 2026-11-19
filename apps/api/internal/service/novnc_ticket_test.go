@@ -60,12 +60,16 @@ func TestProtectedNoVNCURLCarriesTicketIntoTheSocketPath(t *testing.T) {
 		t.Fatalf("sign: %v", err)
 	}
 
-	for _, base := range []string{
-		"https://smm-worker-03.boxd.sh",
-		"https://smm-worker-03.boxd.sh/",
-		"https://smm-worker-03.boxd.sh/vnc.html",
+	for _, tc := range []struct {
+		base, path string
+	}{
+		{"https://smm-worker-03.boxd.sh", "websockify?ticket="},
+		{"https://smm-worker-03.boxd.sh/", "websockify?ticket="},
+		{"https://smm-worker-03.boxd.sh/vnc.html", "websockify?ticket="},
+		{"https://smm-worker-03.boxd.sh/novnc", "novnc/websockify?ticket="},
+		{"https://smm-worker-03.boxd.sh/novnc/vnc.html", "novnc/websockify?ticket="},
 	} {
-		got := BuildProtectedNoVNCURL(base, ticket)
+		got := BuildProtectedNoVNCURL(tc.base, ticket)
 		u, err := url.Parse(got)
 		if err != nil {
 			t.Fatalf("parse %q: %v", got, err)
@@ -77,12 +81,12 @@ func TestProtectedNoVNCURLCarriesTicketIntoTheSocketPath(t *testing.T) {
 			t.Fatalf("%q: autoconnect missing", got)
 		}
 		inner := u.Query().Get("path")
-		// Root-relative: the worker serves the client at "/" and the socket at
-		// "/websockify" (websockify --web), so a "novnc/" prefix 404s both.
-		if !strings.HasPrefix(inner, "/websockify?ticket=") {
-			t.Fatalf("%q: socket path does not carry the ticket: %q", got, inner)
+		// noVNC prepends "/" to this value, so it must be relative. A leading
+		// slash became "//websockify", which nginx does not route.
+		if !strings.HasPrefix(inner, tc.path) {
+			t.Fatalf("%q: socket path = %q, want prefix %q", got, inner, tc.path)
 		}
-		innerTicket := strings.TrimPrefix(inner, "/websockify?ticket=")
+		innerTicket := strings.TrimPrefix(inner, tc.path)
 		if innerTicket != ticket {
 			t.Fatalf("%q: ticket mangled by escaping: %q", got, innerTicket)
 		}
