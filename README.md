@@ -1,6 +1,6 @@
 # jg-smm — Social Media Management
 
-Scrape, monitor, and automate actions across social platforms. The MVP covers
+Scrape, review, and automate actions across social platforms. The MVP covers
 Instagram and Threads end to end, plus YouTube top-level comments. The full
 spec set lives in [`docs/`](docs/) (`docs/PRD.md`, `docs/ERD.md`,
 `docs/SYSTEM_DESIGN.md`, ...).
@@ -50,6 +50,13 @@ pending).
 make bootstrap
 make typecheck
 ```
+
+## Local testing
+
+`make up` exposes the dashboard at `http://localhost:24081` and the API at
+`http://localhost:24080` (health: `/healthz`). Seed and sign in with the owner
+credentials from [Auth (local)](#auth-local). Use the local URL, not a bare
+`next dev` on port 3000, unless `CORS_ALLOWED_ORIGINS` includes that origin.
 
 ## Database migrations
 
@@ -197,13 +204,25 @@ shortcode (`is_reply` rows, linked to the requested post).
 Manual, end-to-end run-through of the live stack (containers up, no mocks):
 `docs/MANUAL_TESTING.md`.
 
+### Add account
+
+The Accounts page opens the four-step Add account modal in place: explicit
+Auto/city location, platform (including YouTube), credentials/tags, then review.
+It mirrors `/accounts/new` field for field, but the account list stays visible
+behind it and refreshes on success.
+
 ### Actions queue
 
-The Actions page targets a post or a specific comment. For YouTube, only
-top-level comments are supported: the Apify actor returns the video row, not
-comment bodies, so the target is a Short/watch URL rather than a scraped
-comment row. Selecting a post that is already stored skips the re-scrape; the
-form still fetches comments when the target is a comment.
+The Actions page has three sections: **Create action**, **Scraped posts**, and
+**Job queue**. The queue tab shows the failed-count badge; Retry/Run/Cancel
+controls appear only when the queue has work that can use them.
+
+The page targets a post or a specific comment. For YouTube, only top-level
+comments are supported: the Apify actor returns the video row, not comment
+bodies, so the target is a Short/watch URL rather than a scraped comment row.
+Selecting a post that is already stored skips the re-scrape; the form still
+fetches comments when the target is a comment. Completed and running rows show
+the worker that executed the job when one was recorded.
 
 `Retry failed` retries every FAILED action in the current page, not one row at
 a time. The generated text stays reusable for 24 hours: a retry reuses the

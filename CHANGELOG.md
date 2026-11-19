@@ -33,6 +33,17 @@
   list: explicit location (Auto or a city), every platform including YouTube,
   credentials/tags, and review. The account list stays behind the dialog, and
   a successful add refreshes it without a navigation.
+- **Actions is split into three sections instead of one long page.** Create
+  action, Scraped posts, and Job queue are separate panels; the queue tab
+  carries the failed-count badge. Queue controls appear only when relevant
+  (Retry failed, Run queued, Cancel queued), status labels use operator
+  language, and the action type stays visible on phone rows. The job detail
+  dialog names the executing worker.
+- **UI spacing and surfaces are now one system.** Cards use 20px internal
+  padding, pages use a 20px vertical rhythm, and dialogs, selects, inputs, and
+  native selects share the same radius, boundary, focus ring, and 44px field
+  height. The Actions tabs collapse to a single three-column row at 390px, and
+  audited pages keep zero horizontal overflow.
 - **Job history now records the worker that executed it.** The pooled dispatcher
   writes `action_job.worker_id` after a worker accepts the push, and the callback
   resolves the worker's hostname to its row UUID before writing `action_log`.
