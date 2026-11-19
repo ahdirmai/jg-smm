@@ -3,23 +3,25 @@
 /**
  * Account picker for the action form.
  *
- * The fleet is ~500 rows and only a fraction can act at any moment, so a flat
- * scroll of every account was both endless and wrong: it offered accounts that
- * would fail at enqueue. This picker shows ONLY authenticated accounts, makes
- * search the primary surface, and keeps the selection visible in a sticky
- * summary that survives scrolling.
+ * The fleet can hold hundreds of rows and only a fraction can act at any
+ * moment, so this list shows ONLY authenticated accounts, makes search the
+ * primary surface, and keeps the selected count visible while scrolling.
+ *
+ * The comment editor is a separate component: selection and writing are two
+ * different decisions, and a textarea per selected account turned a 50-account
+ * batch into a wall of forms. `CommentComposer` edits one account at a time and
+ * can copy the current draft to the whole selection.
  */
 
-import { Badge, Button, Input, Textarea } from '@smm/ui';
-import { Search, X } from 'lucide-react';
-import { useMemo } from 'react';
+import { Button, Input, Textarea } from '@smm/ui';
+import { Search } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 
 import type { Account } from '@/lib/api';
 import { useVirtualRowWindow } from '@/lib/hooks/use-virtual-window';
 
-// One row height for every state (collapsed and with a composer): the window
-// math is fixed-height, so a row that grows when selected would desync it.
-// The composer opens in a separate panel instead of inside the row.
+// One row height for every state: the window math is fixed-height, so a row
+// that grows when selected would desync it.
 const ROW_HEIGHT = 40;
 
 export type AccountPickerProps = {
@@ -30,12 +32,7 @@ export type AccountPickerProps = {
   onClear: () => void;
   query: string;
   onQuery: (q: string) => void;
-  /** Comment composers, shown only for the flows that post text. */
-  text: Record<string, string>;
-  onText: (id: string, value: string) => void;
-  textPlaceholder?: string | undefined;
   maxBatch: number;
-  maxTextLen: number;
 };
 
 export function AccountPicker({
@@ -46,11 +43,7 @@ export function AccountPicker({
   onClear,
   query,
   onQuery,
-  text,
-  onText,
-  textPlaceholder,
   maxBatch,
-  maxTextLen,
 }: AccountPickerProps) {
   const selectedIds = useMemo(
     () => accounts.filter((a) => selected[a.id]).map((a) => a.id),
@@ -68,57 +61,67 @@ export function AccountPicker({
   }, [accounts, query]);
 
   const { ref, slice, offset, total } = useAccountWindow(filtered.length);
+  const overCap = selectedIds.length > maxBatch;
 
   return (
     <div className="space-y-2">
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative min-w-0 flex-1">
-          <Search className="pointer-events-none absolute left-2 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={query}
-            onChange={(e) => onQuery(e.target.value)}
-            placeholder="Search by username or city"
-            className="pl-8"
-            aria-label="Search accounts"
-          />
-        </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => onSelectAll(filtered.slice(0, maxBatch).map((a) => a.id))}
-          disabled={filtered.length === 0}
-        >
-          Select first {Math.min(filtered.length, maxBatch)}
-        </Button>
-        <Button type="button" variant="ghost" size="sm" onClick={onClear} disabled={selectedIds.length === 0}>
-          Clear
-        </Button>
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          value={query}
+          onChange={(e) => onQuery(e.target.value)}
+          placeholder="Search by username or city"
+          className="pl-9"
+          aria-label="Search accounts"
+          disabled={accounts.length === 0}
+        />
       </div>
 
-      <div className="flex items-center justify-between text-xs text-muted-foreground">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
         <span>
-          {filtered.length === accounts.length
-            ? `${accounts.length} authenticated`
-            : `${filtered.length} of ${accounts.length} match`}
+          {accounts.length} ready
+          {filtered.length !== accounts.length ? ` · ${filtered.length} match` : ''}
+          <span className="mx-1.5 text-border">·</span>
+          <span className={overCap ? 'font-medium text-destructive' : 'font-medium text-foreground'}>
+            {selectedIds.length}
+          </span>{' '}
+          selected
+          <span className="text-muted-foreground"> · max {maxBatch}</span>
         </span>
-        <span>
-          <span className="font-medium text-foreground">{selectedIds.length}</span> / {maxBatch} selected
-        </span>
+        <div className="flex items-center gap-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => onSelectAll(filtered.slice(0, maxBatch).map((a) => a.id))}
+            disabled={filtered.length === 0 || selectedIds.length >= maxBatch}
+          >
+            {filtered.length <= maxBatch ? `Select all ${filtered.length}` : `Select first ${maxBatch}`}
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={onClear}
+            disabled={selectedIds.length === 0}
+          >
+            Clear
+          </Button>
+        </div>
       </div>
 
       {filtered.length === 0 ? (
-        <p className="rounded-md border border-border/60 p-3 text-sm text-muted-foreground">
-          No authenticated account matches. Accounts finish a login on the Accounts page; only
-          those can act.
+        <p className="rounded-lg border border-border/60 p-3 text-sm text-muted-foreground">
+          {accounts.length === 0
+            ? 'No authenticated account on this platform. Finish a login on the Accounts page; only those can act.'
+            : 'No account matches that search. Try a username or city.'}
         </p>
       ) : (
         <div
           ref={ref}
-          className="max-h-72 overflow-y-auto rounded-md border border-border/60"
-          role="listbox"
+          className="max-h-56 overflow-y-auto rounded-xl border border-border/60"
+          role="group"
           aria-label="Authenticated accounts"
-          aria-multiselectable
         >
           <div style={{ height: total, position: 'relative' }}>
             <div style={{ transform: `translateY(${offset}px)` }}>
@@ -131,9 +134,9 @@ export function AccountPicker({
                   <label
                     key={a.id}
                     style={{ height: ROW_HEIGHT }}
-                    className={`flex cursor-pointer items-center gap-2 border-b border-border/40 px-2 text-sm last:border-b-0 hover:bg-secondary/40 ${
-                      capped ? 'opacity-50' : ''
-                    }`}
+                    className={`flex cursor-pointer items-center gap-2.5 border-b border-border/40 px-2.5 text-sm last:border-b-0 hover:bg-secondary/40 ${
+                      on ? 'bg-primary/5' : ''
+                    } ${capped ? 'cursor-not-allowed opacity-50' : ''}`}
                   >
                     <input
                       type="checkbox"
@@ -141,16 +144,14 @@ export function AccountPicker({
                       disabled={capped}
                       onChange={() => onToggle(a.id)}
                       aria-label={`Select @${a.username}`}
+                      className="size-4 shrink-0 accent-primary"
                     />
                     <span className="min-w-0 flex-1 truncate font-medium">@{a.username}</span>
                     {a.location ? (
-                      <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">
+                      <span className="hidden max-w-[42%] truncate text-xs text-muted-foreground sm:inline">
                         {a.location}
                       </span>
                     ) : null}
-                    <Badge variant="success" className="shrink-0">
-                      ready
-                    </Badge>
                   </label>
                 );
               })}
@@ -158,35 +159,6 @@ export function AccountPicker({
           </div>
         </div>
       )}
-
-      {textPlaceholder && selectedIds.length > 0 ? (
-        <div className="space-y-2 border-t border-border/60 pt-2">
-          <p className="text-xs text-muted-foreground">
-            Leave a body blank to use the template pool.
-          </p>
-          <div className="max-h-56 space-y-2 overflow-y-auto">
-            {accounts
-              .filter((a) => selected[a.id])
-              .map((a) => (
-                <div key={a.id} className="space-y-1">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="truncate font-medium">@{a.username}</span>
-                    <span className="text-muted-foreground">
-                      {(text[a.id] ?? '').length}/{maxTextLen}
-                    </span>
-                  </div>
-                  <Textarea
-                    rows={2}
-                    maxLength={maxTextLen}
-                    placeholder={textPlaceholder}
-                    value={text[a.id] ?? ''}
-                    onChange={(e) => onText(a.id, e.target.value)}
-                  />
-                </div>
-              ))}
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -200,25 +172,129 @@ function useAccountWindow(count: number) {
   return { ref, slice: indices, offset: before, total: before + (end - start) * ROW_HEIGHT + after };
 }
 
-export function PickerSummary({
-  count,
-  maxBatch,
-  onClear,
-}: {
-  count: number;
-  maxBatch: number;
-  onClear: () => void;
-}) {
-  if (count === 0) return null;
+export type CommentComposerProps = {
+  /** Only the selected accounts, in selection order. */
+  accounts: Account[];
+  text: Record<string, string>;
+  onText: (id: string, value: string) => void;
+  /** Copy the active draft to every selected account in one update. */
+  onApplyAll: (value: string) => void;
+  maxTextLen: number;
+  placeholder: string;
+};
+
+export function CommentComposer({
+  accounts,
+  text,
+  onText,
+  onApplyAll,
+  maxTextLen,
+  placeholder,
+}: CommentComposerProps) {
+  const [activeId, setActiveId] = useState<string | null>(accounts[0]?.id ?? null);
+  const [applied, setApplied] = useState(false);
+
+  // Removing the active account must not leave the editor pointing at a row
+  // that is no longer in the batch.
+  useEffect(() => {
+    setActiveId((current) =>
+      current && accounts.some((a) => a.id === current) ? current : (accounts[0]?.id ?? null),
+    );
+  }, [accounts]);
+
+  const active = accounts.find((a) => a.id === activeId) ?? accounts[0] ?? null;
+  const activeText = active ? (text[active.id] ?? '') : '';
+
+  useEffect(() => {
+    setApplied(false);
+  }, [activeId, activeText]);
+
+  if (accounts.length === 0) {
+    return (
+      <p className="rounded-lg border border-dashed border-border/70 p-3 text-sm text-muted-foreground">
+        Select at least one account above to write a comment.
+      </p>
+    );
+  }
+
+  const draftCount = accounts.filter((a) => (text[a.id] ?? '').trim().length > 0).length;
+  const templateCount = accounts.length - draftCount;
+
   return (
-    <div className="sticky bottom-0 z-10 flex items-center justify-between gap-2 border-t border-border/60 bg-background/95 px-2 py-2 backdrop-blur">
-      <span className="text-sm">
-        <span className="font-medium">{count}</span> account{count === 1 ? '' : 's'} selected
-        {count > maxBatch ? ` — max ${maxBatch} per batch` : ''}
-      </span>
-      <Button type="button" variant="ghost" size="sm" onClick={onClear}>
-        <X className="size-3.5" /> Clear
-      </Button>
+    <div className="space-y-2.5">
+      <div
+        className="flex gap-1 overflow-x-auto pb-1 [scrollbar-width:thin]"
+        role="group"
+        aria-label="Choose an account to edit"
+      >
+        {accounts.map((a) => {
+          const current = a.id === active?.id;
+          const hasDraft = (text[a.id] ?? '').trim().length > 0;
+          return (
+            <button
+              key={a.id}
+              type="button"
+              aria-pressed={current}
+              onClick={() => setActiveId(a.id)}
+              title={`@${a.username}: ${hasDraft ? 'custom draft' : 'template pool'}`}
+              className={`flex shrink-0 items-center gap-1.5 rounded-lg border px-2 py-1.5 text-xs transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${
+                current
+                  ? 'border-primary/40 bg-primary/10 text-foreground'
+                  : 'border-border/60 text-muted-foreground hover:bg-secondary/50 hover:text-foreground'
+              }`}
+            >
+              <span
+                className={`size-1.5 rounded-full ${hasDraft ? 'bg-success' : 'bg-border'}`}
+                aria-label={hasDraft ? 'Custom draft set' : 'Uses template pool'}
+              />
+              <span className="max-w-[150px] truncate">@{a.username}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div>
+        <div className="mb-1 flex items-center justify-between gap-2">
+          <p className="truncate text-xs font-medium">@{active?.username}</p>
+          <div className="flex shrink-0 items-center gap-2">
+            {accounts.length > 1 ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                onClick={() => {
+                  onApplyAll(activeText);
+                  setApplied(true);
+                }}
+              >
+                Apply to all {accounts.length}
+              </Button>
+            ) : null}
+            <span className="text-[11px] tabular-nums text-muted-foreground">
+              {activeText.length}/{maxTextLen}
+            </span>
+          </div>
+        </div>
+        <Textarea
+          rows={4}
+          maxLength={maxTextLen}
+          placeholder={placeholder}
+          value={activeText}
+          onChange={(e) => active && onText(active.id, e.target.value)}
+          aria-label={`Comment for @${active?.username ?? 'selected account'}`}
+        />
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
+        <span>
+          Blank uses the template pool. {draftCount} custom
+          {templateCount > 0 ? ` · ${templateCount} template` : ''}.
+        </span>
+        <span role="status" className="text-success">
+          {applied ? `Copied to ${accounts.length} accounts.` : ''}
+        </span>
+      </div>
     </div>
   );
 }

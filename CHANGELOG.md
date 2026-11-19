@@ -6,6 +6,15 @@
 
 ## Unreleased
 ### Changed
+- **Action setup is now a two-pane composer.** The post and its existing
+  comments stay visible beside the action and audience controls, the account
+  picker is searchable and shows selection inline, and one comment editor edits
+  the active selected account with an explicit `Apply to all` action. Reply
+  targets are picked directly from the comment thread, AI drafting is
+  progressive disclosure, and the queue summary states the accounts, action,
+  custom/template draft counts, and the exact reason the queue button is
+  disabled. Editing the target URL or platform now clears the stale preview and
+  batch instead of queueing against a post the operator is no longer viewing.
 - **Dashboard visual system replaced with a coastal-glass design.** The command
   centre now uses a floating, labelled navigation rail, a phone dock with the
   four primary destinations, a layered atmospheric canvas, and a quieter
@@ -53,6 +62,10 @@
 - **Worker boxes downsized to 1 vCPU / 4 GiB.** All 10 pool workers and
   `smm-login-01` now use `1 vCPU · 4 GiB`; `smm-hub` stays `2 vCPU · 8 GiB`.
   Measured browser footprint after resize: ~0.8 GiB used of 3.8 GiB.
+### Fixed
+- **macOS AppleDouble files no longer break the container build.** Source
+  archives now exclude `._*` sidecars, and the Docker build context ignores
+  them; the web rebuild cannot fail ESLint on binary metadata again.
 ### Fixed
 - **Release session now works even after the lease is already gone.** Closing
   a parked login with `worker_id = NULL` returned 204 without settling the

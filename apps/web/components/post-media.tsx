@@ -19,7 +19,7 @@ import { Button, Dialog, DialogContent } from '@smm/ui';
 import { ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-export function PostMedia({ urls }: { urls: string[] | null }) {
+export function PostMedia({ urls, compact = false }: { urls: string[] | null; compact?: boolean }) {
   const items = urls ?? [];
   const track = useRef<HTMLDivElement>(null);
   const [index, setIndex] = useState(0);
@@ -67,7 +67,11 @@ export function PostMedia({ urls }: { urls: string[] | null }) {
     <>
       {/* Capped width: an uncapped square slide fills the whole column on a
           desktop and buries the rest of the form below the fold. */}
-      <div className="relative mx-auto max-w-[380px] overflow-hidden rounded-xl border border-border/60 bg-secondary/40">
+      <div
+        className={`relative mx-auto overflow-hidden rounded-xl border border-border/60 bg-secondary/40 ${
+          compact ? 'max-w-[200px]' : 'max-w-[380px]'
+        }`}
+      >
         <div
           ref={track}
           onScroll={onScroll}
@@ -83,7 +87,7 @@ export function PostMedia({ urls }: { urls: string[] | null }) {
               type="button"
               onClick={() => setOpen(i)}
               className="relative block aspect-square w-full shrink-0 snap-center focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
-              aria-label={`Media ${i + 1} of ${items.length} — open full size`}
+              aria-label={`Media ${i + 1} of ${items.length}, open full size`}
             >
               {/* eslint-disable-next-line @next/next/no-img-element -- remote user content, rotating CDN hosts */}
               <img

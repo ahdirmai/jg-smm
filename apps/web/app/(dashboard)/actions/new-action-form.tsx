@@ -23,18 +23,20 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
+  cn,
 } from '@smm/ui';
 import {
   AlertCircle,
-  AtSign,
+  ChevronDown,
   Heart,
   Loader2,
   MessageSquare,
+  PenLine,
   RefreshCw,
   Reply,
   Search,
-  Sparkles,
 } from 'lucide-react';
+import Link from 'next/link';
 import { forwardRef, useCallback, useImperativeHandle, useMemo, useRef, useState } from 'react';
 
 import {
@@ -59,7 +61,8 @@ import { can } from '@/lib/auth/permissions';
 import { PostMedia } from '@/components/post-media';
 import { postPermalink } from '@/lib/permalink';
 import { CommentThread } from '@/components/comment-thread';
-import { AccountPicker } from './account-picker';
+import { platformIcon } from '@/components/platform-icon';
+import { AccountPicker, CommentComposer } from './account-picker';
 import { SentimentSummary } from '@/components/sentiment';
 
 const MAX_BATCH = 50;
@@ -140,6 +143,30 @@ function scrapedAgo(iso: string): string {
   return `${Math.round(mins / 60)}h ago`;
 }
 
+function SectionHeading({
+  id,
+  step,
+  title,
+  hint,
+}: {
+  id?: string | undefined;
+  step: number;
+  title: string;
+  hint?: string | undefined;
+}) {
+  return (
+    <div className="mb-2 flex flex-wrap items-baseline gap-x-2 gap-y-1">
+      <span className="grid size-5 shrink-0 place-items-center rounded-full bg-primary/10 text-[10px] font-semibold text-primary">
+        {step}
+      </span>
+      <h2 id={id} className="text-sm font-semibold tracking-tight">
+        {title}
+      </h2>
+      {hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
+    </div>
+  );
+}
+
 export type NewActionFormHandle = {
   /**
    * Fill the form with a platform + permalink, run the scrape, and optionally
@@ -203,6 +230,9 @@ export const NewActionForm = forwardRef<
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Manual writing is the primary path; the AI controls are progressive
+  // disclosure so they do not crowd the editor before they are wanted.
+  const [aiOpen, setAiOpen] = useState(false);
 
   // Only accounts that can actually act: same platform, ACTIVE, and holding a
   // completed login. A FAILED/PENDING account opens the platform logged out, so
@@ -222,6 +252,41 @@ export const NewActionForm = forwardRef<
     () => platformAccounts.filter((a) => selected[a.id]),
     [platformAccounts, selected],
   );
+
+  // A scraped target is tied to its platform and URL. Editing either one
+  // invalidates the preview, the action, the selected accounts and the drafts;
+  // queueing a comment against a post the operator is no longer looking at is
+  // the one mistake this form must make impossible.
+  function resetSetup() {
+    // Invalidate the stored-post comment read: it may still be in flight and
+    // would otherwise restore the preview after the target changed.
+    storedLoadId.current += 1;
+    setScrape(null);
+    setFlow(null);
+    setReplyCommentId(null);
+    setManualReplyUrl('');
+    setSelected({});
+    setText({});
+    setScrapeError(null);
+    setResult(null);
+    setError(null);
+    setAiError(null);
+  }
+
+  function changePlatform(value: string) {
+    if ((ON_DEMAND_PLATFORMS as readonly string[]).includes(value)) {
+      setPlatform(value as OnDemandPlatform);
+      if (scrape) {
+        resetSetup();
+        setUrl('');
+      }
+    }
+  }
+
+  function changeTargetUrl(value: string) {
+    setUrl(value);
+    if (scrape) resetSetup();
+  }
 
   // One scrape runner: explicit args so a history pick (platform/url set in
   // the same tick) scrapes the right post, not the previous state values.
@@ -394,6 +459,34 @@ export const NewActionForm = forwardRef<
     !submitting &&
     (flow !== 'reply' || replyTargetUrl !== '');
 
+  // One update for the whole batch. Copying inside the composer would call
+  // setText once per account and render a half-applied map.
+  function applyTextToAll(value: string) {
+    setText(Object.fromEntries(selectedAccounts.map((a) => [a.id, value])));
+  }
+
+  const customDrafts = selectedAccounts.filter((a) => (text[a.id] ?? '').trim()).length;
+  const templateDrafts = selectedAccounts.length - customDrafts;
+  const flowNoun = flow === 'like' ? 'like' : flow === 'reply' ? 'reply' : 'comment';
+  const flowPlural = flow === 'reply' ? 'replies' : `${flowNoun}s`;
+  const queueLabel =
+    selectedAccounts.length === 0
+      ? 'Select accounts'
+      : `Queue ${selectedAccounts.length} ${
+          selectedAccounts.length === 1 ? flowNoun : flowPlural
+        }`;
+  const queueBlocked =
+    !flow
+      ? 'Choose an action first.'
+      : selectedAccounts.length === 0
+        ? 'Select at least one account.'
+        : selectedAccounts.length > MAX_BATCH
+          ? `Keep the batch at ${MAX_BATCH} accounts or fewer.`
+          : flow === 'reply' && !replyTargetUrl
+            ? 'Pick the comment to reply to, or paste its link.'
+            : null;
+  const TargetIcon = platformIcon(scrape?.post.platform ?? platform);
+
   async function submit() {
     setError(null);
     setResult(null);
@@ -427,34 +520,36 @@ export const NewActionForm = forwardRef<
   }
 
   return (
-    <Card>
+    <Card className="overflow-visible">
       <CardHeader>
-        <CardTitle>Create an action</CardTitle>
-        <CardDescription>
-          Load a target (scrape it once, or pick a stored post from Scraped posts), then queue the
-          action. Executed by the owning worker via Playwright.
-        </CardDescription>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <CardTitle>Create an action</CardTitle>
+            <CardDescription>
+              Load a post, choose who acts, then write the comment or let AI draft it.
+            </CardDescription>
+          </div>
+          <p className="max-w-xs text-xs leading-5 text-muted-foreground">
+            One post per batch. Existing comments stay visible while you write.
+          </p>
+        </div>
       </CardHeader>
-      <CardContent className="space-y-5">
-        {/* 1. Platform + link + scrape */}
-        <div className="space-y-2">
-          <Label htmlFor="action-target-url">Target post</Label>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-[180px_1fr_auto]">
-            <Select
-              value={platform}
-              onValueChange={(v) => {
-                if ((ON_DEMAND_PLATFORMS as readonly string[]).includes(v)) {
-                  setPlatform(v as OnDemandPlatform);
-                }
-              }}
-            >
-              <SelectTrigger aria-label="Platform">
+      <CardContent className="space-y-4">
+        {/* 1. Target */}
+        <section aria-labelledby="target-heading">
+          <SectionHeading
+            id="target-heading"
+            step={1}
+            title="Target post"
+            hint="Paste a link and scrape it once. Reusing storage is free."
+          />
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-[150px_minmax(0,1fr)_auto]">
+            <Select value={platform} onValueChange={changePlatform}>
+
+              <SelectTrigger aria-label="Platform" disabled={!canAct || scraping}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {/* Rendered from the constant, so the options and the type
-                    cannot drift apart. Labels come from lib/platforms, the one
-                    canonical map. */}
                 {ON_DEMAND_PLATFORMS.map((p) => (
                   <SelectItem key={p} value={p}>
                     {PLATFORM_LABEL[p]}
@@ -464,344 +559,521 @@ export const NewActionForm = forwardRef<
             </Select>
             <Input
               id="action-target-url"
+              type="url"
+              inputMode="url"
+              autoComplete="off"
+              spellCheck={false}
               value={url}
-              onChange={(e) => setUrl(e.target.value)}
+              onChange={(e) => changeTargetUrl(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  runScrape();
+                }
+              }}
               placeholder={
                 platform === 'youtube'
-                  ? 'https://youtube.com/shorts/… or https://www.youtube.com/watch?v=…'
-                  : 'https://www.instagram.com/p/…'
+                  ? 'https://youtube.com/shorts/... or a watch link'
+                  : 'https://www.instagram.com/p/...'
               }
               className="font-mono text-xs"
+              aria-label="Target post URL"
               disabled={!canAct || scraping}
             />
-            <Button type="button" onClick={runScrape} disabled={scraping || !canAct}>
+            <Button
+              type="button"
+              onClick={runScrape}
+              disabled={scraping || !canAct || !url.trim()}
+              className="sm:w-auto"
+            >
               {scraping ? <Loader2 className="animate-spin" /> : <Search />}
-              {scraping ? 'Scraping…' : 'Scrape'}
+              {scraping ? 'Scraping...' : 'Scrape'}
             </Button>
           </div>
-          <p className="text-xs text-muted-foreground">
+          <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
             {platform === 'youtube'
-              ? 'Scrape pulls the video title, channel, thumbnail and metrics (Apify). The YouTube actor does not return comment bodies, and its targets are not comment-cached, so each scrape is a paid run. Paste the Short, watch or youtu.be link.'
-              : 'Scrape pulls the post metadata, caption and existing comments (Apify). A post already scraped within 6h is reused from storage — no paid run; only a new post, a stale one, or a batch-ingested post without comments triggers a fresh scrape.'}
+              ? 'YouTube loads the video title, channel, and metrics. The actor does not return comment bodies.'
+              : 'A post scraped in the last 6 hours is served from storage. A new or stale post runs the paid actor once.'}
           </p>
-        </div>
+        </section>
 
         {scrapeError ? (
-          <div className="flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+          <div
+            className="flex items-center gap-2 rounded-xl border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"
+            role="alert"
+          >
             <AlertCircle className="size-4" />
             {scrapeError}
           </div>
         ) : null}
 
-        {/* 2. Scraped post preview */}
         {scrape ? (
-          <div className="overflow-hidden rounded-xl border border-border/60 bg-secondary/30">
-            {/* Header: who posted it, how fresh this read is, and a way to
-                force a fresh run when the operator wants live data. */}
-            <div className="flex items-center gap-2.5 border-b border-border/60 px-3 py-2.5">
-              <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-secondary">
-                <AtSign className="size-4 text-muted-foreground" />
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">@{scrape.post.authorHandle}</p>
-                <p className="text-[11px] text-muted-foreground">
-                  {platformLabel(scrape.post.platform) ?? scrape.post.platform} · scraped{' '}
-                  {scrapedAgo(scrape.post.scrapedAt)}
-                  {scrape.cached ? ' · served from storage' : ''}
-                </p>
-              </div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-7 shrink-0 px-2 text-xs"
-                onClick={runScrapeForce}
-                disabled={scraping || !canAct}
-                title="Run a fresh paid scrape even if the post is already in storage"
-              >
-                {scraping ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-                Re-scrape
-              </Button>
-            </div>
-
-            <div className="space-y-3 p-3">
-              {scrape.post.mediaUrls && scrape.post.mediaUrls.length > 0 ? (
-                <PostMedia urls={scrape.post.mediaUrls} />
-              ) : null}
-
-              {scrape.post.text ? (
-                // Long captions are the norm on IG; clamp so the form stays
-                // scannable and let the operator expand when they care.
-                <details className="group">
-                  <summary className="line-clamp-4 cursor-pointer list-none text-sm group-open:line-clamp-none">
-                    {scrape.post.text}
-                  </summary>
-                  <span className="text-xs text-muted-foreground underline underline-offset-2 group-open:hidden">
-                    Show more
-                  </span>
-                </details>
-              ) : (
-                <p className="text-xs text-muted-foreground">(no caption)</p>
-              )}
-
-              {/* §3.4 — numbers are heroes: bold value, small muted label under. */}
-              {metrics(scrape.post.metrics).length > 0 ? (
-                <div className="flex flex-wrap gap-5 border-t border-border/60 pt-3">
-                  {metrics(scrape.post.metrics).map((m) => (
-                    <div key={m.label}>
-                      <p className="text-lg font-semibold leading-none">{m.value}</p>
-                      <p className="mt-1 text-[11px] uppercase tracking-wide text-muted-foreground">
-                        {m.label}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-
-              {/* Comment sentiment: the distribution over what was actually
-                  analysed, with the unanalysed count kept visible. */}
-              {scrape.comments.length > 0 ? (
-                <SentimentSummary breakdown={scrape.sentiment} />
-              ) : null}
-
-              {scrape.comments.length > 0 ? (
-                <div className="space-y-2 border-t border-border/60 pt-3">
-                  <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                    {scrape.comments.length} comment{scrape.comments.length === 1 ? '' : 's'} loaded
+          <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)]">
+            {/* Post and existing comments stay in view beside the composer on desktop. */}
+            <section className="min-w-0 space-y-3 self-start rounded-2xl border border-border/60 bg-secondary/20 p-3">
+              <div className="flex items-center gap-2.5 border-b border-border/60 pb-2.5">
+                <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-secondary">
+                  <TargetIcon className="size-4 text-muted-foreground" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">@{scrape.post.authorHandle}</p>
+                  <p className="text-[11px] text-muted-foreground">
+                    {platformLabel(scrape.post.platform) ?? scrape.post.platform} · scraped{' '}
+                    {scrapedAgo(scrape.post.scrapedAt)}
+                    {scrape.cached ? ' · storage' : ''}
                   </p>
-                  {/* Threaded by parentId so a reply sits under what it answers.
-                      A flat list reads as non-sequiturs on a busy post. */}
-                  <div className="max-h-72 overflow-y-auto rounded-lg border border-border/60 p-2">
-                    <CommentThread comments={scrape.comments} />
-                  </div>
                 </div>
-              ) : null}
-              {scrape.comments.length === 0 ? (
-                platform === 'youtube' ? (
-                  // The YouTube actor returns the video row only. Saying "no
-                  // comments" here would be a fabricated answer; the target URL
-                  // is all a top-level comment job needs.
-                  <p className="text-xs text-muted-foreground">
-                    YouTube metadata loaded. Comment bodies are not returned by this actor — the
-                    video URL is enough to queue a comment.
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 shrink-0 px-2 text-xs"
+                  onClick={runScrapeForce}
+                  disabled={scraping || !canAct}
+                  title="Run a fresh paid scrape even if the post is already in storage"
+                >
+                  {scraping ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+                  Re-scrape
+                </Button>
+              </div>
+
+              <div
+                className={cn(
+                  'grid gap-3',
+                  scrape.post.mediaUrls && scrape.post.mediaUrls.length > 0
+                    ? 'sm:grid-cols-[160px_minmax(0,1fr)]'
+                    : 'grid-cols-1',
+                )}
+              >
+                {scrape.post.mediaUrls && scrape.post.mediaUrls.length > 0 ? (
+                  <PostMedia urls={scrape.post.mediaUrls} compact />
+                ) : null}
+                <div className="min-w-0 space-y-2">
+                  {scrape.post.text ? (
+                    <details className="group">
+                      <summary className="line-clamp-5 cursor-pointer list-none text-sm leading-5 group-open:line-clamp-none">
+                        {scrape.post.text}
+                      </summary>
+                      <span className="text-xs text-muted-foreground underline underline-offset-2 group-open:hidden">
+                        Show more
+                      </span>
+                    </details>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">(no caption)</p>
+                  )}
+
+                  {metrics(scrape.post.metrics).length > 0 ? (
+                    <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+                      {metrics(scrape.post.metrics).map((m) => (
+                        <span key={m.label}>
+                          <span className="font-semibold text-foreground">{m.value}</span> {m.label}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+
+              {scrape.comments.length > 0 ? <SentimentSummary breakdown={scrape.sentiment} /> : null}
+
+              <div className="border-t border-border/60 pt-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-medium">Existing comments</p>
+                    <p className="text-[11px] leading-5 text-muted-foreground">
+                      {flow === 'reply'
+                        ? 'Click the comment you want to answer.'
+                        : 'Read the thread before writing yours.'}
+                    </p>
+                  </div>
+                  <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
+                    {scrape.comments.length} loaded
+                  </span>
+                </div>
+
+                {scrape.comments.length > 0 ? (
+                  <div
+                    className={cn(
+                      'mt-2 max-h-[320px] overflow-y-auto rounded-xl border p-2',
+                      flow === 'reply'
+                        ? 'border-primary/30 bg-primary/[0.03]'
+                        : 'border-border/60',
+                    )}
+                  >
+                    <CommentThread
+                      comments={scrape.comments}
+                      selectable={flow === 'reply'}
+                      selectedId={replyCommentId}
+                      onSelect={(c) => {
+                        if (!c.url) return;
+                        setReplyCommentId(c.id);
+                        setManualReplyUrl('');
+                      }}
+                    />
+                  </div>
+                ) : platform === 'youtube' ? (
+                  <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                    YouTube metadata is loaded. Comment bodies are not returned by this actor, so
+                    the video URL is enough to queue a top-level comment.
                   </p>
                 ) : (
-                  // The 6h cache only serves posts whose comments were actually
-                  // fetched, so an empty list here is always the real answer, not
-                  // a cached "no comments" placeholder. Without this the operator
-                  // cannot tell whether there is anything to reply to.
-                  <p className="text-xs text-muted-foreground">
-                    No existing comments on this post — the comments were fetched, so this is the
-                    real answer, not a cached placeholder.
+                  <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                    The scrape returned no comments. That is the real answer for this post, not a
+                    cached placeholder.
                   </p>
-                )
-              ) : null}
-            </div>
-          </div>
-        ) : null}
-
-        {/* 3. Action type */}
-        {scrape ? (
-          <div className="space-y-2">
-            <Label>Action</Label>
-            <div className="flex gap-2">
-              <Button
-                type="button"
-                variant={flow === 'comment' ? 'default' : 'outline'}
-                onClick={() => setFlow('comment')}
-                disabled={!canAct}
-              >
-                <MessageSquare /> Comment
-              </Button>
-              {platform !== 'youtube' ? (
-                <>
-                  <Button
-                    type="button"
-                    variant={flow === 'like' ? 'default' : 'outline'}
-                    onClick={() => setFlow('like')}
-                    disabled={!canAct}
-                  >
-                    <Heart /> Like
-                  </Button>
-                  <Button
-                    type="button"
-                    variant={flow === 'reply' ? 'default' : 'outline'}
-                    onClick={() => {
-                      setFlow('reply');
-                      // Default to the first comment that can actually be replied
-                      // to, so the common case is one click. Comments with no
-                      // derivable permalink have no legal target and are skipped;
-                      // with none at all the operator pastes the comment link.
-                      setReplyCommentId(
-                        (prev) => prev ?? scrape?.comments.find((c) => c.url)?.id ?? null,
-                      );
-                    }}
-                    disabled={!canAct}
-                    title={
-                      scrape.comments.some((c) => c.url)
-                        ? 'Reply to one of the scraped comments'
-                        : 'Paste a comment link to reply'
-                    }
-                  >
-                    <Reply /> Reply
-                  </Button>
-                </>
-              ) : null}
-            </div>
-            {platform === 'youtube' ? (
-              <p className="text-xs text-muted-foreground">
-                YouTube automation currently ships top-level comments only; like and reply are not
-                built yet.
-              </p>
-            ) : null}
-          </div>
-        ) : null}
-
-        {/* 3b. Reply target: which comment the reply threads under. */}
-        {scrape && flow === 'reply' ? (
-          <div className="space-y-2">
-            <Label>Reply to which comment</Label>
-            {/* Paste route first: the platform's own "Copy link" on a reply is
-                the shortest path, and the only one when the scrape did not
-                deliver that comment. A pasted link overrides the picker. */}
-            <Input
-              placeholder="Paste the comment link (optional) — e.g. https://www.threads.com/@user/post/ABC123"
-              value={manualReplyUrl}
-              onChange={(e) => setManualReplyUrl(e.target.value)}
-              disabled={!canAct}
-            />
-            {scrape.comments.some((c) => c.url) ? (
-              <div className="max-h-64 overflow-y-auto rounded-lg border border-border/60 p-2">
-                {/* The picker uses the same threaded view as the card, so the
-                    operator picks a target in the shape they will see on the
-                    platform. Comments without a derivable permalink stay
-                    visible but unselectable: hiding a parent would strand its
-                    replies, and hiding the row would misrepresent the thread. */}
-                <CommentThread
-                  comments={scrape.comments}
-                  selectable
-                  selectedId={replyCommentId}
-                  onSelect={(c) => {
-                    if (!c.url) return;
-                    setReplyCommentId(c.id);
-                    // Picking a row clears a stale pasted link so the visible
-                    // selection is the one that ships.
-                    setManualReplyUrl('');
-                  }}
-                />
+                )}
               </div>
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                No scraped comment has a permalink, so paste the comment link above to reply.
-              </p>
-            )}
-          </div>
-        ) : null}
+            </section>
 
-        {/* 4. Accounts (+ per-account comment when the flow is a comment) */}
-        {scrape && flow ? (
-          <div className="space-y-2">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <Label>
-                Accounts ({platformAccounts.length} ready on{' '}
-                {platformLabel(platform) ?? platform})
-              </Label>
-              {flow === 'comment' || flow === 'reply' ? (
-                <div className="flex items-center gap-1.5">
-                  <Select value={aiMode} onValueChange={(v) => setAiMode(v as 'support' | 'counter')}>
-                    <SelectTrigger className="w-32" aria-label="AI mode">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="support">Support</SelectItem>
-                      <SelectItem value="counter">Counter</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  {/* How long each draft is; medium is the server default. */}
-                  <Select value={length} onValueChange={(v) => setLength(v as CommentLength)}>
-                    <SelectTrigger className="w-24" aria-label="Comment length">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="short">Short</SelectItem>
-                      <SelectItem value="medium">Medium</SelectItem>
-                      <SelectItem value="long">Long</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  {/* How hard the draft may push: a 1-5 slider, 3 = balanced.
-                      The value label sits next to the track so the operator
-                      sees which end of the scale they are on. */}
-                  <div className="flex items-center gap-1.5" aria-label="Comment intensity">
-                    <input
-                      type="range"
-                      min={INTENSITY_MIN}
-                      max={INTENSITY_MAX}
-                      step={1}
-                      value={intensity}
-                      onChange={(e) => setIntensity(Number(e.target.value))}
-                      className="h-2 w-24 cursor-pointer accent-primary"
-                      aria-label="Comment intensity"
-                    />
-                    <span className="w-16 text-xs text-muted-foreground" title="How hard the draft may push">
-                      {INTENSITY_LABELS[intensity]}
-                    </span>
-                  </div>
-                  <Button type="button" variant="outline" size="sm" onClick={generateAI} disabled={aiBusy || selectedAccounts.length === 0}>
-                    {aiBusy ? <Loader2 className="animate-spin" /> : <Sparkles />}
-                    AI generate
+            <div className="min-w-0 space-y-4">
+              {/* 2. Action + accounts */}
+              <section className="rounded-2xl border border-border/60 bg-secondary/20 p-3">
+                <SectionHeading
+                  step={2}
+                  title="Action and audience"
+                  hint="Pick what each account does."
+                />
+
+                <div
+                  className={cn(
+                    'grid gap-2',
+                    platform === 'youtube' ? 'grid-cols-1' : 'grid-cols-1 sm:grid-cols-3',
+                  )}
+                  role="group"
+                  aria-label="Action type"
+                >
+                  <Button
+                    type="button"
+                    variant={flow === 'comment' ? 'default' : 'outline'}
+                    aria-pressed={flow === 'comment'}
+                    onClick={() => setFlow('comment')}
+                    disabled={!canAct}
+                    className="justify-start"
+                  >
+                    <MessageSquare /> Comment
                   </Button>
+                  {platform !== 'youtube' ? (
+                    <>
+                      <Button
+                        type="button"
+                        variant={flow === 'like' ? 'default' : 'outline'}
+                        aria-pressed={flow === 'like'}
+                        onClick={() => setFlow('like')}
+                        disabled={!canAct}
+                        className="justify-start"
+                      >
+                        <Heart /> Like
+                      </Button>
+                      <Button
+                        type="button"
+                        variant={flow === 'reply' ? 'default' : 'outline'}
+                        aria-pressed={flow === 'reply'}
+                        onClick={() => setFlow('reply')}
+                        disabled={!canAct}
+                        className="justify-start"
+                        title="Reply to one existing comment"
+                      >
+                        <Reply /> Reply
+                      </Button>
+                    </>
+                  ) : null}
+                </div>
+
+                <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                  {platform === 'youtube'
+                    ? 'YouTube supports top-level comments in this build. Like and reply are not available.'
+                    : flow === 'comment'
+                      ? 'Post a new top-level comment under this post.'
+                      : flow === 'like'
+                        ? 'Like the post once from every selected account.'
+                        : flow === 'reply'
+                          ? 'Answer one existing comment. Pick it in the preview.'
+                          : 'Choose Comment, Like, or Reply to see the accounts that can act.'}
+                </p>
+
+                {flow ? (
+                  <div className="mt-3 space-y-3">
+                    {flow === 'reply' ? (
+                      <div className="rounded-xl border border-border/60 bg-background/50 p-2.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-xs font-medium">Reply target</p>
+                          {replyComment ? (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 px-2 text-xs"
+                              onClick={() => setReplyCommentId(null)}
+                            >
+                              Clear
+                            </Button>
+                          ) : null}
+                        </div>
+                        {replyComment ? (
+                          <div className="mt-1.5 rounded-lg border border-primary/25 bg-primary/5 p-2 text-xs">
+                            <p className="font-medium">@{replyComment.authorHandle}</p>
+                            <p className="mt-0.5 line-clamp-2 text-muted-foreground">
+                              {replyComment.text}
+                            </p>
+                          </div>
+                        ) : (
+                          <p className="mt-1.5 text-xs text-muted-foreground">
+                            Select a comment in the preview, or paste its link below.
+                          </p>
+                        )}
+                        <div className="mt-2 space-y-1">
+                          <Label htmlFor="manual-reply-url" className="text-xs">
+                            Comment link
+                          </Label>
+                          <Input
+                            id="manual-reply-url"
+                            placeholder="https://www.instagram.com/p/.../c/..."
+                            value={manualReplyUrl}
+                            onChange={(e) => setManualReplyUrl(e.target.value)}
+                            disabled={!canAct}
+                            className="font-mono text-xs"
+                          />
+                          <p className="text-[11px] leading-5 text-muted-foreground">
+                            A pasted link overrides the selected comment.
+                          </p>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    <div>
+                      <div className="mb-1.5">
+                        <p className="text-xs font-medium">Accounts</p>
+                      </div>
+                      {platformAccounts.length === 0 ? (
+                        <p className="rounded-lg border border-dashed border-border/70 p-3 text-sm leading-6 text-muted-foreground">
+                          No account is ready on {platformLabel(platform) ?? platform}. Finish a
+                          login on the{' '}
+                          <Link href="/accounts" className="font-medium text-primary underline">
+                            Accounts page
+                          </Link>
+                          . An account without a session would act logged out.
+                        </p>
+                      ) : (
+                        <AccountPicker
+                          accounts={platformAccounts}
+                          selected={selected}
+                          onToggle={(id) => setSelected((s2) => ({ ...s2, [id]: !s2[id] }))}
+                          onSelectAll={(ids) =>
+                            setSelected(Object.fromEntries(ids.map((id) => [id, true])))
+                          }
+                          onClear={() => {
+                            setSelected({});
+                            setText({});
+                          }}
+                          query={accountQuery}
+                          onQuery={setAccountQuery}
+                          maxBatch={MAX_BATCH}
+                        />
+                      )}
+                    </div>
+                  </div>
+                ) : null}
+              </section>
+
+              {/* 3. Message */}
+              {flow === 'comment' || flow === 'reply' ? (
+                <section className="rounded-2xl border border-border/60 bg-secondary/20 p-3">
+                  <SectionHeading
+                    step={3}
+                    title={flow === 'reply' ? 'Reply' : 'Comment'}
+                    hint={
+                      selectedAccounts.length > 0
+                        ? 'Write once per account, or apply one draft to all.'
+                        : undefined
+                    }
+                  />
+
+                  <CommentComposer
+                    accounts={selectedAccounts}
+                    text={text}
+                    onText={(id, value) => setText((s2) => ({ ...s2, [id]: value }))}
+                    onApplyAll={applyTextToAll}
+                    maxTextLen={MAX_COMMENT_LEN}
+                    placeholder={
+                      flow === 'reply'
+                        ? 'Write the reply for this account...'
+                        : 'Write the comment for this account...'
+                    }
+                  />
+
+                  {aiError ? (
+                    <p className="mt-2 text-sm text-destructive" role="alert">
+                      {aiError}
+                    </p>
+                  ) : null}
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-2"
+                    onClick={() => setAiOpen((open) => !open)}
+                    aria-expanded={aiOpen}
+                  >
+                    <PenLine />
+                    Draft with AI
+                    <ChevronDown className={cn('transition-transform', aiOpen && 'rotate-180')} />
+                  </Button>
+
+                  {aiOpen ? (
+                    <div className="mt-2 space-y-2 rounded-xl border border-border/60 bg-background/50 p-2.5">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Select
+                          value={aiMode}
+                          onValueChange={(v) => setAiMode(v as 'support' | 'counter')}
+                        >
+                          <SelectTrigger className="w-32" aria-label="AI mode">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="support">Support</SelectItem>
+                            <SelectItem value="counter">Counter</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <Select
+                          value={length}
+                          onValueChange={(v) => setLength(v as CommentLength)}
+                        >
+                          <SelectTrigger className="w-24" aria-label="Comment length">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="short">Short</SelectItem>
+                            <SelectItem value="medium">Medium</SelectItem>
+                            <SelectItem value="long">Long</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <div className="flex items-center gap-1.5" aria-label="Comment intensity">
+                          <input
+                            type="range"
+                            min={INTENSITY_MIN}
+                            max={INTENSITY_MAX}
+                            step={1}
+                            value={intensity}
+                            onChange={(e) => setIntensity(Number(e.target.value))}
+                            className="h-2 w-24 cursor-pointer accent-primary"
+                            aria-label="Comment intensity"
+                          />
+                          <span
+                            className="w-16 text-xs text-muted-foreground"
+                            title="How hard the draft may push"
+                          >
+                            {INTENSITY_LABELS[intensity]}
+                          </span>
+                        </div>
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={generateAI}
+                          disabled={
+                            aiBusy || selectedAccounts.length === 0 || selectedAccounts.length > MAX_BATCH
+                          }
+                        >
+                          {aiBusy ? <Loader2 className="animate-spin" /> : <PenLine />}
+                          {aiBusy
+                            ? 'Drafting...'
+                            : selectedAccounts.length === 0
+                              ? 'Generate drafts'
+                              : `Generate ${selectedAccounts.length} draft${
+                                  selectedAccounts.length === 1 ? '' : 's'
+                                }`}
+                        </Button>
+                      </div>
+                      <p className="text-[11px] leading-5 text-muted-foreground">
+                        Drafts replace the current bodies for every selected account. Review before
+                        queueing.
+                      </p>
+                    </div>
+                  ) : null}
+                </section>
+              ) : null}
+
+              {/* Queue bar */}
+              {flow ? (
+                <div
+                  className="rounded-2xl border border-primary/20 bg-primary/[0.04] p-3"
+                  aria-label="Queue action"
+                >
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium">
+                        {selectedAccounts.length === 0
+                          ? 'No accounts selected'
+                          : `${selectedAccounts.length} account${
+                              selectedAccounts.length === 1 ? '' : 's'
+                            } · ${flowNoun}`}
+                      </p>
+                      <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+                        {queueBlocked ??
+                          (flow === 'like'
+                            ? 'Each account will like this post once.'
+                            : customDrafts === 0
+                              ? 'Blank bodies use the template pool.'
+                              : `${customDrafts} custom draft${
+                                  customDrafts === 1 ? '' : 's'
+                                }${templateDrafts > 0 ? ` · ${templateDrafts} template` : ''}.`)}
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      onClick={submit}
+                      disabled={!canSubmit}
+                      className="shrink-0"
+                    >
+                      {submitting ? <Loader2 className="animate-spin" /> : null}
+                      {submitting ? 'Queueing...' : queueLabel}
+                    </Button>
+                  </div>
+                  <div aria-live="polite" className="mt-2 empty:mt-0">
+                    {result ? <p className="text-sm text-success">{result}</p> : null}
+                    {error ? (
+                      <p className="text-sm text-destructive" role="alert">
+                        {error}
+                      </p>
+                    ) : null}
+                  </div>
                 </div>
               ) : null}
             </div>
-            {aiError ? <p className="text-sm text-destructive">{aiError}</p> : null}
-            {platformAccounts.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                No authenticated account on this platform. Finish a login on the Accounts page —
-                an account without a session would act logged out.
-              </p>
-            ) : (
-              <AccountPicker
-                accounts={platformAccounts}
-                selected={selected}
-                onToggle={(id) => setSelected((s2) => ({ ...s2, [id]: !s2[id] }))}
-                onSelectAll={(ids) => setSelected(Object.fromEntries(ids.map((id) => [id, true])))}
-                onClear={() => {
-                  setSelected({});
-                  setText({});
-                }}
-                query={accountQuery}
-                onQuery={setAccountQuery}
-                text={text}
-                onText={(id, value) => setText((s2) => ({ ...s2, [id]: value }))}
-                textPlaceholder={
-                  flow === 'comment' || flow === 'reply'
-                    ? flow === 'reply'
-                      ? 'Reply for this account (blank = template pool)'
-                      : 'Comment for this account (blank = template pool)'
-                    : undefined
-                }
-                maxBatch={MAX_BATCH}
-                maxTextLen={MAX_COMMENT_LEN}
-              />
-            )}
           </div>
-        ) : null}
-
-        {/* 5. Submit */}
-        {flow ? (
-          <div className="flex flex-wrap items-center gap-3">
-            <Button type="button" onClick={submit} disabled={!canSubmit}>
-              {submitting ? <Loader2 className="animate-spin" /> : null}
-              Queue {selectedAccounts.length} {flow}
-              {selectedAccounts.length === 1 ? '' : 's'}
-            </Button>
-            {selectedAccounts.length > MAX_BATCH ? (
-              <span className="text-sm text-destructive">Over the {MAX_BATCH} batch cap.</span>
-            ) : null}
-            {result ? <span className="text-sm text-success">{result}</span> : null}
-            {error ? <span className="text-sm text-destructive">{error}</span> : null}
+        ) : (
+          <div className="rounded-2xl border border-dashed border-border/70 p-4 sm:p-5">
+            <div className="flex items-start gap-3">
+              <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
+                <Search className="size-4" />
+              </span>
+              <div>
+                <p className="text-sm font-medium">Start with a post</p>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  Scrape a link, or open Scraped posts above and choose a stored post. Its existing
+                  comments load here for context.
+                </p>
+              </div>
+            </div>
+            <ol className="mt-4 grid gap-2 sm:grid-cols-3">
+              {[
+                ['1', 'Load the post', 'Paste a link and scrape it.'],
+                ['2', 'Choose the audience', 'Pick an action and accounts.'],
+                ['3', 'Write and queue', 'Set one draft per account, then send.'],
+              ].map(([n, title, body]) => (
+                <li key={n} className="flex gap-2 rounded-xl bg-secondary/30 p-2.5">
+                  <span className="grid size-5 shrink-0 place-items-center rounded-full bg-background text-[10px] font-semibold text-muted-foreground">
+                    {n}
+                  </span>
+                  <div>
+                    <p className="text-xs font-medium">{title}</p>
+                    <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">{body}</p>
+                  </div>
+                </li>
+              ))}
+            </ol>
           </div>
-        ) : null}
+        )}
       </CardContent>
     </Card>
   );
