@@ -37,6 +37,7 @@ func (h *ContainerHandler) Register(g *echo.Group) {
 	g.GET("/containers/:containerId", h.listLogs)
 	g.DELETE("/containers/:containerId", h.delete, RequirePermission(domain.PermAct))
 	g.POST("/containers/:containerId/browser", h.openBrowser, RequirePermission(domain.PermAct))
+	g.POST("/containers/:containerId/live-view", h.openWorkerLiveView, RequirePermission(domain.PermAct))
 	// Closes every browser the pool is holding. Must be registered before the
 	// :containerId routes' semantics can shadow it — Echo matches the literal
 	// segment first, but keeping it adjacent makes the intent obvious.
@@ -167,6 +168,24 @@ func (h *ContainerHandler) openBrowser(c echo.Context) error {
 		return translateContainerError(err)
 	}
 	return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// openWorkerLiveView mints a ticketed URL for the admin Workers page. The
+// unticketed `novncUrl` remains visible for diagnostics, but is not usable as
+// a WebSocket endpoint.
+func (h *ContainerHandler) openWorkerLiveView(c echo.Context) error {
+	if h.containers == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "container service unavailable")
+	}
+	id := c.Param("containerId")
+	if id == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "containerId is required")
+	}
+	url, err := h.containers.OpenWorkerLiveView(c.Request().Context(), id)
+	if err != nil {
+		return translateContainerError(err)
+	}
+	return c.JSON(http.StatusOK, map[string]string{"liveViewUrl": url})
 }
 
 // clearSessions closes every browser context the pool is holding, on every

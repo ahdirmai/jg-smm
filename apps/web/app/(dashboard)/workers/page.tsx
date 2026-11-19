@@ -101,6 +101,8 @@ export default function WorkersPage() {
   const canExport = can(role, 'admin');
 
   const [live, setLive] = useState<{ name: string; url: string } | null>(null);
+  const [liveBusy, setLiveBusy] = useState<string | null>(null);
+  const [liveError, setLiveError] = useState<string | null>(null);
   // Delete-with-accounts confirm (P-C): a container still holding packed
   // accounts can lose their sessions on delete, so the operator is offered a
   // session export before deleting anyway.
@@ -153,6 +155,22 @@ export default function WorkersPage() {
     }
     return [...byCity.entries()].map(([name, items]) => ({ city: name, items }));
   }, [visible, city]);
+
+  // The worker row's noVNC base is intentionally not usable directly: the
+  // stateless nginx gate accepts only a short-lived ticket. Mint one through
+  // the API before opening the modal.
+  const openLive = async (id: string, name: string) => {
+    setLiveBusy(id);
+    setLiveError(null);
+    try {
+      const view = await api.openContainerLiveView(id);
+      setLive({ name, url: view.liveViewUrl });
+    } catch (err) {
+      setLiveError(err instanceof Error ? err.message : 'Could not open the live view');
+    } finally {
+      setLiveBusy(null);
+    }
+  };
 
   const onAct = async (id: string, fn: (id: string) => Promise<void>) => {
     setBusy(id);
@@ -288,6 +306,12 @@ export default function WorkersPage() {
 
   return (
     <div className="mx-auto max-w-6xl space-y-5">
+      {liveError ? (
+        <div className="flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive" role="alert">
+          <AlertCircle className="size-4" />
+          {liveError}
+        </div>
+      ) : null}
       {error ? (
         <div className="flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
           <AlertCircle className="size-4" />
@@ -435,19 +459,15 @@ export default function WorkersPage() {
                             variant="outline"
                             size="sm"
                             className="h-8"
-                            onClick={() => {
-                              // Open the screen; do NOT wait on a browser-open
-                              // call. That call asks the API to wake the worker
-                              // and can block for the full 120s wake timeout,
-                              // leaving the operator with no visible response.
-                              // The iframe already streams the worker's current
-                              // display (an action's browser when one is running,
-                              // the Xvfb root when idle).
-                              setLive({ name: c.name, url: c.novncUrl as string });
-                            }}
+                            disabled={liveBusy === c.id}
+                            onClick={() => void openLive(c.id, c.name)}
                           >
-                            <MonitorPlay className="size-3.5" />
-                            Live view
+                            {liveBusy === c.id ? (
+                              <Loader2 className="size-3.5 animate-spin" />
+                            ) : (
+                              <MonitorPlay className="size-3.5" />
+                            )}
+                            {liveBusy === c.id ? 'Opening…' : 'Live view'}
                           </Button>
                         ) : (
                           <Button

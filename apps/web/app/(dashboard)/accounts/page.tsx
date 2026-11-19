@@ -172,8 +172,9 @@ function Stat({
 
 export default function AccountsPage() {
   const { accounts, loading, error, setStatus, remove, refresh } = useAccounts();
-  // The live view lives on the account's worker container, so this page needs
-  // the fleet to resolve an account → its noVNC URL.
+  // The fleet drives the STATUS column and the first-run readiness badge. The
+  // live view does NOT use this list's standing URLs: stateless workers require
+  // a per-open ticket, which openLiveView mints.
   const { containers } = useContainers();
   const session = useSession();
   const role = session.status === 'authenticated' ? session.role : undefined;
@@ -206,16 +207,6 @@ export default function AccountsPage() {
   // many accounts at once; each call hits the real per-id endpoints.
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  // account id → its worker's noVNC URL. Workers without a heartbeat publish
-  // nothing, so absent means "no live view yet", not a broken link.
-  const novncByWorker = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const c of containers) {
-      if (c.novncUrl) m.set(c.id, c.novncUrl as string);
-    }
-    return m;
-  }, [containers]);
-
   // Ticketed live-view URLs, keyed by account. In the stateless pool the live
   // view is a PUBLIC hostname, so the URL must be minted per open and expires in
   // minutes — it is not a standing heartbeat field. Kept in state because the
@@ -231,7 +222,10 @@ export default function AccountsPage() {
     // A minute of margin: a ticket that dies mid-handshake is the same blank
     // screen as one that was never minted.
     if (cached && cached.expiresAt - 60_000 > Date.now()) return cached.url;
-    return a.workerId ? (novncByWorker.get(a.workerId) ?? null) : null;
+    // NEVER fall back to a worker's standing noVNC base URL in the stateless
+    // pool. It has no ticket, so nginx answers 403 and the iframe shows a blank
+    // screen. The ticket is minted by openLiveView and cached above.
+    return null;
   };
 
   /**

@@ -60,6 +60,13 @@
   `https://smm.ahdirmai.my.id` and `https://smm-hub.boxd.sh` both call the API
   on their own origin. The stale `smm-hub-01` worker row without an RPC endpoint
   was removed, leaving the health gate at 11/11 awake workers.
+- **noVNC live view always receives a ticket.** Accounts no longer falls back to
+  a worker's standing `novncUrl` (no ticket → nginx 403 and a blank iframe), and
+  the Workers page mints a short-lived worker ticket through
+  `POST /api/containers/:id/live-view` before opening the modal. This also
+  surfaced the boxd `.env` drift: the hub was still in legacy/docker mode, so
+  an account with no lease answered “account has no worker to view”. The hub
+  now runs `WORKER_POOL_MODE=stateless` with 11/11 healthy workers.
 ### Fixed
 - **Audit remediation: recovery, reports, and error boundaries.** `restore.sh`
   now accepts the absolute backup path that `drill.sh` passes (no doubled

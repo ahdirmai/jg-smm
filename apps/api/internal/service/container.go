@@ -55,8 +55,12 @@ type ContainerService struct {
 	// slots is the fleet's worker-slot coordinator, swept by ClearSessions so a
 	// cleared machine is not still "busy" to the scheduler until a TTL expires.
 	// Optional: nil means the sweep is skipped.
-	slots  port.WorkerSlotCoordinator
-	logger *slog.Logger
+	slots port.WorkerSlotCoordinator
+	// Live-view ticket signer for the worker page. Optional; empty keeps the
+	// admin live view unavailable rather than handing out a URL that 403s.
+	novncSecret    string
+	novncTicketTTL time.Duration
+	logger         *slog.Logger
 }
 
 // ContainerConfig tunes the container service.
@@ -84,6 +88,12 @@ type ContainerConfig struct {
 	// stateless worker keeps in memory: there is no control channel on that
 	// tier, so without RPC a "clear sessions" request has no transport.
 	RPC port.WorkerRPC
+	// NoVNCSecret signs the short-lived ticket on a worker's public noVNC URL.
+	// Without it the worker page can link only to the unticketed page, which the
+	// nginx gate rejects (403); live view must mint a ticket.
+	NoVNCSecret string
+	// NoVNCTicketTTL bounds that ticket. Zero falls back to five minutes.
+	NoVNCTicketTTL time.Duration
 }
 
 // NewContainerService wires the service. packer may be nil; deletion then only
@@ -97,18 +107,20 @@ func NewContainerService(workers port.WorkerStore, accounts port.AccountStore, p
 		cfg.Logger = slog.Default()
 	}
 	return &ContainerService{
-		workers:  workers,
-		accounts: accounts,
-		packer:   packer,
-		clock:    cfg.Clock,
-		logs:     cfg.Logs,
-		driver:   cfg.Driver,
-		stream:   cfg.Stream,
-		control:  cfg.Control,
-		novnc:    cfg.Novnc,
-		waker:    cfg.Waker,
-		rpc:      cfg.RPC,
-		slots:    cfg.Slots,
+		workers:        workers,
+		accounts:       accounts,
+		packer:         packer,
+		clock:          cfg.Clock,
+		logs:           cfg.Logs,
+		driver:         cfg.Driver,
+		stream:         cfg.Stream,
+		control:        cfg.Control,
+		novnc:          cfg.Novnc,
+		waker:          cfg.Waker,
+		rpc:            cfg.RPC,
+		slots:          cfg.Slots,
+		novncSecret:    cfg.NoVNCSecret,
+		novncTicketTTL: cfg.NoVNCTicketTTL,
 		// Per-worker coordinates are chosen once; a fresh source per service is
 		// fine because stability is per-worker, not per-process.
 		rnd:    rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), uint64(time.Now().UnixNano())>>1)),
@@ -299,6 +311,31 @@ func (s *ContainerService) WakeWorkers(ctx context.Context) ([]WorkerHealth, err
 	}
 	wg.Wait()
 	return s.WorkerHealth(ctx)
+}
+
+// OpenWorkerLiveView mints a ticketed noVNC URL for a worker, without an
+// account. The worker page needs this: the standing `novnc_service` URL has no
+// ticket, and the nginx gate intentionally rejects its WebSocket.
+func (s *ContainerService) OpenWorkerLiveView(ctx context.Context, workerID string) (string, error) {
+	if s.novncSecret == "" {
+		return "", fmt.Errorf("%w: live view is not configured (no ticket secret)", domain.ErrUnavailable)
+	}
+	w, err := s.workers.GetByID(ctx, workerID)
+	if err != nil {
+		return "", fmt.Errorf("container service: worker: %w", err)
+	}
+	if w.NoVNCService == nil || *w.NoVNCService == "" {
+		return "", fmt.Errorf("%w: worker %s has no live-view URL", domain.ErrConflict, w.Name)
+	}
+	ttl := s.novncTicketTTL
+	if ttl <= 0 {
+		ttl = 5 * time.Minute
+	}
+	ticket, err := SignLiveViewTicket(s.novncSecret, w.Name, TicketExpiry(s.clock.Now(), ttl))
+	if err != nil {
+		return "", fmt.Errorf("container service: sign live-view ticket: %w", err)
+	}
+	return BuildProtectedNoVNCURL(*w.NoVNCService, ticket), nil
 }
 
 // Delete tears a container down: accounts are released first (so an AUTO

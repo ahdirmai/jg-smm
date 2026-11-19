@@ -445,6 +445,10 @@ export const api = {
   deleteContainer: (id: string) => request<void>(`/api/containers/${id}`, { method: 'DELETE' }),
   // Open a URL in the account's live, session-hydrated browser on the worker's
   // VNC display; the noVNC live view then shows the page already logged in.
+  // Mint a ticketed noVNC URL for the admin Workers page. The standing
+  // `novncUrl` has no ticket and its WebSocket is intentionally 403.
+  openContainerLiveView: (id: string) =>
+    request<{ liveViewUrl: string }>(`/api/containers/${id}/live-view`, { method: 'POST' }),
   openBrowser: (containerId: string, url: string | null, platform: string) =>
     request<{ status: string }>(`/api/containers/${containerId}/browser`, {
       method: 'POST',
