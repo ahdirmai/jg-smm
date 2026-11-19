@@ -15,6 +15,21 @@ export const PLATFORMS = [
 
 export type Platform = (typeof PLATFORMS)[number];
 
+/**
+ * Platforms with an on-demand per-post actor in `actorForPlatform`
+ * (apps/api/cmd/server/main.go). The scrape endpoint answers 400 "no actor
+ * configured" for every other platform, so a UI that offers one would promise
+ * a target load that can never succeed. YouTube is the same search actor
+ * addressed through `startUrls`; it returns the video row but no comment bodies.
+ */
+export const ON_DEMAND_PLATFORMS = ['instagram', 'threads', 'youtube'] as const;
+export type OnDemandPlatform = (typeof ON_DEMAND_PLATFORMS)[number];
+
+/** Narrow untrusted platform ids (API rows, route params) to the on-demand set. */
+export function isOnDemandPlatform(id: string): id is OnDemandPlatform {
+  return (ON_DEMAND_PLATFORMS as readonly string[]).includes(id.toLowerCase());
+}
+
 // Keyed by Platform, not string: adding a platform to PLATFORMS without a label
 // is a compile error rather than an "undefined" rendered somewhere at runtime.
 export const PLATFORM_LABEL: Record<Platform, string> = {

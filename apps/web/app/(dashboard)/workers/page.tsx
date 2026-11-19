@@ -90,7 +90,7 @@ function authToneColor(status: Account['authStatus']): string {
 }
 
 export default function WorkersPage() {
-  const { containers, locations, loading, error, remove } = useContainers();
+  const { containers, locations, loading, error, remove, refresh } = useContainers();
   const { setStatus, remove: removeAccount } = useAccounts();
   const ticker = useLiveTicker();
   const session = useSession();
@@ -264,6 +264,28 @@ export default function WorkersPage() {
     }
   };
 
+  // Close every browser the pool is holding. A per-account Release session
+  // cannot reach a tab whose account no lease names any more; only the machine
+  // can drop everything. Confirmed first: this also cancels logins other
+  // operators may be mid-way through.
+  const [clearBusy, setClearBusy] = useState(false);
+  const [clearResult, setClearResult] = useState<string | null>(null);
+  const onClearSessions = async () => {
+    if (!window.confirm('Close every Chrome tab on every worker? Parked logins and CAPTCHAs in progress are cancelled.')) return;
+    setClearBusy(true);
+    setClearResult(null);
+    try {
+      const r = await api.clearWorkerSessions();
+      const failed = r.failed.length ? `; failed: ${r.failed.map((f) => f.worker).join(', ')}` : '';
+      setClearResult(`Closed browsers on ${r.cleared.length} worker(s)${failed}.`);
+      void refresh();
+    } catch (err) {
+      setClearResult(err instanceof Error ? err.message : 'Could not clear worker sessions');
+    } finally {
+      setClearBusy(false);
+    }
+  };
+
   return (
     <div className="mx-auto max-w-6xl space-y-4">
       {error ? (
@@ -278,6 +300,27 @@ export default function WorkersPage() {
       <AddContainerForm />
 
       <LiveTicker ticker={ticker} />
+
+      {/* Pool mode: a worker is a SLOT, not an account's home. The hub leases
+          one per job or login, and the microVM sleeps when idle — so the fleet
+          below may look quiet while 486 accounts are perfectly healthy. */}
+      <section className="rounded-lg border border-border/60 bg-secondary/30 p-3 text-xs text-muted-foreground">
+        <span className="font-medium text-foreground">Worker pool</span>
+        <span className="mx-2">·</span>
+        {containers.length} slot{containers.length === 1 ? '' : 's'} ·{' '}
+        {containers.filter((c) => c.accounts?.length === 1).length} leased ·{' '}
+        {containers.filter((c) => (c.accounts?.length ?? 0) === 0).length} idle. An idle slot is
+        normal: workers sleep on boxd and wake when the hub pushes work to them.
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <Button variant="outline" size="sm" disabled={clearBusy} onClick={() => void onClearSessions()}>
+            {clearBusy ? 'Closing…' : 'Clear all browser sessions'}
+          </Button>
+          <span className="text-xs text-muted-foreground">
+            Closes every Chrome tab on every worker — parked logins, CAPTCHAs, live views.
+          </span>
+        </div>
+        {clearResult ? <p className="mt-1 text-xs text-foreground">{clearResult}</p> : null}
+      </section>
 
       <section className="grid grid-cols-2 gap-4 lg:grid-cols-5">
         {(
@@ -392,8 +435,14 @@ export default function WorkersPage() {
                             variant="outline"
                             size="sm"
                             className="h-8"
-                            onClick={async () => {
-                              try { await api.openBrowser(c.id, null, ''); } catch { /* best-effort: browser may already be open */ }
+                            onClick={() => {
+                              // Open the screen; do NOT wait on a browser-open
+                              // call. That call asks the API to wake the worker
+                              // and can block for the full 120s wake timeout,
+                              // leaving the operator with no visible response.
+                              // The iframe already streams the worker's current
+                              // display (an action's browser when one is running,
+                              // the Xvfb root when idle).
                               setLive({ name: c.name, url: c.novncUrl as string });
                             }}
                           >

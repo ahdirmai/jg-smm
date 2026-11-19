@@ -16,6 +16,7 @@ export type ActionsState = {
   refresh: () => void;
   enqueue: (items: ActionItem[]) => Promise<void>;
   retry: (jobId: string) => Promise<void>;
+  retryFailed: () => Promise<{ requeued: number; failed: number; skippedOld: number }>;
   runPendingNow: () => Promise<number>;
   cancel: (jobId: string) => Promise<void>;
   cancelPendingNow: () => Promise<number>;
@@ -85,6 +86,35 @@ export function useActions(status?: JobStatus): ActionsState {
     [refresh],
   );
 
+  /**
+   * Retry every FAILED job finished in the last 24 hours. Older jobs are
+   * skipped because the per-account body has a 24h TTL: re-queueing one would
+   * silently fall back to the template pool, which is not the text the
+   * operator saw. The caller arms this action before invoking it.
+   */
+  const retryFailed = useCallback(async () => {
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    const failedJobs = actions.filter((a) => a.status === 'FAILED');
+    // The queue DTO exposes scheduledAt but not finishedAt. A failed job's
+    // last schedule is stamped at its final attempt, so it is the closest
+    // available age signal; older jobs are left to the per-row retry.
+    const recent = failedJobs.filter(
+      (a) => new Date(a.scheduledAt).getTime() >= cutoff,
+    );
+    let requeued = 0;
+    let failed = 0;
+    for (const job of recent) {
+      try {
+        await api.retryAction(job.id);
+        requeued++;
+      } catch {
+        failed++;
+      }
+    }
+    await refresh();
+    return { requeued, failed, skippedOld: failedJobs.length - recent.length };
+  }, [actions, refresh]);
+
   // Pull the PENDING queue forward so a backoff wait ends now. Resolves to the
   // number moved, so the caller can report "0 waiting" rather than guessing.
   const runPendingNow = useCallback(async () => {
@@ -118,6 +148,7 @@ export function useActions(status?: JobStatus): ActionsState {
     refresh,
     enqueue,
     retry,
+    retryFailed,
     runPendingNow,
     cancel,
     cancelPendingNow,

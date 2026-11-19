@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { ArrowLeft, Check, ChevronRight, Loader2 } from 'lucide-react';
 
 import { Button, Card, CardContent, Input, Label } from '@smm/ui';
-import { api, type Container } from '@/lib/api';
+import { api } from '@/lib/api';
 import type { ApiSchemas } from '@smm/shared';
 
 type Platform = ApiSchemas['CreateAccountRequest']['platform'];
@@ -21,20 +21,21 @@ const STEPS = ['Container', 'Platform', 'Credentials', 'Review'] as const;
 /**
  * Add-account wizard (P6-07, mirrors docs/prototype/add-account.html).
  *
- * Four steps: pick container → pick platform → credentials → review. The
- * platform step disables every platform the container already holds an account
- * for (one credential set per platform per worker — a duplicate is rejected,
- * never overwritten), so the operator sees the constraint before typing.
- * The final submit is the only write; earlier steps are local state only, so
- * backing out costs nothing. The quick path on the Accounts list stays the
- * AddAccountDialog.
+ * Four steps: location → platform → credentials → review.
+ *
+ * The first step used to pick a CONTAINER, because an account lived inside one.
+ * In the stateless pool an account is scheduled onto whichever worker is free,
+ * so the only placement decision left is the account's own city — and that
+ * decides the GPS and timezone its browser reports. The final submit is the
+ * only write; earlier steps are local state only.
  */
 export default function AddAccountPage() {
   const router = useRouter();
   const [step, setStep] = useState(0);
-  const [containers, setContainers] = useState<Container[]>([]);
-  const [containersLoading, setContainersLoading] = useState(true);
-  const [containerId, setContainerId] = useState<string | null>(null);
+  const [cities, setCities] = useState<string[]>([]);
+  const [citiesLoading, setCitiesLoading] = useState(true);
+  // 'auto' lets the API distribute by account id.
+  const [location, setLocation] = useState<string | null>(null);
   const [platform, setPlatform] = useState<Platform | null>(null);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -42,54 +43,40 @@ export default function AddAccountPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Platforms the selected container already has an account for — those are
-  // disabled in step 1 (a duplicate would be rejected server-side anyway).
-  const takenPlatforms = new Set(
-    containers
-      .find((c) => c.id === containerId)
-      ?.accounts?.map((a) => a.platform as Platform) ?? [],
-  );
-
   useEffect(() => {
     let alive = true;
     api
-      .listContainers()
-      .then((res) => {
-        if (alive) setContainers(res.containers ?? []);
+      .listLocations()
+      .then((rows) => {
+        if (alive) setCities(rows.map((c) => c.name));
       })
       .catch(() => {
-        if (alive) setError('Failed to load containers');
+        if (alive) setError('Failed to load locations');
       })
       .finally(() => {
-        if (alive) setContainersLoading(false);
+        if (alive) setCitiesLoading(false);
       });
     return () => {
       alive = false;
     };
   }, []);
 
-  // A platform change invalidates nothing else, but a container change may
-  // make the chosen platform unavailable — clear it when that happens.
-  useEffect(() => {
-    if (platform && takenPlatforms.has(platform)) setPlatform(null);
-  }, [containerId]); // eslint-disable-line react-hooks/exhaustive-deps
-
   const canNext =
     step === 0
-      ? containerId !== null
+      ? location !== null
       : step === 1
         ? platform !== null
         : username.trim() !== '' && password !== '';
 
   const submit = async () => {
-    if (!platform || !containerId) return;
+    if (!platform) return;
     setSubmitting(true);
     setError(null);
     const body: CreateAccountRequest = {
       platform,
       username: username.trim(),
       password,
-      workerId: containerId,
+      ...(location && location !== 'auto' ? { location } : {}),
       tags: tags
         .split(',')
         .map((t) => t.trim())
@@ -112,7 +99,7 @@ export default function AddAccountPage() {
         Back to accounts
       </Button>
 
-      {/* Stepper: Container → Platform → Credentials → Review */}
+      {/* Stepper: Location → Platform → Credentials → Review */}
       <div className="flex items-center justify-center gap-1.5">
         {STEPS.map((label, i) => (
           <div key={label} className="flex items-center gap-2">
@@ -145,38 +132,51 @@ export default function AddAccountPage() {
           {step === 0 ? (
             <div className="space-y-3">
               <div>
-                <h2 className="text-sm font-semibold">Pick a container</h2>
+                <h2 className="text-sm font-semibold">Pick a location</h2>
                 <p className="text-xs text-muted-foreground">
-                  The worker container the account will be packed into. Its region decides where
-                  the account browses from.
+                  Where this account claims to be. The API assigns a coordinate inside the city
+                  and the matching timezone, and the browser context reports both — the machine it
+                  runs on is shared and says nothing about the account.
                 </p>
               </div>
-              {containersLoading ? (
+              {citiesLoading ? (
                 <p className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Loader2 className="size-4 animate-spin" /> Loading containers…
-                </p>
-              ) : containers.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  No containers yet — create one on the Workers page first.
+                  <Loader2 className="size-4 animate-spin" /> Loading locations…
                 </p>
               ) : (
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  {containers.map((c) => (
+                  <button
+                    type="button"
+                    onClick={() => setLocation('auto')}
+                    className={
+                      'rounded-lg border px-3 py-2.5 text-left text-sm transition-colors ' +
+                      (location === 'auto'
+                        ? 'border-primary bg-primary/5 ring-1 ring-primary'
+                        : 'hover:bg-accent')
+                    }
+                  >
+                    <span className="font-medium">Auto</span>
+                    <span className="mt-0.5 block text-xs text-muted-foreground">
+                      Distribute evenly across cities
+                    </span>
+                  </button>
+                  {cities.map((city) => (
                     <button
-                      key={c.id}
+                      key={city}
                       type="button"
-                      onClick={() => setContainerId(c.id)}
+                      onClick={() => setLocation(city)}
                       className={
                         'rounded-lg border px-3 py-2.5 text-left text-sm transition-colors ' +
-                        (containerId === c.id
+                        (location === city
                           ? 'border-primary bg-primary/5 ring-1 ring-primary'
                           : 'hover:bg-accent')
                       }
                     >
-                      <span className="font-medium">{c.name}</span>
+                      <span className="font-medium">{city}</span>
                       <span className="mt-0.5 block text-xs text-muted-foreground">
-                        {c.region}
-                        {c.location ? ` · ${c.location}` : ''} · {c.status}
+                        {city === 'Makassar' || city === 'Denpasar' || city === 'Balikpapan'
+                          ? 'Asia/Makassar'
+                          : 'Asia/Jakarta'}
                       </span>
                     </button>
                   ))}
@@ -190,36 +190,26 @@ export default function AddAccountPage() {
               <div>
                 <h2 className="text-sm font-semibold">Pick a platform</h2>
                 <p className="text-xs text-muted-foreground">
-                  One credential set per platform per container — platforms this container already
-                  has an account for are disabled.
+                  Any platform may be added here: a worker hosts one account at a time, so two
+                  accounts of the same platform no longer collide.
                 </p>
               </div>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                {PLATFORMS.map((p) => {
-                  const taken = takenPlatforms.has(p);
-                  return (
-                    <button
-                      key={p}
-                      type="button"
-                      disabled={taken}
-                      onClick={() => setPlatform(p)}
-                      className={
-                        'rounded-lg border px-3 py-2.5 text-left text-sm transition-colors ' +
-                        (platform === p
-                          ? 'border-primary bg-primary/5 ring-1 ring-primary'
-                          : 'hover:bg-accent') +
-                        (taken ? ' cursor-not-allowed opacity-40 hover:bg-transparent' : '')
-                      }
-                    >
-                      {PLATFORM_LABEL[p]}
-                      {taken ? (
-                        <span className="mt-0.5 block text-xs text-muted-foreground">
-                          Already added
-                        </span>
-                      ) : null}
-                    </button>
-                  );
-                })}
+                {PLATFORMS.map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => setPlatform(p)}
+                    className={
+                      'rounded-lg border px-3 py-2.5 text-left text-sm transition-colors ' +
+                      (platform === p
+                        ? 'border-primary bg-primary/5 ring-1 ring-primary'
+                        : 'hover:bg-accent')
+                    }
+                  >
+                    {PLATFORM_LABEL[p]}
+                  </button>
+                ))}
               </div>
             </div>
           ) : null}
@@ -273,16 +263,14 @@ export default function AddAccountPage() {
               <div>
                 <h2 className="text-sm font-semibold">Review</h2>
                 <p className="text-xs text-muted-foreground">
-                  The worker logs in interactively (headful, Playwright) once the account is packed
-                  into a container.
+                  The account joins the worker pool and is scheduled onto a free machine. The
+                  login is headful (Playwright) inside that worker&apos;s browser.
                 </p>
               </div>
               <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
                 <div className="flex justify-between gap-4">
-                  <dt className="text-muted-foreground">Container</dt>
-                  <dd className="font-medium">
-                    {containers.find((c) => c.id === containerId)?.name ?? '—'}
-                  </dd>
+                  <dt className="text-muted-foreground">Location</dt>
+                  <dd className="font-medium">{location === 'auto' ? 'Auto' : location}</dd>
                 </div>
                 <div className="flex justify-between gap-4">
                   <dt className="text-muted-foreground">Platform</dt>

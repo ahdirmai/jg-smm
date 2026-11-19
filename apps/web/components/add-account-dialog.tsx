@@ -17,7 +17,7 @@ import {
   SelectValue,
 } from '@smm/ui';
 import { Check, Loader2 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { api, type Account } from '@/lib/api';
 import { PLATFORM_LABEL } from '@/lib/platforms';
@@ -62,6 +62,10 @@ export function AddAccountDialog({
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [proxyGroup, setProxyGroup] = useState<string>('none');
+  // Where the account says it is. Empty means "let the API distribute", which
+  // spreads an import across cities instead of pinning everyone to one.
+  const [location, setLocation] = useState<string>('auto');
+  const [cities, setCities] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<Account | null>(null);
 
@@ -71,11 +75,31 @@ export function AddAccountDialog({
     setUsername('');
     setPassword('');
     setProxyGroup('none');
+    setLocation('auto');
     setError(null);
     setCreated(null);
   };
 
   const canContinue = platform && username.trim() !== '' && password !== '';
+
+  // The city list is the API's own reference list, so the dropdown can never
+  // offer a value the create endpoint rejects.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    api
+      .listLocations()
+      .then((rows) => {
+        if (!cancelled) setCities(rows.map((c) => c.name));
+      })
+      .catch(() => {
+        // Best effort: without the list the field stays on "auto", which the
+        // API resolves itself.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   const submit = async () => {
     setStep('provisioning');
@@ -86,6 +110,7 @@ export function AddAccountDialog({
         username: username.trim(),
         password,
         tags: [],
+        ...(location === 'auto' ? {} : { location }),
       });
       setCreated(account);
       setStep('done');
@@ -113,7 +138,7 @@ export function AddAccountDialog({
           <DialogTitle>Add account</DialogTitle>
           <DialogDescription>
             {step === 'done'
-              ? 'Account added. It is being packed into a container.'
+              ? 'Account added. It joins the worker pool and is scheduled on the next free machine.'
               : 'The credential is encrypted before it is stored; it is never returned.'}
           </DialogDescription>
         </DialogHeader>
@@ -177,11 +202,31 @@ export function AddAccountDialog({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="none">None (use container default)</SelectItem>
+                  <SelectItem value="none">None (use worker egress)</SelectItem>
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
                 Region-matched proxy binding lands with P1-14; none is correct for the MVP.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="aa-location">Location</Label>
+              <Select value={location} onValueChange={setLocation}>
+                <SelectTrigger id="aa-location">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="auto">Auto (spread across cities)</SelectItem>
+                  {cities.map((city) => (
+                    <SelectItem key={city} value={city}>
+                      {city}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                The account reports this city&apos;s GPS and timezone. It travels with the
+                account, not the machine, so a shared worker cannot leak its own position.
               </p>
             </div>
             {error ? <p className="text-sm text-destructive">{error}</p> : null}
@@ -191,7 +236,7 @@ export function AddAccountDialog({
         {step === 'provisioning' ? (
           <div className="flex items-center gap-3 py-6 text-sm text-muted-foreground">
             <Loader2 className="size-4 animate-spin" />
-            Adding the account and packing it into a container…
+            Adding the account to the worker pool…
           </div>
         ) : null}
 

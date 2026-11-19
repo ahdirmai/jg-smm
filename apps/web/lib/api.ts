@@ -291,6 +291,24 @@ export const api = {
   // worker's noVNC view, never here.
   startAccountLogin: (id: string) =>
     request<Account>(`/api/accounts/${id}/login`, { method: 'POST' }),
+  /**
+   * Lease a pool worker and open the account's browser there.
+   *
+   * Returns a TICKETED noVNC URL: on boxd the live view is on a public hostname,
+   * and the short-lived ticket is the only thing between that hostname and a
+   * browser logged into the account.
+   */
+  openAccountLiveView: (id: string) =>
+    request<ApiSchemas['LiveView']>(`/api/accounts/${id}/live-view`, { method: 'POST' }),
+  /**
+   * End the account's interactive session.
+   *
+   * Needs calling whenever the operator stops watching: the lease is a DATABASE
+   * row, so a view that is merely hidden keeps the worker and the account
+   * locked until someone closes it.
+   */
+  closeAccountLiveView: (id: string) =>
+    request<void>(`/api/accounts/${id}/live-view`, { method: 'DELETE' }),
   submitAccountInput: (id: string, value: string) =>
     request<Account>(`/api/accounts/${id}/input`, {
       method: 'POST',
@@ -409,6 +427,13 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ name, region, location, novncPort: novncPort ?? null }),
     }),
+  // Closes every browser the pool holds (all parked logins + live views).
+  // The recovery path for a worker stuck "busy" with an account no lease names.
+  clearWorkerSessions: () =>
+    request<{ cleared: string[]; failed: Array<{ worker: string; error: string }> }>(
+      '/api/containers/clear-sessions',
+      { method: 'POST' },
+    ),
   listLocations: (signal?: AbortSignal) =>
     request<ApiSchemas['Location'][]>('/api/locations', signal ? { signal } : undefined),
   containerLogs: (id: string, limit = 20) =>

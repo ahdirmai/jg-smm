@@ -10,7 +10,6 @@
  */
 
 import {
-  Badge,
   Button,
   Card,
   CardContent,
@@ -24,7 +23,6 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-  Textarea,
 } from '@smm/ui';
 import {
   AlertCircle,
@@ -37,17 +35,31 @@ import {
   Search,
   Sparkles,
 } from 'lucide-react';
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from 'react';
+import { forwardRef, useCallback, useImperativeHandle, useMemo, useRef, useState } from 'react';
 
-import { api, type AccountsByRegionResponse, type ScrapeTargetResponse } from '@/lib/api';
+import {
+  api,
+  type ScrapedComment,
+  type ScrapedPost,
+  type ScrapeTargetResponse,
+  type SentimentBreakdown,
+} from '@/lib/api';
 import { useAccounts } from '@/lib/hooks/use-accounts';
 import { useActions } from '@/lib/hooks/use-actions';
-import { PLATFORM_LABEL, platformLabel } from '@/lib/platforms';
+import {
+  isOnDemandPlatform,
+  ON_DEMAND_PLATFORMS,
+  PLATFORM_LABEL,
+  platformLabel,
+  type OnDemandPlatform,
+} from '@/lib/platforms';
 import type { ActionItem } from '@/lib/api';
 import { useSession } from '@/lib/auth/session-context';
 import { can } from '@/lib/auth/permissions';
 import { PostMedia } from '@/components/post-media';
+import { postPermalink } from '@/lib/permalink';
 import { CommentThread } from '@/components/comment-thread';
+import { AccountPicker } from './account-picker';
 import { SentimentSummary } from '@/components/sentiment';
 
 const MAX_BATCH = 50;
@@ -89,6 +101,18 @@ const METRIC_LABELS: Record<string, string> = {
   shareCount: 'shares',
 };
 
+/** Counts from the stored comments; the same shape the scrape endpoint returns. */
+function sentimentOf(comments: ScrapedComment[]): SentimentBreakdown {
+  const out: SentimentBreakdown = { positive: 0, neutral: 0, negative: 0, unanalysed: 0 };
+  for (const c of comments) {
+    if (c.sentiment === 'POSITIVE') out.positive++;
+    else if (c.sentiment === 'NEGATIVE') out.negative++;
+    else if (c.sentiment === 'NEUTRAL') out.neutral++;
+    else out.unanalysed++;
+  }
+  return out;
+}
+
 function compact(n: number): string {
   if (n < 1_000) return String(n);
   if (n < 1_000_000) return `${(n / 1_000).toFixed(n < 10_000 ? 1 : 0).replace(/\.0$/, '')}K`;
@@ -116,23 +140,18 @@ function scrapedAgo(iso: string): string {
   return `${Math.round(mins / 60)}h ago`;
 }
 
-/**
- * On-demand post scrape is wired to exactly two platforms, and that is a
- * backend fact rather than a UI choice: `actorForPlatform` in
- * cmd/server/main.go returns an actor for Instagram and Threads and "" for the
- * other five, and ScrapeTarget turns an empty actor into a 400 "no actor
- * configured". Listing the other five here would be five options that always
- * fail. Keyword scrape is the surface that covers all seven.
- *
- * Named once because it was spelled out in four signatures and two more
- * callbacks, and actions/page.tsx cast into it unchecked.
- */
-const ON_DEMAND_PLATFORMS = ['instagram', 'threads'] as const;
-type OnDemandPlatform = (typeof ON_DEMAND_PLATFORMS)[number];
-
 export type NewActionFormHandle = {
-  /** Fill the form with a platform + permalink and run the scrape (6h cache = instant for a stored post). */
-  loadPost: (platform: OnDemandPlatform, url: string) => void;
+  /**
+   * Fill the form with a platform + permalink, run the scrape, and optionally
+   * preselect the action (the scrape itself resets `flow` to null).
+   */
+  loadPost: (platform: OnDemandPlatform, url: string, flow?: 'comment' | 'like') => void;
+  /**
+   * Load a post that is already stored (a Scrape History row). No actor run:
+   * the row is the target, and its comment bodies are a DB read. This is what
+   * keeps "act on this saved post" from paying for a second scrape.
+   */
+  loadStoredPost: (post: ScrapedPost, flow?: 'comment' | 'like') => void;
 };
 
 export const NewActionForm = forwardRef<
@@ -177,17 +196,24 @@ export const NewActionForm = forwardRef<
   // Accounts grouped by the worker's location (city; region fallback,
   // unassigned last). null = not fetched yet / fetch failed: the list then
   // falls back to the flat platformAccounts.
-  const [regionGroups, setRegionGroups] = useState<AccountsByRegionResponse['regions'] | null>(null);
+  // Picker search. Kept in the form (not the picker) so it survives a re-render
+  // when a selection changes.
+  const [accountQuery, setAccountQuery] = useState('');
 
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Only accounts on the scraped platform can act on it.
+  // Only accounts that can actually act: same platform, ACTIVE, and holding a
+  // completed login. A FAILED/PENDING account opens the platform logged out, so
+  // offering it here only produces a job that dies at enqueue.
   const platformAccounts = useMemo(
     () =>
       accounts.filter(
-        (a) => a.platform === platform && (a.status === 'ACTIVE' || a.status === 'PAUSED'),
+        (a) =>
+          a.platform === platform &&
+          a.status === 'ACTIVE' &&
+          a.authStatus === 'AUTHENTICATED',
       ),
     [accounts, platform],
   );
@@ -196,40 +222,6 @@ export const NewActionForm = forwardRef<
     () => platformAccounts.filter((a) => selected[a.id]),
     [platformAccounts, selected],
   );
-
-  // The by-region list is the grouping source for the account picker: the
-  // same accounts, keyed by the worker's location (city; region fallback;
-  // unassigned last). One fetch on mount; a failure keeps regionGroups null,
-  // so the picker falls back to the flat list — grouping is an enhancement,
-  // never a blocker.
-  useEffect(() => {
-    let live = true;
-    api
-      .listAccountsByRegion()
-      .then((res) => {
-        if (live) setRegionGroups(res.regions);
-      })
-      .catch(() => {
-        if (live) setRegionGroups(null);
-      });
-    return () => {
-      live = false;
-    };
-  }, []);
-
-  // The picker's rows: the platform's usable accounts, grouped by location.
-  // regionGroups null (not fetched / failed) collapses to one unlabelled
-  // group, i.e. today's flat list.
-  const accountGroups = useMemo(() => {
-    const usable = (a: (typeof accounts)[number]) =>
-      a.platform === platform && (a.status === 'ACTIVE' || a.status === 'PAUSED');
-    if (!regionGroups) {
-      return [{ region: '', accounts: accounts.filter(usable) }];
-    }
-    return regionGroups
-      .map((g) => ({ region: g.region, accounts: g.accounts.filter(usable) }))
-      .filter((g) => g.accounts.length > 0);
-  }, [accounts, regionGroups, platform]);
 
   // One scrape runner: explicit args so a history pick (platform/url set in
   // the same tick) scrapes the right post, not the previous state values.
@@ -342,14 +334,53 @@ export const NewActionForm = forwardRef<
   // History card hands a stored post back: fill platform + link, scrape to
   // refresh the preview (instant — 6h cache), bump the history list.
   const loadPost = useCallback(
-    (p: OnDemandPlatform, u: string) => {
+    (p: OnDemandPlatform, u: string, flow?: 'comment' | 'like') => {
       setPlatform(p);
       setUrl(u);
-      void runScrapeWith(p, u);
+      // runScrapeWith clears the action at its start; selecting it after the
+      // scrape lands is what makes a history row open as the right flow.
+      void runScrapeWith(p, u).then(() => {
+        if (flow) setFlow(flow);
+      });
     },
     [runScrapeWith],
   );
-  useImperativeHandle(ref, () => ({ loadPost }), [loadPost]);
+  // A stored post is shown immediately, then its saved comments arrive from the
+  // DB. The token prevents a slow read for post A from overwriting post B.
+  const storedLoadId = useRef(0);
+  const loadStoredPost = useCallback((post: ScrapedPost, flow?: 'comment' | 'like') => {
+    const platform = post.platform.toLowerCase();
+    if (!isOnDemandPlatform(platform)) return;
+    const loadId = ++storedLoadId.current;
+    setPlatform(platform);
+    setUrl(postPermalink(post) ?? '');
+    setScrapeError(null);
+    setReplyCommentId(null);
+    setManualReplyUrl('');
+    setSelected({});
+    setText({});
+    // The preview is the stored row, not a fresh scrape. `cached: true` is the
+    // honest label: this data came from storage, and re-scraping is optional.
+    setScrape({
+      post,
+      comments: [],
+      sentiment: { positive: 0, neutral: 0, negative: 0, unanalysed: 0 },
+      cached: true,
+    });
+    setFlow(flow ?? null);
+    void api
+      .listPostComments(post.id, { limit: 100 })
+      .then((r) => {
+        if (storedLoadId.current !== loadId) return;
+        const comments = r.comments ?? [];
+        setScrape({ post, comments, sentiment: sentimentOf(comments), cached: true });
+      })
+      .catch(() => {
+        // Comment bodies are optional for a comment/like target. Keep the
+        // stored post usable instead of blocking the action on a read failure.
+      });
+  }, []);
+  useImperativeHandle(ref, () => ({ loadPost, loadStoredPost }), [loadPost, loadStoredPost]);
 
   // A reply needs an addressable target: either a picked comment with a
   // derived permalink, or a pasted comment link. The pasted link wins when
@@ -399,8 +430,8 @@ export const NewActionForm = forwardRef<
       <CardHeader>
         <CardTitle>New action</CardTitle>
         <CardDescription>
-          Scrape the target post first (stores metadata, caption and existing comments), then queue
-          the action. Executed by the owning worker via Playwright.
+          Load a target (scrape it once, or pick a stored post from Scrape History), then queue the
+          action. Executed by the owning worker via Playwright.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">
@@ -411,7 +442,9 @@ export const NewActionForm = forwardRef<
             <Select
               value={platform}
               onValueChange={(v) => {
-                if (v === 'instagram' || v === 'threads') setPlatform(v);
+                if ((ON_DEMAND_PLATFORMS as readonly string[]).includes(v)) {
+                  setPlatform(v as OnDemandPlatform);
+                }
               }}
             >
               <SelectTrigger aria-label="Platform">
@@ -432,7 +465,11 @@ export const NewActionForm = forwardRef<
               id="action-target-url"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
-              placeholder="https://www.instagram.com/p/…"
+              placeholder={
+                platform === 'youtube'
+                  ? 'https://youtube.com/shorts/… or https://www.youtube.com/watch?v=…'
+                  : 'https://www.instagram.com/p/…'
+              }
               className="font-mono text-xs"
               disabled={!canAct || scraping}
             />
@@ -442,9 +479,9 @@ export const NewActionForm = forwardRef<
             </Button>
           </div>
           <p className="text-xs text-muted-foreground">
-            Scrape pulls the post metadata, caption and existing comments (Apify). A post already
-            scraped within 6h is reused from storage — no paid run; only a new post, a stale one, or a
-            batch-ingested post without comments triggers a fresh scrape.
+            {platform === 'youtube'
+              ? 'Scrape pulls the video title, channel, thumbnail and metrics (Apify). The YouTube actor does not return comment bodies, and its targets are not comment-cached, so each scrape is a paid run. Paste the Short, watch or youtu.be link.'
+              : 'Scrape pulls the post metadata, caption and existing comments (Apify). A post already scraped within 6h is reused from storage — no paid run; only a new post, a stale one, or a batch-ingested post without comments triggers a fresh scrape.'}
           </p>
         </div>
 
@@ -539,14 +576,24 @@ export const NewActionForm = forwardRef<
                 </div>
               ) : null}
               {scrape.comments.length === 0 ? (
-                // The 6h cache only serves posts whose comments were actually
-                // fetched, so an empty list here is always the real answer, not
-                // a cached "no comments" placeholder. Without this the operator
-                // cannot tell whether there is anything to reply to.
-                <p className="text-xs text-muted-foreground">
-                  No existing comments on this post — the comments were fetched, so this is the
-                  real answer, not a cached placeholder.
-                </p>
+                platform === 'youtube' ? (
+                  // The YouTube actor returns the video row only. Saying "no
+                  // comments" here would be a fabricated answer; the target URL
+                  // is all a top-level comment job needs.
+                  <p className="text-xs text-muted-foreground">
+                    YouTube metadata loaded. Comment bodies are not returned by this actor — the
+                    video URL is enough to queue a comment.
+                  </p>
+                ) : (
+                  // The 6h cache only serves posts whose comments were actually
+                  // fetched, so an empty list here is always the real answer, not
+                  // a cached "no comments" placeholder. Without this the operator
+                  // cannot tell whether there is anything to reply to.
+                  <p className="text-xs text-muted-foreground">
+                    No existing comments on this post — the comments were fetched, so this is the
+                    real answer, not a cached placeholder.
+                  </p>
+                )
               ) : null}
             </div>
           </div>
@@ -565,37 +612,47 @@ export const NewActionForm = forwardRef<
               >
                 <MessageSquare /> Comment
               </Button>
-              <Button
-                type="button"
-                variant={flow === 'like' ? 'default' : 'outline'}
-                onClick={() => setFlow('like')}
-                disabled={!canAct}
-              >
-                <Heart /> Like
-              </Button>
-              <Button
-                type="button"
-                variant={flow === 'reply' ? 'default' : 'outline'}
-                onClick={() => {
-                  setFlow('reply');
-                  // Default to the first comment that can actually be replied
-                  // to, so the common case is one click. Comments with no
-                  // derivable permalink have no legal target and are skipped;
-                  // with none at all the operator pastes the comment link.
-                  setReplyCommentId(
-                    (prev) => prev ?? scrape?.comments.find((c) => c.url)?.id ?? null,
-                  );
-                }}
-                disabled={!canAct}
-                title={
-                  scrape.comments.some((c) => c.url)
-                    ? 'Reply to one of the scraped comments'
-                    : 'Paste a comment link to reply'
-                }
-              >
-                <Reply /> Reply
-              </Button>
+              {platform !== 'youtube' ? (
+                <>
+                  <Button
+                    type="button"
+                    variant={flow === 'like' ? 'default' : 'outline'}
+                    onClick={() => setFlow('like')}
+                    disabled={!canAct}
+                  >
+                    <Heart /> Like
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={flow === 'reply' ? 'default' : 'outline'}
+                    onClick={() => {
+                      setFlow('reply');
+                      // Default to the first comment that can actually be replied
+                      // to, so the common case is one click. Comments with no
+                      // derivable permalink have no legal target and are skipped;
+                      // with none at all the operator pastes the comment link.
+                      setReplyCommentId(
+                        (prev) => prev ?? scrape?.comments.find((c) => c.url)?.id ?? null,
+                      );
+                    }}
+                    disabled={!canAct}
+                    title={
+                      scrape.comments.some((c) => c.url)
+                        ? 'Reply to one of the scraped comments'
+                        : 'Paste a comment link to reply'
+                    }
+                  >
+                    <Reply /> Reply
+                  </Button>
+                </>
+              ) : null}
             </div>
+            {platform === 'youtube' ? (
+              <p className="text-xs text-muted-foreground">
+                YouTube automation currently ships top-level comments only; like and reply are not
+                built yet.
+              </p>
+            ) : null}
           </div>
         ) : null}
 
@@ -645,7 +702,7 @@ export const NewActionForm = forwardRef<
           <div className="space-y-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <Label>
-                Accounts ({accountGroups.reduce((n, g) => n + g.accounts.length, 0)} on{' '}
+                Accounts ({platformAccounts.length} ready on{' '}
                 {platformLabel(platform) ?? platform})
               </Label>
               {flow === 'comment' || flow === 'reply' ? (
@@ -696,63 +753,35 @@ export const NewActionForm = forwardRef<
               ) : null}
             </div>
             {aiError ? <p className="text-sm text-destructive">{aiError}</p> : null}
-            {accountGroups.length === 0 ? (
+            {platformAccounts.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                No usable account on this platform — add one on the Accounts page.
+                No authenticated account on this platform. Finish a login on the Accounts page —
+                an account without a session would act logged out.
               </p>
             ) : (
-              <div className="space-y-3">
-                {accountGroups.map((g) => (
-                  <div key={g.region || 'flat'} className="space-y-1.5">
-                    {/* Group header only when there is more than one location
-                        to distinguish; a single group is the flat list as
-                        before. */}
-                    {accountGroups.length > 1 ? (
-                      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                        {g.region === 'unassigned' ? 'Unassigned' : g.region} ({g.accounts.length})
-                      </div>
-                    ) : null}
-                    {g.accounts.map((a) => {
-                      const on = !!selected[a.id];
-                      return (
-                        <div key={a.id} className="flex items-start gap-2">
-                          <Button
-                            type="button"
-                            variant={on ? 'default' : 'outline'}
-                            size="sm"
-                            className="mt-0.5 shrink-0"
-                            aria-pressed={on}
-                            aria-label={`${on ? 'Deselect' : 'Select'} @${a.username}`}
-                            onClick={() => setSelected((s) => ({ ...s, [a.id]: !s[a.id] }))}
-                          >
-                            {on ? '✓' : '+'}
-                          </Button>
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2 text-sm">
-                              <span className="truncate font-medium">@{a.username}</span>
-                              <Badge variant="outline">{a.status}</Badge>
-                            </div>
-                            {on && (flow === 'comment' || flow === 'reply') ? (
-                              <Textarea
-                                className="mt-1"
-                                rows={2}
-                                maxLength={MAX_COMMENT_LEN}
-                                placeholder={
-                                  flow === 'reply'
-                                    ? 'Reply for this account (blank = template pool)'
-                                    : 'Comment for this account (blank = template pool)'
-                                }
-                                value={text[a.id] ?? ''}
-                                onChange={(e) => setText((s) => ({ ...s, [a.id]: e.target.value }))}
-                              />
-                            ) : null}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                ))}
-              </div>
+              <AccountPicker
+                accounts={platformAccounts}
+                selected={selected}
+                onToggle={(id) => setSelected((s2) => ({ ...s2, [id]: !s2[id] }))}
+                onSelectAll={(ids) => setSelected(Object.fromEntries(ids.map((id) => [id, true])))}
+                onClear={() => {
+                  setSelected({});
+                  setText({});
+                }}
+                query={accountQuery}
+                onQuery={setAccountQuery}
+                text={text}
+                onText={(id, value) => setText((s2) => ({ ...s2, [id]: value }))}
+                textPlaceholder={
+                  flow === 'comment' || flow === 'reply'
+                    ? flow === 'reply'
+                      ? 'Reply for this account (blank = template pool)'
+                      : 'Comment for this account (blank = template pool)'
+                    : undefined
+                }
+                maxBatch={MAX_BATCH}
+                maxTextLen={MAX_COMMENT_LEN}
+              />
             )}
           </div>
         ) : null}

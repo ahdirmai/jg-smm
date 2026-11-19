@@ -10,9 +10,10 @@
  * exactly the way `permalinkFor` did (see lib/permalink.ts) — two renderers of
  * the same post that disagree about which fields exist.
  *
- * Deliberately NO "create action" button: that is the caller's decision. Only
- * Instagram and Threads can be acted on, and a component that offers the button
- * for a TikTok post would promise something the worker cannot do.
+ * The create-action controls are a caller `footer`, not built in: the batch
+ * page and Scrape History decide whether a row can be acted on. Scrape History
+ * passes Comment/Like for on-demand platforms; the form then reuses the stored
+ * row (no paid re-scrape).
  */
 
 import { Badge, Button, Dialog, DialogContent, DialogHeader, DialogTitle } from '@smm/ui';

@@ -198,8 +198,45 @@ export default function AccountsPage() {
     return m;
   }, [containers]);
 
-  const novncFor = (a: Account): string | null =>
-    a.workerId ? (novncByWorker.get(a.workerId) ?? null) : null;
+  // Ticketed live-view URLs, keyed by account. In the stateless pool the live
+  // view is a PUBLIC hostname, so the URL must be minted per open and expires in
+  // minutes — it is not a standing heartbeat field. Kept in state because the
+  // drawer needs it for the whole session of watching one account.
+  // A ticket is valid for minutes, so the URL is cached WITH its expiry. Without
+  // the expiry, reopening an account after a few minutes reused a dead ticket
+  // and the iframe sat blank with nothing to explain it.
+  const [liveView, setLiveView] = useState<Record<string, { url: string; expiresAt: number }>>({});
+  const [liveViewBusy, setLiveViewBusy] = useState<string | null>(null);
+
+  const novncFor = (a: Account): string | null => {
+    const cached = liveView[a.id];
+    // A minute of margin: a ticket that dies mid-handshake is the same blank
+    // screen as one that was never minted.
+    if (cached && cached.expiresAt - 60_000 > Date.now()) return cached.url;
+    return a.workerId ? (novncByWorker.get(a.workerId) ?? null) : null;
+  };
+
+  /**
+   * Mint a ticketed live-view URL and open the drawer on it. The API leases a
+   * worker, opens the account profile there and signs a URL for that worker's
+   * screen, so the operator sees the account's own logged-in browser.
+   */
+  const openLiveView = async (a: Account) => {
+    setDetail({ id: a.id, watch: true });
+    setLiveViewBusy(a.id);
+    try {
+      const view = await api.openAccountLiveView(a.id);
+      const expiresAt = Date.parse(view.expiresAt);
+      setLiveView((prev) => ({
+        ...prev,
+        [a.id]: { url: view.liveViewUrl, expiresAt: Number.isFinite(expiresAt) ? expiresAt : 0 },
+      }));
+    } catch (err) {
+      setOperationError(err instanceof Error ? err.message : 'Could not open the live view');
+    } finally {
+      setLiveViewBusy(null);
+    }
+  };
 
   // workerId → desiredState, so the STATUS column can show what the fleet
   // controller is enforcing (RUNNING/PAUSED) next to the account's own
@@ -253,6 +290,21 @@ export default function AccountsPage() {
   const detailAccount = detail ? (accounts.find((a) => a.id === detail.id) ?? null) : null;
   const isWatching = detail?.watch ?? false;
 
+  // Mint the ticketed URL as soon as the panel OPENS in watch mode (a login in
+  // flight, or the operator's click). Waiting for a separate toggle left the
+  // panel showing "the worker has not published its noVNC port" for an account
+  // that simply had not been asked yet — in the pool the URL is minted per
+  // account, never read off the worker list.
+  useEffect(() => {
+    if (!detailAccount || !isWatching) return;
+    if (liveView[detailAccount.id]) return;
+    if (liveViewBusy === detailAccount.id) return;
+    void openLiveView(detailAccount);
+    // openLiveView is stable enough for this trigger; re-running on every
+    // render would mint a ticket per keystroke.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detailAccount?.id, isWatching]);
+
   const filteredIds = useMemo(() => new Set(filtered.map((a) => a.id)), [filtered]);
   const pageIds = useMemo(() => new Set(pageAccounts.map((a) => a.id)), [pageAccounts]);
   // Drop selections that the current filter hid, so the bulk bar never
@@ -290,14 +342,54 @@ export default function AccountsPage() {
     }
   };
 
+  /**
+   * Run one account action and, when the server says the account is still
+   * leased, offer the one click that actually resolves it.
+   *
+   * A conflict here always means the same thing: an earlier live view or login
+   * still holds a worker. Telling the operator to "wait for it to expire" is a
+   * dead end they cannot see; closing the session is the action, so the error
+   * carries it instead of just describing the problem.
+   */
   const onAct = async (id: string, fn: (id: string) => Promise<void>) => {
     setBusy(id);
     setOperationError(null);
     try {
       await fn(id);
     } catch (err) {
-      // Keep the table usable; the SSE refresh restores truth on the next tick.
-      setOperationError(err instanceof Error ? err.message : 'Account operation failed');
+      const message = err instanceof Error ? err.message : 'Account operation failed';
+      if (/already has a live session|worker busy|wait for it to expire/i.test(message)) {
+        setOperationError(
+          `${message}
+
+This account still holds a worker from an earlier session. Use "Release session" to free it, then try again.`,
+        );
+      } else {
+        // Keep the table usable; the SSE refresh restores truth on the next tick.
+        setOperationError(message);
+      }
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  /**
+   * Free whatever an earlier session left behind: lease, Redis slot, and the
+   * browser context on the worker. Idempotent, so it is safe on a clean account.
+   */
+  const releaseSession = async (id: string) => {
+    setBusy(id);
+    setOperationError(null);
+    try {
+      await api.closeAccountLiveView(id);
+      setLiveView((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      await refresh();
+    } catch (err) {
+      setOperationError(err instanceof Error ? err.message : 'Could not release the session');
     } finally {
       setBusy(null);
     }
@@ -307,8 +399,32 @@ export default function AccountsPage() {
   // in its noVNC view; the operator completes it there. The badge flips to
   // AUTHENTICATING now and the callback settles it.
   const startLogin = async (id: string) => {
-    await api.startAccountLogin(id);
+    try {
+      await api.startAccountLogin(id);
+    } catch (err) {
+      // Opening the cockpit on a fresh AUTHENTICATING row mints a watch lease,
+      // and in the stateless pool that lease IS the login machine: the login
+      // then 409s ("live view is open"). The lease is safe to drop here — the
+      // operator asked for a login, not to keep watching a blank page.
+      const message = err instanceof Error ? err.message : '';
+      if (!/live view is open|already has a live session|worker busy/i.test(message)) throw err;
+      await api.closeAccountLiveView(id).catch(() => undefined);
+      await api.startAccountLogin(id);
+    }
     refresh();
+  };
+
+  // Download the account's stored session (cookies only, never to the server
+  // again). Useful before a rebuild, and for moving an account between fleets.
+  const exportSession = async (a: Account) => {
+    const session = await api.exportAccountSession(a.id);
+    const blob = new Blob([JSON.stringify(session, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `session-${a.platform}-${a.username.replace(/[^a-z0-9._@-]/gi, '_')}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
   };
 
   // Submit a 2FA / checkpoint code to a parked login. The value arrives from
@@ -325,11 +441,19 @@ export default function AccountsPage() {
   // Chromium; this page then opens the live view so the operator watches it.
   // No worker / no live view yet: fall back to an operator tab.
   const openProfile = async (a: Account) => {
-    const novnc = novncFor(a);
-    if (!a.workerId || !novnc) {
+    // A pool account has no bound worker until one is leased for it, so the
+    // ticketed endpoint IS the "open profile in its own browser" action.
+    if (!a.workerId || !novncFor(a)) {
+      if (canAct) {
+        await openLiveView(a);
+        return;
+      }
       window.open(profileUrlFor(a), '_blank', 'noopener,noreferrer');
       return;
     }
+    // Legacy path: the account is already packed into a container that
+    // publishes a standing noVNC URL, so no ticket is minted — the container
+    // address IS the view.
     setDetail({ id: a.id, watch: true });
     try {
       await api.openBrowser(a.workerId, profileUrlFor(a), a.platform);
@@ -341,12 +465,41 @@ export default function AccountsPage() {
     }
   };
 
+  /**
+   * "Live view" for one account, from ANY entry point.
+   *
+   * The pool has no standing noVNC URL: it is minted per open, expires in
+   * minutes, and is bound to the worker the account is leased on. So every path
+   * that wants to show a screen goes through openLiveView — the old code set
+   * `watch: true` and hoped `novncByWorker` had an entry, which on the pool is
+   * almost always null and rendered "the worker has not published its noVNC
+   * port" for an account that simply had not been asked yet.
+   */
+  const showLiveView = (a: Account) => {
+    if (canAct) {
+      void openLiveView(a);
+      return;
+    }
+    setDetail({ id: a.id, watch: true });
+  };
+
   // Accounts that need the operator (a challenge in flight, or a live session
   // they want to watch) show the live view inside the drawer; a logged-in
   // account shows its profile instead — the two things an operator wants one
   // click away from this list.
   const needsLiveView = (a: Account): boolean =>
     a.authStatus === 'AUTHENTICATING' || a.authStatus === 'NEEDS_INPUT';
+
+  // A panel that shows a screen must HAVE a screen: mint the ticket for the
+  // login-in-flight case too, not only when the operator clicked a toggle.
+  // Without this the drawer opened "watching" an account that had never been
+  // asked for a worker, and said the worker published nothing.
+  useEffect(() => {
+    if (!detailAccount || !needsLiveView(detailAccount) || !canAct) return;
+    if (liveView[detailAccount.id] || liveViewBusy === detailAccount.id) return;
+    void openLiveView(detailAccount);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detailAccount?.id, detailAccount?.authStatus]);
 
   // Fleet rollup for the stat strip. Counted over ALL accounts, not the
   // filtered view: the numbers answer "how healthy is the fleet", and a filter
@@ -426,14 +579,58 @@ export default function AccountsPage() {
           <AccountDetailPanel
             account={detailAccount}
             novncUrl={novncFor(detailAccount)}
+            liveViewLoading={liveViewBusy === detailAccount.id}
             showLiveView={isWatching || needsLiveView(detailAccount)}
             canAct={canAct}
             busy={busy === detailAccount.id}
-            onClose={() => setDetail(null)}
+            onClose={() => {
+              // Releasing on close is not cosmetic: an unclosed view keeps the
+              // account's lease (a DB row) and hides it from the scheduler.
+              // A login in flight is the exception — closing the panel is
+              // closing the window, not cancelling the OTP the operator may
+              // come back to. "Cancel this login" is the explicit exit.
+              if (detailAccount && !needsLiveView(detailAccount)) {
+                void api.closeAccountLiveView(detailAccount.id).catch(() => undefined);
+              }
+              setDetail(null);
+            }}
             onStartLogin={(id) => void onAct(id, startLogin)}
+            onImportSession={(a, session) =>
+              void onAct(a.id, async () => {
+                await api.importAccountSession(a.id, session);
+                await refresh();
+              })
+            }
+            onExportSession={(a) => void onAct(a.id, () => exportSession(a))}
             onSubmitInput={(id, value) => void onAct(id, (x) => submitInput(x, value))}
-            onToggleWatch={() => setDetail({ id: detailAccount.id, watch: !isWatching })}
+            onToggleWatch={() => {
+              // Opening the view mints a fresh ticket (it expires in minutes);
+              // closing just stops mounting the iframe.
+              if (isWatching) {
+                // A login in flight owns the worker: unmounting the iframe is
+                // not the operator asking to abandon the OTP — it used to
+                // release the session and close the very browser showing the
+                // code form. Only a plain watch releases the lease.
+                if (!needsLiveView(detailAccount)) {
+                  void api.closeAccountLiveView(detailAccount.id).catch(() => undefined);
+                }
+                setDetail({ id: detailAccount.id, watch: false });
+                return;
+              }
+              showLiveView(detailAccount);
+            }}
             onOpenProfile={(a) => void openProfile(a)}
+            onReleaseSession={(id) => void releaseSession(id)}
+            onCancelParkedLogin={(id) => {
+              // Closing the live view both frees the worker and settles the
+              // parked attempt, so the account becomes retryable again.
+              void api
+                .closeAccountLiveView(id)
+                .then(() => refresh())
+                .catch((err: unknown) =>
+                  setOperationError(err instanceof Error ? err.message : 'Could not cancel the login'),
+                );
+            }}
           />
         </Card>
       ) : null}
@@ -592,9 +789,21 @@ export default function AccountsPage() {
             ) : null}
 
             {operationError || error ? (
-              <div className="flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
-                <AlertCircle className="size-4" />
-                {operationError || error}
+              <div className="flex flex-wrap items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+                <AlertCircle className="size-4 shrink-0" />
+                <span className="min-w-0 whitespace-pre-line">{operationError || error}</span>
+                {/* The conflict text names an action; without the button the
+                    operator has to guess which one and where. */}
+                {detail ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={busy === detail.id}
+                    onClick={() => void releaseSession(detail.id)}
+                  >
+                    Release session
+                  </Button>
+                ) : null}
               </div>
             ) : null}
 
@@ -614,7 +823,10 @@ export default function AccountsPage() {
                     </TableHead>
                     <TableHead>Account</TableHead>
                     <TableHead>Platform</TableHead>
-                    <TableHead>Container</TableHead>
+                    {/* The account's own city. The "worker" column beside it
+                        is a LEASE, not a home: an idle pool account has none. */}
+                    <TableHead>Location</TableHead>
+                    <TableHead>Worker</TableHead>
                     <TableHead>Auth</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="w-10" />
@@ -697,9 +909,7 @@ export default function AccountsPage() {
                               <div className="truncate font-mono text-xs text-muted-foreground">
                                 {a.handle && a.handle !== a.username
                                   ? a.handle
-                                  : a.workerId
-                                    ? a.workerId.slice(0, 12)
-                                    : 'unassigned'}
+                                  : a.timezone || 'no timezone'}
                               </div>
                             </div>
                           </div>
@@ -707,8 +917,17 @@ export default function AccountsPage() {
                         <TableCell>
                           <Badge variant="outline">{platformLabel(a.platform)}</Badge>
                         </TableCell>
+                        <TableCell>
+                          {a.location ? (
+                            <Badge variant="outline">{a.location}</Badge>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
+                        </TableCell>
                         <TableCell className="font-mono text-xs text-muted-foreground">
-                          {a.workerId ? a.workerId.slice(0, 12) : '—'}
+                          {/* workerId here is the interactive LEASE, so a dash
+                              means idle/schedulable — not unplaced. */}
+                          {a.workerId ? a.workerId.slice(0, 12) : 'idle'}
                         </TableCell>
                         <TableCell>
                           <AuthBadge status={a.authStatus} />

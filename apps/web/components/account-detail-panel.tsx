@@ -1,8 +1,8 @@
 'use client';
 
 import { Badge, Button, Input, Label } from '@smm/ui';
-import { ExternalLink, KeyRound, MonitorPlay, X } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { Download, ExternalLink, KeyRound, MonitorPlay, RefreshCw, Upload, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 
 import type { Account } from '@/lib/api';
 import { AuthBadge, StatusBadge } from '@/components/account-badges';
@@ -55,6 +55,7 @@ export function profileUrlFor(a: Account): string {
 export function AccountDetailPanel({
   account,
   novncUrl,
+  liveViewLoading = false,
   showLiveView,
   canAct,
   busy,
@@ -63,10 +64,19 @@ export function AccountDetailPanel({
   onSubmitInput,
   onToggleWatch,
   onOpenProfile,
+  onCancelParkedLogin,
+  onReleaseSession,
+  onImportSession,
+  onExportSession,
 }: {
   account: Account;
-  /** The worker's published live view URL, or null until its first heartbeat. */
+  /**
+   * The worker's live view URL. In the stateless pool this is a TICKETED URL
+   * fetched per open (it expires in minutes), not a heartbeat field.
+   */
   novncUrl: string | null;
+  /** The ticketed URL is being minted — the worker is waking. */
+  liveViewLoading?: boolean;
   /** Auth in flight, or the operator explicitly chose to watch. */
   showLiveView: boolean;
   canAct: boolean;
@@ -82,8 +92,21 @@ export function AccountDetailPanel({
    * an operator tab when the account has no live view.
    */
   onOpenProfile: (account: Account) => void;
+  /** Abandon a parked login: closes the browser and marks the attempt failed. */
+  onCancelParkedLogin: (id: string) => void;
+  /** Free whatever an earlier session left holding this account's worker. */
+  onReleaseSession: (id: string) => void;
+  /**
+   * Adopt a Playwright storageState captured elsewhere (the local harness, or
+   * another worker). The account runs from that session with no login step.
+   */
+  onImportSession: (account: Account, session: unknown) => void;
+  /** Download this account's stored session so another container can adopt it. */
+  onExportSession: (account: Account) => void;
 }) {
   const [code, setCode] = useState('');
+  const [sessionError, setSessionError] = useState<string | null>(null);
+  const sessionFile = useRef<HTMLInputElement>(null);
 
   // Switching accounts must not leak the previous row's half-typed code.
   useEffect(() => setCode(''), [account.id]);
@@ -101,12 +124,22 @@ export function AccountDetailPanel({
           </span>
           <div className="min-w-0">
             <div className="truncate text-base font-medium tracking-tight">@{account.username}</div>
-            <div className="truncate font-mono text-xs text-muted-foreground">
-              {account.handle && account.handle !== account.username
-                ? account.handle
-                : account.workerId
-                  ? account.workerId.slice(0, 12)
-                  : 'unassigned'}
+            <div className="flex flex-wrap items-center gap-2 font-mono text-xs text-muted-foreground">
+              <span>
+                {account.handle && account.handle !== account.username
+                  ? account.handle
+                  : account.workerId
+                    ? account.workerId.slice(0, 12)
+                    : 'idle'}
+              </span>
+              {/* The account's OWN city. On a shared pool worker the machine
+                  says nothing about where the account appears to be. */}
+              {account.location ? (
+                <span className="rounded bg-secondary px-1.5 py-0.5 text-[10px] uppercase tracking-wide">
+                  {account.location}
+                  {account.timezone ? ` · ${account.timezone}` : ''}
+                </span>
+              ) : null}
             </div>
           </div>
         </div>
@@ -123,7 +156,11 @@ export function AccountDetailPanel({
       <div className="grid gap-5 md:grid-cols-2">
         {showLiveView ? (
           <div className="space-y-2">
-            {novncUrl ? (
+            {liveViewLoading && !novncUrl ? (
+              <p className="flex items-center gap-2 rounded-lg border border-border/60 bg-secondary/40 p-3 text-sm text-muted-foreground">
+                Starting the live view — the worker wakes on demand…
+              </p>
+            ) : novncUrl ? (
               <>
                 <LiveView url={novncUrl} title={`Live browser — ${account.username}`} />
                 <a
@@ -180,6 +217,29 @@ export function AccountDetailPanel({
                 Type the code shown in the live view — or solve the challenge directly in the live
                 view.
               </p>
+              {/* Escape hatch. Without it a parked login is a trap: the row keeps
+                  NEEDS_INPUT, every new attempt answers "submit the code
+                  instead", and the only exit was the lease TTL. */}
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={busy || !canAct}
+                  onClick={() => onCancelParkedLogin(account.id)}
+                >
+                  <X />
+                  Cancel this login
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={busy || !canAct}
+                  onClick={() => onReleaseSession(account.id)}
+                >
+                  <RefreshCw />
+                  Release session
+                </Button>
+              </div>
             </div>
           ) : null}
 
@@ -200,7 +260,7 @@ export function AccountDetailPanel({
                 <ExternalLink />
                 Open profile
               </Button>
-              <Button variant="ghost" size="sm" disabled={!novncUrl} onClick={onToggleWatch}>
+              <Button variant="ghost" size="sm" onClick={onToggleWatch}>
                 <MonitorPlay />
                 Live view
               </Button>
@@ -235,6 +295,48 @@ export function AccountDetailPanel({
               Log in
             </Button>
           ) : null}
+
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={busy || !canAct}
+              onClick={() => sessionFile.current?.click()}
+            >
+              <Upload />
+              Import session
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={busy || !canAct || account.authStatus !== 'AUTHENTICATED'}
+              onClick={() => onExportSession(account)}
+            >
+              <Download />
+              Export session
+            </Button>
+          </div>
+          {sessionError ? <p className="text-xs text-destructive">{sessionError}</p> : null}
+          <input
+            ref={sessionFile}
+            type="file"
+            accept="application/json,.json"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              // Reset first: picking the same file again must still fire.
+              e.target.value = '';
+              if (!file) return;
+              setSessionError(null);
+              void file.text().then((text) => {
+                try {
+                  onImportSession(account, JSON.parse(text));
+                } catch {
+                  setSessionError('That file is not a Playwright storageState (invalid JSON).');
+                }
+              });
+            }}
+          />
         </div>
       </div>
     </div>

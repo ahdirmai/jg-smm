@@ -24,6 +24,7 @@ import { useAccounts } from '@/lib/hooks/use-accounts';
 import { useActions } from '@/lib/hooks/use-actions';
 import { useVirtualRowWindow } from '@/lib/hooks/use-virtual-window';
 import type { ActionJob, JobStatus } from '@/lib/api';
+import { isOnDemandPlatform } from '@/lib/platforms';
 
 const STATUSES: JobStatus[] = ['PENDING', 'RUNNING', 'SUCCESS', 'FAILED', 'CANCELLED'];
 
@@ -73,7 +74,7 @@ function stageReached(status: JobStatus): number {
 
 export default function ActionsPage() {
   const { accounts } = useAccounts();
-  const { actions, loading, error, retry, runPendingNow, cancel, cancelPendingNow } = useActions();
+  const { actions, loading, error, retry, retryFailed, runPendingNow, cancel, cancelPendingNow } = useActions();
 
   const formRef = useRef<NewActionFormHandle>(null);
   // Bumped after a fresh scrape so the history card re-reads the stored list.
@@ -96,8 +97,9 @@ export default function ActionsPage() {
     const post = params.get('post');
     const platform = params.get('platform');
     if (!post) return;
-    // Only the two on-demand platforms have an actor; anything else would 400.
-    if (platform !== 'instagram' && platform !== 'threads') return;
+    // Only the on-demand platforms with an actor can be preloaded; anything
+    // else would 400. YouTube is included: the same actor takes a video URL.
+    if (!platform || !isOnDemandPlatform(platform)) return;
 
     // Wait one frame: `loadPost` re-enters the form's own state, and on the
     // first paint the imperative handle is attached but the scrape effect has
@@ -121,6 +123,9 @@ export default function ActionsPage() {
   // whole-queue sentinel.
   const [armedCancel, setArmedCancel] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState<string | null>(null);
+  // Bulk retry posts real comments/likes, so it is armed exactly like cancel.
+  const [armedRetryAll, setArmedRetryAll] = useState(false);
+  const [retryingAll, setRetryingAll] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
   const inFlight = useMemo(
@@ -192,6 +197,41 @@ export default function ActionsPage() {
       setSweeping(false);
     }
   }
+  // Bulk retry: every FAILED job from the last 24h. The arm click is the
+  // confirmation because a retry can publish a comment; old jobs are skipped
+  // by the hook (their per-account body TTL has expired).
+  async function doRetryAll() {
+    if (!armedRetryAll) {
+      setArmedRetryAll(true);
+      return;
+    }
+    setArmedRetryAll(false);
+    setRetryError(null);
+    setNotice(null);
+    setRetryingAll(true);
+    try {
+      const { requeued, failed: failedToRequeue, skippedOld } = await retryFailed();
+      const parts = [
+        requeued === 0
+          ? 'No failed job was requeued.'
+          : `Requeued ${requeued} failed job${requeued === 1 ? '' : 's'}.`,
+      ];
+      if (skippedOld > 0) {
+        parts.push(
+          `Skipped ${skippedOld} older than 24h — their per-account text may have expired.`,
+        );
+      }
+      if (failedToRequeue > 0) {
+        parts.push(`${failedToRequeue} could not be requeued.`);
+      }
+      setNotice(parts.join(' '));
+    } catch (err) {
+      setRetryError(err instanceof Error ? err.message : 'Could not retry failed jobs');
+    } finally {
+      setRetryingAll(false);
+    }
+  }
+
   // Cancel one queued/running job. Armed first: the click that turns the
   // button destructive is the confirmation. Throws on the server's 400 when
   // the job already finished, surfaced as the row error banner.
@@ -285,7 +325,15 @@ export default function ActionsPage() {
         post is already open and its platform is known to be actable — the batch
         page's "Buat Action" button, which gates on actionDeepLink().
       */}
-      <ScrapeHistory refreshKey={historyRefresh} />
+      <ScrapeHistory
+        refreshKey={historyRefresh}
+        onUseAsTarget={(post, flow) => {
+          // Stored row, stored comments: no paid re-scrape. The form sets the
+          // platform/URL from the row and preselects the requested flow.
+          formRef.current?.loadStoredPost(post, flow);
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }}
+      />
 
       <Card>
         <CardHeader className="flex-row items-center justify-between space-y-0">
@@ -295,7 +343,7 @@ export default function ActionsPage() {
               {loading
                 ? 'Loading…'
                 : failed > 0
-                  ? `${failed} failed — retry from the row or the detail dialog`
+                  ? `${failed} failed — retry from the header, a row, or the detail dialog`
                   : inFlight > 0
                     ? `${inFlight} running · ${nextDueLabel}`
                     : `${actions.length} job${actions.length === 1 ? '' : 's'}, all settled`}
@@ -315,6 +363,31 @@ export default function ActionsPage() {
               ) : null}
               {inFlight} in flight
             </span>
+            <Button
+              variant={armedRetryAll ? 'destructive' : 'outline'}
+              size="sm"
+              disabled={retryingAll || failed === 0}
+              onClick={() => void doRetryAll()}
+              onBlur={() => setArmedRetryAll(false)}
+              title={
+                failed === 0
+                  ? 'No failed jobs'
+                  : armedRetryAll
+                    ? `Press again to retry ${failed} failed job${failed === 1 ? '' : 's'} (real public actions)`
+                    : `Retry failed jobs from the last 24h (${failed} failed; older jobs are skipped)`
+              }
+            >
+              {retryingAll ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <RotateCcw className="size-3.5" />
+              )}
+              {retryingAll
+                ? 'Retrying…'
+                : armedRetryAll
+                  ? `Confirm retry ${failed}`
+                  : `Retry failed (${failed})`}
+            </Button>
             <Button
               variant={armedCancel === CANCEL_ALL ? 'destructive' : 'outline'}
               size="sm"

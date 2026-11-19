@@ -5,11 +5,10 @@
  * grouped by the keyword batch that produced them.
  *
  * Clicking a row opens the post detail panel — the same one the batch page
- * uses. It used to hand the permalink to the New Action form instead, and that
- * was a dead click for five of the seven platforms: the form only accepts
- * Instagram and Threads, so a TikTok row looked interactive (pointer cursor,
- * hover fill) and did nothing. Reading a post is possible for all seven; acting
- * on it is not, and the list must not conflate the two.
+ * uses. For an on-demand platform the panel also offers Comment/Like; choosing
+ * one loads the STORED row into the New Action form, so acting on history never
+ * pays for a second scrape. Other platforms stay read-only: the form only has
+ * actors for Instagram, Threads and YouTube.
  *
  * Grouping needs no new endpoint: /api/scrape/recent returns a flat post list
  * and /api/scrape/batches/:id/posts returns that batch's posts, so the batch id
@@ -18,12 +17,12 @@
  */
 
 import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Input } from '@smm/ui';
-import { ChevronDown, Filter, History, Layers, Search, X } from 'lucide-react';
+import { ChevronDown, Filter, Heart, History, Layers, MessageSquare, Search, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { PostDetailDialog } from '@/components/post-detail-dialog';
 import { api, type KeywordBatch, type ScrapedPost } from '@/lib/api';
-import { PLATFORMS, PLATFORM_LABEL, metricsLine, platformLabel } from '@/lib/platforms';
+import { isOnDemandPlatform, PLATFORMS, PLATFORM_LABEL, metricsLine, platformLabel } from '@/lib/platforms';
 import { postPermalink } from '@/lib/permalink';
 
 type Group = {
@@ -50,7 +49,18 @@ function engagement(p: ScrapedPost): number {
   return Object.values(p.metrics).reduce((n, v) => n + (typeof v === 'number' ? v : 0), 0);
 }
 
-export function ScrapeHistory({ refreshKey }: { refreshKey: number }) {
+export function ScrapeHistory({
+  refreshKey,
+  onUseAsTarget,
+}: {
+  refreshKey: number;
+  /**
+   * Turn a stored row into a new action target. The caller must NOT re-scrape:
+   * this row is already the target, and the form loads it plus its saved
+   * comments from the database.
+   */
+  onUseAsTarget?: (post: ScrapedPost, flow: 'comment' | 'like') => void;
+}) {
   const [posts, setPosts] = useState<ScrapedPost[] | null>(null);
   const [groups, setGroups] = useState<Group[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -355,7 +365,40 @@ export function ScrapeHistory({ refreshKey }: { refreshKey: number }) {
         )}
       </CardContent>
 
-      <PostDetailDialog post={selected} onClose={() => setSelected(null)} />
+      <PostDetailDialog
+        post={selected}
+        onClose={() => setSelected(null)}
+        footer={
+          selected && onUseAsTarget && isOnDemandPlatform(selected.platform) ? (
+            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border/60 bg-secondary/30 p-2">
+              <span className="text-xs font-medium text-muted-foreground">Act on this stored post</span>
+              <Button
+                size="sm"
+                onClick={() => {
+                  onUseAsTarget(selected, 'comment');
+                  setSelected(null);
+                }}
+              >
+                <MessageSquare className="size-3.5" />
+                Comment
+              </Button>
+              {selected.platform.toLowerCase() !== 'youtube' ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    onUseAsTarget(selected, 'like');
+                    setSelected(null);
+                  }}
+                >
+                  <Heart className="size-3.5" />
+                  Like
+                </Button>
+              ) : null}
+            </div>
+          ) : null
+        }
+      />
     </Card>
   );
 }

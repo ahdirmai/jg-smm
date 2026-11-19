@@ -14,6 +14,13 @@ import { cn } from '@smm/ui';
  * URL already pointing at the client is left alone — only its query params are merged.
  */
 export function novncClientUrl(url: string): string {
+  // A TICKETED URL is used verbatim. Its `path=/websockify?ticket=...`
+  // parameter is the authorisation the worker checks, and re-serialising the
+  // query (or appending a second `?`) breaks the signature. The API already
+  // returns `autoconnect=true&resize=scale`, so nothing needs adding.
+  if (new URLSearchParams(url.split('?')[1] ?? '').has('path')) {
+    return url.trim();
+  }
   const cleaned = url.trim().replace(/\/+$/, '');
   const qIndex = cleaned.indexOf('?');
   const path = qIndex === -1 ? cleaned : cleaned.slice(0, qIndex);
@@ -50,7 +57,12 @@ export function LiveView({
   title: string;
   className?: string;
 }) {
-  const [src, setSrc] = useState<string | null>(null);
+  // Mounted straight away for a ticketed URL: the ticket expires, and a second
+  // of delay on first render is a second the operator may spend staring at a
+  // blank frame. The legacy path still normalises after mount.
+  const [src, setSrc] = useState<string | null>(() =>
+    url.includes('ticket=') ? url.trim() : null,
+  );
   useEffect(() => {
     setSrc(novncClientUrl(url));
   }, [url]);
@@ -63,6 +75,10 @@ export function LiveView({
           title={title}
           className="absolute inset-0 size-full border-0"
           allow="clipboard-read; clipboard-write"
+          // The ticket lives in this URL. Without this it rides along as the
+          // Referer of every asset request the noVNC client makes, handing the
+          // credential to anything that logs referrers.
+          referrerPolicy="no-referrer"
         />
       ) : null}
     </div>

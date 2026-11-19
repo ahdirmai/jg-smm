@@ -60,6 +60,9 @@ export function ImportAccountsDialog({
           platform: (parts[0] ?? '').trim().toLowerCase() as CreateAccountRequest['platform'],
           username: (parts[1] ?? '').trim(),
           password: (parts[2] ?? '').trim(),
+          // A fourth field is the city. Omitted, the API distributes the rows
+          // across cities by account id, which is what a bulk import wants.
+          ...((parts[3] ?? '').trim() ? { location: (parts[3] ?? '').trim() } : {}),
           tags: [] as string[],
         };
       });
@@ -70,7 +73,7 @@ export function ImportAccountsDialog({
 
     const rows = parse(csv);
     if (rows.length === 0) {
-      setError('Paste at least one row: platform,username,password');
+      setError('Paste at least one row: platform,username,password[,location]');
       return;
     }
     if (rows.length > MAX_ROWS) {
@@ -79,7 +82,7 @@ export function ImportAccountsDialog({
     }
     const bad = rows.find((r) => !r.username || !r.password || !r.platform);
     if (bad) {
-      setError('Every row needs platform, username and password (3 comma fields).');
+      setError('Every row needs platform, username and password (3 comma fields). A fourth field is optional: the account city.');
       return;
     }
 
@@ -102,7 +105,7 @@ export function ImportAccountsDialog({
           <DialogTitle>Import accounts</DialogTitle>
           <DialogDescription>
             {
-              'One account per line as platform,username,password. Up to 100 rows; 10 imports per minute.'
+              'One account per line as platform,username,password,location (the city is optional). Up to 100 rows; 10 imports per minute.'
             }
           </DialogDescription>
         </DialogHeader>
