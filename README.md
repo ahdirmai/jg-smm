@@ -182,6 +182,12 @@ Platform quirks worth knowing before debugging a login:
   never needs a human. Seed or import a session (dashboard export/import, or
   copy the file into the worker's `smm-session-<workerId>` volume) and the
   login settles on the first poll.
+- **`ERR_HTTP_RESPONSE_CODE_FAILURE` on Instagram login.** When Instagram or a
+  proxy answers `/accounts/login/` with an empty-body 4xx/5xx, `runLogin`
+  automatically clears stale stored cookies and retries once, then falls back to
+  `https://www.instagram.com/`. If it still fails, the failure reason now
+  includes the captured HTTP status (`HTTP 429` rate-limit, `HTTP 403` IP/proxy
+  block, `HTTP 407` proxy auth, or `5xx`).
 - **Proof is cookies, never the URL.** Instagram and Threads both require
   `sessionid` + `ds_user_id`; a redirect to the home page without both is
   not a login.

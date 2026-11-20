@@ -67,6 +67,13 @@
   `smm-login-01` now use `1 vCPU · 4 GiB`; `smm-hub` stays `2 vCPU · 8 GiB`.
   Measured browser footprint after resize: ~0.8 GiB used of 3.8 GiB.
 ### Fixed
+- **Instagram login recovers from `ERR_HTTP_RESPONSE_CODE_FAILURE` and reports
+  the HTTP status code.** `runLogin` now clears stale `storageState` cookies and
+  retries `/accounts/login/` once, falls back to `https://www.instagram.com/` if
+  `/accounts/login/` still rejects the request, stops treating `chrome-error://`
+  as a loaded page, and includes the captured main-frame HTTP status (`429`,
+  `403`, `407`, `5xx`) in the failure reason so rate-limits and proxy blocks are
+  immediately actionable.
 - **YouTube Shorts commenting now works under the worker's `id-ID` locale.**
   The Shorts comments rail selector previously matched only English
   `aria-label*="comment"`, missing Indonesian labels (`Lihat komentar` /
