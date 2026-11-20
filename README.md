@@ -221,6 +221,9 @@ controls appear only when the queue has work that can use them.
 The page targets a post or a specific comment. For YouTube, only top-level
 comments are supported: the Apify actor returns the video row, not comment
 bodies, so the target is a Short/watch URL rather than a scraped comment row.
+The YouTube worker supports both `/shorts/<id>` (expanding the comments
+engagement panel across English and Indonesian `id-ID` UI labels) and
+`/watch?v=<id>` (plus canonicalised `youtu.be/<id>` links).
 Selecting a post that is already stored skips the re-scrape; the form still
 fetches comments when the target is a comment. Completed and running rows show
 the worker that executed the job when one was recorded.

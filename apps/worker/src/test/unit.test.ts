@@ -15,7 +15,11 @@ import {
   isFullyAutomated,
   supportedPlatforms,
 } from '../platforms/registry.js';
-import { canonicalYouTubeUrl } from '../platforms/youtube.js';
+import {
+  canonicalYouTubeUrl,
+  COMMENT_SUBMIT_SELECTOR,
+  SHORTS_COMMENTS_BUTTON_SELECTOR,
+} from '../platforms/youtube.js';
 
 test('parsePlatforms filters unknown values and falls back on empty', () => {
   assert.deepEqual(parsePlatforms('instagram,threads', []), ['instagram', 'threads']);
@@ -208,4 +212,13 @@ test('canonicalYouTubeUrl rewrites youtu.be links and leaves both surfaces alone
     'https://www.youtube.com/watch?v=CWh1yOIeL_I',
   );
   assert.equal(canonicalYouTubeUrl('not a url'), 'not a url');
+});
+
+test('YouTube Shorts selectors cover both English and Indonesian (id-ID) UI labels', () => {
+  assert.match(SHORTS_COMMENTS_BUTTON_SELECTOR, /comment/i);
+  assert.match(SHORTS_COMMENTS_BUTTON_SELECTOR, /komentar/i);
+  assert.match(SHORTS_COMMENTS_BUTTON_SELECTOR, /#comments-button/);
+  assert.match(COMMENT_SUBMIT_SELECTOR, /#submit-button/);
+  assert.match(COMMENT_SUBMIT_SELECTOR, /Comment/);
+  assert.match(COMMENT_SUBMIT_SELECTOR, /Komentar/);
 });

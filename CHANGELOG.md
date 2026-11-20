@@ -67,6 +67,13 @@
   `smm-login-01` now use `1 vCPU · 4 GiB`; `smm-hub` stays `2 vCPU · 8 GiB`.
   Measured browser footprint after resize: ~0.8 GiB used of 3.8 GiB.
 ### Fixed
+- **YouTube Shorts commenting now works under the worker's `id-ID` locale.**
+  The Shorts comments rail selector previously matched only English
+  `aria-label*="comment"`, missing Indonesian labels (`Lihat komentar` /
+  `Lihat N komentar`) and timing out with `comment composer not found`.
+  `revealComposer` now matches English, Indonesian, and `#comments-button`,
+  verifies the engagement panel expansion with retry instead of scrolling the
+  Shorts viewport, and checks Indonesian submit/unavailable/comments-off labels.
 - **macOS AppleDouble files no longer break the container build.** Source
   archives now exclude `._*` sidecars, and the Docker build context ignores
   them; the web rebuild cannot fail ESLint on binary metadata again.
