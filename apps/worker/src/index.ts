@@ -533,7 +533,10 @@ async function openLiveView(
   }
   const page = ctx.pages()[0] ?? (await ctx.newPage());
   const target = targetUrl || defaultProfileURL(runtime.platform);
-  await page.goto(target, { waitUntil: 'domcontentloaded' }).catch(() => undefined);
+  // Fire navigation without blocking the RPC response: the window is already on
+  // Xvfb, so the operator sees it load live in noVNC instead of hitting the 30s
+  // workerrpc timeout while a residential proxy finishes the first TLS hop.
+  void page.goto(target, { waitUntil: 'domcontentloaded', timeout: 60_000 }).catch(() => undefined);
   logger.info('live view opened', { url: target, platform: runtime.platform });
   return ctx;
 }

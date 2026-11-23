@@ -151,7 +151,7 @@ export async function dismissMetaAccountModal(page: Page): Promise<boolean> {
  * resolves to the standalone post view. IG lands on the permalink directly, so
  * the URL already carries the shortcode and this is a no-op there.
  */
-export async function openPost(page: Page, url: string, timeoutMs = 30_000): Promise<void> {
+export async function openPost(page: Page, url: string, timeoutMs = 60_000): Promise<void> {
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
 
   const short = postShortcode(url);
@@ -178,7 +178,7 @@ export async function openPost(page: Page, url: string, timeoutMs = 30_000): Pro
   // click + re-goto put the like button back on the page. Best-effort and
   // bounded: absent screen → no-op, and Threads still falls through to recovery.
   if (await dismissContinueInterstitial(page)) {
-    await page.goto(url, { waitUntil: 'domcontentloaded' });
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
     if (onPost()) {
       await dismissMetaAccountModal(page);
       return;
@@ -979,7 +979,7 @@ export async function credentialLogin(
 ): Promise<LoginResultLike> {
   const page = await ctx.newPage();
   try {
-    await page.goto(loginUrl, { waitUntil: 'domcontentloaded' });
+    await page.goto(loginUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
     await fillMetaCredentials(page, credentials);
     // The page must stay open while the poll runs: closing it would abort the
     // submit navigation. Cookies live on the context, so the verdict reads the
