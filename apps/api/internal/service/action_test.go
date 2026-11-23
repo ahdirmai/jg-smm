@@ -567,3 +567,52 @@ func TestActionEnqueueRejectsUnauthenticatedAccount(t *testing.T) {
 		}
 	}
 }
+
+type readableActionTargets struct {
+	actionTargets
+	byID  map[string]domain.Target
+	calls int
+}
+
+func (r *readableActionTargets) GetTarget(_ context.Context, id string) (domain.Target, error) {
+	r.calls++
+	if t, ok := r.byID[id]; ok {
+		return t, nil
+	}
+	return domain.Target{}, domain.ErrNotFound
+}
+
+func TestActionListResolvesTargetURLOncePerTarget(t *testing.T) {
+	store := newActionStore()
+	accs := &actionAccounts{acc: domain.Account{Platform: domain.PlatformInstagram, Status: domain.AccountActive, AuthStatus: domain.AuthAuthenticated}}
+	tgts := &readableActionTargets{
+		actionTargets: actionTargets{ups: targetUpsert{id: "tgt-1"}},
+		byID: map[string]domain.Target{
+			"tgt-1": {ID: "tgt-1", URL: "https://www.instagram.com/p/abc/"},
+		},
+	}
+	svc := NewActionService(store, accs, tgts, fixedClock{}, nil, nil, nil, nil)
+
+	if _, err := svc.Enqueue(t.Context(), []ActionItem{
+		{AccountID: "acc-1", TargetURL: "https://www.instagram.com/p/abc/", Type: domain.JobTypeActionLike},
+		{AccountID: "acc-2", TargetURL: "https://www.instagram.com/p/abc/", Type: domain.JobTypeActionLike},
+	}); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	views, err := svc.List(t.Context(), nil, 0)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(views) != 2 {
+		t.Fatalf("want 2 views, got %d", len(views))
+	}
+	for i, v := range views {
+		if v.TargetURL != "https://www.instagram.com/p/abc/" {
+			t.Errorf("views[%d].TargetURL = %q, want %q", i, v.TargetURL, "https://www.instagram.com/p/abc/")
+		}
+	}
+	if tgts.calls != 1 {
+		t.Errorf("GetTarget calls = %d, want 1 (deduplicated per target)", tgts.calls)
+	}
+}

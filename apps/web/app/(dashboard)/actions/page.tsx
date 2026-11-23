@@ -15,11 +15,24 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@smm/ui';
-import { AlertCircle, Check, Loader2, Play, RotateCcw, X, XCircle } from 'lucide-react';
+import {
+  AlertCircle,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  ExternalLink,
+  Link2,
+  Loader2,
+  Play,
+  RotateCcw,
+  X,
+  XCircle,
+} from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { NewActionForm, type NewActionFormHandle } from './new-action-form';
 import { ScrapeHistory } from './scrape-history';
+import { platformIcon } from '@/components/platform-icon';
 import { useAccounts } from '@/lib/hooks/use-accounts';
 import { useActions } from '@/lib/hooks/use-actions';
 import { useVirtualRowWindow } from '@/lib/hooks/use-virtual-window';
@@ -287,23 +300,66 @@ export default function ActionsPage() {
     [actions, status],
   );
 
-  // Group per account (P4-02): an operator reads a queue by who is working it.
-  // Flatten to one row array so the window can be a fixed-height slice.
-  const rows = useMemo(() => {
-    type Row = { kind: 'group'; accountId: string } | { kind: 'job'; job: ActionJob };
-    const byAccount = new Map<string, ActionJob[]>();
+  // Per-target collapse toggle; expanded by default so every row is visible
+  // immediately, and an operator can fold noisy targets when scanning many.
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  function toggleGroup(targetId: string) {
+    setCollapsed((prev) => ({ ...prev, [targetId]: !prev[targetId] }));
+  }
+
+  // Group per target: an operator queues a batch of accounts against a post or
+  // comment, so reading the queue by target keeps all accounts acting on the
+  // same URL together with a single summary header. Flattened to one row array
+  // so fixed-height virtualization stays exact.
+  const { rows, targetCount } = useMemo(() => {
+    type TargetGroup = {
+      targetId: string;
+      targetUrl: string | null;
+      jobs: ActionJob[];
+      success: number;
+      failed: number;
+      running: number;
+      pending: number;
+      cancelled: number;
+    };
+    type Row = { kind: 'group'; group: TargetGroup } | { kind: 'job'; job: ActionJob };
+
+    const byTarget = new Map<string, TargetGroup>();
     for (const a of filtered) {
-      const bucket = byAccount.get(a.accountId);
-      if (bucket) bucket.push(a);
-      else byAccount.set(a.accountId, [a]);
+      let group = byTarget.get(a.targetId);
+      if (!group) {
+        group = {
+          targetId: a.targetId,
+          targetUrl: a.targetUrl ?? null,
+          jobs: [],
+          success: 0,
+          failed: 0,
+          running: 0,
+          pending: 0,
+          cancelled: 0,
+        };
+        byTarget.set(a.targetId, group);
+      }
+      if (!group.targetUrl && a.targetUrl) {
+        group.targetUrl = a.targetUrl;
+      }
+      group.jobs.push(a);
+      if (a.status === 'SUCCESS') group.success++;
+      else if (a.status === 'FAILED') group.failed++;
+      else if (a.status === 'RUNNING') group.running++;
+      else if (a.status === 'PENDING') group.pending++;
+      else if (a.status === 'CANCELLED') group.cancelled++;
     }
+
     const out: Row[] = [];
-    for (const [acc, jobs] of byAccount) {
-      out.push({ kind: 'group', accountId: acc });
-      for (const job of jobs) out.push({ kind: 'job', job });
+    for (const group of byTarget.values()) {
+      out.push({ kind: 'group', group });
+      if (!collapsed[group.targetId]) {
+        for (const job of group.jobs) out.push({ kind: 'job', job });
+      }
     }
-    return out;
-  }, [filtered]);
+    return { rows: out, targetCount: byTarget.size };
+  }, [filtered, collapsed]);
 
   const virtual = useVirtualRowWindow(ROW_HEIGHT);
   const win = virtual.slice(rows.length);
@@ -428,23 +484,30 @@ export default function ActionsPage() {
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
-          <section className="flex flex-wrap items-center gap-2">
-            <FilterChip
-              label="All"
-              count={tally.all ?? 0}
-              active={status === 'all'}
-              onClick={() => setStatusFilter('all')}
-            />
-            {STATUSES.map((s) => (
+          <section className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <FilterChip
-                key={s}
-                label={statusLabel(s)}
-                count={tally[s] ?? 0}
-                active={status === s}
-                tone={statusTone(s)}
-                onClick={() => setStatusFilter(s)}
+                label="All"
+                count={tally.all ?? 0}
+                active={status === 'all'}
+                onClick={() => setStatusFilter('all')}
               />
-            ))}
+              {STATUSES.map((s) => (
+                <FilterChip
+                  key={s}
+                  label={statusLabel(s)}
+                  count={tally[s] ?? 0}
+                  active={status === s}
+                  tone={statusTone(s)}
+                  onClick={() => setStatusFilter(s)}
+                />
+              ))}
+            </div>
+            {targetCount > 0 ? (
+              <span className="text-xs tabular-nums text-muted-foreground">
+                {targetCount} {targetCount === 1 ? 'target' : 'targets'}
+              </span>
+            ) : null}
           </section>
 
           {notice ? (
@@ -481,16 +544,71 @@ export default function ActionsPage() {
               role="table"
               aria-label="Action queue"
             >
-              <div style={{ height: win.before + rows.length * ROW_HEIGHT, position: 'relative' }}>
+              <div style={{ height: rows.length * ROW_HEIGHT, position: 'relative' }}>
                 <div style={{ transform: `translateY(${win.before}px)` }}>
                   {rows.slice(win.start, win.end).map((row) =>
                     row.kind === 'group' ? (
                       <div
-                        key={`g-${row.accountId}`}
-                        className="flex items-center border-b border-border/60 bg-secondary/50 px-3 text-xs font-medium uppercase tracking-wide text-muted-foreground"
+                        key={`g-${row.group.targetId}`}
+                        role="button"
+                        tabIndex={0}
+                        aria-expanded={!collapsed[row.group.targetId]}
+                        onClick={() => toggleGroup(row.group.targetId)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            toggleGroup(row.group.targetId);
+                          }
+                        }}
+                        className="flex cursor-pointer items-center justify-between gap-3 border-b border-border/60 bg-secondary/50 px-3 text-xs transition-colors hover:bg-secondary/80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                         style={{ height: ROW_HEIGHT }}
                       >
-                        Account {accountLabel(accounts, row.accountId)}
+                        <div className="flex min-w-0 items-center gap-2">
+                          {collapsed[row.group.targetId] ? (
+                            <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+                          ) : (
+                            <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+                          )}
+                          <TargetIcon url={row.group.targetUrl} />
+                          <span
+                            className="truncate font-mono text-xs font-medium text-foreground"
+                            title={row.group.targetUrl ?? row.group.targetId}
+                          >
+                            {formatTargetLabel(row.group.targetUrl, row.group.targetId)}
+                          </span>
+                          {row.group.targetUrl ? (
+                            <a
+                              href={row.group.targetUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              title="Open target URL"
+                              className="shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:text-foreground"
+                            >
+                              <ExternalLink className="size-3" />
+                            </a>
+                          ) : null}
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2 text-[11px] tabular-nums text-muted-foreground">
+                          {row.group.success > 0 ? (
+                            <span className="text-success">{row.group.success} ok</span>
+                          ) : null}
+                          {row.group.running > 0 ? (
+                            <span className="text-primary">{row.group.running} running</span>
+                          ) : null}
+                          {row.group.pending > 0 ? (
+                            <span>{row.group.pending} pending</span>
+                          ) : null}
+                          {row.group.failed > 0 ? (
+                            <span className="text-destructive">{row.group.failed} failed</span>
+                          ) : null}
+                          {row.group.cancelled > 0 ? (
+                            <span>{row.group.cancelled} cancelled</span>
+                          ) : null}
+                          <span className="rounded-full bg-background/80 px-2 py-0.5 font-medium text-foreground">
+                            {row.group.jobs.length} {row.group.jobs.length === 1 ? 'job' : 'jobs'}
+                          </span>
+                        </div>
                       </div>
                     ) : (
                       <div
@@ -504,21 +622,30 @@ export default function ActionsPage() {
                             setSelected(row.job);
                           }
                         }}
-                        className="flex w-full cursor-pointer items-center gap-4 border-b border-border/60 px-3 text-left transition-colors hover:bg-secondary/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        className="flex w-full cursor-pointer items-center gap-3 border-b border-border/60 pl-8 pr-3 text-left transition-colors hover:bg-secondary/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                         style={{ height: ROW_HEIGHT }}
                       >
-                        <Badge variant={statusTone(row.job.status)}>{row.job.status}</Badge>
-                        <span className="w-20 text-sm">{actionLabel(row.job.actionType)}</span>
-                        <span className="max-w-[200px] flex-1 truncate font-mono text-xs text-muted-foreground">
-                          {row.job.targetUrl ?? row.job.targetId}
+                        <div className="w-[88px] shrink-0">
+                          <Badge variant={statusTone(row.job.status)}>{row.job.status}</Badge>
+                        </div>
+                        <span
+                          className="w-40 shrink-0 truncate text-sm font-medium text-foreground"
+                          title={accountLabel(accounts, row.job.accountId)}
+                        >
+                          {accountHandle(accounts, row.job.accountId)}
+                        </span>
+                        <span className="w-16 shrink-0 text-xs text-muted-foreground">
+                          {actionLabel(row.job.actionType)}
                         </span>
                         <Stepper
                           reached={stageReached(row.job.status)}
                           failed={row.job.status === 'FAILED'}
                         />
-                        <span className="max-w-[200px] flex-1 truncate text-xs">
+                        <span className="min-w-0 flex-1 truncate text-xs">
                           {row.job.renderedText ? (
-                            <span className="text-foreground">{row.job.renderedText}</span>
+                            <span className="text-foreground" title={row.job.renderedText}>
+                              {row.job.renderedText}
+                            </span>
                           ) : row.job.error ? (
                             <span className="text-destructive" title={row.job.error}>
                               {row.job.errorClass ? `${row.job.errorClass}: ` : ''}
@@ -528,15 +655,18 @@ export default function ActionsPage() {
                             <span className="text-muted-foreground">—</span>
                           )}
                         </span>
-                        <span className="w-10 text-right text-sm tabular-nums text-muted-foreground">
-                          {row.job.attempts}
+                        <span
+                          className="w-10 shrink-0 text-right text-xs tabular-nums text-muted-foreground"
+                          title={`${row.job.attempts} attempt${row.job.attempts === 1 ? '' : 's'}`}
+                        >
+                          {row.job.attempts}×
                         </span>
                         {/* Only meaningful while queued: a finished job's
                             scheduled_at is history. Absolute time on hover so
                             "in 42s" stays readable without losing the instant. */}
                         {row.job.status === 'PENDING' ? (
                           <span
-                            className="w-24 text-right text-xs tabular-nums text-muted-foreground"
+                            className="w-16 shrink-0 text-right text-xs tabular-nums text-muted-foreground"
                             title={`Scheduled for ${new Date(row.job.scheduledAt).toLocaleString()}`}
                           >
                             {countdown(row.job.scheduledAt)}
@@ -629,10 +759,26 @@ export default function ActionsPage() {
                 ) : null}
               </div>
               <div className="space-y-1">
-                <div className="text-xs text-muted-foreground">Target</div>
-                <div className="break-all font-mono text-xs">
-                  {selected.targetUrl ?? selected.targetId}
+                <div className="text-xs text-muted-foreground">Account</div>
+                <div className="text-sm font-medium">
+                  {accountLabel(accounts, selected.accountId)}
                 </div>
+              </div>
+              <div className="space-y-1">
+                <div className="text-xs text-muted-foreground">Target</div>
+                {selected.targetUrl ? (
+                  <a
+                    href={selected.targetUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 break-all font-mono text-xs text-primary hover:underline"
+                  >
+                    {selected.targetUrl}
+                    <ExternalLink className="size-3 shrink-0" />
+                  </a>
+                ) : (
+                  <div className="break-all font-mono text-xs">{selected.targetId}</div>
+                )}
               </div>
               {selected.renderedText ? (
                 <div className="space-y-1">
@@ -800,4 +946,51 @@ function actionLabel(t: string): string {
 function accountLabel(accounts: { id: string; username: string }[], id: string): string {
   const acc = accounts.find((a) => a.id === id);
   return acc ? `@${acc.username} (${id.slice(0, 8)})` : id.slice(0, 8);
+}
+
+/** Compact @handle for job rows; full id stays on hover and in the detail dialog. */
+function accountHandle(accounts: { id: string; username: string }[], id: string): string {
+  const acc = accounts.find((a) => a.id === id);
+  return acc ? `@${acc.username}` : id.slice(0, 8);
+}
+
+/** Strip scheme/www/trailing slash so a target URL reads cleanly in a group header. */
+function formatTargetLabel(url: string | null | undefined, targetId: string): string {
+  if (!url) return `Target ${targetId.slice(0, 8)}`;
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.replace(/^www\./, '');
+    const path = parsed.pathname.replace(/\/+$/, '');
+    const query = parsed.search || '';
+    return `${host}${path}${query}`;
+  } catch {
+    return url;
+  }
+}
+
+/** Infer platform glyph from a target URL host so each target group is scannable. */
+function TargetIcon({ url }: { url: string | null | undefined }) {
+  const platform = inferPlatformFromUrl(url);
+  if (!platform) {
+    return <Link2 className="size-3.5 shrink-0 text-muted-foreground" />;
+  }
+  const Icon = platformIcon(platform);
+  return <Icon className="size-3.5 shrink-0 text-muted-foreground" />;
+}
+
+function inferPlatformFromUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, '').toLowerCase();
+    if (host.endsWith('instagram.com')) return 'instagram';
+    if (host.endsWith('threads.net') || host.endsWith('threads.com')) return 'threads';
+    if (host.endsWith('youtube.com') || host === 'youtu.be') return 'youtube';
+    if (host.endsWith('tiktok.com')) return 'tiktok';
+    if (host.endsWith('x.com') || host.endsWith('twitter.com')) return 'x';
+    if (host.endsWith('facebook.com')) return 'facebook';
+    if (host.endsWith('linkedin.com')) return 'linkedin';
+    return null;
+  } catch {
+    return null;
+  }
 }

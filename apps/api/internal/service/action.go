@@ -83,6 +83,13 @@ type narrowTargetWriter interface {
 	LinkTargetComment(ctx context.Context, targetID, commentID string) error
 }
 
+// targetReader is an optional read capability on narrowTargetWriter (satisfied
+// by ScrapeRepo in production) so List can resolve each unique targetId to its
+// URL for the queue UI without forcing minimal test fakes to implement it.
+type targetReader interface {
+	GetTarget(ctx context.Context, id string) (domain.Target, error)
+}
+
 // ActionItem is one intent from the enqueue request.
 type ActionItem struct {
 	AccountID string
@@ -543,9 +550,29 @@ func (s *ActionService) List(ctx context.Context, status *domain.JobStatus, limi
 		byJob[l.ActionJobID] = l
 	}
 
+	targetURLs := make(map[string]string)
+	if tr, ok := s.scrapes.(targetReader); ok {
+		for _, j := range jobs {
+			if j.TargetID == "" {
+				continue
+			}
+			if _, seen := targetURLs[j.TargetID]; seen {
+				continue
+			}
+			if tgt, err := tr.GetTarget(ctx, j.TargetID); err == nil {
+				targetURLs[j.TargetID] = tgt.URL
+			} else {
+				targetURLs[j.TargetID] = ""
+			}
+		}
+	}
+
 	views := make([]ActionView, 0, len(jobs))
 	for _, j := range jobs {
-		v := ActionView{Job: j}
+		v := ActionView{
+			Job:       j,
+			TargetURL: targetURLs[j.TargetID],
+		}
 		if l, ok := byJob[j.ID]; ok {
 			v.RenderedText = l.RenderedText
 			v.ErrorClass = l.ErrorClass

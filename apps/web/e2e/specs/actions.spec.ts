@@ -146,9 +146,9 @@ test.describe('actions page', () => {
       'the queue shows the job without a reload',
     ).toBeVisible();
 
-    // A PENDING job has no targetUrl yet (resolved at dispatch — see ActionJob
-    // schema), so the row shows its targetId.
-    await expect(queue).toContainText(body.actions[0].targetId);
+    // The queue groups jobs by target and displays the resolved target URL
+    // (stripped of scheme/www/trailing slash).
+    await expect(queue).toContainText('instagram.com/p/DdaJ8Y8gp3u');
 
     await api.removeAccount(account.id);
   });
