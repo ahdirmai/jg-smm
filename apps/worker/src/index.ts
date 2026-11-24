@@ -53,10 +53,13 @@ const screenshotDir = process.env.SCREENSHOT_DIR;
 
 // One headful browser per machine, launched lazily: in dry-run (the compose
 // default) no page is ever opened, so a dev box without Xvfb still boots clean.
+// Memoise the launch promise (not just the resolved handle) so two concurrent
+// requests on a cold worker never spawn two Chromium processes side by side.
 let browserHandle: BrowserHandle | undefined;
+let browserLaunching: Promise<BrowserHandle> | undefined;
 async function browser() {
   if (!browserHandle) {
-    browserHandle = await launchBrowser({
+    browserLaunching ??= launchBrowser({
       display: config.display,
       // Null `proxyUrl` is the direct-dial default. In pool mode the egress is
       // decided per CONTEXT from the account's own proxy group, so the browser
@@ -69,7 +72,17 @@ async function browser() {
               ...(config.proxyAuth ? { password: config.proxyAuth.password } : {}),
             }
           : null,
-    });
+    }).then(
+      (h) => {
+        browserHandle = h;
+        return h;
+      },
+      (err) => {
+        browserLaunching = undefined;
+        throw err;
+      },
+    );
+    return (await browserLaunching).browser;
   }
   return browserHandle.browser;
 }
@@ -102,8 +115,22 @@ type AccountJobPlatform = ActionJob['platform'];
 
 // The live-view context, kept open across "open profile" calls so repeated
 // clicks navigate one window instead of stacking Chrome windows on the display.
+// `manualQueue` serialises open/close operations so two concurrent browser-open
+// RPCs can never race past `manualContext === undefined` and orphan a second
+// Chrome window on the display.
 let manualContext: BrowserContext | undefined;
 let manualAccountId: string | undefined;
+let manualOpeningId: string | undefined;
+let manualQueue: Promise<void> = Promise.resolve();
+
+function runManualSerialized<T>(fn: () => Promise<T>): Promise<T> {
+  const next = manualQueue.then(fn, fn);
+  manualQueue = next.then(
+    () => undefined,
+    () => undefined,
+  );
+  return next;
+}
 
 const authCallback = createAuthCallback(config, logger);
 const sessionCallback = createSessionCallback(config, logger);
@@ -479,6 +506,15 @@ async function startStateless(): Promise<void> {
       authAttempts.delete(accountId);
       clearAuthContext(accountId);
       if (manualAccountId === accountId) await closeManualContext();
+      // If no other login is active, close any leftover browser contexts so
+      // zero Chrome tabs remain open on the display.
+      if (authContexts.size === 0 && browserHandle) {
+        for (const ctx of browserHandle.browser.contexts()) {
+          await ctx.close().catch(() => undefined);
+        }
+        manualContext = undefined;
+        manualAccountId = undefined;
+      }
     },
 
     openBrowser: async (runtime, targetUrl) => {
@@ -487,12 +523,23 @@ async function startStateless(): Promise<void> {
       // account's own `clearAuth`) close the login's challenge out from under
       // the running poll.
       if (authContexts.has(runtime.accountId)) return;
-      // Reuse the window only for the SAME account (a second click navigates
-      // it). A different account gets a fresh context, always.
-      const reusable = manualAccountId === runtime.accountId ? manualContext : undefined;
-      if (!reusable) await closeManualContext();
-      manualContext = await openLiveView(runtime, targetUrl, async () => ({}), reusable);
-      manualAccountId = runtime.accountId;
+      // Deduplicate bursts of concurrent browser-open RPCs for the same account
+      // (e.g. double-clicks or parallel UI effects) before entering the queue.
+      if (manualOpeningId === runtime.accountId) return;
+      manualOpeningId = runtime.accountId;
+      try {
+        await runManualSerialized(async () => {
+          if (authContexts.has(runtime.accountId)) return;
+          // Reuse the window only for the SAME account (a second click navigates
+          // it). A different account gets a fresh context, always.
+          const reusable = manualAccountId === runtime.accountId ? manualContext : undefined;
+          if (!reusable) await closeManualContext();
+          manualContext = await openLiveView(runtime, targetUrl, async () => ({}), reusable);
+          manualAccountId = runtime.accountId;
+        });
+      } finally {
+        if (manualOpeningId === runtime.accountId) manualOpeningId = undefined;
+      }
     },
   });
 

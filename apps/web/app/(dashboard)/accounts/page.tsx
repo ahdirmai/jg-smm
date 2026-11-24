@@ -46,7 +46,7 @@ import {
   Users,
   type LucideIcon,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { api } from '@/lib/api';
 
@@ -251,6 +251,9 @@ export default function AccountsPage() {
   // and the iframe sat blank with nothing to explain it.
   const [liveView, setLiveView] = useState<Record<string, { url: string; expiresAt: number }>>({});
   const [liveViewBusy, setLiveViewBusy] = useState<string | null>(null);
+  // Synchronous guard so two effects or rapid clicks in the same render tick
+  // never fire duplicate POST /live-view requests before `liveViewBusy` commits.
+  const liveViewInFlightRef = useRef<Set<string>>(new Set());
 
   const novncFor = (a: Account): string | null => {
     const cached = liveView[a.id];
@@ -270,6 +273,8 @@ export default function AccountsPage() {
    */
   const openLiveView = async (a: Account) => {
     setDetail({ id: a.id, watch: true });
+    if (liveViewInFlightRef.current.has(a.id)) return;
+    liveViewInFlightRef.current.add(a.id);
     setLiveViewBusy(a.id);
     try {
       const view = await api.openAccountLiveView(a.id);
@@ -281,7 +286,8 @@ export default function AccountsPage() {
     } catch (err) {
       setOperationError(err instanceof Error ? err.message : 'Could not open the live view');
     } finally {
-      setLiveViewBusy(null);
+      liveViewInFlightRef.current.delete(a.id);
+      setLiveViewBusy((prev) => (prev === a.id ? null : prev));
     }
   };
 
@@ -360,15 +366,13 @@ export default function AccountsPage() {
   const detailAccount = detail ? (accounts.find((a) => a.id === detail.id) ?? null) : null;
   const isWatching = detail?.watch ?? false;
 
-  // Mint the ticketed URL as soon as the panel OPENS in watch mode (a login in
-  // flight, or the operator's click). Waiting for a separate toggle left the
-  // panel showing "the worker has not published its noVNC port" for an account
-  // that simply had not been asked yet — in the pool the URL is minted per
-  // account, never read off the worker list.
+  // Mint the ticketed URL ONLY when watch mode is explicitly active (after
+  // clicking "Log in" or "Live view"). Tapping an account row keeps `watch`
+  // false so no browser tab opens until the operator asks for it.
   useEffect(() => {
-    if (!detailAccount || !isWatching) return;
-    if (liveView[detailAccount.id]) return;
-    if (liveViewBusy === detailAccount.id) return;
+    if (!detailAccount || !isWatching || !canAct) return;
+    if (novncFor(detailAccount)) return;
+    if (liveViewBusy === detailAccount.id || liveViewInFlightRef.current.has(detailAccount.id)) return;
     void openLiveView(detailAccount);
     // openLiveView is stable enough for this trigger; re-running on every
     // render would mint a ticket per keystroke.
@@ -481,10 +485,17 @@ This account still holds a worker from an earlier session. Use "Release session"
       // then 409s ("live view is open"). The lease is safe to drop here — the
       // operator asked for a login, not to keep watching a blank page.
       const message = err instanceof Error ? err.message : '';
-      if (!/live view is open|already has a live session|worker busy/i.test(message)) throw err;
+      if (!/live view is open|already has a live session|worker busy|waiting for operator input/i.test(message))
+        throw err;
       await api.closeAccountLiveView(id).catch(() => undefined);
       await api.startAccountLogin(id);
     }
+    setLiveView((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    setDetail({ id, watch: true });
     refresh();
   };
 
@@ -563,17 +574,6 @@ This account still holds a worker from an earlier session. Use "Release session"
   // click away from this list.
   const needsLiveView = (a: Account): boolean =>
     a.authStatus === 'AUTHENTICATING' || a.authStatus === 'NEEDS_INPUT';
-
-  // A panel that shows a screen must HAVE a screen: mint the ticket for the
-  // login-in-flight case too, not only when the operator clicked a toggle.
-  // Without this the drawer opened "watching" an account that had never been
-  // asked for a worker, and said the worker published nothing.
-  useEffect(() => {
-    if (!detailAccount || !needsLiveView(detailAccount) || !canAct) return;
-    if (liveView[detailAccount.id] || liveViewBusy === detailAccount.id) return;
-    void openLiveView(detailAccount);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [detailAccount?.id, detailAccount?.authStatus]);
 
   // Fleet rollup for the stat strip. Counted over ALL accounts, not the
   // filtered view: the numbers answer "how healthy is the fleet", and a filter
@@ -658,7 +658,7 @@ This account still holds a worker from an earlier session. Use "Release session"
             account={detailAccount}
             novncUrl={novncFor(detailAccount)}
             liveViewLoading={liveViewBusy === detailAccount.id}
-            showLiveView={isWatching || needsLiveView(detailAccount)}
+            showLiveView={isWatching}
             canAct={canAct}
             busy={busy === detailAccount.id}
             onClose={() => {
@@ -969,11 +969,23 @@ This account still holds a worker from an earlier session. Use "Release session"
                         // buttons in the last cell are real buttons, so
                         // keyboard users have the same actions one Tab away.)
                         className="cursor-pointer transition-colors hover:bg-accent/60"
-                        onClick={() =>
-                          setDetail(
-                            detail?.id === a.id ? null : { id: a.id, watch: needsLiveView(a) },
-                          )
-                        }
+                        onClick={() => {
+                          // Tapping an account closes any active browser tab on
+                          // the previously open account and opens the detail
+                          // panel WITHOUT launching Chrome. Chrome only opens
+                          // when the operator clicks "Log in" (or "Live view").
+                          if (detail?.id) {
+                            const prevId = detail.id;
+                            void api.closeAccountLiveView(prevId).catch(() => undefined);
+                            setLiveView((prev) => {
+                              if (!prev[prevId]) return prev;
+                              const next = { ...prev };
+                              delete next[prevId];
+                              return next;
+                            });
+                          }
+                          setDetail(detail?.id === a.id ? null : { id: a.id, watch: false });
+                        }}
                       >
                         <TableCell>
                           <input
