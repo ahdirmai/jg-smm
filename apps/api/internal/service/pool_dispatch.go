@@ -380,8 +380,13 @@ func (p *PoolDispatch) ClearAccountFromPool(ctx context.Context, accountID strin
 				if w.EndpointURL == nil || *w.EndpointURL == "" {
 					continue
 				}
-				// ClearAuth on a worker that never held the account is a no-op
-				// there; the cost is one tiny request per machine.
+				// When a dedicated login worker is configured, interactive auth
+				// and live-view browsers ONLY ever live on that machine. Sending
+				// ClearAuth to sleeping action workers wakes every boxd microVM
+				// in the fleet and bills for nothing.
+				if p.LoginWorkerName != "" && w.Name != p.LoginWorkerName {
+					continue
+				}
 				if err := p.RPC.ClearAuth(bg, *w.EndpointURL, accountID); err != nil {
 					p.log().Warn("pool: clear orphaned browser failed",
 						"accountId", accountID, "worker", w.Name, "err", err)

@@ -386,3 +386,33 @@ func TestAcquireRefusesWhenOnlyTheLoginWorkerExists(t *testing.T) {
 		t.Fatal("a refused acquire must not hand back a release func")
 	}
 }
+
+// ClearAccountFromPool must ONLY wake the dedicated login worker when
+// LoginWorkerName is configured — fanning out ClearAuth to sleeping action
+// workers wakes every boxd microVM in the fleet unnecessarily.
+func TestClearAccountFromPoolOnlyWakesLoginWorker(t *testing.T) {
+	p, _, _, _ := poolFixture(t, 3, nil)
+	p.LoginWorkerName = "smm-worker-01"
+
+	var cleared []string
+	p.RPC = &recordingClearRPC{onClear: func(endpoint, accountID string) {
+		cleared = append(cleared, endpoint+"#"+accountID)
+	}}
+
+	if _, err := p.ClearAccountFromPool(context.Background(), "acc-1"); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	if len(cleared) != 1 || cleared[0] != "http://smm-worker-01:8090#acc-1" {
+		t.Fatalf("cleared = %v, want only login worker smm-worker-01", cleared)
+	}
+}
+
+type recordingClearRPC struct {
+	fakeRPC
+	onClear func(endpoint, accountID string)
+}
+
+func (r *recordingClearRPC) ClearAuth(_ context.Context, endpointURL, accountID string) error {
+	r.onClear(endpointURL, accountID)
+	return nil
+}

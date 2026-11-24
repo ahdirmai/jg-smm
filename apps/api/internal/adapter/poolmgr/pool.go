@@ -113,11 +113,16 @@ func (s *Slots) AcquireWorkerSlot(ctx context.Context, accountID string, candida
 	if ttl <= 0 {
 		return domain.Worker{}, fmt.Errorf("poolmgr: worker slot ttl must be positive")
 	}
-	start := AffinityIndex(accountID, len(candidates))
+	// Pack proxied accounts onto the lowest-index free action worker first
+	// (start = 0) so small batches wake 1 microVM instead of fanning out across
+	// every sleeping VM in the fleet. Proxyless accounts stay pinned to their
+	// deterministic AffinityIndex so their egress IP never changes.
+	start := 0
 	tries := len(candidates)
 	if !allowFallback {
 		// Pinned: only the affinity worker is acceptable. Trying others would
 		// move a proxyless account to a different egress IP.
+		start = AffinityIndex(accountID, len(candidates))
 		tries = 1
 	}
 	for i := range tries {

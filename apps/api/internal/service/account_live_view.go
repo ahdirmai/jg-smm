@@ -86,17 +86,25 @@ func (s *AccountService) leaseWorker(ctx context.Context, acc domain.Account) (d
 	if acc.WorkerID != nil {
 		if s.workers != nil {
 			if held, err := s.workers.GetByID(ctx, *acc.WorkerID); err == nil {
-				release := func() {
-					if err := s.pool.Slots.ReleaseWorkerSlot(context.WithoutCancel(ctx), held.ID, acc.ID); err != nil {
-						s.logger.Warn("account service: release worker slot failed", "workerId", held.ID, "err", err)
+				// Interactive sessions belong exclusively on the dedicated login
+				// worker when configured. Reusing a stale lease that points to
+				// an action worker would wake a sleeping action VM during login.
+				if s.pool.LoginWorkerName == "" || held.Name == s.pool.LoginWorkerName {
+					release := func() {
+						if err := s.pool.Slots.ReleaseWorkerSlot(context.WithoutCancel(ctx), held.ID, acc.ID); err != nil {
+							s.logger.Warn("account service: release worker slot failed", "workerId", held.ID, "err", err)
+						}
 					}
+					return held, release, nil
 				}
-				return held, release, nil
+				// Drop the stale action-worker lease in DB/Redis without waking
+				// the action worker over RPC.
+				_ = s.pool.Slots.ReleaseWorkerSlot(context.WithoutCancel(ctx), held.ID, acc.ID)
 			}
 		}
-		// The lease points at a worker row that no longer exists (a purged
-		// container, a recreated fleet). Drop it and lease afresh rather than
-		// trapping the account on a machine it can never reach.
+		// The lease points at a worker row that no longer exists (or an action
+		// worker that must not host interactive sessions). Drop it and lease
+		// afresh on the login machine.
 		if err := s.pool.Unlease(ctx, acc.ID, *acc.WorkerID); err != nil {
 			s.logger.Warn("account service: clear dangling lease failed", "accountId", acc.ID, "err", err)
 		}
@@ -356,14 +364,18 @@ func (s *AccountService) CloseLiveView(ctx context.Context, accountID string) er
 		}
 	}
 	if s.pool != nil {
-		if worker.EndpointURL == nil || *worker.EndpointURL == "" {
+		// Only wake the worker with a ClearAuth RPC when it can actually hold an
+		// interactive browser context (the dedicated login worker, or any worker
+		// when no login worker is configured). Never wake sleeping action VMs.
+		clearBrowser := s.pool.LoginWorkerName == "" || worker.Name == s.pool.LoginWorkerName
+		if clearBrowser && (worker.EndpointURL == nil || *worker.EndpointURL == "") {
 			// Without the endpoint the browser context cannot be closed, and the
 			// worker stays "busy" with the account's cookies until it restarts.
 			// Say so instead of silently leaving a locked display behind.
 			s.logger.Warn("live view closed without clearing the worker browser: worker has no endpoint",
 				"accountId", accountID, "workerId", workerID)
 		}
-		s.pool.ReleaseSession(ctx, acc.ID, worker, true)
+		s.pool.ReleaseSession(ctx, acc.ID, worker, clearBrowser)
 	} else {
 		if err := s.accounts.ReleaseLease(ctx, acc.ID, workerID); err != nil {
 			return fmt.Errorf("account service: release lease: %w", err)

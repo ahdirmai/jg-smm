@@ -349,3 +349,24 @@ func TestClearSessionsReportsFailures(t *testing.T) {
 		t.Fatalf("failed = %v", res.Failed)
 	}
 }
+
+func TestClearSessionsOnlyWakesLoginWorkerWhenConfigured(t *testing.T) {
+	store := newFakeWorkerStore()
+	epLogin, epAction := "http://login:8090", "http://action:8090"
+	store.seed(domain.Worker{ID: "w-login", Name: "smm-login-01", EndpointURL: &epLogin})
+	store.seed(domain.Worker{ID: "w-action", Name: "smm-worker-01", EndpointURL: &epAction})
+
+	rpc := &clearRPC{}
+	svc := NewContainerService(store, newFakeAccountStore(), nil, ContainerConfig{
+		RPC:             rpc,
+		LoginWorkerName: "smm-login-01",
+	})
+
+	res := svc.ClearSessions(context.Background())
+	if len(res.Cleared) != 1 || res.Cleared[0] != "smm-login-01" {
+		t.Fatalf("cleared = %v, want only smm-login-01", res.Cleared)
+	}
+	if len(rpc.cleared) != 1 || rpc.cleared[0] != epLogin+"#" {
+		t.Fatalf("rpc.cleared = %v, action worker must not be woken", rpc.cleared)
+	}
+}

@@ -54,8 +54,12 @@ type ContainerService struct {
 	// slots is the fleet's worker-slot coordinator, swept by ClearSessions so a
 	// cleared machine is not still "busy" to the scheduler until a TTL expires.
 	// Optional: nil means the sweep is skipped.
-	slots  port.WorkerSlotCoordinator
-	logger *slog.Logger
+	slots port.WorkerSlotCoordinator
+	// loginWorkerName scopes ClearSessions RPCs to the dedicated login machine
+	// when configured, so clearing interactive browsers does not wake sleeping
+	// action worker VMs.
+	loginWorkerName string
+	logger          *slog.Logger
 }
 
 // ContainerConfig tunes the container service.
@@ -83,6 +87,9 @@ type ContainerConfig struct {
 	// stateless worker keeps in memory: there is no control channel on that
 	// tier, so without RPC a "clear sessions" request has no transport.
 	RPC port.WorkerRPC
+	// LoginWorkerName restricts ClearSessions browser-clear RPCs to the login
+	// machine so sleeping action workers are not woken up.
+	LoginWorkerName string
 }
 
 // NewContainerService wires the service. packer may be nil; deletion then only
@@ -96,18 +103,19 @@ func NewContainerService(workers port.WorkerStore, accounts port.AccountStore, p
 		cfg.Logger = slog.Default()
 	}
 	return &ContainerService{
-		workers:  workers,
-		accounts: accounts,
-		packer:   packer,
-		clock:    cfg.Clock,
-		logs:     cfg.Logs,
-		driver:   cfg.Driver,
-		stream:   cfg.Stream,
-		control:  cfg.Control,
-		novnc:    cfg.Novnc,
-		waker:    cfg.Waker,
-		rpc:      cfg.RPC,
-		slots:    cfg.Slots,
+		workers:         workers,
+		accounts:        accounts,
+		packer:          packer,
+		clock:           cfg.Clock,
+		logs:            cfg.Logs,
+		driver:          cfg.Driver,
+		stream:          cfg.Stream,
+		control:         cfg.Control,
+		novnc:           cfg.Novnc,
+		waker:           cfg.Waker,
+		rpc:             cfg.RPC,
+		slots:           cfg.Slots,
+		loginWorkerName: cfg.LoginWorkerName,
 		// Per-worker coordinates are chosen once; a fresh source per service is
 		// fine because stability is per-worker, not per-process.
 		rnd:    rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), uint64(time.Now().UnixNano())>>1)),
@@ -485,6 +493,9 @@ func (s *ContainerService) ClearSessions(ctx context.Context) SessionClearResult
 	for _, w := range workers {
 		if w.EndpointURL == nil || *w.EndpointURL == "" || s.rpc == nil {
 			continue // not a reachable pool worker (legacy/static tier)
+		}
+		if s.loginWorkerName != "" && w.Name != s.loginWorkerName {
+			continue // never wake sleeping action workers to clear interactive logins
 		}
 		// Empty account id = drop every parked login and the live view. Safe
 		// because a worker serves one account at a time.
