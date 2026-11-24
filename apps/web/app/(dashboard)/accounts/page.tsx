@@ -90,7 +90,45 @@ const AUTH_STATUSES = [
   'QUARANTINED',
 ] as const;
 
+const AUTH_DETAIL_OPTIONS = [
+  { value: 'captcha', label: 'Memerlukan CAPTCHA' },
+  { value: 'otp', label: 'Perlu OTP' },
+  { value: 'checkpoint', label: 'Perlu checkpoint' },
+  { value: 'wrong_password', label: 'Password salah' },
+  { value: 'rate_limited', label: 'Rate limited' },
+  { value: 'account_locked', label: 'Akun terkunci' },
+  { value: 'reverify', label: 'Perlu verifikasi ulang' },
+  { value: 'historical', label: 'Hasil login lama' },
+  { value: 'other', label: 'Login belum selesai' },
+  { value: 'none', label: 'Tanpa catatan' },
+] as const;
+
+type AuthDetailKey = (typeof AUTH_DETAIL_OPTIONS)[number]['value'];
+
+function authDetailKey(error: string | null | undefined): AuthDetailKey {
+  if (!error) return 'none';
+  const lower = error.toLowerCase();
+  if (lower.includes('captcha')) return 'captcha';
+  if (lower.includes('otp_required') || lower.includes('codeentry') || lower.includes('email_code'))
+    return 'otp';
+  if (lower.includes('checkpoint')) return 'checkpoint';
+  if (lower.includes('wrong_password')) return 'wrong_password';
+  if (lower.includes('rate_limited')) return 'rate_limited';
+  if (lower.includes('account_locked')) return 'account_locked';
+  if (/^historical_login_result:\s*ok(?:\s|$)/i.test(error) || error.startsWith('historical_login_verified:'))
+    return 'reverify';
+  if (error.startsWith('historical_login_result:')) return 'historical';
+  return 'other';
+}
+
 function loginResultNote(error: string): string {
+  const key = authDetailKey(error);
+  if (key === 'captcha') return 'Memerlukan CAPTCHA';
+  if (key === 'otp') return 'Perlu OTP';
+  if (key === 'checkpoint') return 'Perlu checkpoint';
+  if (key === 'wrong_password') return 'Password salah';
+  if (key === 'rate_limited') return 'Rate limited';
+  if (key === 'account_locked') return 'Akun terkunci';
   const historical = error.match(/^historical_login_result: ([^ ]+)/);
   if (historical) {
     return historical[1] === 'OK'
@@ -99,10 +137,6 @@ function loginResultNote(error: string): string {
   }
   if (error.startsWith('historical_login_verified:'))
     return 'Pernah terverifikasi; session perlu dicek ulang';
-  if (error.includes('wrong_password')) return 'Password salah';
-  if (error.includes('captcha')) return 'Memerlukan CAPTCHA';
-  if (error.includes('otp_required') || error.includes('codeentry') || error.includes('email_code'))
-    return 'Perlu OTP';
   return 'Login belum selesai; cek melalui panel login';
 }
 
@@ -190,13 +224,14 @@ export default function AccountsPage() {
   const [platform, setPlatform] = useState<string>('all');
   const [status, setStatusFilter] = useState<string>('all');
   const [auth, setAuthFilter] = useState<string>('all');
+  const [authDetail, setAuthDetailFilter] = useState<string>('all');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const [busy, setBusy] = useState<string | null>(null);
   const [operationError, setOperationError] = useState<string | null>(null);
   const [operationNotice, setOperationNotice] = useState<string | null>(null);
 
-  useEffect(() => setPage(1), [platform, status, auth, pageSize]);
+  useEffect(() => setPage(1), [platform, status, auth, authDetail, pageSize]);
   // The detail drawer is shared by the row click and the dropdown items. The
   // row is addressed by id so the panel re-renders from the live `accounts`
   // list (an in-flight login settling is visible without reopening). `watch`
@@ -271,12 +306,35 @@ export default function AccountsPage() {
     [containers],
   );
 
+  const authDetailCounts = useMemo(() => {
+    const counts: Record<AuthDetailKey, number> = {
+      captcha: 0,
+      otp: 0,
+      checkpoint: 0,
+      wrong_password: 0,
+      rate_limited: 0,
+      account_locked: 0,
+      reverify: 0,
+      historical: 0,
+      other: 0,
+      none: 0,
+    };
+    for (const a of accounts) {
+      if (platform !== 'all' && a.platform !== platform) continue;
+      if (status !== 'all' && a.status !== status) continue;
+      if (auth !== 'all' && a.authStatus !== auth) continue;
+      counts[authDetailKey(a.lastError)]++;
+    }
+    return counts;
+  }, [accounts, platform, status, auth]);
+
   const filtered = useMemo(() => {
     return accounts
       .filter((a) => {
         if (platform !== 'all' && a.platform !== platform) return false;
         if (status !== 'all' && a.status !== status) return false;
         if (auth !== 'all' && a.authStatus !== auth) return false;
+        if (authDetail !== 'all' && authDetailKey(a.lastError) !== authDetail) return false;
         return true;
       })
       .slice()
@@ -286,7 +344,7 @@ export default function AccountsPage() {
           a.platform.localeCompare(b.platform) ||
           a.username.localeCompare(b.username),
       );
-  }, [accounts, platform, status, auth]);
+  }, [accounts, platform, status, auth, authDetail]);
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const currentPage = Math.min(page, pageCount);
@@ -748,6 +806,20 @@ This account still holds a worker from an earlier session. Use "Release session"
                     {AUTH_STATUSES.map((s) => (
                       <SelectItem key={s} value={s}>
                         {s}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                <Select value={authDetail} onValueChange={setAuthDetailFilter}>
+                  <SelectTrigger className="w-48" aria-label="All auth details">
+                    <SelectValue placeholder="All auth details" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All auth details</SelectItem>
+                    {AUTH_DETAIL_OPTIONS.map((opt) => (
+                      <SelectItem key={opt.value} value={opt.value}>
+                        {opt.label} ({authDetailCounts[opt.value]})
                       </SelectItem>
                     ))}
                   </SelectContent>
