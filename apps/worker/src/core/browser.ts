@@ -61,6 +61,7 @@ export async function launchBrowser(options: LaunchOptions = {}): Promise<Browse
       : {}),
     args: [
       // noVNC sees a real desktop; the container's entrypoint starts Xvfb.
+      '--incognito',
       '--start-maximized',
       '--disable-blink-features=AutomationControlled',
     ],
