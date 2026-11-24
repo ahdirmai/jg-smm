@@ -337,6 +337,15 @@ func (s *AccountService) CloseLiveView(ctx context.Context, accountID string) er
 					"accountId", accountID, "slots", cleared)
 			}
 		}
+		if acc.AuthStatus == domain.AuthNeedsInput || acc.AuthStatus == domain.AuthAuthenticating {
+			acc.AuthStatus = domain.AuthFailed
+			msg := "login cancelled: operator closed the live view"
+			acc.LastError = &msg
+			if _, err := s.accounts.Update(ctx, acc); err != nil {
+				return fmt.Errorf("account service: settle parked login: %w", err)
+			}
+			s.publishAccount(ctx, toAccountView(acc))
+		}
 		return nil
 	}
 	workerID := *acc.WorkerID
@@ -374,14 +383,14 @@ func (s *AccountService) CloseLiveView(ctx context.Context, accountID string) er
 				"accountId", accountID, "slots", cleared)
 		}
 	}
-	// A parked login outlives its display: closing the view frees the worker but
-	// the account stays NEEDS_INPUT, so the NEXT attempt is refused with
-	// "waiting for operator input; submit the code instead" forever — there is no
-	// browser left to submit a code into. Clearing the lease must therefore also
-	// settle the status, or the row is a one-way trap.
-	if acc.AuthStatus == domain.AuthNeedsInput {
+	// A parked or in-flight login outlives its display: closing the view frees
+	// the worker but leaving NEEDS_INPUT or AUTHENTICATING behind traps the
+	// account (and makes the UI immediately re-open a live view). Clear the
+	// in-memory worker pointer too so the published SSE snapshot reflects the
+	// released lease.
+	acc.WorkerID = nil
+	if acc.AuthStatus == domain.AuthNeedsInput || acc.AuthStatus == domain.AuthAuthenticating {
 		acc.AuthStatus = domain.AuthFailed
-		acc.WorkerID = nil
 		msg := "login cancelled: operator closed the live view"
 		acc.LastError = &msg
 		if _, err := s.accounts.Update(ctx, acc); err != nil {

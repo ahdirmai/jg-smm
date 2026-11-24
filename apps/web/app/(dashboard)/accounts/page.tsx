@@ -47,7 +47,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { api } from '@/lib/api';
 
@@ -79,7 +79,45 @@ const AUTH_STATUSES = [
   'QUARANTINED',
 ] as const;
 
+const AUTH_DETAIL_OPTIONS = [
+  { value: 'captcha', label: 'Memerlukan CAPTCHA' },
+  { value: 'otp', label: 'Perlu OTP' },
+  { value: 'checkpoint', label: 'Perlu checkpoint' },
+  { value: 'wrong_password', label: 'Password salah' },
+  { value: 'rate_limited', label: 'Rate limited' },
+  { value: 'account_locked', label: 'Akun terkunci' },
+  { value: 'reverify', label: 'Perlu verifikasi ulang' },
+  { value: 'historical', label: 'Hasil login lama' },
+  { value: 'other', label: 'Login belum selesai' },
+  { value: 'none', label: 'Tanpa catatan' },
+] as const;
+
+type AuthDetailKey = (typeof AUTH_DETAIL_OPTIONS)[number]['value'];
+
+function authDetailKey(error: string | null | undefined): AuthDetailKey {
+  if (!error) return 'none';
+  const lower = error.toLowerCase();
+  if (lower.includes('captcha')) return 'captcha';
+  if (lower.includes('otp_required') || lower.includes('codeentry') || lower.includes('email_code'))
+    return 'otp';
+  if (lower.includes('checkpoint')) return 'checkpoint';
+  if (lower.includes('wrong_password')) return 'wrong_password';
+  if (lower.includes('rate_limited')) return 'rate_limited';
+  if (lower.includes('account_locked')) return 'account_locked';
+  if (/^historical_login_result:\s*ok(?:\s|$)/i.test(error) || error.startsWith('historical_login_verified:'))
+    return 'reverify';
+  if (error.startsWith('historical_login_result:')) return 'historical';
+  return 'other';
+}
+
 function loginResultNote(error: string): string {
+  const key = authDetailKey(error);
+  if (key === 'captcha') return 'Memerlukan CAPTCHA';
+  if (key === 'otp') return 'Perlu OTP';
+  if (key === 'checkpoint') return 'Perlu checkpoint';
+  if (key === 'wrong_password') return 'Password salah';
+  if (key === 'rate_limited') return 'Rate limited';
+  if (key === 'account_locked') return 'Akun terkunci';
   const historical = error.match(/^historical_login_result: ([^ ]+)/);
   if (historical) {
     return historical[1] === 'OK'
@@ -88,10 +126,6 @@ function loginResultNote(error: string): string {
   }
   if (error.startsWith('historical_login_verified:'))
     return 'Pernah terverifikasi; session perlu dicek ulang';
-  if (error.includes('wrong_password')) return 'Password salah';
-  if (error.includes('captcha')) return 'Memerlukan CAPTCHA';
-  if (error.includes('otp_required') || error.includes('codeentry') || error.includes('email_code'))
-    return 'Perlu OTP';
   return 'Login belum selesai; cek melalui panel login';
 }
 
@@ -172,12 +206,13 @@ export default function AccountsPage() {
   const [platform, setPlatform] = useState<string>('all');
   const [status, setStatusFilter] = useState<string>('all');
   const [auth, setAuthFilter] = useState<string>('all');
+  const [authDetail, setAuthDetailFilter] = useState<string>('all');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const [busy, setBusy] = useState<string | null>(null);
   const [operationError, setOperationError] = useState<string | null>(null);
 
-  useEffect(() => setPage(1), [platform, status, auth, pageSize]);
+  useEffect(() => setPage(1), [platform, status, auth, authDetail, pageSize]);
   // The detail drawer is shared by the row click and the dropdown items. The
   // row is addressed by id so the panel re-renders from the live `accounts`
   // list (an in-flight login settling is visible without reopening). `watch`
@@ -207,6 +242,10 @@ export default function AccountsPage() {
   // and the iframe sat blank with nothing to explain it.
   const [liveView, setLiveView] = useState<Record<string, { url: string; expiresAt: number }>>({});
   const [liveViewBusy, setLiveViewBusy] = useState<string | null>(null);
+  // Tracks an in-flight row-click auto-login so the watch useEffects do not
+  // race ahead and open a bare manual browser before startLogin autofills the
+  // login form.
+  const autoLoginRef = useRef<string | null>(null);
 
   const novncFor = (a: Account): string | null => {
     const cached = liveView[a.id];
@@ -259,12 +298,37 @@ export default function AccountsPage() {
     [containers],
   );
 
+  // Counts per auth detail over accounts matching the other active filters so
+  // the operator can see which failure/challenge types exist before picking one.
+  const authDetailCounts = useMemo(() => {
+    const counts: Record<AuthDetailKey, number> = {
+      captcha: 0,
+      otp: 0,
+      checkpoint: 0,
+      wrong_password: 0,
+      rate_limited: 0,
+      account_locked: 0,
+      reverify: 0,
+      historical: 0,
+      other: 0,
+      none: 0,
+    };
+    for (const a of accounts) {
+      if (platform !== 'all' && a.platform !== platform) continue;
+      if (status !== 'all' && a.status !== status) continue;
+      if (auth !== 'all' && a.authStatus !== auth) continue;
+      counts[authDetailKey(a.lastError)]++;
+    }
+    return counts;
+  }, [accounts, platform, status, auth]);
+
   const filtered = useMemo(() => {
     return accounts
       .filter((a) => {
         if (platform !== 'all' && a.platform !== platform) return false;
         if (status !== 'all' && a.status !== status) return false;
         if (auth !== 'all' && a.authStatus !== auth) return false;
+        if (authDetail !== 'all' && authDetailKey(a.lastError) !== authDetail) return false;
         return true;
       })
       .slice()
@@ -274,7 +338,7 @@ export default function AccountsPage() {
           a.platform.localeCompare(b.platform) ||
           a.username.localeCompare(b.username),
       );
-  }, [accounts, platform, status, auth]);
+  }, [accounts, platform, status, auth, authDetail]);
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const currentPage = Math.min(page, pageCount);
@@ -297,6 +361,7 @@ export default function AccountsPage() {
   // account, never read off the worker list.
   useEffect(() => {
     if (!detailAccount || !isWatching) return;
+    if (autoLoginRef.current === detailAccount.id) return;
     if (liveView[detailAccount.id]) return;
     if (liveViewBusy === detailAccount.id) return;
     void openLiveView(detailAccount);
@@ -380,6 +445,10 @@ This account still holds a worker from an earlier session. Use "Release session"
   const releaseSession = async (id: string) => {
     setBusy(id);
     setOperationError(null);
+    // Stop watching BEFORE clearing the cached live-view URL so the watch
+    // useEffect does not immediately re-mint a ticket and re-lease the worker
+    // right after Release session frees it.
+    setDetail((prev) => (prev?.id === id ? { id, watch: false } : prev));
     try {
       await api.closeAccountLiveView(id);
       setLiveView((prev) => {
@@ -496,10 +565,58 @@ This account still holds a worker from an earlier session. Use "Release session"
   // asked for a worker, and said the worker published nothing.
   useEffect(() => {
     if (!detailAccount || !needsLiveView(detailAccount) || !canAct) return;
+    if (autoLoginRef.current === detailAccount.id) return;
     if (liveView[detailAccount.id] || liveViewBusy === detailAccount.id) return;
     void openLiveView(detailAccount);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detailAccount?.id, detailAccount?.authStatus]);
+
+  /**
+   * Clicking an account row opens the cockpit. For any unauthenticated account
+   * (except QUARANTINED), start the login FIRST so the worker opens the
+   * platform login page and autofills email/username + password, then attach
+   * noVNC to that session. If a parked login is already live on the worker,
+   * keep it untouched and attach noVNC straight to it.
+   */
+  const openAccountRow = async (a: Account) => {
+    if (detail?.id === a.id) {
+      if (!needsLiveView(a)) {
+        void api.closeAccountLiveView(a.id).catch(() => undefined);
+      }
+      setDetail(null);
+      return;
+    }
+
+    const shouldAutoLogin =
+      canAct && a.authStatus !== 'AUTHENTICATED' && a.authStatus !== 'QUARANTINED';
+    if (!shouldAutoLogin) {
+      setDetail({ id: a.id, watch: needsLiveView(a) });
+      return;
+    }
+
+    autoLoginRef.current = a.id;
+    setOperationError(null);
+    setDetail({ id: a.id, watch: true });
+    setLiveViewBusy(a.id);
+    try {
+      try {
+        await startLogin(a.id);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Could not start login';
+        // A parked login already waiting for operator input (OTP/CAPTCHA) is
+        // live on the worker — keep it running and attach noVNC directly.
+        if (!/waiting for operator input|already authenticating|already in progress/i.test(message)) {
+          setOperationError(message);
+          setDetail({ id: a.id, watch: false });
+          return;
+        }
+      }
+      await openLiveView(a);
+    } finally {
+      if (autoLoginRef.current === a.id) autoLoginRef.current = null;
+      setLiveViewBusy((prev) => (prev === a.id ? null : prev));
+    }
+  };
 
   // Fleet rollup for the stat strip. Counted over ALL accounts, not the
   // filtered view: the numbers answer "how healthy is the fleet", and a filter
@@ -621,16 +738,7 @@ This account still holds a worker from an earlier session. Use "Release session"
             }}
             onOpenProfile={(a) => void openProfile(a)}
             onReleaseSession={(id) => void releaseSession(id)}
-            onCancelParkedLogin={(id) => {
-              // Closing the live view both frees the worker and settles the
-              // parked attempt, so the account becomes retryable again.
-              void api
-                .closeAccountLiveView(id)
-                .then(() => refresh())
-                .catch((err: unknown) =>
-                  setOperationError(err instanceof Error ? err.message : 'Could not cancel the login'),
-                );
-            }}
+            onCancelParkedLogin={(id) => void releaseSession(id)}
           />
         </Card>
       ) : null}
@@ -730,6 +838,20 @@ This account still holds a worker from an earlier session. Use "Release session"
                     {AUTH_STATUSES.map((s) => (
                       <SelectItem key={s} value={s}>
                         {s}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                <Select value={authDetail} onValueChange={setAuthDetailFilter}>
+                  <SelectTrigger className="w-48" aria-label="All auth details">
+                    <SelectValue placeholder="All auth details" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All auth details</SelectItem>
+                    {AUTH_DETAIL_OPTIONS.map((opt) => (
+                      <SelectItem key={opt.value} value={opt.value}>
+                        {opt.label} ({authDetailCounts[opt.value]})
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -864,11 +986,7 @@ This account still holds a worker from an earlier session. Use "Release session"
                         // buttons in the last cell are real buttons, so
                         // keyboard users have the same actions one Tab away.)
                         className="cursor-pointer transition-colors hover:bg-accent/60"
-                        onClick={() =>
-                          setDetail(
-                            detail?.id === a.id ? null : { id: a.id, watch: needsLiveView(a) },
-                          )
-                        }
+                        onClick={() => void openAccountRow(a)}
                       >
                         <TableCell>
                           <input

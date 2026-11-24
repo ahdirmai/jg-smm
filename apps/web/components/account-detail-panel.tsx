@@ -230,15 +230,6 @@ export function AccountDetailPanel({
                   <X />
                   Cancel this login
                 </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={busy || !canAct}
-                  onClick={() => onReleaseSession(account.id)}
-                >
-                  <RefreshCw />
-                  Release session
-                </Button>
               </div>
             </div>
           ) : null}
@@ -286,14 +277,29 @@ export function AccountDetailPanel({
           ) : null}
 
           {account.authStatus !== 'QUARANTINED' ? (
-            <Button
-              className="w-full"
-              disabled={busy || !canAct}
-              onClick={() => onStartLogin(account.id)}
-            >
-              <KeyRound />
-              Log in
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                className="flex-1"
+                disabled={busy || !canAct}
+                onClick={() => onStartLogin(account.id)}
+              >
+                <KeyRound />
+                Log in
+              </Button>
+              {account.workerId ||
+              showLiveView ||
+              account.authStatus === 'AUTHENTICATING' ||
+              account.authStatus === 'NEEDS_INPUT' ? (
+                <Button
+                  variant="outline"
+                  disabled={busy || !canAct}
+                  onClick={() => onReleaseSession(account.id)}
+                >
+                  <RefreshCw />
+                  Release session
+                </Button>
+              ) : null}
+            </div>
           ) : null}
 
           <div className="flex flex-wrap gap-2">

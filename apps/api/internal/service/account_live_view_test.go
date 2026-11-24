@@ -255,3 +255,34 @@ func TestLoginClearsStaleLeaseOnSettledAccount(t *testing.T) {
 		t.Fatalf("auth status = %q, want AUTHENTICATING", got.AuthStatus)
 	}
 }
+
+func TestCloseLiveViewSettlesAuthenticatingLogin(t *testing.T) {
+	accounts := newFakeAccountStore()
+	acc := accountFixture("acc-auth", domain.PlatformInstagram)
+	acc.AuthStatus = domain.AuthAuthenticating
+	acc.WorkerID = new("w-4")
+	accounts.seed(acc)
+
+	pool := &PoolDispatch{
+		Unlease: func(_ context.Context, accountID, workerID string) error {
+			return accounts.ReleaseLease(context.Background(), accountID, workerID)
+		},
+		Slots: slotsRecorder{probe: &authReleaseProbe{keepalives: make(chan string, 1)}},
+		RPC:   rpcRecorder{probe: &authReleaseProbe{keepalives: make(chan string, 1)}},
+	}
+	svc := NewAccountService(accounts, newFakeWorkerStore(), nil, AccountConfig{
+		PoolMode: "stateless",
+		Pool:     pool,
+	})
+
+	if err := svc.CloseLiveView(context.Background(), acc.ID); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	got, _ := accounts.GetByID(context.Background(), acc.ID)
+	if got.WorkerID != nil {
+		t.Fatalf("lease survived close: %v", *got.WorkerID)
+	}
+	if got.AuthStatus != domain.AuthFailed {
+		t.Fatalf("auth status = %q, want FAILED", got.AuthStatus)
+	}
+}
