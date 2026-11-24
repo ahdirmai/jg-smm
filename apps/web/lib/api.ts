@@ -6,7 +6,8 @@
 
 import type { ApiSchemas } from '@smm/shared';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:24080';
+export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:24080';
+export const SSE_URL = process.env.NEXT_PUBLIC_SSE_URL ?? 'http://localhost:24080/api/stream';
 
 export type Account = ApiSchemas['Account'];
 export type AccountList = ApiSchemas['AccountList'];
@@ -14,15 +15,22 @@ export type CreateAccountRequest = ApiSchemas['CreateAccountRequest'];
 export type SetAccountStatusRequest = ApiSchemas['SetAccountStatusRequest'];
 export type Container = ApiSchemas['Container'];
 export type ContainerList = ApiSchemas['ContainerList'];
+export type WorkerHealth = {
+  id: string;
+  name: string;
+  status: string;
+  awake: boolean;
+  accountId?: string;
+  error?: string;
+  lastActionAt?: string;
+};
+export type WorkerHealthList = { workers: WorkerHealth[] };
 export type ActionJob = ApiSchemas['ActionJob'];
 export type LogEntry = ApiSchemas['ProvisionLogEntry'];
 export type ActionJobList = ApiSchemas['ActionJobList'];
 export type EnqueueActionsRequest = ApiSchemas['EnqueueActionsRequest'];
 export type ActionItem = ApiSchemas['ActionItem'];
 export type JobStatus = ApiSchemas['JobStatus'];
-export type CommentTemplate = ApiSchemas['CommentTemplate'];
-export type TemplateList = ApiSchemas['TemplateList'];
-export type CreateTemplateRequest = ApiSchemas['CreateTemplateRequest'];
 export type Platform = ApiSchemas['Platform'];
 export type ImportResult = ApiSchemas['ImportResult'];
 export type MeResponse = ApiSchemas['MeResponse'];
@@ -60,17 +68,7 @@ export type AuditQuery = {
   offset?: number;
 };
 
-function auditQuery(params: AuditQuery): string {
-  const search = new URLSearchParams();
-  for (const [key, value] of Object.entries(params)) {
-    if (value === undefined || value === '') continue;
-    search.set(key, String(value));
-  }
-  const qs = search.toString();
-  return qs ? `?${qs}` : '';
-}
-
-function reportQuery(params: ReportQuery): string {
+function toQueryString(params: AuditQuery | ReportQuery): string {
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
     if (value === undefined || value === '') continue;
@@ -336,6 +334,15 @@ export const api = {
 
   listContainers: (signal?: AbortSignal) =>
     request<ContainerList>('/api/containers', signal ? { signal } : undefined),
+  // The workspace gate. Health probes worker /healthz; on boxd that inbound
+  // request is what wakes a hibernated machine. Wake sends an authenticated
+  // keepalive first and then returns the same status shape.
+  workerHealth: (role?: 'login' | 'action') =>
+    request<WorkerHealthList>(`/api/workers/health${role ? `?role=${role}` : ''}`),
+  wakeWorkers: (role?: 'login' | 'action') =>
+    request<WorkerHealthList>(`/api/workers/wake${role ? `?role=${role}` : ''}`, {
+      method: 'POST',
+    }),
   // Already-scraped posts, newest first (the "recent" history card).
   listRecentPosts: (signal?: AbortSignal) =>
     request<RecentPostsResponse>(
@@ -441,6 +448,10 @@ export const api = {
   deleteContainer: (id: string) => request<void>(`/api/containers/${id}`, { method: 'DELETE' }),
   // Open a URL in the account's live, session-hydrated browser on the worker's
   // VNC display; the noVNC live view then shows the page already logged in.
+  // Mint a ticketed noVNC URL for the admin Workers page. The standing
+  // `novncUrl` has no ticket and its WebSocket is intentionally 403.
+  openContainerLiveView: (id: string) =>
+    request<{ liveViewUrl: string }>(`/api/containers/${id}/live-view`, { method: 'POST' }),
   openBrowser: (containerId: string, url: string | null, platform: string) =>
     request<{ status: string }>(`/api/containers/${containerId}/browser`, {
       method: 'POST',
@@ -479,23 +490,6 @@ export const api = {
   cancelPendingNow: () =>
     request<{ cancelled: number }>('/api/actions/cancel-pending', { method: 'POST' }),
 
-  // Comment templates (P3-02/P3-03). The pool per platform.
-  listTemplates: (platform?: Platform, signal?: AbortSignal) =>
-    request<TemplateList>(
-      `/api/templates${platform ? `?platform=${platform}` : ''}`,
-      signal ? { signal } : undefined,
-    ),
-  createTemplate: (body: CreateTemplateRequest) =>
-    request<CommentTemplate>('/api/templates', {
-      method: 'POST',
-      body: JSON.stringify(body),
-    }),
-  updateTemplate: (id: string, body: CreateTemplateRequest) =>
-    request<CommentTemplate>(`/api/templates/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(body),
-    }),
-  deleteTemplate: (id: string) => request<void>(`/api/templates/${id}`, { method: 'DELETE' }),
 
   // Session (P4-09). The role drives UI gating; every write is still checked
   // server-side, so this is a UX layer, not a security boundary.
@@ -507,24 +501,24 @@ export const api = {
   // a JSON fetch.
   reportActions: (params: ReportQuery, signal?: AbortSignal) =>
     request<ActionReport>(
-      `/api/reports/actions${reportQuery(params)}`,
+      `/api/reports/actions${toQueryString(params)}`,
       signal ? { signal } : undefined,
     ),
   reportTargets: (params: ReportQuery, signal?: AbortSignal) =>
     request<TargetReport>(
-      `/api/reports/targets${reportQuery(params)}`,
+      `/api/reports/targets${toQueryString(params)}`,
       signal ? { signal } : undefined,
     ),
   reportAnalytics: (params: ReportQuery, signal?: AbortSignal) =>
     request<AnalyticsReport>(
-      `/api/reports/analytics${reportQuery(params)}`,
+      `/api/reports/analytics${toQueryString(params)}`,
       signal ? { signal } : undefined,
     ),
-  reportExportURL: (params: ReportQuery) => `${API_URL}/api/reports/export${reportQuery(params)}`,
+  reportExportURL: (params: ReportQuery) => `${API_URL}/api/reports/export${toQueryString(params)}`,
 
   // Audit trail (P6-10). Who did what, when — read-only, filtered.
   listAudit: (params: AuditQuery, signal?: AbortSignal) =>
-    request<AuditLogList>(`/api/audit${auditQuery(params)}`, signal ? { signal } : undefined),
+    request<AuditLogList>(`/api/audit${toQueryString(params)}`, signal ? { signal } : undefined),
 
   // Team (P6-11). Single-team MVP roster; writes are OWNER-only.
   listUsers: (signal?: AbortSignal) =>

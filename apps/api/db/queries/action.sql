@@ -103,6 +103,14 @@ WHERE id = $1
   AND status = 'FAILED'
 RETURNING id, type, target_id, account_id, worker_id, status, scheduled_at, started_at, finished_at, attempts, error, created_at, template_id;
 
+-- name: AssignActionJobWorker :exec
+-- Records which pool worker actually accepted the pushed job. The legacy path
+-- stamps worker_id in ClaimNextActionJob; the stateless path leases a worker
+-- AFTER the claim, so the attribution is written here once the push succeeds.
+UPDATE action_job
+SET worker_id = $2
+WHERE id = $1;
+
 -- name: SetActionJobTemplate :exec
 -- Records the pool variant a job's text came from. Written at dispatch, after
 -- the composer picks: the job row is created before any text exists (an

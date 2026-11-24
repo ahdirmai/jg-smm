@@ -1,25 +1,14 @@
 import { test, expect } from '../fixtures/base.js';
 
 /**
- * Dead-link sweep. The nav list in monitoring.spec.ts proves each sidebar
- * entry routes. This proves every internal <a href> the shell renders reaches
- * a real 200 and not an error boundary — including the monitoring subroutes
- * the sidebar generates per platform, which the nav list does not enumerate.
+ * Dead-link sweep. Every internal <a href> the shell renders must reach a real
+ * 200 and not an error boundary; the removed Monitoring and Templates routes
+ * are intentionally absent from this list.
  *
  * Every dashboard page holds the SSE stream open, so the response the browser
  * gets is the page itself; a link to a route that 404s or throws renders the
  * Next error view, and that is what this catches.
  */
-
-const PLATFORM_SUBROUTES = [
-  'Instagram',
-  'Threads',
-  'Facebook',
-  'LinkedIn',
-  'X',
-  'YouTube',
-  'TikTok',
-];
 
 /** The pages that render the dashboard shell, walked for links. */
 const PAGES = [
@@ -27,8 +16,6 @@ const PAGES = [
   '/workers',
   '/accounts',
   '/actions',
-  '/templates',
-  '/monitoring',
   '/reports',
   '/audit',
   '/settings',
@@ -72,15 +59,4 @@ test.describe('dead links', () => {
     });
   }
 
-  for (const label of PLATFORM_SUBROUTES) {
-    test(`the monitoring ${label} subroute renders`, async ({ authedPage }) => {
-      // The sidebar generates these from the platform list; a route that only
-      // exists for one platform is a silent dead link for the rest.
-      await authedPage.goto('/monitoring');
-      await authedPage.getByRole('link', { name: label, exact: true }).click();
-
-      await expect(authedPage).toHaveURL(new RegExp(`\\/monitoring\\/[a-z]+$`));
-      await expect(authedPage.getByRole('banner')).toBeVisible();
-    });
-  }
 });

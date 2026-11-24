@@ -169,8 +169,10 @@ func preemptionFixture(t *testing.T, heldStatus domain.AuthStatus, heldLeased bo
 		LoginWorkerName: "smm-login-01",
 		Workers:         func(context.Context) ([]domain.Worker, error) { return workers.all(), nil },
 		Slots:           slots,
-		Unlease:         func(_ context.Context, accountID, workerID string) error { return accounts.ReleaseLease(context.Background(), accountID, workerID) },
-		RPC:             probe,
+		Unlease: func(_ context.Context, accountID, workerID string) error {
+			return accounts.ReleaseLease(context.Background(), accountID, workerID)
+		},
+		RPC: probe,
 	}
 	svc := NewAccountService(accounts, workers, nil, AccountConfig{PoolMode: "stateless", Pool: pool})
 	return svc, accounts, probe
@@ -284,5 +286,76 @@ func TestCloseLiveViewSettlesAuthenticatingLogin(t *testing.T) {
 	}
 	if got.AuthStatus != domain.AuthFailed {
 		t.Fatalf("auth status = %q, want FAILED", got.AuthStatus)
+	}
+}
+
+// After a login worker restarts it reports busy:false, while Postgres still
+// holds worker_id on the previously parked account. Leasing the machine for a
+// different account on the same platform must clear that stale DB lease instead
+// of failing with a 409 unique-constraint conflict.
+func TestLeaseClearsStaleDBLeaseOnIdleLoginWorker(t *testing.T) {
+	accounts := newFakeAccountStore()
+	endpoint := "http://127.0.0.1:18090"
+	workers := newFakeWorkerStore()
+	workers.seed(domain.Worker{ID: "w-login", Name: "smm-login-01", EndpointURL: &endpoint})
+
+	stale := accountFixture("acc-stale", domain.PlatformInstagram)
+	stale.AuthStatus = domain.AuthNeedsInput
+	stale.WorkerID = new("w-login")
+	accounts.seed(stale)
+	accounts.seed(accountFixture("acc-incoming", domain.PlatformInstagram))
+
+	probe := busyProbe{rpcRecorder{probe: newAuthProbe()}, ""}
+	slots := &fakeSlots{held: map[string]string{}}
+	pool := &PoolDispatch{
+		LoginWorkerName: "smm-login-01",
+		Workers:         func(context.Context) ([]domain.Worker, error) { return workers.all(), nil },
+		Slots:           slots,
+		Unlease: func(_ context.Context, accountID, workerID string) error {
+			return accounts.ReleaseLease(context.Background(), accountID, workerID)
+		},
+		RPC: probe,
+	}
+	svc := NewAccountService(accounts, workers, nil, AccountConfig{PoolMode: "stateless", Pool: pool})
+
+	if _, _, err := svc.leaseWorker(context.Background(), mustAccount(t, accounts, "acc-incoming")); err != nil {
+		t.Fatalf("lease after worker restart: %v", err)
+	}
+	gotStale, _ := accounts.GetByID(context.Background(), "acc-stale")
+	if gotStale.WorkerID != nil {
+		t.Fatalf("stale account still leased: %v", *gotStale.WorkerID)
+	}
+	if gotStale.AuthStatus != domain.AuthFailed {
+		t.Fatalf("stale account status = %q, want %q", gotStale.AuthStatus, domain.AuthFailed)
+	}
+	gotIncoming, _ := accounts.GetByID(context.Background(), "acc-incoming")
+	if gotIncoming.WorkerID == nil || *gotIncoming.WorkerID != "w-login" {
+		t.Fatalf("incoming account not leased to w-login: %v", gotIncoming.WorkerID)
+	}
+}
+
+// A parked login whose worker lease was already released is still a trap: the
+// account answers "submit the code" but no browser exists. Release must settle
+// the status even when there is no worker_id left to release.
+func TestCloseLiveViewSettlesParkedLoginWithoutLease(t *testing.T) {
+	accounts := newFakeAccountStore()
+	acc := accountFixture("acc-parked-idle", domain.PlatformInstagram)
+	acc.AuthStatus = domain.AuthNeedsInput
+	acc.WorkerID = nil
+	accounts.seed(acc)
+
+	svc := NewAccountService(accounts, newFakeWorkerStore(), nil, AccountConfig{PoolMode: "stateless"})
+	if err := svc.CloseLiveView(context.Background(), acc.ID); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	got, err := accounts.GetByID(context.Background(), acc.ID)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if got.AuthStatus != domain.AuthFailed {
+		t.Fatalf("auth status = %q, want FAILED", got.AuthStatus)
+	}
+	if got.LastError == nil || *got.LastError == "" {
+		t.Fatal("released parked login must explain why it settled")
 	}
 }

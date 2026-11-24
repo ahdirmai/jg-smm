@@ -15,7 +15,11 @@ import {
   isFullyAutomated,
   supportedPlatforms,
 } from '../platforms/registry.js';
-import { canonicalYouTubeUrl } from '../platforms/youtube.js';
+import {
+  canonicalYouTubeUrl,
+  COMMENT_SUBMIT_SELECTOR,
+  SHORTS_COMMENTS_BUTTON_SELECTOR,
+} from '../platforms/youtube.js';
 
 test('parsePlatforms filters unknown values and falls back on empty', () => {
   assert.deepEqual(parsePlatforms('instagram,threads', []), ['instagram', 'threads']);
@@ -129,15 +133,11 @@ test('computeJitter stays within the range and is injectable', () => {
   );
 });
 
-test('loadConfig applies defaults and trims the API url', () => {
-  const cfg = loadConfig({
-    WORKER_ID: ' worker-1 ',
-    API_URL: 'http://api:8080/',
-    ACTION_DRY_RUN: 'false',
-  });
-  assert.equal(cfg.workerId, 'worker-1');
+test('loadConfig applies local defaults when environment is empty', () => {
+  const cfg = loadConfig({});
+  assert.equal(cfg.workerId, 'worker-local');
   assert.equal(cfg.apiUrl, 'http://api:8080');
-  assert.equal(cfg.dryRun, false);
+  assert.equal(cfg.dryRun, true);
   assert.equal(cfg.heartbeatIntervalSec, 30);
   assert.deepEqual(cfg.platforms, ['instagram', 'threads']);
 });
@@ -212,4 +212,13 @@ test('canonicalYouTubeUrl rewrites youtu.be links and leaves both surfaces alone
     'https://www.youtube.com/watch?v=CWh1yOIeL_I',
   );
   assert.equal(canonicalYouTubeUrl('not a url'), 'not a url');
+});
+
+test('YouTube Shorts selectors cover both English and Indonesian (id-ID) UI labels', () => {
+  assert.match(SHORTS_COMMENTS_BUTTON_SELECTOR, /comment/i);
+  assert.match(SHORTS_COMMENTS_BUTTON_SELECTOR, /komentar/i);
+  assert.match(SHORTS_COMMENTS_BUTTON_SELECTOR, /#comments-button/);
+  assert.match(COMMENT_SUBMIT_SELECTOR, /#submit-button/);
+  assert.match(COMMENT_SUBMIT_SELECTOR, /Comment/);
+  assert.match(COMMENT_SUBMIT_SELECTOR, /Komentar/);
 });

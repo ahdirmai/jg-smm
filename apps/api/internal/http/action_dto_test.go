@@ -27,3 +27,16 @@ func TestJobToDTOUppercasesQueueStatus(t *testing.T) {
 		}
 	}
 }
+
+// The queue history must name the machine that accepted the job. worker_id was
+// persisted but omitted from the wire, so every row rendered "unassigned".
+func TestJobToDTOExposesWorkerID(t *testing.T) {
+	row := jobToDTO(domain.ActionJob{ID: "j1", WorkerID: "w-123"})
+	if !row.WorkerId.IsSpecified() || row.WorkerId.IsNull() || row.WorkerId.MustGet() != "w-123" {
+		t.Fatalf("workerId = %+v, want w-123", row.WorkerId)
+	}
+	empty := jobToDTO(domain.ActionJob{ID: "j2"})
+	if empty.WorkerId.IsSpecified() && !empty.WorkerId.IsNull() {
+		t.Fatalf("unassigned job leaked workerId = %+v", empty.WorkerId)
+	}
+}

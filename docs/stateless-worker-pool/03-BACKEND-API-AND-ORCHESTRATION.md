@@ -18,7 +18,7 @@ Seluruh penambahan kode Go tetap mematuhi [`apps/api/internal/arch/arch_test.go`
 ## 2. Mengapa Beralih ke `WorkerRPCClient` (HTTPS Push) untuk `boxd`?
 
 Pada `boxd` microVM, mekanisme Redis `BLPOP` (pull) menyebabkan dilema:
-- Jika worker terus terhubung ke Redis + mengirim heartbeat tiap 30 detik, trafik keluar menahan idle timer sehingga ke-10 VM `2vCPU/8G` menyala 24 jam penuh tanpa tidur.
+- Jika worker terus terhubung ke Redis + mengirim heartbeat tiap 30 detik, trafik keluar menahan idle timer sehingga ke-10 VM `1vCPU/4G` menyala 24 jam penuh tanpa tidur.
 - Jika `idle.ignore-outbound=on` diaktifkan agar VM berhibernasi saat sepi, proses di dalam VM ikut membeku sehingga tidak bisa menarik job dari Redis.
 
 Dengan **`WorkerRPCClient` (HTTPS Push)** dari `smm-hub` ke `https://rpc.smm-worker-XX.boxd.sh`:

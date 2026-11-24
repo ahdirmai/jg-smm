@@ -8,6 +8,7 @@ import (
 	"math/rand/v2"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ahdirmai/jg-smm/apps/api/internal/domain"
@@ -55,11 +56,14 @@ type ContainerService struct {
 	// cleared machine is not still "busy" to the scheduler until a TTL expires.
 	// Optional: nil means the sweep is skipped.
 	slots port.WorkerSlotCoordinator
-	// loginWorkerName scopes ClearSessions RPCs to the dedicated login machine
-	// when configured, so clearing interactive browsers does not wake sleeping
-	// action worker VMs.
+	// loginWorkerName scopes ClearSessions and WorkerHealth/Wake RPCs to the
+	// dedicated login machine when requested, so sleeping action VMs stay off.
 	loginWorkerName string
-	logger          *slog.Logger
+	// Live-view ticket signer for the worker page. Optional; empty keeps the
+	// admin live view unavailable rather than handing out a URL that 403s.
+	novncSecret    string
+	novncTicketTTL time.Duration
+	logger         *slog.Logger
 }
 
 // ContainerConfig tunes the container service.
@@ -90,6 +94,12 @@ type ContainerConfig struct {
 	// LoginWorkerName restricts ClearSessions browser-clear RPCs to the login
 	// machine so sleeping action workers are not woken up.
 	LoginWorkerName string
+	// NoVNCSecret signs the short-lived ticket on a worker's public noVNC URL.
+	// Without it the worker page can link only to the unticketed page, which the
+	// nginx gate rejects (403); live view must mint a ticket.
+	NoVNCSecret string
+	// NoVNCTicketTTL bounds that ticket. Zero falls back to five minutes.
+	NoVNCTicketTTL time.Duration
 }
 
 // NewContainerService wires the service. packer may be nil; deletion then only
@@ -116,6 +126,8 @@ func NewContainerService(workers port.WorkerStore, accounts port.AccountStore, p
 		rpc:             cfg.RPC,
 		slots:           cfg.Slots,
 		loginWorkerName: cfg.LoginWorkerName,
+		novncSecret:     cfg.NoVNCSecret,
+		novncTicketTTL:  cfg.NoVNCTicketTTL,
 		// Per-worker coordinates are chosen once; a fresh source per service is
 		// fine because stability is per-worker, not per-process.
 		rnd:    rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), uint64(time.Now().UnixNano())>>1)),
@@ -227,6 +239,136 @@ func (s *ContainerService) List(ctx context.Context) ([]ContainerView, error) {
 		views = append(views, toContainerView(w, accounts))
 	}
 	return views, nil
+}
+
+// WorkerHealth is one worker's live reachability. It is produced by an
+// explicit probe: on boxd, GET /healthz is itself the inbound request that
+// wakes a hibernated microVM, so there is no passive way to ask a sleeping
+// machine whether it is asleep. The UI calls this only when it is about to
+// block or after the operator presses Start.
+type WorkerHealth struct {
+	ID           string     `json:"id"`
+	Name         string     `json:"name"`
+	Status       string     `json:"status"`
+	Awake        bool       `json:"awake"`
+	AccountID    *string    `json:"accountId,omitempty"`
+	Error        string     `json:"error,omitempty"`
+	LastActionAt *time.Time `json:"lastActionAt,omitempty"`
+}
+
+// WorkerHealth probes every configured worker concurrently. A worker with no
+// endpoint is reported unavailable rather than silently omitted: the gate must
+// be able to name the machine that cannot be started.
+func (s *ContainerService) filterWorkersByRole(workers []domain.Worker, role string) []domain.Worker {
+	if role == "" || s.loginWorkerName == "" {
+		return workers
+	}
+	out := make([]domain.Worker, 0, len(workers))
+	for _, w := range workers {
+		isLogin := w.Name == s.loginWorkerName
+		if role == "login" && isLogin {
+			out = append(out, w)
+		} else if role == "action" && !isLogin {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+func (s *ContainerService) WorkerHealth(ctx context.Context) ([]WorkerHealth, error) {
+	return s.WorkerHealthForRole(ctx, "")
+}
+
+func (s *ContainerService) WorkerHealthForRole(ctx context.Context, role string) ([]WorkerHealth, error) {
+	workers, err := s.workers.List(ctx, port.WorkerFilter{Limit: 1000})
+	if err != nil {
+		return nil, fmt.Errorf("container service: list workers: %w", err)
+	}
+	workers = s.filterWorkersByRole(workers, role)
+	out := make([]WorkerHealth, len(workers))
+	var wg sync.WaitGroup
+	probeCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	defer cancel()
+	for i := range workers {
+		w := workers[i]
+		out[i] = WorkerHealth{ID: w.ID, Name: w.Name, Status: string(w.Status), LastActionAt: w.LastActionAt}
+		if w.EndpointURL == nil || *w.EndpointURL == "" || s.rpc == nil {
+			out[i].Error = "worker has no RPC endpoint"
+			continue
+		}
+		wg.Add(1)
+		go func(i int, endpoint string) {
+			defer wg.Done()
+			accountID, err := s.rpc.BusyAccount(probeCtx, endpoint)
+			if err != nil {
+				out[i].Error = err.Error()
+				return
+			}
+			out[i].Awake = true
+			if accountID != "" {
+				out[i].AccountID = &accountID
+			}
+		}(i, *w.EndpointURL)
+	}
+	wg.Wait()
+	return out, nil
+}
+
+// WakeWorkers sends one authenticated keepalive to every configured worker,
+// which is the explicit "start" action for a boxd microVM. The health probe
+// follows so the caller gets the post-wake state in one round trip.
+func (s *ContainerService) WakeWorkers(ctx context.Context) ([]WorkerHealth, error) {
+	return s.WakeWorkersForRole(ctx, "")
+}
+
+func (s *ContainerService) WakeWorkersForRole(ctx context.Context, role string) ([]WorkerHealth, error) {
+	workers, err := s.workers.List(ctx, port.WorkerFilter{Limit: 1000})
+	if err != nil {
+		return nil, fmt.Errorf("container service: list workers: %w", err)
+	}
+	workers = s.filterWorkersByRole(workers, role)
+	if s.rpc == nil {
+		return nil, fmt.Errorf("%w: worker RPC is not configured", domain.ErrUnavailable)
+	}
+	var wg sync.WaitGroup
+	for i := range workers {
+		w := workers[i]
+		if w.EndpointURL == nil || *w.EndpointURL == "" {
+			continue
+		}
+		wg.Add(1)
+		go func(endpoint string) {
+			defer wg.Done()
+			_ = s.rpc.PingKeepalive(ctx, endpoint)
+		}(*w.EndpointURL)
+	}
+	wg.Wait()
+	return s.WorkerHealthForRole(ctx, role)
+}
+
+// OpenWorkerLiveView mints a ticketed noVNC URL for a worker, without an
+// account. The worker page needs this: the standing `novnc_service` URL has no
+// ticket, and the nginx gate intentionally rejects its WebSocket.
+func (s *ContainerService) OpenWorkerLiveView(ctx context.Context, workerID string) (string, error) {
+	if s.novncSecret == "" {
+		return "", fmt.Errorf("%w: live view is not configured (no ticket secret)", domain.ErrUnavailable)
+	}
+	w, err := s.workers.GetByID(ctx, workerID)
+	if err != nil {
+		return "", fmt.Errorf("container service: worker: %w", err)
+	}
+	if w.NoVNCService == nil || *w.NoVNCService == "" {
+		return "", fmt.Errorf("%w: worker %s has no live-view URL", domain.ErrConflict, w.Name)
+	}
+	ttl := s.novncTicketTTL
+	if ttl <= 0 {
+		ttl = 5 * time.Minute
+	}
+	ticket, err := SignLiveViewTicket(s.novncSecret, w.Name, TicketExpiry(s.clock.Now(), ttl))
+	if err != nil {
+		return "", fmt.Errorf("container service: sign live-view ticket: %w", err)
+	}
+	return BuildProtectedNoVNCURL(*w.NoVNCService, ticket), nil
 }
 
 // Delete tears a container down: accounts are released first (so an AUTO

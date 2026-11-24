@@ -2,9 +2,9 @@
 
 import { useEffect, useRef, useState } from 'react';
 
+import { SSE_URL } from '../api';
 import { subscribeStream, type StreamEvent, type StreamKind } from '@smm/shared';
 
-const SSE_URL = process.env.NEXT_PUBLIC_SSE_URL ?? 'http://localhost:24080/api/stream';
 const TICKER_MAX = 50;
 
 export type TickerItem = {

@@ -193,7 +193,7 @@ export default function BatchDetailPage() {
 
   if (err) {
     return (
-      <div className="mx-auto max-w-6xl space-y-4">
+      <div className="mx-auto max-w-6xl space-y-5">
         <BackLink />
         <div className="flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
           <AlertCircle className="size-4" /> {err}
@@ -203,7 +203,7 @@ export default function BatchDetailPage() {
   }
   if (!batch) {
     return (
-      <div className="mx-auto max-w-6xl space-y-4">
+      <div className="mx-auto max-w-6xl space-y-5">
         <BackLink />
         <div className="flex items-center gap-2 py-10 text-sm text-muted-foreground">
           <Loader2 className="size-4 animate-spin" /> Loading batch…
@@ -215,7 +215,7 @@ export default function BatchDetailPage() {
   const shareUrl = typeof window !== 'undefined' ? window.location.href : '';
 
   return (
-    <div className="mx-auto max-w-6xl space-y-4">
+    <div className="mx-auto max-w-6xl space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <BackLink />
         <CopyButton value={shareUrl} label="Copy link to this batch" />

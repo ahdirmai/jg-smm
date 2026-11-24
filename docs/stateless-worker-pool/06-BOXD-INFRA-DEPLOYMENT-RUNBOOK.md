@@ -20,7 +20,7 @@
 | --- | --- |
 | Control plane | `smm-hub` (`2 vCPU / 8 GiB`, `fra`, always-on, bot protection off) |
 | URL sementara | `https://smm-hub.boxd.sh` (proxy default port `8000`) |
-| Domain | `smm.ahdirmai.my.id` **pending** di boxd (DNS/verifikasi belum selesai) |
+| Domain | `smm.ahdirmai.my.id` **active**; `smm-hub.boxd.sh` tetap tersedia |
 | Login worker | `smm-login-01` (always-on; semua login/CAPTCHA/live view dipin di sini) |
 | Action worker | `smm-worker-01` … `smm-worker-10` (idle sleep 5 menit, hibernate 1 jam) |
 | Golden | `smm-worker-golden` (stopped), snapshot `smm-golden-v1` |
@@ -28,9 +28,8 @@
 | Akun | 15 akun + 14 `account_session` + 1 `app_user` diimpor dari lokal |
 | Worker pool | `WORKER_POOL_MODE=stateless`, endpoint `https://rpc.<vm>.boxd.sh` |
 
-Kalau domain custom sudah aktif, ganti `smm-hub.boxd.sh` di `.env` **sebelum
-build web** (`NEXT_PUBLIC_*` di-inline saat build) lalu `docker compose ...
-up -d --build web api`.
+Custom domain dan hostname default sama-sama menggunakan origin halaman itu
+sendiri karena API/SSE relatif. Tidak perlu rebuild saat berpindah hostname.
 
 ---
 
@@ -39,9 +38,9 @@ up -d --build web api`.
 | Mesin | Ukuran | Role | Tidur | Isi |
 | --- | --- | --- | --- | --- |
 | `smm-hub` | `2x8G` | `app=smm,role=hub` | selalu hidup | `compose.hub.yaml`: postgres, redis, minio, migrate, api, web, nginx:8000 |
-| `smm-worker-golden` | `2x8G` | `golden` | stopped setelah snapshot | Xvfb/x11vnc/websockify, Playwright, worker RPC, nginx |
-| `smm-login-01` | `2x8G` | `login` | selalu hidup | worker yang sama; menahan login/CAPTCHA yang diparkir |
-| `smm-worker-01..10` | `2x8G` | `worker` | suspend 300s / hibernate 3600s | worker yang sama, satu akun per job |
+| `smm-worker-golden` | `1x4G` | `golden` | stopped setelah snapshot | Xvfb/x11vnc/websockify, Playwright, worker RPC, nginx |
+| `smm-login-01` | `1x4G` | `login` | selalu hidup | worker yang sama; menahan login/CAPTCHA yang diparkir |
+| `smm-worker-01..10` | `1x4G` | `worker` | suspend 300s / hibernate 3600s | worker yang sama, satu akun per job |
 
 Semua worker memakai nginx port `8000` sebagai satu-satunya gerbang:
 
@@ -86,9 +85,10 @@ Pindahkan `.env` lama ke samping, lalu isi `.env` baru (mode `600`) dari
 template lokal. Nilai wajib:
 
 ```dotenv
-# Public URLs — dipakai build web dan worker; ganti domain sebelum build.
-NEXT_PUBLIC_API_URL=https://smm-hub.boxd.sh
-NEXT_PUBLIC_SSE_URL=https://smm-hub.boxd.sh/api/stream
+# Same-origin web: leave the API base empty and make SSE relative. Both the
+# custom domain and the boxd hostname then work without CORS or a rebuild.
+NEXT_PUBLIC_API_URL=
+NEXT_PUBLIC_SSE_URL=/api/stream
 API_PORT=8080
 SECURE_COOKIES=true
 
@@ -134,6 +134,33 @@ curl -fsS https://smm-hub.boxd.sh/healthz
 Yang harus terlihat: `postgres`, `redis`, `minio`, `api`, `web`, `nginx`
 healthy/running; `migrate` exit 0. Nginx mem-proxy `/api/` dan `/internal/`
 ke `api:8080`, sisanya ke `web:3000`; SSE tidak dibuffer.
+
+**Wajib dicek setelah start** — jangan menyalin `.env` lokal apa adanya:
+
+```bash
+docker logs smm-api-1 2>&1 | grep -E "stateless worker pool enabled|pool mode|reconcile"
+docker exec smm-postgres-1 psql -U smm -d smm -Atc \
+  "select name, endpoint_url from worker order by name"
+```
+
+Expected: log `stateless worker pool enabled` dengan 11 worker, dan setiap
+row punya endpoint `https://rpc.<vm>.boxd.sh`. Jika log justru menunjukkan
+`reconcile: at capacity` dan ada container `smm-worker-smm-worker-*` di hub,
+berarti `.env` masih membawa `WORKER_POOL_MODE=legacy` /
+`PROVISIONER_MODE=docker` dari lokal. Akibatnya live view akun tanpa lease
+menjawab `conflict: account has no worker to view` dan noVNC tidak bisa dibuka.
+Perbaiki empat baris berikut lalu recreate API:
+
+```dotenv
+WORKER_POOL_MODE=stateless
+PROVISIONER_MODE=static
+ELASTIC_POOL_MAX_ACTIVE=0
+RECONCILE_INTERVAL_SECONDS=0
+```
+
+```bash
+docker compose --env-file .env -f infra/boxd/compose.hub.yaml up -d --force-recreate api
+```
 
 ### 2.4 Impor akun + session dari lokal
 
@@ -191,7 +218,7 @@ produksi berjalan.
 ### 3.1 Build
 
 ```bash
-boxd machine new smm-worker-golden --region fra --vcpu 2 --memory 8G \
+boxd machine new smm-worker-golden --region fra --vcpu 1 --memory 4G \
   --auto-suspend-timeout=0 --auto-hibernate-timeout=0 \
   --label app=smm --label role=golden --json
 boxd machine config set smm-worker-golden bot-protection off
@@ -345,13 +372,32 @@ for VM in smm-login-01 smm-worker-01 smm-worker-10; do
 done
 
 # WebSocket tanpa ticket harus 403; dengan ticket valid harus 101
-# (ticket dibuat API lewat POST /api/accounts/<id>/live-view)
+# (ticket dibuat API lewat POST /api/accounts/<id>/live-view
+# atau POST /api/containers/<id>/live-view untuk halaman Workers)
 ```
 
 Bukti browser yang sudah dijalankan: noVNC membuka canvas dan
 `Connected (encrypted) to …:99` pada worker login.
 
 ---
+
+### 4.1 Cek cepat noVNC
+
+1. `POST /api/accounts/<id>/live-view` (atau
+   `POST /api/containers/<id>/live-view` untuk Workers) harus `200` dan
+   mengembalikan URL `https://<worker>.boxd.sh/novnc/vnc.html?...` yang punya
+   query `path=…ticket=…`.
+2. Halaman `/novnc/vnc.html` harus `200`.
+3. WebSocket dengan ticket harus `101`; tanpa ticket harus `403` (uji dengan
+   `curl --http1.1`, bukan HTTP/2).
+4. Jika API berkata `account has no worker to view`, itu **bukan** masalah
+   nginx: pool API masih legacy. Cek log `stateless worker pool enabled`.
+5. URL mentah `https://<worker>.boxd.sh/novnc/vnc.html?autoconnect=1` **tidak
+   akan pernah terhubung**: tidak ada `path=ticket`, jadi noVNC memanggil
+   `/websockify` dan nginx menolaknya. Buka dari tombol Live view di Akun atau
+   Workers; tombol itu yang meminta ticket baru.
+6. Jika iframe dashboard kosong tetapi URL berticket bekerja di tab langsung,
+   tutup panel/refresh cache ticket — ticket lama kedaluwarsa dalam beberapa menit.
 
 ## 5. Operasional & biaya
 

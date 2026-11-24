@@ -60,7 +60,7 @@ export function TeamPanel({ admin }: { admin: boolean }) {
 
   return (
     <Card>
-      <div className="flex items-center justify-between border-b p-4">
+      <div className="flex items-center justify-between border-b p-5">
         <div>
           <h2 className="flex items-center gap-2 text-sm font-semibold">
             <Users className="size-4" />

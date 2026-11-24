@@ -54,6 +54,10 @@ type Querier interface {
 	AppendProvisionLog(ctx context.Context, arg AppendProvisionLogParams) error
 	ArchiveOfficialAccount(ctx context.Context, id pgtype.UUID) (OfficialAccount, error)
 	AssignAccount(ctx context.Context, arg AssignAccountParams) (AssignAccountRow, error)
+	// Records which pool worker actually accepted the pushed job. The legacy path
+	// stamps worker_id in ClaimNextActionJob; the stateless path leases a worker
+	// AFTER the claim, so the attribution is written here once the push succeeds.
+	AssignActionJobWorker(ctx context.Context, arg AssignActionJobWorkerParams) error
 	// Mark a refresh in flight. AUTHENTICATING is the same state an operator login
 	// sets, so the dashboard shows the live view while it runs; the worker reports
 	// the outcome over /internal/account-callback either way.
@@ -411,6 +415,12 @@ type Querier interface {
 	// it behind would hide the account for RetryAfter (6h) after every interactive
 	// login, which is the opposite of what releasing means.
 	ReleaseAccountWorkerLease(ctx context.Context, arg ReleaseAccountWorkerLeaseParams) error
+	// Manual operator retry. Deliberately separate from RescheduleActionJob:
+	// that query's PENDING/RUNNING guard is the terminal-state guard that stops a
+	// replayed callback from re-posting a finished action, and it must stay.
+	// A retry is an explicit operator decision, so it may resurrect FAILED and
+	// starts a fresh attempt budget.
+	RequeueFailedActionJob(ctx context.Context, arg RequeueFailedActionJobParams) (ActionJob, error)
 	// Backoff/jitter path (P3-11): the attempt failed with a retryable class, so
 	// the job goes back to PENDING at a future scheduled_at for the next tick.
 	// Also serves "run pending now", where the row is already PENDING.
@@ -418,7 +428,6 @@ type Querier interface {
 	// Same guard as CompleteActionJob: a SUCCESS/FAILED/CANCELLED job is terminal
 	// and must never be pushed back into the queue.
 	RescheduleActionJob(ctx context.Context, arg RescheduleActionJobParams) (ActionJob, error)
-	RequeueFailedActionJob(ctx context.Context, arg RequeueFailedActionJobParams) (ActionJob, error)
 	// Moves a job back into the queue at a later time. Used by the scheduler's
 	// backoff/jitter path: the job is set PENDING and its scheduled_at pushed out,
 	// so the next eligible tick claims it again.

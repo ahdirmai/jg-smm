@@ -207,29 +207,48 @@ async function youtubeLoggedIn(page: Page): Promise<boolean | undefined> {
 
 /**
  * Reveal the top-level composer. Shorts keeps it in a collapsed engagement
- * panel (click "View comments"); a watch page keeps it inline and lazy-loads it
+ * panel (click the comments rail button — English "View comments" / "View N
+ * comments" or Indonesian "Lihat komentar" / "Lihat N komentar" because the
+ * worker pins locale `id-ID`); a watch page keeps it inline and lazy-loads it
  * once scrolled near. Returns undefined when neither surface produced one.
  */
+export const SHORTS_COMMENTS_BUTTON_SELECTOR =
+  'button[aria-label*="comment" i], button[aria-label*="komentar" i], #comments-button button';
+
+const SHORTS_COMMENTS_PANEL_OPEN_SELECTOR =
+  'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-comments-section"][visibility="ENGAGEMENT_PANEL_VISIBILITY_EXPANDED"]';
+
+export const COMMENT_SUBMIT_SELECTOR =
+  '#submit-button button, button[aria-label="Comment"], button[aria-label="Komentar"]';
+
 async function revealComposer(page: Page): Promise<Locator | undefined> {
-  const box = page.locator('ytd-comment-simplebox-renderer').first();
+  const box = page.locator('ytd-comment-simplebox-renderer').filter({ visible: true }).first();
   const shorts = /\/shorts\//.test(page.url());
-  let openedPanel = false;
+  const commentsPanel = page.locator(SHORTS_COMMENTS_PANEL_OPEN_SELECTOR);
+  const viewButtons = page.locator(SHORTS_COMMENTS_BUTTON_SELECTOR).filter({ visible: true });
+
+  let lastClickAt = 0;
   const deadline = Date.now() + COMMENTS_WAIT_MS;
   for (;;) {
-    if (await visible(box)) return box;
+    if ((await box.count().catch(() => 0)) > 0) return box;
     if (Date.now() >= deadline) break;
 
-    if (shorts && !openedPanel) {
-      // The rail label carries the count when the Short has comments
-      // ("View 174 comments"); the old exact "View comments" missed every
-      // popular Short and the job died with "composer not found".
-      const view = page.locator('button[aria-label*="comment" i]').first();
-      if (await visible(view)) {
-        await view.click({ timeout: 5_000 }).catch(() => undefined);
-        openedPanel = true;
-        await sleep(600);
-        continue;
+    if (shorts) {
+      // Retry clicking the rail button if the engagement panel hasn't expanded
+      // yet (e.g. click fired before Polymer hydrated its handler). Never call
+      // window.scrollBy on Shorts — scrolling doesn't load comments there.
+      const panelOpen = (await commentsPanel.count().catch(() => 0)) > 0;
+      if (!panelOpen && Date.now() - lastClickAt >= 2_000) {
+        const view = viewButtons.first();
+        if ((await view.count().catch(() => 0)) > 0) {
+          await view.click({ timeout: 5_000 }).catch(() => undefined);
+          lastClickAt = Date.now();
+          await sleep(600);
+          continue;
+        }
       }
+      await sleep(500);
+      continue;
     }
 
     // Watch page: the comments section mounts below the fold. `ytd-comments`
@@ -245,7 +264,7 @@ async function revealComposer(page: Page): Promise<Locator | undefined> {
       .catch(() => undefined);
     await sleep(600);
   }
-  return (await visible(box)) ? box : undefined;
+  return (await box.count().catch(() => 0)) > 0 ? box : undefined;
 }
 
 /** Click the placeholder, then return the contenteditable it reveals. */
@@ -346,13 +365,23 @@ async function commentOnVideo(d: DomDeps, text: string): Promise<AdapterResult> 
     .locator('body')
     .innerText({ timeout: 5_000 })
     .catch(() => '');
-  if (/this video isn.t available anymore|this video is unavailable|video unavailable|private video/i.test(body)) {
+  if (
+    /this video isn.t available anymore|this video is unavailable|video unavailable|private video|video ini tidak lagi tersedia|video tidak tersedia|video pribadi/i.test(
+      body,
+    )
+  ) {
     return failShot(d, TARGET_UNAVAILABLE_ERROR);
   }
 
   const box = await revealComposer(page);
   if (!box) {
-    if (/comments are turned off|komentar.*(dimatikan|dinonaktifkan)/i.test(body)) {
+    // Re-read body after opening the Shorts engagement panel so "Comments are
+    // turned off" / "Komentar dinonaktifkan" rendered inside the panel is seen.
+    const latestBody = await page
+      .locator('body')
+      .innerText({ timeout: 5_000 })
+      .catch(() => body);
+    if (/comments are turned off|komentar.*(dimatikan|dinonaktifkan)/i.test(latestBody)) {
       return failShot(d, 'comments are turned off on this video');
     }
     return failShot(d, 'comment composer not found (comments section did not load)');
@@ -369,10 +398,7 @@ async function commentOnVideo(d: DomDeps, text: string): Promise<AdapterResult> 
     return failShot(d, 'comment editor did not accept the text');
   }
 
-  const submit = page
-    .locator('#submit-button button, button[aria-label="Comment"]')
-    .filter({ visible: true })
-    .first();
+  const submit = page.locator(COMMENT_SUBMIT_SELECTOR).filter({ visible: true }).first();
   if ((await submit.count().catch(() => 0)) === 0) {
     return failShot(d, 'comment submit button not found');
   }

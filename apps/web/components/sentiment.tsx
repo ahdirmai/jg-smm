@@ -111,7 +111,7 @@ export function SentimentSummary({ breakdown }: { breakdown: SentimentBreakdown 
         </>
       ) : (
         <p className="text-xs text-muted-foreground">
-          Not analysed yet — opening this post again will label the comments.
+          Not analysed yet. Opening this post again will label the comments.
         </p>
       )}
     </div>

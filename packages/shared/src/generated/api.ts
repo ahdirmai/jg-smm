@@ -1603,6 +1603,8 @@ export interface components {
             targetId: string;
             /** @description Resolved at dispatch from the target; null until then. */
             targetUrl?: string | null;
+            /** @description The worker row that accepted this attempt. Null until a worker claims it; cleared when an operator retries so the next execution can name its own machine. */
+            workerId?: string | null;
             status: components["schemas"]["JobStatus"];
             attempts: number;
             /** Format: date-time */

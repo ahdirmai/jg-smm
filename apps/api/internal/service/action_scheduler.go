@@ -555,6 +555,13 @@ func (s *ActionScheduler) publishPooled(ctx context.Context, job domain.ActionJo
 		release()
 		return err
 	}
+	// Record the machine that accepted the push. ClaimNextActionJob ran before
+	// the pool lease, so worker_id was empty there; this is the attribution the
+	// queue history reads. A write failure must not fail the action that is
+	// already running, but it is logged because the row would otherwise lie.
+	if err := s.actions.AssignActionJobWorker(ctx, job.ID, worker.ID); err != nil {
+		s.log.Warn("action: record executing worker failed", "job", job.ID, "worker", worker.Name, "err", err)
+	}
 	// The verdict arrives by callback; JobService.RecordAttempt releases the
 	// leases when it does. Handing the release func over via the job id keeps
 	// the callback path free of scheduler state.

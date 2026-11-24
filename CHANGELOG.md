@@ -5,6 +5,119 @@
 > schema changes are traced here per `docs/DEVELOPMENT_RULE.md` §4.
 
 ## Unreleased
+### Changed
+- **Action setup is now a two-pane composer.** The post and its existing
+  comments stay visible beside the action and audience controls, the account
+  picker is searchable and shows selection inline, and one comment editor edits
+  the active selected account with an explicit `Apply to all` action. Reply
+  targets are picked directly from the comment thread, AI drafting is
+  progressive disclosure, and the queue summary states the accounts, action,
+  custom/template draft counts, and the exact reason the queue button is
+  disabled. Editing the target URL or platform now clears the stale preview and
+  batch instead of queueing against a post the operator is no longer viewing.
+  The account list can be narrowed by city without dropping accounts already
+  selected, and the post preview gets an explicit label, an open-on-platform
+  link, a larger thumbnail, and a compact analysed/not-analysed comment count.
+  The stored-post dialog now renders the same threaded comments.
+- **Dashboard visual system replaced with a coastal-glass design.** The command
+  centre now uses a floating, labelled navigation rail, a phone dock with the
+  four primary destinations, a layered atmospheric canvas, and a quieter
+  translucent card surface. The palette is shared by light and dark mode; the
+  accent is reserved for primary actions and the active route. ReactBits
+  Spotlight Card and Glare Hover provide pointer and gloss feedback without
+  running on a loop. The shell adds a skip link, a focus-trapped mobile drawer,
+  visible focus rings, and 44px navigation targets.
+- **A worker-availability gate now protects the workspace.** After an hour of
+  no interaction the shell blocks the dashboard and opens a modal explaining
+  that boxd may have hibernated the fleet. `Start all workers` sends an
+  authenticated keepalive to every worker, then polls `/api/workers/health`
+  every two seconds and unlocks only when every worker answers. The background
+  is inert while blocked; there is no dismiss path that bypasses the check.
+- **Overview is now a decision page, not an analytics dashboard.** The
+  reach/likes/comments KPI strip and the decorative trend sketch were removed.
+  The page leads with a ranked attention list (failed actions, account
+  sign-ins, offline workers), then fleet readiness, account health, platform
+  mix, and the latest real queue entries. Every count comes from the live
+  workers/accounts/actions hooks. "Export CSV" became "Open reports", and the
+  dead Filter button was removed. Accounts keeps only the columns that fit a
+  phone, with auth and status combined below the breakpoint.
+- **Add account is an inline modal on Accounts.** The button no longer
+  navigates to `/accounts/new`; it opens the same four-step funnel over the
+  list: explicit location (Auto or a city), every platform including YouTube,
+  credentials/tags, and review. The account list stays behind the dialog, and
+  a successful add refreshes it without a navigation.
+- **Actions is split into three sections instead of one long page.** Create
+  action, Scraped posts, and Job queue are separate panels; the queue tab
+  carries the failed-count badge. Queue controls appear only when relevant
+  (Retry failed, Run queued, Cancel queued), status labels use operator
+  language, and the action type stays visible on phone rows. The job detail
+  dialog names the executing worker.
+- **UI spacing and surfaces are now one system.** Cards use 20px internal
+  padding, pages use a 20px vertical rhythm, and dialogs, selects, inputs, and
+  native selects share the same radius, boundary, focus ring, and 44px field
+  height. The Actions tabs collapse to a single three-column row at 390px, and
+  audited pages keep zero horizontal overflow.
+- **Job history now records the worker that executed it.** The pooled dispatcher
+  writes `action_job.worker_id` after a worker accepts the push, and the callback
+  resolves the worker's hostname to its row UUID before writing `action_log`.
+  `ActionJob.workerId` is exposed to the client; the queue row and detail dialog
+  resolve it to the worker name (or show a short id after a worker is removed).
+### Infrastructure
+- **Worker boxes downsized to 1 vCPU / 4 GiB.** All 10 pool workers and
+  `smm-login-01` now use `1 vCPU · 4 GiB`; `smm-hub` stays `2 vCPU · 8 GiB`.
+  Measured browser footprint after resize: ~0.8 GiB used of 3.8 GiB.
+### Fixed
+- **Instagram login recovers from `ERR_HTTP_RESPONSE_CODE_FAILURE` and reports
+  the HTTP status code.** `runLogin` now clears stale `storageState` cookies and
+  retries `/accounts/login/` once, falls back to `https://www.instagram.com/` if
+  `/accounts/login/` still rejects the request, stops treating `chrome-error://`
+  as a loaded page, and includes the captured main-frame HTTP status (`429`,
+  `403`, `407`, `5xx`) in the failure reason so rate-limits and proxy blocks are
+  immediately actionable.
+- **YouTube Shorts commenting now works under the worker's `id-ID` locale.**
+  The Shorts comments rail selector previously matched only English
+  `aria-label*="comment"`, missing Indonesian labels (`Lihat komentar` /
+  `Lihat N komentar`) and timing out with `comment composer not found`.
+  `revealComposer` now matches English, Indonesian, and `#comments-button`,
+  verifies the engagement panel expansion with retry instead of scrolling the
+  Shorts viewport, and checks Indonesian submit/unavailable/comments-off labels.
+- **macOS AppleDouble files no longer break the container build.** Source
+  archives now exclude `._*` sidecars, and the Docker build context ignores
+  them; the web rebuild cannot fail ESLint on binary metadata again.
+### Fixed
+- **Release session now works even after the lease is already gone.** Closing
+  a parked login with `worker_id = NULL` returned 204 without settling the
+  account, so it stayed `NEEDS_INPUT` with no browser to submit a code into.
+  The idempotent second click now marks the login `FAILED` with an explanation;
+  the Accounts UI clears the panel and shows a success notice.
+- **Boxd hub now serves the same-origin build on both hostnames.** The deployed
+  web uses an empty `NEXT_PUBLIC_API_URL` and `/api/stream`, so
+  `https://smm.ahdirmai.my.id` and `https://smm-hub.boxd.sh` both call the API
+  on their own origin. The stale `smm-hub-01` worker row without an RPC endpoint
+  was removed, leaving the health gate at 11/11 awake workers.
+- **noVNC live view always receives a ticket.** Accounts no longer falls back to
+  a worker's standing `novncUrl` (no ticket → nginx 403 and a blank iframe), and
+  the Workers page mints a short-lived worker ticket through
+  `POST /api/containers/:id/live-view` before opening the modal. This also
+  surfaced the boxd `.env` drift: the hub was still in legacy/docker mode, so
+  an account with no lease answered “account has no worker to view”. The hub
+  now runs `WORKER_POOL_MODE=stateless` with 11/11 healthy workers.
+### Fixed
+- **Audit remediation: recovery, reports, and error boundaries.** `restore.sh`
+  now accepts the absolute backup path that `drill.sh` passes (no doubled
+  prefix), validates the dump/manifest before the drill wipes any volume, and
+  the embedded session-count command is parseable by `/bin/sh`. The reports
+  page binds each payload to the report kind that produced it, so a slow
+  analytics request cannot render a targets payload; the analytics report
+  looks the account up by id instead of the first 100-row page; nullable DTO
+  mapping, CSV row mapping, URL query building, and SSE type/URL definitions
+  each have one source; and an audit query failure no longer leaks its internal
+  500 message. The duplicate worker-config test now exercises empty-env
+  defaults.
+### Removed
+- **Monitoring and Templates are gone from the dashboard.** Their routes, nav
+  entries, page titles, client hooks, API-client template methods, and e2e specs
+  were removed; the backend endpoints remain for data/API compatibility.
 ### Added
 - **YouTube comments now run end to end, on Shorts and watch pages.** The
   worker opens the video, waits for the "View N comments" control (Shorts does

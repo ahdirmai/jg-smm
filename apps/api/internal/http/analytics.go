@@ -205,10 +205,10 @@ func toOfficialAccountDTO(a domain.OfficialAccount) oapigen.OfficialAccount {
 		Tags:          &a.Tags,
 		Stale:         ptr(a.IsStale(time.Now())),
 		CreatedAt:     ptr(a.CreatedAt),
-		AvatarUrl:     nullStr(a.AvatarURL),
-		DisplayName:   nullStr(a.DisplayName),
-		ProfileUrl:    nullStr(a.ProfileURL),
-		LastFetchedAt: nullTime(a.LastFetchedAt),
+		AvatarUrl:     nullableFromPtr(a.AvatarURL),
+		DisplayName:   nullableFromPtr(a.DisplayName),
+		ProfileUrl:    nullableFromPtr(a.ProfileURL),
+		LastFetchedAt: nullableFromPtr(a.LastFetchedAt),
 	}
 }
 
@@ -219,7 +219,7 @@ func toKpiDTOs(kpis []service.KPI) []oapigen.AnalyticsKpi {
 			OfficialAccountId: k.OfficialAccountID,
 			Handle:            &k.Handle,
 			Metric:            string(k.Metric),
-			Value:             nullInt64(k.Value),
+			Value:             nullableFromPtr(k.Value),
 		})
 	}
 	return out
@@ -238,8 +238,8 @@ func toTrendDTOs(points []domain.TrendPoint) []oapigen.TrendPoint {
 
 func toFreshnessDTO(f service.Freshness) oapigen.AnalyticsFreshness {
 	return oapigen.AnalyticsFreshness{
-		LastRunStatus:    nullStr(f.LastRunStatus),
-		LastRunAt:        nullTime(f.LastRunAt),
+		LastRunStatus:    nullableFromPtr(f.LastRunStatus),
+		LastRunAt:        nullableFromPtr(f.LastRunAt),
 		Stale:            f.Stale,
 		ThresholdSeconds: ptr(f.ThresholdSeconds),
 	}
@@ -252,36 +252,24 @@ func toIngestRunDTO(r domain.AnalyticsIngestRun) oapigen.AnalyticsIngestRun {
 		Scope:       r.Scope,
 		Status:      string(r.Status),
 		StartedAt:   r.StartedAt,
-		FinishedAt:  nullTime(r.FinishedAt),
+		FinishedAt:  nullableFromPtr(r.FinishedAt),
 		AccountsOk:  ptr(r.AccountsOk),
 		AccountsErr: ptr(r.AccountsErr),
-		ErrorClass:  nullStr(r.ErrorClass),
-		Error:       nullStr(r.Error),
+		ErrorClass:  nullableFromPtr(r.ErrorClass),
+		Error:       nullableFromPtr(r.Error),
 	}
 }
 
 // --- helpers ------------------------------------------------------------------
 
-// nullStr / nullTime / nullInt64 map *T to the oapi-codegen Nullable wrapper
-// the generated models use for optional fields, so a nil pointer round-trips
-// to JSON null instead of being omitted or coerced to a zero value.
-func nullStr(p *string) nullable.Nullable[string] {
+// nullableFromPtr maps a pointer to the oapi-codegen Nullable wrapper the
+// generated models use for optional fields, so a nil pointer round-trips to
+// JSON null instead of being omitted or coerced to a zero value. One generic
+// rule, applied to every nullable DTO field, keeps the four scalar shapes from
+// drifting apart.
+func nullableFromPtr[T any](p *T) nullable.Nullable[T] {
 	if p == nil {
-		return nullable.NewNullNullable[string]()
-	}
-	return nullable.NewNullableWithValue(*p)
-}
-
-func nullTime(p *time.Time) nullable.Nullable[time.Time] {
-	if p == nil {
-		return nullable.NewNullNullable[time.Time]()
-	}
-	return nullable.NewNullableWithValue(*p)
-}
-
-func nullInt64(p *int64) nullable.Nullable[int64] {
-	if p == nil {
-		return nullable.NewNullNullable[int64]()
+		return nullable.NewNullNullable[T]()
 	}
 	return nullable.NewNullableWithValue(*p)
 }
@@ -326,31 +314,21 @@ func toContentMetricDTOs(rows []service.ContentMetric) []oapigen.ContentMetric {
 			Id:                r.ID,
 			AccountHandle:     r.AccountHandle,
 			ExternalId:        r.ExternalID,
-			ContentType:       nullStr(r.ContentType),
-			Caption:           nullStr(r.Caption),
-			Permalink:         nullStr(r.Permalink),
-			PublishedAt:       nullTime(r.PublishedAt),
-			Reach:             nullInt64(r.Reach),
-			Views:             nullInt64(r.Views),
-			Interactions:      nullInt64(r.Interactions),
-			Likes:             nullInt64(r.Likes),
-			Comments:          nullInt64(r.Comments),
-			Saves:             nullInt64(r.Saves),
-			Shares:            nullInt64(r.Shares),
-			EngagementRatePct: nullFloat64(r.EngagementRatePct),
+			ContentType:       nullableFromPtr(r.ContentType),
+			Caption:           nullableFromPtr(r.Caption),
+			Permalink:         nullableFromPtr(r.Permalink),
+			PublishedAt:       nullableFromPtr(r.PublishedAt),
+			Reach:             nullableFromPtr(r.Reach),
+			Views:             nullableFromPtr(r.Views),
+			Interactions:      nullableFromPtr(r.Interactions),
+			Likes:             nullableFromPtr(r.Likes),
+			Comments:          nullableFromPtr(r.Comments),
+			Saves:             nullableFromPtr(r.Saves),
+			Shares:            nullableFromPtr(r.Shares),
+			EngagementRatePct: nullableFromPtr(r.EngagementRatePct),
 		})
 	}
 	return out
-}
-
-// nullFloat64 keeps "no rate" distinct from a rate of zero. A post with no
-// reach has no engagement rate at all, and 0% would read as "published and
-// ignored" — a verdict, where the truth is "we cannot know".
-func nullFloat64(p *float64) nullable.Nullable[float64] {
-	if p == nil {
-		return nullable.NewNullNullable[float64]()
-	}
-	return nullable.NewNullableWithValue(*p)
 }
 
 func toBreakdownDTOs(rows []service.EngagementBreakdown) []oapigen.EngagementBreakdown {
@@ -359,12 +337,12 @@ func toBreakdownDTOs(rows []service.EngagementBreakdown) []oapigen.EngagementBre
 		out = append(out, oapigen.EngagementBreakdown{
 			OfficialAccountId: r.OfficialAccountID,
 			Handle:            r.Handle,
-			Likes:             nullInt64(r.Likes),
-			Comments:          nullInt64(r.Comments),
-			Saves:             nullInt64(r.Saves),
-			Shares:            nullInt64(r.Shares),
-			AccountsEngaged:   nullInt64(r.AccountsEngaged),
-			EngagementRatePct: nullFloat64(r.EngagementRatePct),
+			Likes:             nullableFromPtr(r.Likes),
+			Comments:          nullableFromPtr(r.Comments),
+			Saves:             nullableFromPtr(r.Saves),
+			Shares:            nullableFromPtr(r.Shares),
+			AccountsEngaged:   nullableFromPtr(r.AccountsEngaged),
+			EngagementRatePct: nullableFromPtr(r.EngagementRatePct),
 		})
 	}
 	return out

@@ -479,3 +479,117 @@ test('runLogin hydrates the persisted session so a refresh proves itself', async
     clearAuthContext('a3');
   }
 });
+
+test('runLogin clears stale cookies and retries on ERR_HTTP_RESPONSE_CODE_FAILURE', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'smm-auth-http-'));
+  const stale = { cookies: [{ name: 'rur', value: 'stale' }], origins: [] };
+  await writeFile(join(dir, 'session-instagram.json'), JSON.stringify(stale), 'utf8');
+
+  const visited: string[] = [];
+  let cleared = 0;
+  let cookies = stale.cookies;
+  const page = {
+    url: () => 'https://www.instagram.com/accounts/login/',
+    goto: async (url: string) => {
+      visited.push(url);
+      if (visited.length === 1) {
+        throw new Error('page.goto: net::ERR_HTTP_RESPONSE_CODE_FAILURE at https://www.instagram.com/accounts/login/');
+      }
+      cookies = [
+        { name: 'sessionid', value: 'fresh' },
+        { name: 'ds_user_id', value: '42' },
+      ];
+    },
+    locator: () => ({ count: async () => 0 }),
+  };
+  const ctx = {
+    cookies: async () => cookies,
+    clearCookies: async () => {
+      cleared += 1;
+      cookies = [];
+    },
+    storageState: async () => ({ cookies, origins: [] }),
+    pages: () => [page],
+    newPage: async () => page,
+    close: async () => undefined,
+  } as unknown as BrowserContext;
+  const browser = {
+    newContext: async () => ctx,
+    close: async () => undefined,
+  } as unknown as Browser;
+
+  try {
+    const result = await runLogin('a-http-stale', 'instagram', {
+      browser: async () => browser,
+      loginUrlFor: () => 'https://www.instagram.com/accounts/login/',
+      sessionDir: dir,
+      now: () => 0,
+    });
+    assert.equal(cleared, 1, 'stale cookies must be cleared before retrying');
+    assert.deepEqual(visited, [
+      'https://www.instagram.com/accounts/login/',
+      'https://www.instagram.com/accounts/login/',
+    ]);
+    assert.equal(result.outcome, 'verified');
+  } finally {
+    clearAuthContext('a-http-stale');
+  }
+});
+
+test('runLogin falls back to Instagram root and surfaces HTTP status when still blocked', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'smm-auth-http-429-'));
+  const visited: string[] = [];
+  const listeners = new Set<(resp: unknown) => void>();
+  const mainFrame = {};
+  const page = {
+    url: () => 'about:blank',
+    mainFrame: () => mainFrame,
+    on: (ev: string, fn: (resp: unknown) => void) => {
+      if (ev === 'response') listeners.add(fn);
+    },
+    off: (ev: string, fn: (resp: unknown) => void) => {
+      if (ev === 'response') listeners.delete(fn);
+    },
+    goto: async (url: string) => {
+      visited.push(url);
+      for (const fn of listeners) {
+        fn({
+          status: () => 429,
+          frame: () => mainFrame,
+          request: () => ({ isNavigationRequest: () => true }),
+        });
+      }
+      throw new Error(`page.goto: net::ERR_HTTP_RESPONSE_CODE_FAILURE at ${url}`);
+    },
+    locator: () => ({ count: async () => 0 }),
+  };
+  const ctx = {
+    cookies: async () => [],
+    storageState: async () => ({ cookies: [], origins: [] }),
+    pages: () => [page],
+    newPage: async () => page,
+    close: async () => undefined,
+  } as unknown as BrowserContext;
+  const browser = {
+    newContext: async () => ctx,
+    close: async () => undefined,
+  } as unknown as Browser;
+
+  try {
+    const result = await runLogin('a-http-429', 'instagram', {
+      browser: async () => browser,
+      loginUrlFor: () => 'https://www.instagram.com/accounts/login/',
+      sessionDir: dir,
+      now: () => 0,
+    });
+    assert.deepEqual(visited, [
+      'https://www.instagram.com/accounts/login/',
+      'https://www.instagram.com/',
+    ]);
+    assert.equal(result.outcome, 'failed');
+    assert.match(String(result.reason), /HTTP 429/);
+    assert.equal(listeners.size, 0, 'response listener must be removed in finally');
+  } finally {
+    clearAuthContext('a-http-429');
+  }
+});

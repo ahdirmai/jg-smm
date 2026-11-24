@@ -80,15 +80,21 @@ function CommentRow({
 }) {
   const { comment, children } = node;
   const selected = selectedId === comment.id;
+  // A reply needs an addressable target. Keep the row visible (hiding a parent
+  // would strand its replies) but make the missing permalink explicit.
+  const disabled = selectable && !comment.url;
 
   return (
     <li className={depth > 0 ? 'border-l border-border/60 pl-2.5' : undefined}>
       <div
         role={selectable ? 'button' : undefined}
-        tabIndex={selectable ? 0 : undefined}
-        onClick={selectable ? () => onSelect?.(comment) : undefined}
+        tabIndex={selectable && !disabled ? 0 : undefined}
+        aria-disabled={disabled || undefined}
+        aria-pressed={selectable ? selected : undefined}
+        title={disabled ? 'This comment has no permalink. Paste its link instead.' : undefined}
+        onClick={disabled ? undefined : selectable ? () => onSelect?.(comment) : undefined}
         onKeyDown={
-          selectable
+          selectable && !disabled
             ? (e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
                   e.preventDefault();
@@ -97,8 +103,12 @@ function CommentRow({
               }
             : undefined
         }
-        className={`rounded-md px-2 py-1.5 text-xs transition-colors ${
-          selectable ? 'cursor-pointer hover:bg-secondary/60' : ''
+        className={`rounded-md px-2 py-1.5 text-xs transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${
+          disabled
+            ? 'cursor-not-allowed opacity-55'
+            : selectable
+              ? 'cursor-pointer hover:bg-secondary/60'
+              : ''
         } ${selected ? 'bg-secondary text-foreground' : ''}`}
       >
         <div className="flex items-start gap-1.5">

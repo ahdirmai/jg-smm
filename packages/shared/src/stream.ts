@@ -18,11 +18,14 @@
 import type { operations } from './generated/api.js';
 
 /** Event kinds the API emits on /api/stream. */
-export type StreamKind =
-  | 'account-updated'
-  | 'worker-health'
-  | 'provision-updated'
-  | 'action-updated';
+const STREAM_KINDS = [
+  'account-updated',
+  'worker-health',
+  'provision-updated',
+  'action-updated',
+] as const;
+
+export type StreamKind = (typeof STREAM_KINDS)[number];
 
 /** One SSE frame: the `event:` line plus the parsed JSON `data:` body. */
 export type StreamEvent<T = unknown> = {
@@ -54,13 +57,6 @@ type Hub = {
 };
 
 const hubs = new Map<string, Hub>();
-
-const STREAM_KINDS: StreamKind[] = [
-  'account-updated',
-  'worker-health',
-  'provision-updated',
-  'action-updated',
-];
 
 function openHub(url: string): Hub {
   const existing = hubs.get(url);

@@ -164,3 +164,37 @@ func TestExportCSVStreamsRows(t *testing.T) {
 		}
 	})
 }
+
+// Account membership must not depend on the first page of the monitored list.
+// The fake's GetOfficialAccount is a direct lookup, so this also proves the
+// service stopped walking ListOfficialAccounts.
+func TestAnalyticsReportFindsAccountBeyondTheFirstPage(t *testing.T) {
+	store := newFakeAnalyticsStore()
+	store.accounts["account-101"] = domain.OfficialAccount{
+		ID: "account-101", Status: domain.OfficialAccountActive,
+	}
+	store.series = map[string][]domain.TrendPoint{
+		"account-101": {{Value: 7}},
+	}
+	svc := NewReportService(&fakeReportQuery{}, store, nil)
+	metric, series, err := svc.AnalyticsReport(context.Background(), ReportFilter{
+		AccountID: new("account-101"), Metric: "followers",
+	})
+	if err != nil {
+		t.Fatalf("account beyond the old page should resolve: %v", err)
+	}
+	if metric != "followers" || len(series) != 1 || series[0].Value != 7 {
+		t.Fatalf("metric=%q series=%v", metric, series)
+	}
+}
+
+func TestAnalyticsReportRejectsArchivedAccount(t *testing.T) {
+	store := newFakeAnalyticsStore()
+	store.accounts["archived"] = domain.OfficialAccount{
+		ID: "archived", Status: domain.OfficialAccountArchived,
+	}
+	svc := NewReportService(&fakeReportQuery{}, store, nil)
+	if _, _, err := svc.AnalyticsReport(context.Background(), ReportFilter{AccountID: new("archived")}); err == nil {
+		t.Fatal("archived official account must be reported as unknown")
+	}
+}

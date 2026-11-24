@@ -15,3 +15,4 @@ tickets
 platforms
 docs
 *.md
+**/._*

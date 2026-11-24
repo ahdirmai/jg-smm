@@ -518,5 +518,3 @@ func windowOrDefault(days int) time.Duration {
 	}
 	return time.Duration(days) * 24 * time.Hour
 }
-
-var _ = errors.New

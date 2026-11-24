@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"math"
+	"net/url"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -368,5 +370,29 @@ func TestClearSessionsOnlyWakesLoginWorkerWhenConfigured(t *testing.T) {
 	}
 	if len(rpc.cleared) != 1 || rpc.cleared[0] != epLogin+"#" {
 		t.Fatalf("rpc.cleared = %v, action worker must not be woken", rpc.cleared)
+	}
+}
+
+func TestOpenWorkerLiveViewMintsATicket(t *testing.T) {
+	store := newFakeWorkerStore()
+	store.seed(domain.Worker{
+		ID: "w-live", Name: "smm-worker-06",
+		NoVNCService: new("https://smm-worker-06.boxd.sh/novnc"),
+	})
+	svc := NewContainerService(store, newFakeAccountStore(), nil, ContainerConfig{
+		NoVNCSecret: ticketSecret, NoVNCTicketTTL: time.Minute,
+	})
+	got, err := svc.OpenWorkerLiveView(context.Background(), "w-live")
+	if err != nil {
+		t.Fatalf("open worker live view: %v", err)
+	}
+	u, err := url.Parse(got)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	path := u.Query().Get("path")
+	ticket := strings.TrimPrefix(path, "novnc/websockify?ticket=")
+	if ticket == path || VerifyLiveViewTicket(ticketSecret, ticket, "smm-worker-06", time.Now()) != nil {
+		t.Fatalf("URL does not carry a valid ticket: %s", got)
 	}
 }

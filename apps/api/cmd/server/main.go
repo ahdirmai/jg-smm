@@ -267,6 +267,8 @@ func main() {
 		// Container API (P1-19): create/list/delete MANUAL containers. The
 		// reconciler provisions the pod from the row this service writes.
 		containerSvc := service.NewContainerService(workerRepo, accountRepo, packer, service.ContainerConfig{
+			NoVNCSecret:     cfg.InternalAPISecret,
+			NoVNCTicketTTL:  time.Duration(cfg.NoVNCTicketTTLSeconds) * time.Second,
 			Clock:           adapter.SystemClock{},
 			Logger:          logger,
 			Stream:          hub,

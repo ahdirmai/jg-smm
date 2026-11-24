@@ -7,99 +7,120 @@
 @source '../../../packages/ui/src';
 
 /*
- * Design tokens (DESIGN_SYSTEM §4, mirrored from docs/prototype/styles.css).
- * Palette intent: calm and professional, comfortable for long operator shifts.
- * Saturation is kept modest (no neon); accent is a muted indigo. Light mode is
- * a soft off-white (not pure white), dark mode a soft charcoal (not pure
- * black). Contrast targets WCAG 2.1 AA in both themes.
+ * "Coastal glass" design tokens.
  *
- * Light is the base; dark applies via `.dark` on <html> (next-themes).
+ * The reference is ../dashboard-smm-new: a cool, atmospheric canvas, frosted
+ * surfaces, navy ink, and one deep blue accent. Glass is a hierarchy tool here,
+ * not a page-wide default: the shell and the primary dashboard surface use the
+ * stronger blur; ordinary cards use a quieter translucent surface.
+ *
+ * All text pairings are checked against WCAG AA; the accent is reserved for
+ * primary actions and the active navigation item.
  */
 @layer base {
   :root,
   .light {
-    /* Homies Lab: warm cream canvas, white cards, yellow accent, black as the
-     * second accent for active states. One saturated hue, generous radius. */
-    --background: 42 60% 87%; /* #F4E9CE page */
-    --foreground: 0 0% 10%; /* #1A1A1A */
+    --background: 210 36% 94%;
+    --foreground: 210 34% 15%;
     --card: 0 0% 100%;
-    --card-foreground: 0 0% 10%;
+    --card-foreground: 210 34% 15%;
     --popover: 0 0% 100%;
-    --popover-foreground: 0 0% 10%;
-    /* Primary = brand yellow #F5B700; ink text on it (design principle 5). */
-    --primary: 41 100% 48%;
-    --primary-foreground: 0 0% 10%;
-    --secondary: 42 55% 92%; /* #FBF3DE soft cream */
-    --secondary-foreground: 0 0% 10%;
-    --muted: 42 55% 92%;
-    --muted-foreground: 0 0% 42%; /* #6B6B6B */
-    --accent: 42 60% 94%; /* #FFF3CE */
-    --accent-foreground: 0 0% 10%;
-    --destructive: 2 76% 62%; /* #E85454 */
+    --popover-foreground: 210 34% 15%;
+    --primary: 205 48% 30%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 207 30% 90%;
+    --secondary-foreground: 210 34% 18%;
+    --muted: 207 28% 92%;
+    --muted-foreground: 210 17% 34%;
+    --accent: 204 45% 91%;
+    --accent-foreground: 210 34% 18%;
+    --destructive: 355 48% 36%;
     --destructive-foreground: 0 0% 100%;
-    --success: 122 48% 50%; /* #4CAF50 */
-    --warning: 41 100% 48%;
-    --info: 41 100% 48%;
-    --border: 40 35% 89%; /* #ECE5D3 */
-    --input: 0 0% 91%; /* #EFEFEF */
-    --ring: 41 100% 48%;
-    --status-cold: 0 0% 61%; /* #9C9C9C */
-    --status-ready: 122 48% 50%;
-    --status-busy: 41 100% 48%;
-    --status-error: 2 76% 62%;
-    --chart-1: 41 100% 48%;
-    --chart-2: 0 0% 10%;
-    --chart-3: 0 0% 61%;
-    --chart-4: 41 100% 65%;
-    --chart-5: 122 48% 50%;
-    --chart-6: 2 76% 62%;
-    --radius: 1rem; /* 16px cards */
+    --success: 154 45% 28%;
+    --warning: 38 78% 30%;
+    --info: 205 48% 30%;
+    --border: 210 22% 82%;
+    --input: 210 14% 52%;
+    --ring: 204 62% 38%;
+    --radius: 16px;
+    --status-cold: 210 12% 46%;
+    --status-ready: 154 45% 28%;
+    --status-busy: 38 78% 30%;
+    --status-error: 355 48% 36%;
+    --chart-1: 205 48% 30%;
+    --chart-2: 154 45% 28%;
+    --chart-3: 210 12% 48%;
+    --chart-4: 199 45% 52%;
+    --chart-5: 38 78% 42%;
+    --chart-6: 355 48% 36%;
+
+    --glass-bg: linear-gradient(145deg, rgb(255 255 255 / 0.78), rgb(255 255 255 / 0.54));
+    --glass-card: rgb(255 255 255 / 0.7);
+    --glass-border: rgb(255 255 255 / 0.7);
+    --glass-line: rgb(24 48 69 / 0.1);
+    --shadow-card: 0 1px 2px rgb(24 48 69 / 0.04), 0 18px 44px -26px rgb(31 63 88 / 0.24);
+    --shadow-float: 0 24px 60px -22px rgb(24 48 69 / 0.3);
+    --ring-shadow: 0 0 0 3px rgb(38 99 138 / 0.2);
+    --field-bg: rgb(255 255 255 / 0.48);
+    --atmosphere-a: #edf4f9;
+    --atmosphere-b: #dbe8f1;
+    --atmosphere-c: #c9dbe7;
+    --ridge-near: #9fb8c9;
+    --ridge-far: #b4c8d5;
+    color-scheme: light;
   }
 
   .dark {
-    /* Homies Lab, dark: warm near-black canvas (not indigo, not pure black),
-     * same single yellow accent. Cream surfaces invert to warm charcoal; ink
-     * text on yellow is preserved (design principle 5). */
-    --background: 36 8% 9%; /* warm near-black */
-    --foreground: 40 22% 92%;
-    --card: 34 8% 13%;
-    --card-foreground: 40 22% 92%;
-    --popover: 34 8% 13%;
-    --popover-foreground: 40 22% 92%;
-    /* Accent stays brand yellow; ink text on it. */
-    --primary: 41 100% 52%;
-    --primary-foreground: 0 0% 10%;
-    --secondary: 34 7% 17%;
-    --secondary-foreground: 40 22% 92%;
-    --muted: 34 7% 17%;
-    --muted-foreground: 40 8% 64%;
-    --accent: 34 8% 20%;
-    --accent-foreground: 40 22% 94%;
-    --destructive: 2 72% 60%;
-    --destructive-foreground: 0 0% 100%;
-    --success: 122 40% 52%;
-    --warning: 41 100% 52%;
-    --info: 41 100% 52%;
-    --border: 34 6% 22%;
-    --input: 34 6% 24%;
-    --ring: 41 100% 52%;
-    --status-cold: 0 0% 55%;
-    --status-ready: 122 40% 52%;
-    --status-busy: 41 100% 52%;
-    --status-error: 2 72% 60%;
-    --chart-1: 41 100% 52%;
-    --chart-2: 40 22% 92%;
-    --chart-3: 0 0% 55%;
-    --chart-4: 41 100% 68%;
-    --chart-5: 122 40% 52%;
-    --chart-6: 2 72% 60%;
+    --background: 213 28% 8%;
+    --foreground: 205 30% 92%;
+    --card: 213 24% 13%;
+    --card-foreground: 205 30% 92%;
+    --popover: 213 24% 13%;
+    --popover-foreground: 205 30% 92%;
+    --primary: 202 58% 64%;
+    --primary-foreground: 213 40% 8%;
+    --secondary: 213 18% 18%;
+    --secondary-foreground: 205 30% 92%;
+    --muted: 213 18% 17%;
+    --muted-foreground: 205 14% 70%;
+    --accent: 213 18% 21%;
+    --accent-foreground: 205 30% 94%;
+    --destructive: 355 62% 68%;
+    --destructive-foreground: 213 40% 8%;
+    --success: 154 44% 62%;
+    --warning: 38 80% 66%;
+    --info: 202 58% 64%;
+    --border: 210 14% 25%;
+    --input: 210 12% 52%;
+    --ring: 202 58% 64%;
+    --status-cold: 205 10% 58%;
+    --status-ready: 154 44% 62%;
+    --status-busy: 38 80% 66%;
+    --status-error: 355 62% 68%;
+    --chart-1: 202 58% 64%;
+    --chart-2: 154 44% 62%;
+    --chart-3: 205 10% 62%;
+    --chart-4: 199 48% 70%;
+    --chart-5: 38 80% 66%;
+    --chart-6: 355 62% 68%;
+
+    --glass-bg: linear-gradient(145deg, rgb(37 55 69 / 0.86), rgb(16 29 40 / 0.72));
+    --glass-card: rgb(23 38 50 / 0.8);
+    --glass-border: rgb(255 255 255 / 0.12);
+    --glass-line: rgb(255 255 255 / 0.1);
+    --shadow-card: 0 1px 2px rgb(0 0 0 / 0.2), 0 22px 50px -28px rgb(0 0 0 / 0.62);
+    --shadow-float: 0 24px 64px -22px rgb(0 0 0 / 0.6);
+    --ring-shadow: 0 0 0 3px rgb(139 202 238 / 0.24);
+    --field-bg: rgb(9 20 29 / 0.36);
+    --atmosphere-a: #203847;
+    --atmosphere-b: #142532;
+    --atmosphere-c: #0b161e;
+    --ridge-near: #233c4d;
+    --ridge-far: #1b3041;
+    color-scheme: dark;
   }
 }
 
-/*
- * Map the CSS variables to Tailwind's design tokens so utilities like
- * `bg-background`, `text-muted-foreground` and `ring-ring` resolve.
- */
 @theme inline {
   --color-background: hsl(var(--background));
   --color-foreground: hsl(var(--foreground));
@@ -130,24 +151,370 @@
   --color-chart-5: hsl(var(--chart-5));
   --color-chart-6: hsl(var(--chart-6));
 
-  --radius-xl: 24px; /* outer app container */
-  --radius-lg: var(--radius); /* 16px cards */
-  --radius-md: 12px; /* inputs, small cards */
-  --radius-sm: 8px; /* pills, tags, avatars */
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Monaco, Consolas, monospace;
 
-  /* Homies Lab: cards float on soft shadow, no harsh borders (principle 3). */
-  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.04), 0 8px 24px rgb(0 0 0 / 0.06);
-  --shadow-popover: 0 4px 12px rgb(0 0 0 / 0.08), 0 16px 40px rgb(0 0 0 / 0.12);
+  --radius-xl: 26px;
+  --radius-lg: 20px;
+  --radius-md: 14px;
+  --radius-sm: 10px;
+  --shadow-card: var(--shadow-card);
+  --shadow-popover: var(--shadow-float);
 }
 
 @layer base {
   * {
     border-color: hsl(var(--border));
   }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
   body {
+    min-height: 100vh;
     background-color: hsl(var(--background));
     color: hsl(var(--foreground));
+    font-family: var(--font-sans);
     font-feature-settings: 'cv11', 'ss01';
     -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background: hsl(var(--primary) / 0.18);
+  }
+
+  :where(a, button, input, select, textarea, [tabindex]):focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+  }
+
+  /* Native selects in dense toolbars inherit the same field language as the
+   * shadcn Select. The primitive covers most controls; this keeps the few
+   * native ones from looking like a different product. */
+  select:not([multiple]) {
+    min-height: 2.75rem;
+    border: 1px solid hsl(var(--input) / 0.8);
+    border-radius: 12px;
+    background-color: rgb(255 255 255 / 0.45);
+    padding: 0 0.75rem;
+    color: hsl(var(--foreground));
+    font: inherit;
+  }
+
+  .dark select:not([multiple]) {
+    background-color: rgb(255 255 255 / 0.05);
+  }
+
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+}
+
+/* ---------- Atmosphere ---------- */
+.atmosphere {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 70% 54% at 16% 2%, rgb(255 255 255 / 0.82), transparent 64%),
+    radial-gradient(ellipse 58% 46% at 86% 12%, rgb(255 255 255 / 0.58), transparent 68%),
+    radial-gradient(ellipse 88% 64% at 50% 112%, rgb(138 171 194 / 0.47), transparent 72%),
+    linear-gradient(160deg, var(--atmosphere-a) 0%, var(--atmosphere-b) 46%, var(--atmosphere-c) 100%);
+}
+
+.dark .atmosphere {
+  background:
+    radial-gradient(ellipse 70% 54% at 16% 0%, rgb(95 139 168 / 0.2), transparent 64%),
+    radial-gradient(ellipse 58% 46% at 86% 10%, rgb(72 111 139 / 0.16), transparent 68%),
+    linear-gradient(160deg, var(--atmosphere-a) 0%, var(--atmosphere-b) 48%, var(--atmosphere-c) 100%);
+}
+
+.atmosphere::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 160px 160px;
+  mix-blend-mode: soft-light;
+}
+
+.atmosphere__cloud {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(64px);
+  background: rgb(255 255 255 / 0.48);
+}
+
+.dark .atmosphere__cloud {
+  background: rgb(137 181 210 / 0.16);
+}
+
+.atmosphere__cloud--one {
+  top: -24%;
+  left: -14%;
+  width: 68vw;
+  height: 46vw;
+  min-width: 420px;
+  min-height: 300px;
+}
+
+.atmosphere__cloud--two {
+  right: -18%;
+  bottom: -26%;
+  width: 64vw;
+  height: 42vw;
+  min-width: 360px;
+  min-height: 260px;
+  opacity: 0.7;
+}
+
+/* ---------- Application shell ---------- */
+.app-shell {
+  min-height: 100dvh;
+}
+
+.app-sidebar {
+  position: fixed;
+  z-index: 40;
+  top: 16px;
+  bottom: 16px;
+  left: 16px;
+  display: flex;
+  width: 236px;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--glass-border);
+  border-radius: 28px;
+  background: var(--glass-bg);
+  box-shadow: var(--shadow-float);
+  -webkit-backdrop-filter: blur(26px) saturate(140%);
+  backdrop-filter: blur(26px) saturate(140%);
+}
+
+.app-main-wrap {
+  min-width: 0;
+  padding-left: 268px;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 84px;
+  padding: 18px 32px 8px;
+}
+
+.app-content {
+  width: 100%;
+  max-width: 1440px;
+  margin: 0 auto;
+  min-width: 0;
+  padding: 12px 32px 48px;
+  overflow-x: clip;
+}
+
+.page-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+}
+
+/* A flex item's automatic min-width is its content's min-content width. A
+ * wide table or a fixed control would otherwise blow out the phone layout even
+ * though the child declares max-width. Every direct page section is allowed
+ * to shrink; its own internal scroll region opts back in. */
+.page-stack > * {
+  width: 100%;
+  min-width: 0;
+}
+
+.card-surface {
+  border: 1px solid var(--glass-border);
+  background: var(--glass-card);
+  box-shadow: var(--shadow-card);
+  -webkit-backdrop-filter: blur(18px) saturate(130%);
+  backdrop-filter: blur(18px) saturate(130%);
+}
+
+.glass-strong {
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  box-shadow: var(--shadow-float);
+  -webkit-backdrop-filter: blur(26px) saturate(140%);
+  backdrop-filter: blur(26px) saturate(140%);
+}
+
+.nav-section-label {
+  padding: 16px 14px 6px;
+  color: hsl(var(--muted-foreground));
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.nav-link {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: 13px;
+  color: hsl(var(--muted-foreground));
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  transition: background-color 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.nav-link:hover {
+  background: rgb(255 255 255 / 0.5);
+  color: hsl(var(--foreground));
+}
+
+.dark .nav-link:hover {
+  background: rgb(255 255 255 / 0.07);
+}
+
+.nav-link[aria-current='page'] {
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  box-shadow: 0 8px 18px -10px hsl(var(--primary) / 0.75), inset 0 1px 0 rgb(255 255 255 / 0.18);
+}
+
+.mobile-dock {
+  position: fixed;
+  z-index: 45;
+  right: 12px;
+  bottom: max(12px, env(safe-area-inset-bottom));
+  left: 12px;
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2px;
+  padding: 6px;
+  border: 1px solid var(--glass-border);
+  border-radius: 24px;
+  background: var(--glass-bg);
+  box-shadow: var(--shadow-float);
+  -webkit-backdrop-filter: blur(24px) saturate(140%);
+  backdrop-filter: blur(24px) saturate(140%);
+}
+
+.mobile-dock a,
+.mobile-dock button {
+  display: grid;
+  min-width: 48px;
+  min-height: 44px;
+  place-items: center;
+  border-radius: 14px;
+  color: hsl(var(--muted-foreground));
+  text-decoration: none;
+}
+
+.mobile-dock a[aria-current='page'],
+.mobile-dock button[aria-current='true'] {
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+}
+
+.mobile-dock__label {
+  display: block;
+  margin-top: 2px;
+  font-size: 9px;
+  font-weight: 600;
+}
+
+/* ---------- Page furniture ---------- */
+.page-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.surface-note {
+  border: 1px dashed hsl(var(--border));
+  border-radius: var(--radius-lg);
+  background: rgb(255 255 255 / 0.48);
+  color: hsl(var(--muted-foreground));
+}
+
+.dark .surface-note {
+  background: rgb(255 255 255 / 0.03);
+}
+
+/* A table stays readable on a phone by becoming a horizontal scroll region
+ * with an explicit label; pages that can reflow into cards do so locally. */
+.table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ---------- Responsive shell ---------- */
+@media (max-width: 1023px) {
+  .app-sidebar {
+    display: none;
+  }
+
+  .app-main-wrap {
+    padding-left: 0;
+  }
+
+  .app-header {
+    min-height: 72px;
+    padding: 12px 18px 4px;
+  }
+
+  .app-content {
+    padding: 10px 18px calc(92px + env(safe-area-inset-bottom));
+  }
+
+  .mobile-dock {
+    display: flex;
+  }
+}
+
+@media (max-width: 560px) {
+  .app-header {
+    padding-inline: 14px;
+  }
+
+  .app-content {
+    padding-inline: 14px;
+  }
+
+  .page-stack {
+    gap: 14px;
+  }
+
+  .app-sidebar {
+    border-radius: 24px;
+  }
+}
+
+/* Reduced-motion respects both the OS preference and next-themes' state. */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

@@ -9,8 +9,15 @@ export type ReportKind = 'actions' | 'targets' | 'analytics';
 
 export type ReportResult = ActionReport | TargetReport | AnalyticsReport;
 
+/** The payload is stored with the kind that produced it, so a slow response
+ * from the previous picker can never be rendered as the new kind. */
+export type TaggedReportResult =
+  | { kind: 'actions'; data: ActionReport }
+  | { kind: 'targets'; data: TargetReport }
+  | { kind: 'analytics'; data: AnalyticsReport };
+
 export type UseReports = {
-  result: ReportResult | null;
+  result: TaggedReportResult | null;
   loading: boolean;
   error: string | null;
   run: (params: ReportQuery) => Promise<void>;
@@ -24,7 +31,7 @@ export type UseReports = {
  */
 export function useReports(kind: ReportKind): UseReports {
   const [params, setParams] = useState<ReportQuery>({ kind });
-  const [result, setResult] = useState<ReportResult | null>(null);
+  const [result, setResult] = useState<TaggedReportResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Last write wins. Changing a filter calls run() again immediately, so two
@@ -67,13 +74,13 @@ export function useReports(kind: ReportKind): UseReports {
   return { result, loading, error, run, refresh };
 }
 
-async function fetchByKind(kind: ReportKind, params: ReportQuery): Promise<ReportResult> {
+async function fetchByKind(kind: ReportKind, params: ReportQuery): Promise<TaggedReportResult> {
   switch (kind) {
     case 'actions':
-      return api.reportActions(params);
+      return { kind, data: await api.reportActions(params) };
     case 'targets':
-      return api.reportTargets(params);
+      return { kind, data: await api.reportTargets(params) };
     case 'analytics':
-      return api.reportAnalytics(params);
+      return { kind, data: await api.reportAnalytics(params) };
   }
 }

@@ -65,14 +65,14 @@ export default function ImportAccountsPage() {
   };
 
   return (
-    <div className="mx-auto max-w-2xl space-y-4">
+    <div className="mx-auto max-w-2xl space-y-5">
       <Button variant="ghost" size="sm" onClick={() => router.back()} className="-ml-2">
         <ArrowLeft />
         Back to accounts
       </Button>
 
       <Card>
-        <CardContent className="space-y-4 p-6">
+        <CardContent className="space-y-4 p-5">
           <div>
             <h2 className="text-sm font-semibold">Bulk import accounts</h2>
             <p className="text-xs text-muted-foreground">

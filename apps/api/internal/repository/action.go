@@ -120,6 +120,16 @@ func (r *ActionRepo) SetActionJobTemplate(ctx context.Context, id, templateID st
 // RequeueFailedActionJob implements the operator retry. The terminal guard in
 // RescheduleActionJob stays intact; this query is the one explicit exception,
 // scoped to a FAILED row and resetting the attempt budget.
+func (r *ActionRepo) AssignActionJobWorker(ctx context.Context, id, workerID string) error {
+	if err := r.q.AssignActionJobWorker(ctx, sqlcgen.AssignActionJobWorkerParams{
+		ID:       uuidValue(id),
+		WorkerID: uuidValue(workerID),
+	}); err != nil {
+		return fmt.Errorf("repository.action.AssignActionJobWorker: %w", err)
+	}
+	return nil
+}
+
 func (r *ActionRepo) RequeueFailedActionJob(ctx context.Context, id string, scheduledAt time.Time) (domain.ActionJob, error) {
 	row, err := r.q.RequeueFailedActionJob(ctx, sqlcgen.RequeueFailedActionJobParams{
 		ID:          uuidValue(id),

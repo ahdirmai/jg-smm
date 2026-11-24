@@ -177,7 +177,7 @@ export function KeywordScrapeForm() {
                   id="ks-platform"
                   value={platform}
                   onChange={(e) => setPlatform(e.target.value as Platform)}
-                  className="h-9 w-full rounded-lg border border-input bg-transparent px-3 text-sm"
+                  className="w-full"
                 >
                   {PLATFORMS.map((p) => (
                     <option key={p} value={p}>

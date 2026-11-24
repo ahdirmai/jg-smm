@@ -46,6 +46,7 @@ export async function launchBrowser(options: LaunchOptions = {}): Promise<Browse
     headless: false,
     executablePath: options.executablePath,
     env: { ...process.env, DISPLAY: display },
+    ignoreDefaultArgs: ['--enable-automation'],
     // The proxy is a LAUNCH option, not a context one: Playwright fixes the
     // egress at browser start, so per-account routing would need one browser
     // per account. That is why the proxy comes from the container's own
@@ -61,6 +62,7 @@ export async function launchBrowser(options: LaunchOptions = {}): Promise<Browse
       : {}),
     args: [
       // noVNC sees a real desktop; the container's entrypoint starts Xvfb.
+      '--incognito',
       '--start-maximized',
       '--disable-blink-features=AutomationControlled',
     ],
@@ -123,11 +125,12 @@ export async function newAccountContext(
   browser: Browser,
   init: AccountContextInit,
 ): Promise<BrowserContext> {
-  // YouTube keeps the browser's own UA even when the account row carries the
-  // default pinned one: Google compares UA against client hints/build, and the
-  // stored "Chrome 131" never matches the Chromium that runs it — the exact
-  // inconsistency that gets sign-in refused as "not secure".
-  const userAgent = init.platform === 'youtube' ? undefined : (init.userAgent ?? FIXED_USER_AGENT);
+  // Keep the browser's own native User-Agent when the account row has no
+  // explicit override: spoofing a hardcoded macOS Chrome 131 UA on Linux
+  // Chromium 140 contradicts Sec-CH-UA / Sec-CH-UA-Platform / navigator.platform
+  // and triggers anti-bot login rejections (e.g. Instagram e=1348020 / CAPTCHA
+  // loops and Google's "browser not secure").
+  const userAgent = init.platform === 'youtube' ? undefined : init.userAgent;
   const ctx = await browser.newContext({
     locale: FIXED_LOCALE,
     timezoneId: init.timezoneId || 'Asia/Jakarta',
@@ -148,9 +151,6 @@ export async function newAccountContext(
   await pinGeolocation(ctx, init.geolocation);
   return ctx;
 }
-
-const FIXED_USER_AGENT =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
 async function defaultLaunch(opts: Record<string, unknown>): Promise<Browser> {
   // Imported lazily so unit tests never pull in the driver or need a display.

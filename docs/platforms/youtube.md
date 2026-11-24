@@ -57,7 +57,7 @@
   dicabut kapan saja (login dari perangkat lain, perubahan keamanan akun).
   Jangan pernah memperlakukan file session sebagai permanen.
 - **Penyimpanan:** local harness → `infra/backup/sessions/session-youtube.json`
-  (`docs/local-worker/README.md`); app-worker → tombol **Import session** di
+  (`../local-worker/README.md`); app-worker → tombol **Import session** di
   panel akun (dashboard `/accounts`) atau `POST
   /api/accounts/{id}/session/import` (disimpan terenkripsi di `account_session`),
   atau file `/data/sessions/session-youtube.json` pada worker legacy.

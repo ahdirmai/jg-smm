@@ -46,7 +46,6 @@ import {
   Users,
   type LucideIcon,
 } from 'lucide-react';
-import Link from 'next/link';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { api } from '@/lib/api';
@@ -69,6 +68,18 @@ import { AuthBadge, StatusBadge } from '@/components/account-badges';
 import { platformIcon } from '@/components/platform-icon';
 
 const STATUSES = ['PENDING', 'ACTIVE', 'PAUSED', 'QUARANTINED', 'DEAD', 'ARCHIVED'] as const;
+
+/**
+ * The handle field can contain a provider token (some imported sessions store
+ * one there). Showing a 200-character opaque token in a table is noise and
+ * pushes every useful column off screen; fall back to the account's timezone.
+ */
+function accountSecondary(account: Account): string {
+  const handle = account.handle?.trim();
+  const looksOpaque = !handle || handle.length > 42 || /[%:]/.test(handle);
+  if (handle && handle !== account.username && !looksOpaque) return handle;
+  return account.timezone || 'no timezone';
+}
 
 const AUTH_STATUSES = [
   'PENDING',
@@ -195,13 +206,20 @@ function Stat({
 
 export default function AccountsPage() {
   const { accounts, loading, error, setStatus, remove, refresh } = useAccounts();
-  // The live view lives on the account's worker container, so this page needs
-  // the fleet to resolve an account → its noVNC URL.
+  // The fleet drives the STATUS column and the first-run readiness badge. The
+  // live view does NOT use this list's standing URLs: stateless workers require
+  // a per-open ticket, which openLiveView mints.
   const { containers } = useContainers();
   const session = useSession();
   const role = session.status === 'authenticated' ? session.role : undefined;
   const canAct = can(role, 'act');
   const [addOpen, setAddOpen] = useState(false);
+
+  // The overview's "No accounts yet" link lands here with ?add=1; opening the
+  // modal directly keeps that CTA from dead-ending on a list with no rows.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('add') === '1') setAddOpen(true);
+  }, []);
   const [importOpen, setImportOpen] = useState(false);
   const [platform, setPlatform] = useState<string>('all');
   const [status, setStatusFilter] = useState<string>('all');
@@ -211,6 +229,7 @@ export default function AccountsPage() {
   const [pageSize, setPageSize] = useState(25);
   const [busy, setBusy] = useState<string | null>(null);
   const [operationError, setOperationError] = useState<string | null>(null);
+  const [operationNotice, setOperationNotice] = useState<string | null>(null);
 
   useEffect(() => setPage(1), [platform, status, auth, authDetail, pageSize]);
   // The detail drawer is shared by the row click and the dropdown items. The
@@ -222,16 +241,6 @@ export default function AccountsPage() {
   // P6 parity: bulk select over the filtered set. Ops pause/resume/remove
   // many accounts at once; each call hits the real per-id endpoints.
   const [selected, setSelected] = useState<Set<string>>(new Set());
-
-  // account id → its worker's noVNC URL. Workers without a heartbeat publish
-  // nothing, so absent means "no live view yet", not a broken link.
-  const novncByWorker = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const c of containers) {
-      if (c.novncUrl) m.set(c.id, c.novncUrl as string);
-    }
-    return m;
-  }, [containers]);
 
   // Ticketed live-view URLs, keyed by account. In the stateless pool the live
   // view is a PUBLIC hostname, so the URL must be minted per open and expires in
@@ -246,13 +255,19 @@ export default function AccountsPage() {
   // race ahead and open a bare manual browser before startLogin autofills the
   // login form.
   const autoLoginRef = useRef<string | null>(null);
+  // Synchronous guard so two effects or rapid clicks in the same render tick
+  // never fire duplicate POST /live-view requests before `liveViewBusy` commits.
+  const liveViewInFlightRef = useRef<Set<string>>(new Set());
 
   const novncFor = (a: Account): string | null => {
     const cached = liveView[a.id];
     // A minute of margin: a ticket that dies mid-handshake is the same blank
     // screen as one that was never minted.
     if (cached && cached.expiresAt - 60_000 > Date.now()) return cached.url;
-    return a.workerId ? (novncByWorker.get(a.workerId) ?? null) : null;
+    // NEVER fall back to a worker's standing noVNC base URL in the stateless
+    // pool. It has no ticket, so nginx answers 403 and the iframe shows a blank
+    // screen. The ticket is minted by openLiveView and cached above.
+    return null;
   };
 
   /**
@@ -262,6 +277,8 @@ export default function AccountsPage() {
    */
   const openLiveView = async (a: Account) => {
     setDetail({ id: a.id, watch: true });
+    if (liveViewInFlightRef.current.has(a.id)) return;
+    liveViewInFlightRef.current.add(a.id);
     setLiveViewBusy(a.id);
     try {
       const view = await api.openAccountLiveView(a.id);
@@ -273,7 +290,8 @@ export default function AccountsPage() {
     } catch (err) {
       setOperationError(err instanceof Error ? err.message : 'Could not open the live view');
     } finally {
-      setLiveViewBusy(null);
+      liveViewInFlightRef.current.delete(a.id);
+      setLiveViewBusy((prev) => (prev === a.id ? null : prev));
     }
   };
 
@@ -354,16 +372,14 @@ export default function AccountsPage() {
   const detailAccount = detail ? (accounts.find((a) => a.id === detail.id) ?? null) : null;
   const isWatching = detail?.watch ?? false;
 
-  // Mint the ticketed URL as soon as the panel OPENS in watch mode (a login in
-  // flight, or the operator's click). Waiting for a separate toggle left the
-  // panel showing "the worker has not published its noVNC port" for an account
-  // that simply had not been asked yet — in the pool the URL is minted per
-  // account, never read off the worker list.
+  // Mint the ticketed URL ONLY when watch mode is explicitly active (after
+  // clicking "Log in" or "Live view"). Tapping an account row keeps `watch`
+  // false so no browser tab opens until the operator asks for it.
   useEffect(() => {
-    if (!detailAccount || !isWatching) return;
+    if (!detailAccount || !isWatching || !canAct) return;
     if (autoLoginRef.current === detailAccount.id) return;
-    if (liveView[detailAccount.id]) return;
-    if (liveViewBusy === detailAccount.id) return;
+    if (novncFor(detailAccount)) return;
+    if (liveViewBusy === detailAccount.id || liveViewInFlightRef.current.has(detailAccount.id)) return;
     void openLiveView(detailAccount);
     // openLiveView is stable enough for this trigger; re-running on every
     // render would mint a ticket per keystroke.
@@ -419,6 +435,7 @@ export default function AccountsPage() {
   const onAct = async (id: string, fn: (id: string) => Promise<void>) => {
     setBusy(id);
     setOperationError(null);
+    setOperationNotice(null);
     try {
       await fn(id);
     } catch (err) {
@@ -445,6 +462,7 @@ This account still holds a worker from an earlier session. Use "Release session"
   const releaseSession = async (id: string) => {
     setBusy(id);
     setOperationError(null);
+    setOperationNotice(null);
     // Stop watching BEFORE clearing the cached live-view URL so the watch
     // useEffect does not immediately re-mint a ticket and re-lease the worker
     // right after Release session frees it.
@@ -457,6 +475,8 @@ This account still holds a worker from an earlier session. Use "Release session"
         return next;
       });
       await refresh();
+      setDetail(null);
+      setOperationNotice('Session released. The account is free to be scheduled again.');
     } catch (err) {
       setOperationError(err instanceof Error ? err.message : 'Could not release the session');
     } finally {
@@ -476,10 +496,17 @@ This account still holds a worker from an earlier session. Use "Release session"
       // then 409s ("live view is open"). The lease is safe to drop here — the
       // operator asked for a login, not to keep watching a blank page.
       const message = err instanceof Error ? err.message : '';
-      if (!/live view is open|already has a live session|worker busy/i.test(message)) throw err;
+      if (!/live view is open|already has a live session|worker busy|waiting for operator input/i.test(message))
+        throw err;
       await api.closeAccountLiveView(id).catch(() => undefined);
       await api.startAccountLogin(id);
     }
+    setLiveView((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    setDetail({ id, watch: true });
     refresh();
   };
 
@@ -559,24 +586,10 @@ This account still holds a worker from an earlier session. Use "Release session"
   const needsLiveView = (a: Account): boolean =>
     a.authStatus === 'AUTHENTICATING' || a.authStatus === 'NEEDS_INPUT';
 
-  // A panel that shows a screen must HAVE a screen: mint the ticket for the
-  // login-in-flight case too, not only when the operator clicked a toggle.
-  // Without this the drawer opened "watching" an account that had never been
-  // asked for a worker, and said the worker published nothing.
-  useEffect(() => {
-    if (!detailAccount || !needsLiveView(detailAccount) || !canAct) return;
-    if (autoLoginRef.current === detailAccount.id) return;
-    if (liveView[detailAccount.id] || liveViewBusy === detailAccount.id) return;
-    void openLiveView(detailAccount);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [detailAccount?.id, detailAccount?.authStatus]);
-
   /**
    * Clicking an account row opens the cockpit. For any unauthenticated account
-   * (except QUARANTINED), start the login FIRST so the worker opens the
-   * platform login page and autofills email/username + password, then attach
-   * noVNC to that session. If a parked login is already live on the worker,
-   * keep it untouched and attach noVNC straight to it.
+   * (except QUARANTINED), close any previous account's tab first, start login
+   * so the worker autofills email/username + password, then attach noVNC.
    */
   const openAccountRow = async (a: Account) => {
     if (detail?.id === a.id) {
@@ -587,10 +600,21 @@ This account still holds a worker from an earlier session. Use "Release session"
       return;
     }
 
+    if (detail?.id) {
+      const prevId = detail.id;
+      void api.closeAccountLiveView(prevId).catch(() => undefined);
+      setLiveView((prev) => {
+        if (!prev[prevId]) return prev;
+        const next = { ...prev };
+        delete next[prevId];
+        return next;
+      });
+    }
+
     const shouldAutoLogin =
       canAct && a.authStatus !== 'AUTHENTICATED' && a.authStatus !== 'QUARANTINED';
     if (!shouldAutoLogin) {
-      setDetail({ id: a.id, watch: needsLiveView(a) });
+      setDetail({ id: a.id, watch: false });
       return;
     }
 
@@ -603,8 +627,6 @@ This account still holds a worker from an earlier session. Use "Release session"
         await startLogin(a.id);
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Could not start login';
-        // A parked login already waiting for operator input (OTP/CAPTCHA) is
-        // live on the worker — keep it running and attach noVNC directly.
         if (!/waiting for operator input|already authenticating|already in progress/i.test(message)) {
           setOperationError(message);
           setDetail({ id: a.id, watch: false });
@@ -617,7 +639,6 @@ This account still holds a worker from an earlier session. Use "Release session"
       setLiveViewBusy((prev) => (prev === a.id ? null : prev));
     }
   };
-
   // Fleet rollup for the stat strip. Counted over ALL accounts, not the
   // filtered view: the numbers answer "how healthy is the fleet", and a filter
   // that silently moved them would read as a bug.
@@ -637,7 +658,7 @@ This account still holds a worker from an earlier session. Use "Release session"
   }, [accounts]);
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
+    <div className="mx-auto max-w-6xl space-y-5">
       {/* Page-level actions. The title/subtitle live in the shell header (h-14),
           so this row carries only the write controls. */}
       <div className="flex flex-wrap items-center justify-end gap-2">
@@ -645,17 +666,21 @@ This account still holds a worker from an earlier session. Use "Release session"
           <Upload />
           Import
         </Button>
-        <Button asChild disabled={!canAct}>
-          <Link href="/accounts/new">
-            <UserPlus />
-            Add account
-          </Link>
+        <Button type="button" disabled={!canAct} onClick={() => setAddOpen(true)}>
+          <UserPlus />
+          Add account
         </Button>
       </div>
 
       {/* A wall of zeros is not a stat strip — with no accounts the numbers
           carry nothing, so the empty state below speaks alone. */}
-      {accounts.length > 0 ? (
+      {loading && accounts.length === 0 ? (
+        <section className="grid grid-cols-2 gap-4 lg:grid-cols-4" aria-label="Loading account summary">
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="card-surface h-[92px] animate-pulse rounded-[26px]" />
+          ))}
+        </section>
+      ) : accounts.length > 0 ? (
         <section className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           <Stat
             icon={Users}
@@ -697,7 +722,7 @@ This account still holds a worker from an earlier session. Use "Release session"
             account={detailAccount}
             novncUrl={novncFor(detailAccount)}
             liveViewLoading={liveViewBusy === detailAccount.id}
-            showLiveView={isWatching || needsLiveView(detailAccount)}
+            showLiveView={isWatching}
             canAct={canAct}
             busy={busy === detailAccount.id}
             onClose={() => {
@@ -777,11 +802,9 @@ This account still holds a worker from an earlier session. Use "Release session"
                 : 'No container ready — create one first'}
             </Badge>
             <div className="flex flex-wrap items-center justify-center gap-2">
-              <Button asChild disabled={!canAct}>
-                <Link href="/accounts/new">
-                  <UserPlus />
-                  Add account
-                </Link>
+              <Button type="button" disabled={!canAct} onClick={() => setAddOpen(true)}>
+                <UserPlus />
+                Add account
               </Button>
               <Button variant="outline" disabled={!canAct} onClick={() => setImportOpen(true)}>
                 <Upload />
@@ -859,7 +882,7 @@ This account still holds a worker from an earlier session. Use "Release session"
               </div>
             </div>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="space-y-5">
             {selected.size > 0 ? (
               <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border/60 bg-secondary/40 p-3">
                 <span className="text-sm font-medium">
@@ -910,6 +933,13 @@ This account still holds a worker from an earlier session. Use "Release session"
               </div>
             ) : null}
 
+            {operationNotice ? (
+              <div className="flex items-center gap-2 rounded-lg border border-success/30 bg-success/8 p-3 text-sm text-success" role="status">
+                <CheckCircle2 className="size-4 shrink-0" />
+                {operationNotice}
+              </div>
+            ) : null}
+
             {operationError || error ? (
               <div className="flex flex-wrap items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
                 <AlertCircle className="size-4 shrink-0" />
@@ -930,7 +960,7 @@ This account still holds a worker from an earlier session. Use "Release session"
             ) : null}
 
             <div className="overflow-hidden rounded-lg border border-border/60">
-              <Table>
+              <Table className="w-full table-fixed">
                 <TableHeader>
                   <TableRow className="bg-secondary/40 hover:bg-secondary/40">
                     <TableHead className="w-10">
@@ -943,21 +973,29 @@ This account still holds a worker from an earlier session. Use "Release session"
                         disabled={!canAct || filtered.length === 0}
                       />
                     </TableHead>
-                    <TableHead>Account</TableHead>
-                    <TableHead>Platform</TableHead>
+                    <TableHead className="w-[52%] md:w-[34%]">Account</TableHead>
+                    <TableHead className="hidden w-24 sm:table-cell">Platform</TableHead>
                     {/* The account's own city. The "worker" column beside it
                         is a LEASE, not a home: an idle pool account has none. */}
-                    <TableHead>Location</TableHead>
-                    <TableHead>Worker</TableHead>
-                    <TableHead>Auth</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="w-10" />
+                    <TableHead className="hidden w-24 lg:table-cell">Location</TableHead>
+                    <TableHead className="hidden w-24 xl:table-cell">Worker</TableHead>
+                    <TableHead className="hidden w-32 md:table-cell">Auth</TableHead>
+                    <TableHead className="w-[36%] md:w-32">Status</TableHead>
+                    <TableHead className="w-12" />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filtered.length === 0 && !loading ? (
+                  {loading && accounts.length === 0 ? (
+                    Array.from({ length: 6 }).map((_, index) => (
+                      <TableRow key={`skeleton-${index}`} className="hover:bg-transparent">
+                        <TableCell colSpan={8} className="py-3">
+                          <div className="h-9 animate-pulse rounded-lg bg-secondary/60" />
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  ) : filtered.length === 0 && !loading ? (
                     <TableRow>
-                      <TableCell colSpan={7} className="py-0">
+                      <TableCell colSpan={8} className="py-0">
                         {/* Reached only with accounts present — the zero-account
                           case never renders this table (see above). */}
                         <div className="flex flex-col items-center gap-3 py-12 text-center">
@@ -1022,32 +1060,30 @@ This account still holds a worker from an earlier session. Use "Release session"
                                 return <Icon className="size-4" />;
                               })()}
                             </span>
-                            <div className="min-w-0">
-                              <div className="truncate font-medium">@{a.username}</div>
-                              <div className="truncate font-mono text-xs text-muted-foreground">
-                                {a.handle && a.handle !== a.username
-                                  ? a.handle
-                                  : a.timezone || 'no timezone'}
+                            <div className="min-w-0 max-w-[280px]">
+                              <div className="truncate font-medium" title={`@${a.username}`}>@{a.username}</div>
+                              <div className="truncate text-xs text-muted-foreground">
+                                {accountSecondary(a)}
                               </div>
                             </div>
                           </div>
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="hidden sm:table-cell">
                           <Badge variant="outline">{platformLabel(a.platform)}</Badge>
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="hidden lg:table-cell">
                           {a.location ? (
                             <Badge variant="outline">{a.location}</Badge>
                           ) : (
                             <span className="text-xs text-muted-foreground">—</span>
                           )}
                         </TableCell>
-                        <TableCell className="font-mono text-xs text-muted-foreground">
+                        <TableCell className="hidden font-mono text-xs text-muted-foreground xl:table-cell">
                           {/* workerId here is the interactive LEASE, so a dash
                               means idle/schedulable — not unplaced. */}
                           {a.workerId ? a.workerId.slice(0, 12) : 'idle'}
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="hidden md:table-cell">
                           <AuthBadge status={a.authStatus} />
                           {a.lastError && (
                             <p className="mt-1 max-w-56 text-xs text-muted-foreground">
@@ -1059,7 +1095,10 @@ This account still holds a worker from an earlier session. Use "Release session"
                           {/* Primary: the worker's enforced state (what is
                            * actually running). Secondary: the account's own
                            * lifecycle. Two pills, no colour lie. */}
-                          <div className="flex items-center gap-1.5">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="md:hidden">
+                              <AuthBadge status={a.authStatus} />
+                            </span>
                             {workerStateFor(a) === 'PAUSED' ? (
                               <Badge variant="warning">PAUSED</Badge>
                             ) : workerStateFor(a) === 'RUNNING' ? (
@@ -1067,6 +1106,11 @@ This account still holds a worker from an earlier session. Use "Release session"
                             ) : null}
                             <StatusBadge status={a.status} />
                           </div>
+                          {a.lastError ? (
+                            <p className="mt-1 line-clamp-2 text-xs text-muted-foreground md:hidden">
+                              {loginResultNote(a.lastError)}
+                            </p>
+                          ) : null}
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center justify-end gap-1">
@@ -1245,7 +1289,7 @@ This account still holds a worker from an earlier session. Use "Release session"
         </Card>
       )}
 
-      <AddAccountDialog open={addOpen} onOpenChange={setAddOpen} />
+      <AddAccountDialog open={addOpen} onOpenChange={setAddOpen} onCreated={() => void refresh()} />
     </div>
   );
 }

@@ -80,3 +80,4 @@ docs/local-worker/node_modules/
 # Harness session copies (live storageState — real credentials, never commit)
 docs/local-worker/*-session.json
 /*-session.json
+._*

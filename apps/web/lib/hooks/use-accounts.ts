@@ -4,9 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { subscribeStream } from '@smm/shared';
 
-import { api, type Account } from '../api';
-
-const SSE_URL = process.env.NEXT_PUBLIC_SSE_URL ?? 'http://localhost:24080/api/stream';
+import { SSE_URL, api, type Account } from '../api';
 
 export type AccountsState = {
   accounts: Account[];

@@ -7,7 +7,7 @@
  * follow-up `auth-input`: both must address the SAME context, so the parked
  * context is keyed by accountId and kept alive across the gap.
  */
-import type { Browser, BrowserContext } from 'playwright';
+import type { Browser, BrowserContext, Page } from 'playwright';
 
 import type { Platform } from '@smm/shared';
 
@@ -282,6 +282,128 @@ async function describeFailedLogin(
   return `login timed out on ${platform}: proof cookies are present but the platform still reports logged out — finish the challenge in the live browser (url ${lastURL || 'unknown'})`;
 }
 
+const HTTP_RESPONSE_CODE_FAILURE = /ERR_HTTP_RESPONSE_CODE_FAILURE/i;
+
+function isUsablePageUrl(url: string | undefined): boolean {
+  return Boolean(url && url !== 'about:blank' && !url.startsWith('chrome-error://'));
+}
+
+function formatHttpFailure(baseError: string, status: number | undefined): string {
+  if (!status) return baseError;
+  if (status === 429) {
+    return `${baseError} (HTTP 429: rate-limited by platform — IP/proxy may be throttled)`;
+  }
+  if (status === 403) {
+    return `${baseError} (HTTP 403: IP or proxy blocked by platform)`;
+  }
+  if (status === 407) {
+    return `${baseError} (HTTP 407: proxy authentication failed)`;
+  }
+  if (status >= 500) {
+    return `${baseError} (HTTP ${status}: platform or proxy upstream error)`;
+  }
+  return `${baseError} (HTTP ${status})`;
+}
+
+/**
+ * Navigate to the platform's login URL with recovery for two common real-world
+ * failures:
+ *  1. `net::ERR_HTTP_RESPONSE_CODE_FAILURE`: Chromium raises this when the
+ *     origin or proxy answers a navigation with an empty-body 4xx/5xx (e.g.
+ *     Instagram returning 400/403/429/500 on stale `storageState` cookies or
+ *     rate-limiting `/accounts/login/`). Clear stale cookies and retry once,
+ *     then fall back to `https://www.instagram.com/` for Instagram. If it still
+ *     fails, surface the captured HTTP status code so the operator knows
+ *     whether it is a 429 rate-limit, 403 IP block, 407 proxy auth, or 5xx.
+ *  2. Slow `domcontentloaded` timeout: if the page already navigated to a real
+ *     URL (not `about:blank` or `chrome-error://`), continue so the poll loop
+ *     can still verify or park the login.
+ */
+async function navigateToLoginPage(
+  page: Page,
+  ctx: BrowserContext,
+  platform: Platform,
+  loginURL: string,
+  hasStoredSession: boolean,
+  accountId: string,
+  deps: AuthDeps,
+): Promise<{ clearedCookies: boolean }> {
+  let lastStatus: number | undefined;
+  const onResponse = (resp: {
+    status: () => number;
+    frame?: () => unknown;
+    request?: () => { isNavigationRequest?: () => boolean };
+  }): void => {
+    const isNav = resp.request?.()?.isNavigationRequest?.() ?? true;
+    const isMain = typeof page.mainFrame === 'function' ? resp.frame?.() === page.mainFrame() : true;
+    if (isNav && isMain) lastStatus = resp.status();
+  };
+  const canListen = typeof page.on === 'function' && typeof page.off === 'function';
+  if (canListen) page.on('response', onResponse as never);
+
+  let clearedCookies = false;
+  const tryGoto = async (url: string): Promise<void> => {
+    lastStatus = undefined;
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+  };
+
+  try {
+    try {
+      await tryGoto(loginURL);
+      return { clearedCookies };
+    } catch (navErr) {
+      const msg = navErr instanceof Error ? navErr.message : String(navErr);
+
+      if (HTTP_RESPONSE_CODE_FAILURE.test(msg)) {
+        const firstStatus = lastStatus;
+        deps.log?.('auth-login: HTTP response code failure on login URL', {
+          accountId,
+          platform,
+          url: loginURL,
+          httpStatus: firstStatus,
+          hadStoredSession: hasStoredSession,
+        });
+
+        // Recovery 1: stale/revoked cookies in storageState can make Instagram
+        // answer `/accounts/login/` with 400/403/500. Clear and retry once.
+        if (hasStoredSession && typeof ctx.clearCookies === 'function') {
+          await ctx.clearCookies().catch(() => undefined);
+          clearedCookies = true;
+          try {
+            await tryGoto(loginURL);
+            return { clearedCookies };
+          } catch {
+            // Fall through to root fallback / enriched error below.
+          }
+        }
+
+        // Recovery 2: Instagram sometimes returns 429/5xx specifically on
+        // `/accounts/login/` while the root `/` still renders the login form.
+        if (platform === 'instagram' && loginURL !== 'https://www.instagram.com/') {
+          try {
+            await tryGoto('https://www.instagram.com/');
+            return { clearedCookies };
+          } catch {
+            // Fall through and report the original error with HTTP status.
+          }
+        }
+
+        throw new Error(formatHttpFailure(msg.split('\n')[0] ?? msg, lastStatus ?? firstStatus));
+      }
+
+      if (!isUsablePageUrl(page.url())) throw navErr;
+      deps.log?.('auth-login: navigation timed out but the page loaded; continuing', {
+        accountId,
+        url: page.url().slice(0, 80),
+        error: msg.split('\n')[0],
+      });
+      return { clearedCookies };
+    }
+  } finally {
+    if (canListen) page.off('response', onResponse as never);
+  }
+}
+
 /**
  * Start a login and block until an outcome is reached. When the API delivers
  * the operator's credentials on the dispatch they are filled into the login
@@ -339,30 +461,22 @@ export async function runLogin(
 
   const page = await ctx.newPage();
   try {
-    // Navigation is the single most fragile step: `domcontentloaded` can exceed
-    // 30s on a slow Instagram edge even though the page is already usable, and
-    // the default timeout turned that into "navigation failed" for accounts
-    // whose network was fine. Wait longer, and if the deadline still hits, only
-    // give up when nothing loaded at all — a page with a URL is a page the poll
-    // below can still prove.
     const loginURL = await loginUrlFor(platform, deps);
-    try {
-      await page.goto(loginURL, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-    } catch (navErr) {
-      const loaded = page.url() && page.url() !== 'about:blank';
-      if (!loaded) throw navErr;
-      deps.log?.('auth-login: navigation timed out but the page loaded; continuing', {
-        accountId,
-        url: page.url().slice(0, 80),
-        error: navErr instanceof Error ? navErr.message.split('\n')[0] : String(navErr),
-      });
-    }
+    const { clearedCookies } = await navigateToLoginPage(
+      page,
+      ctx,
+      platform,
+      loginURL,
+      Boolean(stored),
+      accountId,
+      deps,
+    );
     // A still-valid hydrated session is redirected away from the login page,
     // so there is no form to fill: waiting out the mount bound here only
     // stalls every scheduled refresh (and logs a misleading "field not
     // found"). A stale session — or a first login, where nothing was stored —
     // leaves the form in place and the fill runs normally.
-    const hydratedProven = stored ? (await probeSession(platform, ctx)).proven : false;
+    const hydratedProven = stored && !clearedCookies ? (await probeSession(platform, ctx)).proven : false;
     // Start the poll BEFORE autofill. Google answers a typed identifier with a
     // challenge, and the poll is what turns that into `needs_input` + the live
     // view prompt; awaiting the fill first hid the challenge behind the fill's

@@ -67,6 +67,49 @@ func (s *AccountService) evictFromLoginMachine(ctx context.Context, w domain.Wor
 	s.publishAccount(ctx, toAccountView(holder))
 }
 
+// releaseStaleLeasesOnIdleWorker drops DB leases pointing at a login machine
+// that just reported itself idle (busy:false). A worker restart or crash clears
+// its in-memory browser without clearing account.worker_id in Postgres; without
+// this sweep, the next account on the same platform hits the unique
+// (worker_id, platform) constraint and fails with a bare 409 conflict forever.
+func (s *AccountService) releaseStaleLeasesOnIdleWorker(ctx context.Context, w domain.Worker, incoming domain.Account) {
+	leased, err := s.accounts.ListByWorker(ctx, w.ID)
+	if err != nil {
+		s.logger.Warn("login machine: list stale leases failed", "worker", w.Name, "err", err)
+		return
+	}
+	for _, stale := range leased {
+		if stale.ID == incoming.ID {
+			continue
+		}
+		if s.pool.Slots != nil {
+			_ = s.pool.Slots.ReleaseWorkerSlot(ctx, w.ID, stale.ID)
+		}
+		if s.pool.Unlease != nil {
+			if err := s.pool.Unlease(ctx, stale.ID, w.ID); err != nil {
+				s.logger.Warn("login machine: clear stale lease failed", "staleAccount", stale.ID, "worker", w.Name, "err", err)
+				continue
+			}
+		} else if err := s.accounts.ReleaseLease(ctx, stale.ID, w.ID); err != nil {
+			s.logger.Warn("login machine: clear stale lease failed", "staleAccount", stale.ID, "worker", w.Name, "err", err)
+			continue
+		}
+		s.logger.Warn("login machine: cleared stale DB lease on idle worker",
+			"staleAccount", stale.Username, "staleStatus", stale.AuthStatus, "worker", w.Name)
+		if stale.AuthStatus == domain.AuthNeedsInput || stale.AuthStatus == domain.AuthAuthenticating {
+			stale.WorkerID = nil
+			stale.AuthStatus = domain.AuthFailed
+			msg := fmt.Sprintf("login cleared: %s was idle after restart", w.Name)
+			stale.LastError = &msg
+			if _, err := s.accounts.Update(ctx, stale); err != nil {
+				s.logger.Warn("login machine: settle stale account failed", "staleAccount", stale.ID, "err", err)
+				continue
+			}
+			s.publishAccount(ctx, toAccountView(stale))
+		}
+	}
+}
+
 // leaseWorker gives the account a pool worker for an interactive session.
 //
 // The account's SQL lease (account.worker_id) is the authority; the Redis slot
@@ -135,7 +178,9 @@ func (s *AccountService) leaseWorker(ctx context.Context, acc domain.Account) (d
 		probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		held, herr := s.pool.RPC.BusyAccount(probeCtx, *candidates[0].EndpointURL)
 		cancel()
-		if herr == nil && held != "" && held != acc.ID {
+		if herr == nil && held == "" {
+			s.releaseStaleLeasesOnIdleWorker(ctx, candidates[0], acc)
+		} else if herr == nil && held != "" && held != acc.ID {
 			holder, gerr := s.accounts.GetByID(ctx, held)
 			switch {
 			case gerr != nil:
@@ -345,9 +390,14 @@ func (s *AccountService) CloseLiveView(ctx context.Context, accountID string) er
 					"accountId", accountID, "slots", cleared)
 			}
 		}
+		// A parked login with no lease is still a trap: the next attempt is
+		// refused with "submit the code", but there is no browser left to
+		// submit it into. Settle the status even when the lease was already
+		// gone — this is the idempotent second click the operator reaches for
+		// after a crash.
 		if acc.AuthStatus == domain.AuthNeedsInput || acc.AuthStatus == domain.AuthAuthenticating {
 			acc.AuthStatus = domain.AuthFailed
-			msg := "login cancelled: operator closed the live view"
+			msg := "login cancelled: operator released the session"
 			acc.LastError = &msg
 			if _, err := s.accounts.Update(ctx, acc); err != nil {
 				return fmt.Errorf("account service: settle parked login: %w", err)

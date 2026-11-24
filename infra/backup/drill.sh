@@ -41,6 +41,11 @@ SRC="$BACKUP_DIR/latest"
 SRC="$(cd "$SRC" && pwd)"
 log "drill: will restore from $SRC"
 
+# Validate the payload BEFORE the first destructive operation. The old order
+# deleted every volume and only then discovered a missing dump or manifest.
+[ -f "$SRC/postgres.dump" ] || die "missing postgres.dump in $SRC — refusing to wipe data"
+[ -f "$SRC/manifest.txt" ] || die "missing manifest.txt in $SRC — refusing to wipe data"
+
 # The clock for the AC: "restore < 30 min". It starts when the disaster hits.
 restore_start="$(date +%s)"
 

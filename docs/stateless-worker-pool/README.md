@@ -16,7 +16,7 @@ Catatan infrastruktur `boxd` mengonfirmasi kepingan puzzle terakhir yang membuat
 
 1. **Control Plane Tunggal (`smm-hub` — `boxd` `2vCPU/8G` di `fra`, Always-On):**
    - Menjalankan PostgreSQL (Vault terenkripsi AES-256-GCM untuk seluruh 486+ akun: `password_enc`, `account_session.storage_state`, `proxy_group`, `location`, `latitude/longitude`, `timezone`, `user_agent`), Redis, MinIO, Go API, Next.js (`HOSTNAME=0.0.0.0`), dan `nginx:8000`.
-2. **10 Worker Utama (`smm-worker-01` s/d `smm-worker-10` — `boxd` `2vCPU/8G` di `fra`, Auto-Sleep & Instant Wake):**
+2. **10 Worker Utama (`smm-worker-01` s/d `smm-worker-10` — `boxd` `1vCPU/4G` di `fra`, Auto-Sleep & Instant Wake):**
    - Dibuat dari **1 Golden Snapshot (`smm-worker-golden`)** dalam `<200 ms` tanpa Docker-in-Docker (langsung Ubuntu 24.04 + Xvfb + x11vnc + noVNC + Playwright Chromium + `pm2` + `nginx:8000`).
    - Dikonfigurasi dengan `bot-protection=off`, `idle.ignore-outbound=on`, `auto-suspend.timeout=300` (5 menit), dan `auto-hibernate.timeout=3600` (1 jam).
    - **Saat sepi, ke-10 worker otomatis masuk `standby`/`hibernated` (biaya CPU & RAM = $0!).**

@@ -30,9 +30,14 @@ func NewContainerHandler(containers *service.ContainerService) *ContainerHandler
 func (h *ContainerHandler) Register(g *echo.Group) {
 	g.POST("/containers", h.create, RequirePermission(domain.PermAct))
 	g.GET("/containers", h.list)
+	// Worker liveness/start for the dashboard's workspace gate. This probes
+	// worker hostnames directly; on boxd the probe is the wake request.
+	g.GET("/workers/health", h.workerHealth)
+	g.POST("/workers/wake", h.wakeWorkers, RequirePermission(domain.PermAct))
 	g.GET("/containers/:containerId", h.listLogs)
 	g.DELETE("/containers/:containerId", h.delete, RequirePermission(domain.PermAct))
 	g.POST("/containers/:containerId/browser", h.openBrowser, RequirePermission(domain.PermAct))
+	g.POST("/containers/:containerId/live-view", h.openWorkerLiveView, RequirePermission(domain.PermAct))
 	// Closes every browser the pool is holding. Must be registered before the
 	// :containerId routes' semantics can shadow it — Echo matches the literal
 	// segment first, but keeping it adjacent makes the intent obvious.
@@ -165,6 +170,24 @@ func (h *ContainerHandler) openBrowser(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// openWorkerLiveView mints a ticketed URL for the admin Workers page. The
+// unticketed `novncUrl` remains visible for diagnostics, but is not usable as
+// a WebSocket endpoint.
+func (h *ContainerHandler) openWorkerLiveView(c echo.Context) error {
+	if h.containers == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "container service unavailable")
+	}
+	id := c.Param("containerId")
+	if id == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "containerId is required")
+	}
+	url, err := h.containers.OpenWorkerLiveView(c.Request().Context(), id)
+	if err != nil {
+		return translateContainerError(err)
+	}
+	return c.JSON(http.StatusOK, map[string]string{"liveViewUrl": url})
+}
+
 // clearSessions closes every browser context the pool is holding, on every
 // reachable worker. Used when a display is stuck "busy" with an account no
 // lease names — no per-account call can reach that tab, only the machine can.
@@ -173,6 +196,32 @@ func (h *ContainerHandler) clearSessions(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "container service unavailable")
 	}
 	return c.JSON(http.StatusOK, h.containers.ClearSessions(c.Request().Context()))
+}
+
+// workerHealth reports the live reachability of configured workers (optionally
+// filtered by ?role=login or ?role=action so sleeping action VMs stay off).
+func (h *ContainerHandler) workerHealth(c echo.Context) error {
+	if h.containers == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "container service unavailable")
+	}
+	workers, err := h.containers.WorkerHealthForRole(c.Request().Context(), c.QueryParam("role"))
+	if err != nil {
+		return translateContainerError(err)
+	}
+	return c.JSON(http.StatusOK, map[string]any{"workers": workers})
+}
+
+// wakeWorkers starts (or keeps awake) configured workers (optionally filtered
+// by ?role=login or ?role=action), then returns their health status.
+func (h *ContainerHandler) wakeWorkers(c echo.Context) error {
+	if h.containers == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "container service unavailable")
+	}
+	workers, err := h.containers.WakeWorkersForRole(c.Request().Context(), c.QueryParam("role"))
+	if err != nil {
+		return translateContainerError(err)
+	}
+	return c.JSON(http.StatusOK, map[string]any{"workers": workers})
 }
 
 // translateContainerError maps domain errors to HTTP statuses.
