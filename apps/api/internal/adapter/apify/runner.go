@@ -285,14 +285,13 @@ type searchPostURL struct {
 }
 
 // enrichInstagramPosts turns the search actor's URL rows into full post rows by
-// running the per-post actor on each URL.
+// running the per-post actor in small batches (with per-URL fallback).
 //
-// Why one call per URL rather than one batched call: apify/instagram-post-scraper
-// takes a `username` array and would accept several at once, but a single
-// bad URL then fails the whole batch's payload. Per-URL keeps the blast radius
-// to one post, and the concurrency here is bounded by the sequential loop — the
-// platform's own run-concurrency cap (5 on the free plan) is the real limit, and
-// parallelising would just move the throttling into 429s.
+// Batching 10 URLs per actor call cuts enrichment time from ~8-10 minutes
+// (sequential 1-by-1 actor startups) down to ~30-45 seconds and cuts actor
+// startup overhead by 10x. If a chunk fails (e.g. a deleted/private URL),
+// only that chunk falls back to per-URL calls so one bad URL never poisons
+// the batch.
 //
 // Deduped by URL: the same post can appear under two keywords, and paying twice
 // for one post is the exact waste this pipeline exists to avoid.
@@ -310,14 +309,31 @@ func (r *Runner) enrichInstagramPosts(ctx context.Context, rows []json.RawMessag
 	}
 
 	out := make([]json.RawMessage, 0, len(urls))
-	for _, u := range urls {
-		items, _, err := r.runSync(ctx, actorID, runInput(domain.PlatformInstagram, u, 1), 1)
-		if err != nil {
-			r.log("apify: enrich post failed", "url", u, "err", err)
+	for start := 0; start < len(urls); start += enrichBatchSize {
+		end := start + enrichBatchSize
+		if end > len(urls) {
+			end = len(urls)
+		}
+		chunk := urls[start:end]
+		payload := map[string]any{
+			"username":     chunk,
+			"resultsLimit": len(chunk),
+		}
+		items, _, err := r.runSync(ctx, actorID, payload, len(chunk))
+		if err == nil && len(items) > 0 {
+			out = append(out, items...)
 			continue
 		}
-		for _, it := range items {
-			out = append(out, it)
+		if err != nil {
+			r.log("apify: enrich batch failed, falling back per-URL", "chunkSize", len(chunk), "err", err)
+		}
+		for _, u := range chunk {
+			single, _, serr := r.runSync(ctx, actorID, runInput(domain.PlatformInstagram, u, 1), 1)
+			if serr != nil {
+				r.log("apify: enrich post failed", "url", u, "err", serr)
+				continue
+			}
+			out = append(out, single...)
 		}
 	}
 	r.log("apify: enriched search results", "urls", len(urls), "posts", len(out))
@@ -390,8 +406,10 @@ func (r *Runner) RunSearch(ctx context.Context, in port.ApifySearchInput) (port.
 		// deadline exceeded" while the run was still healthy on Apify — we paid for a
 		// run we then threw away. Async start returns immediately; the poll below
 		// owns the wait and its budget is sized for the actor.
-		startURL := fmt.Sprintf("%s/acts/%s/runs?token=%s",
-			r.baseURL, pathSegment(actorID), r.token)
+		// Pass an explicit server-side timeout so a stalled actor cannot keep
+		// burning Apify credits for an hour if the API restarts or polls time out.
+		startURL := fmt.Sprintf("%s/acts/%s/runs?token=%s&timeout=%d",
+			r.baseURL, pathSegment(actorID), r.token, searchActorTimeoutSec)
 		body, err := json.Marshal(payload)
 		if err != nil {
 			return port.ApifyOutput{}, fmt.Errorf("apify: encode search input: %w", err)
@@ -701,11 +719,20 @@ func (r *Runner) pollRunDataset(ctx context.Context, runID string) ([]json.RawMe
 // run was still healthy) or makes a fast failure take a quarter hour to surface.
 func (r *Runner) pollRunDatasetWithin(ctx context.Context, runID string, budget time.Duration) ([]json.RawMessage, string, string, error) {
 	deadline := time.Now().Add(budget)
+	var (
+		lastMsg        string
+		lastDatasetID  string
+		lastProgressAt = time.Now()
+	)
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, "", "", fmt.Errorf("apify: poll canceled: %w", err)
 		}
 		if time.Now().After(deadline) {
+			r.abortRun(ctx, runID)
+			if items := r.tryHarvestPartial(ctx, runID, lastDatasetID, "poll budget exceeded"); len(items) > 0 {
+				return items, statusSucceeded, "", nil
+			}
 			return nil, "", "", fmt.Errorf("apify: run %s did not finish in %s", runID, budget)
 		}
 		time.Sleep(pollInterval)
@@ -727,6 +754,9 @@ func (r *Runner) pollRunDatasetWithin(ctx context.Context, runID string, budget 
 		if err := json.Unmarshal(raw, &st); err != nil {
 			return nil, "", "", fmt.Errorf("apify: run status body: %w", err)
 		}
+		if st.Data.DatasetID != "" {
+			lastDatasetID = st.Data.DatasetID
+		}
 		switch st.Data.Status {
 		case statusSucceeded:
 			items, err := r.fetchDataset(ctx, st.Data.DatasetID)
@@ -734,10 +764,65 @@ func (r *Runner) pollRunDatasetWithin(ctx context.Context, runID string, budget 
 				return nil, "", "", err
 			}
 			return items, statusSucceeded, "", nil
-		case "FAILED", "ABORTED", "TIMED-OUT":
+		case "TIMED-OUT", "ABORTED":
+			// An actor that timed out or was aborted after producing partial
+			// results still has those items in its dataset — harvest them
+			// instead of throwing away a paid run.
+			if items := r.tryHarvestPartial(ctx, runID, st.Data.DatasetID, st.Data.Status); len(items) > 0 {
+				return items, statusSucceeded, "", nil
+			}
 			return nil, st.Data.Status, st.Data.StatusMessage, nil
+		case "FAILED":
+			return nil, st.Data.Status, st.Data.StatusMessage, nil
+		default:
+			// Stall detection: if the actor has already emitted a progress
+			// message (e.g. "19 result generated so far..") and stops advancing
+			// for `searchStallTimeout`, abort it gracefully and harvest the
+			// results it already wrote instead of waiting out the full timeout.
+			msg := strings.TrimSpace(st.Data.StatusMessage)
+			if msg != lastMsg {
+				lastMsg = msg
+				lastProgressAt = time.Now()
+			} else if msg != "" && time.Since(lastProgressAt) >= searchStallTimeout {
+				r.log("apify: run stalled with no progress; aborting to harvest partial dataset",
+					"run", runID, "statusMessage", msg, "stalledFor", time.Since(lastProgressAt).Round(time.Second))
+				r.abortRun(ctx, runID)
+				if items := r.tryHarvestPartial(ctx, runID, lastDatasetID, "stalled"); len(items) > 0 {
+					return items, statusSucceeded, "", nil
+				}
+				return nil, "TIMED-OUT", fmt.Sprintf("stalled: %s", msg), nil
+			}
 		}
 	}
+}
+
+// abortRun asks Apify to stop a stalled or timed-out run so it stops billing.
+func (r *Runner) abortRun(ctx context.Context, runID string) {
+	url := fmt.Sprintf("%s/actor-runs/%s/abort?token=%s", r.baseURL, runID, r.token)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+	if err != nil {
+		return
+	}
+	resp, err := r.client.Do(req)
+	if err != nil {
+		r.log("apify: abort run failed", "run", runID, "err", err)
+		return
+	}
+	resp.Body.Close()
+}
+
+// tryHarvestPartial fetches whatever items an aborted/timed-out run already
+// wrote to its dataset. Returns nil when the dataset is empty or unreadable.
+func (r *Runner) tryHarvestPartial(ctx context.Context, runID, datasetID, reason string) []json.RawMessage {
+	if datasetID == "" {
+		return nil
+	}
+	items, err := r.fetchDataset(ctx, datasetID)
+	if err != nil || len(items) == 0 {
+		return nil
+	}
+	r.log("apify: harvested partial dataset", "run", runID, "reason", reason, "items", len(items))
+	return items
 }
 
 // fetchDataset downloads every item of a finished run.
@@ -889,16 +974,12 @@ const (
 	pollBudget   = 4 * time.Minute
 	pollInterval = 5 * time.Second
 
-	// Async-run polling budget for the Instagram keyword SEARCH actor.
-	//
-	// This actor drives a real browser and takes ~40-60s PER KEYWORD, so a
-	// 3-keyword batch runs for many minutes. MEASURED on the live actor: a
-	// 3-keyword run took 946s (15m47s) and succeeded — a hair after a 15-minute
-	// budget expired, so the batch failed while Apify had already finished. The
-	// budget must clear the slowest real run with margin, not sit on it.
-	//
-	// The sync endpoint cannot carry this at all: one http.Client.Timeout spans
-	// the whole request, so the batch died with "context deadline exceeded" while
-	// the run was healthy. Hence async start + poll.
-	searchPollBudget = 25 * time.Minute
+	// Batch size for Instagram Stage-2 post enrichment (apify/instagram-post-scraper).
+	enrichBatchSize = 10
+
+	// Hard server-side timeout passed to Apify on async search runs (6 minutes)
+	// and stall threshold when a running actor stops making progress (3 minutes).
+	searchActorTimeoutSec = 360
+	searchStallTimeout    = 3 * time.Minute
+	searchPollBudget      = 7 * time.Minute
 )
